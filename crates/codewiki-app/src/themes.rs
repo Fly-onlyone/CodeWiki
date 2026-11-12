@@ -1,17 +1,23 @@
 //! Bundled color themes and theme switching.
 //!
-//! Most theme files come from the gpui-kit project (Apache-2.0). Dracula,
-//! GitHub, Nord, One and Rosé Pine were written for CodeWiki from the palettes
-//! their authors publish. Every file carries the palette author's name and URL. User themes dropped into
-//! `%APPDATA%\CodeWiki\themes` are loaded as well.
+//! `codewiki.json` is CodeWiki's own family: four hues, each dark and light,
+//! with the bundled fonts and a tighter radius. Most other theme files come
+//! from the gpui-kit project (Apache-2.0). Dracula, GitHub, Nord, One and Rosé
+//! Pine were written for CodeWiki from the palettes their authors publish.
+//! Every file carries the palette author's name and URL. User themes dropped
+//! into `%APPDATA%\CodeWiki\themes` are loaded as well.
 
-use gpui_kit::App;
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
+use gpui_kit::{App, Global, Pixels, SharedString};
 
 /// Theme applied on first start.
-const DEFAULT_THEME: &str = "Tokyo Night";
+const DEFAULT_THEME: &str = "CodeWiki Violet";
 
-const BUNDLED: [&str; 26] = [
+/// The CodeWiki family. Kept apart from `BUNDLED` so tests can check it alone.
+const CODEWIKI: &str = include_str!("../themes/codewiki.json");
+
+const BUNDLED: [&str; 27] = [
+    CODEWIKI,
     include_str!("../themes/dracula.json"),
     include_str!("../themes/github.json"),
     include_str!("../themes/nord.json"),
@@ -56,17 +62,67 @@ fn state_file() -> Option<std::path::PathBuf> {
     })
 }
 
+/// Fonts, radius and shadow as they were before any theme was applied.
+///
+/// A theme file sets these only when it names them, and the values then stay
+/// for every later theme. Without a reset, a theme that names none of them
+/// would inherit the fonts and radius of whichever theme was active before.
+#[derive(Clone)]
+struct Baseline {
+    font_family: SharedString,
+    font_size: Pixels,
+    mono_font_family: SharedString,
+    mono_font_size: Pixels,
+    radius: Pixels,
+    radius_lg: Pixels,
+    shadow: bool,
+}
+
+impl Global for Baseline {}
+
+impl Baseline {
+    fn capture(theme: &Theme) -> Self {
+        Self {
+            font_family: theme.font_family.clone(),
+            font_size: theme.font_size,
+            mono_font_family: theme.mono_font_family.clone(),
+            mono_font_size: theme.mono_font_size,
+            radius: theme.radius,
+            radius_lg: theme.radius_lg,
+            shadow: theme.shadow,
+        }
+    }
+
+    fn restore(self, theme: &mut Theme) {
+        theme.font_family = self.font_family;
+        theme.font_size = self.font_size;
+        theme.mono_font_family = self.mono_font_family;
+        theme.mono_font_size = self.mono_font_size;
+        theme.radius = self.radius;
+        theme.radius_lg = self.radius_lg;
+        theme.shadow = self.shadow;
+    }
+}
+
 fn apply(name: &str, cx: &mut App) -> bool {
     let Some(config) = ThemeRegistry::global(cx).themes().get(name).cloned() else {
         return false;
     };
-    Theme::update(cx, |theme| theme.apply_config(&config));
+    let baseline = cx.try_global::<Baseline>().cloned();
+    Theme::update(cx, |theme| {
+        if let Some(baseline) = baseline {
+            baseline.restore(theme);
+        }
+        theme.apply_config(&config);
+    });
     cx.refresh_windows();
     true
 }
 
 /// Load bundled and user themes, then apply the saved or default theme.
 pub fn init(cx: &mut App) {
+    let baseline = Baseline::capture(cx.theme());
+    cx.set_global(baseline);
     for content in BUNDLED {
         if let Err(error) = ThemeRegistry::global_mut(cx).load_themes_from_str(content) {
             eprintln!("codewiki: skipping a bundled theme: {error}");
@@ -146,9 +202,86 @@ pub fn next_theme(cx: &mut App) {
 
 #[cfg(test)]
 mod tests {
-    use super::BUNDLED;
+    use super::{BUNDLED, CODEWIKI, DEFAULT_THEME};
+    use crate::contrast::{AA, PANE_FLOOR, parse_hex, ratio, worst_ratio};
+    use crate::fonts;
     use gpui_kit::component::ThemeConfigColors;
     use std::collections::BTreeSet;
+
+    fn codewiki_themes() -> Vec<serde_json::Value> {
+        let set: serde_json::Value = serde_json::from_str(CODEWIKI).unwrap();
+        set["themes"].as_array().unwrap().clone()
+    }
+
+    #[test]
+    fn the_codewiki_family_is_four_hues_each_dark_and_light() {
+        let themes = codewiki_themes();
+        let names: Vec<&str> = themes.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert_eq!(names.len(), 8);
+        assert!(names.contains(&DEFAULT_THEME));
+        for theme in &themes {
+            let name = theme["name"].as_str().unwrap();
+            let light = name.ends_with(" Light");
+            assert_eq!(
+                theme["mode"],
+                if light { "light" } else { "dark" },
+                "{name}"
+            );
+            let twin = if light {
+                name.trim_end_matches(" Light").to_string()
+            } else {
+                format!("{name} Light")
+            };
+            assert!(names.contains(&twin.as_str()), "{name} has no twin");
+        }
+    }
+
+    #[test]
+    fn the_codewiki_family_names_the_bundled_fonts() {
+        for theme in codewiki_themes() {
+            assert_eq!(theme["font.family"], fonts::UI_FAMILY);
+            assert_eq!(theme["mono_font.family"], fonts::MONO_FAMILY);
+        }
+    }
+
+    /// Every color that carries text in the reading pane must pass WCAG AA
+    /// there, whatever is behind the window.
+    #[test]
+    fn the_codewiki_family_passes_aa_on_the_reading_pane() {
+        const TEXT_KEYS: [&str; 9] = [
+            "foreground",
+            "muted.foreground",
+            "link",
+            "success.background",
+            "warning.background",
+            "danger.background",
+            "info.background",
+            "base.magenta",
+            "base.cyan",
+        ];
+        let mut failures = Vec::new();
+        for theme in codewiki_themes() {
+            let name = theme["name"].as_str().unwrap();
+            let color = |key: &str| {
+                let hex = theme["colors"][key]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{name} has no {key}"));
+                parse_hex(hex).unwrap_or_else(|| panic!("{name}: {key} is not a hex color"))
+            };
+            let pane = color("background");
+            for key in TEXT_KEYS {
+                let worst = worst_ratio(color(key), pane, PANE_FLOOR);
+                if worst < AA {
+                    failures.push(format!("{name}: {key} is {worst:.2}:1"));
+                }
+            }
+            let button = ratio(color("primary.foreground"), color("primary.background"));
+            if button < AA {
+                failures.push(format!("{name}: primary button text is {button:.2}:1"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
 
     /// The theme loader ignores color keys it does not know, so a misspelt key
     /// is a color that silently never applies.

@@ -11,6 +11,7 @@ mod editor;
 mod fonts;
 mod glass;
 mod graph;
+mod icons;
 mod illustration;
 mod markdown;
 mod pages;
@@ -21,8 +22,6 @@ mod themes;
 use std::collections::BTreeMap;
 
 use cw_client::{Backend, encode};
-use gpui_kit::assets::Assets;
-use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, Input, InputEvent, InputState, MoveDown, MoveUp,
@@ -30,10 +29,12 @@ use gpui_kit::component::input::{
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
+use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
 };
+use gpui_kit::component::{Icon, TitleBar};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -1151,9 +1152,22 @@ impl AppView {
                 "_HOME" => "Home".to_string(),
                 title => title.to_string(),
             };
-            SidebarMenuItem::new(label)
-                .active(note.path == current)
-                .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
+            let icon = match note.title.as_str() {
+                "_index" => icons::OVERVIEW,
+                "_HOME" => icons::HOME,
+                _ => icons::NOTE,
+            };
+            let active = note.path == current;
+            let mut item = SidebarMenuItem::new(label)
+                .icon(icon)
+                .active(active)
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)),
+                );
+            if active {
+                item = item.shadow(glass::selection_bar(cx));
+            }
+            item
         };
 
         let glass = self.glass.chrome(cx.theme().sidebar);
@@ -1192,6 +1206,7 @@ impl AppView {
                         notes.iter().map(|n| item(n, cx)).collect();
                     menu = menu.child(
                         SidebarMenuItem::new(folder.clone())
+                            .icon(icons::FOLDER)
                             .default_open(open)
                             .click_to_toggle(true)
                             .children(children),
@@ -1212,24 +1227,31 @@ impl AppView {
         let pending = self.pending_proposals.len();
         h_flex()
             .w_full()
-            .gap_2()
+            .gap_1()
             .p_2()
             .items_center()
             .border_b_1()
-            .border_color(cx.theme().border)
+            .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(cx.theme().background))
             .child(
                 Button::new("back")
-                    .label("Back")
+                    .icon(icons::BACK)
+                    .tooltip("Back (Alt+Left)")
                     .small()
                     .ghost()
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
-            .child(div().flex_1().child(Input::new(&self.search).small()))
+            .child(
+                div()
+                    .flex_1()
+                    .px_1()
+                    .child(Input::new(&self.search).small()),
+            )
             .when_some(self.busy.clone(), |this, busy| {
                 this.child(
                     div()
+                        .px_1()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("{busy}…")),
@@ -1239,15 +1261,20 @@ impl AppView {
                 matches!(self.page, Page::Note { .. }) && self.editing.is_none(),
                 |this| {
                     this.child(
-                        Button::new("edit").label("Edit").small().on_click(
-                            cx.listener(|this, _, window, cx| this.start_edit(window, cx)),
-                        ),
+                        Button::new("edit")
+                            .icon(icons::EDIT)
+                            .label("Edit")
+                            .small()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.start_edit(window, cx)),
+                            ),
                     )
                 },
             )
             .when_some(self.editing.as_ref().map(|e| e.dirty), |this, dirty| {
                 this.child(
                     Button::new("save")
+                        .icon(icons::SAVE)
                         .label("Save")
                         .small()
                         .primary()
@@ -1256,6 +1283,7 @@ impl AppView {
                 )
                 .child(
                     Button::new("discard")
+                        .icon(icons::CLOSE)
                         .label(if dirty { "Discard" } else { "Close editor" })
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| this.discard_edit(window, cx))),
@@ -1264,6 +1292,11 @@ impl AppView {
             .when(self.figure.is_some() && self.editing.is_none(), |this| {
                 this.child(
                     Button::new("figure")
+                        .icon(if self.show_figure {
+                            icons::NOTE
+                        } else {
+                            icons::FIGURE
+                        })
                         .label(if self.show_figure {
                             "Text"
                         } else {
@@ -1278,28 +1311,41 @@ impl AppView {
             })
             .child(
                 Button::new("commands")
-                    .label("Commands  Ctrl+K")
+                    .icon(icons::COMMANDS)
+                    .label("Ctrl+K")
+                    .tooltip("Commands")
                     .small()
                     .ghost()
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))),
             )
             .child(
                 Button::new("graph")
-                    .label("Graph")
+                    .icon(icons::GRAPH)
+                    .tooltip("Graph")
                     .small()
                     .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
             )
             .child(
                 Button::new("hotspots")
-                    .label("Hotspots")
+                    .icon(icons::HOTSPOTS)
+                    .tooltip("Hotspots")
                     .small()
                     .ghost()
                     .disabled(self.repo.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
             )
             .child(
+                Button::new("theme")
+                    .icon(icons::THEME)
+                    .tooltip(format!("Theme: {}", cx.theme().theme_name()))
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
+            )
+            .child(
                 Button::new("sync")
+                    .icon(icons::SYNC)
                     .label("Sync")
                     .small()
                     .disabled(self.busy.is_some() || self.repo.is_none())
@@ -1307,6 +1353,7 @@ impl AppView {
             )
             .child(
                 Button::new("review")
+                    .icon(icons::REVIEW)
                     .label(format!("Review ({pending})"))
                     .small()
                     .when(pending > 0, |b| b.primary())
@@ -1317,103 +1364,94 @@ impl AppView {
                         }
                     })),
             )
-            .child(
-                Button::new("theme")
-                    .label(cx.theme().theme_name().clone())
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
-            )
     }
 
-    /// The row of tabs under the toolbar.
-    fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
-        let (border, muted, selected) = {
-            let theme = cx.theme();
-            (theme.border, theme.muted_foreground, theme.secondary)
-        };
-        let mut bar = h_flex()
-            .w_full()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .items_center()
-            .border_b_1()
-            .border_color(border)
-            .bg(self.glass.chrome(cx.theme().background));
-        for index in 0..self.tabs.len() {
-            let active = index == self.active_tab;
-            let title = page_title(if active {
+    /// The row of tabs under the toolbar. The underline of the active tab
+    /// slides to the next one; gpui-kit animates it.
+    fn tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
+        let closable = self.tabs.len() > 1;
+        let tabs = (0..self.tabs.len()).map(|index| {
+            let title = page_title(if index == self.active_tab {
                 &self.page
             } else {
                 &self.tabs[index].page
             });
-            bar = bar.child(
-                h_flex()
-                    .id(("tab", index))
-                    .gap_1()
-                    .px_2()
-                    .rounded_md()
-                    .items_center()
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(active, |tab| tab.bg(selected))
-                    .when(!active, |tab| tab.text_color(muted))
-                    .child(div().max_w(px(180.)).truncate().child(title))
-                    .on_click(cx.listener(move |this, _, _, cx| this.activate_tab(index, cx)))
-                    .when(self.tabs.len() > 1, |tab| {
-                        tab.child(
-                            Button::new(("close-tab", index))
-                                .label("×")
-                                .xsmall()
-                                .ghost()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.close_tab(index, cx);
-                                })),
-                        )
-                    }),
-            );
-        }
-        bar.child(
-            Button::new("new-tab")
-                .label("+")
-                .xsmall()
-                .ghost()
-                .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
-        )
+            TabItem::new()
+                .child(div().max_w(px(180.)).truncate().child(title))
+                .when(closable, |tab| {
+                    tab.suffix(
+                        Button::new(("close-tab", index))
+                            .icon(icons::CLOSE)
+                            .tooltip("Close tab (Ctrl+W)")
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.close_tab(index, cx);
+                            })),
+                    )
+                })
+        });
+        TabBar::new("tabs")
+            .underline()
+            .small()
+            .w_full()
+            .px_3()
+            .bg(self.glass.chrome(cx.theme().background))
+            .selected_index(self.active_tab)
+            .children(tabs.collect::<Vec<_>>())
+            .on_click(cx.listener(|this, index: &usize, _, cx| this.activate_tab(*index, cx)))
+            .suffix(
+                Button::new("new-tab")
+                    .icon(icons::NEW_TAB)
+                    .tooltip("New tab (Ctrl+T)")
+                    .xsmall()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
+            )
     }
 
     /// The command palette, drawn over everything else.
     fn palette_view(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let entries = self.palette_matches(cx);
         let selected = self.palette_selected.min(entries.len().saturating_sub(1));
-        let (popover, border, accent, accent_text, muted, backdrop) = {
+        let (popover, accent, accent_text, muted, backdrop) = {
             let theme = cx.theme();
             (
                 theme.popover,
-                theme.border,
                 theme.accent,
                 theme.accent_foreground,
                 theme.muted_foreground,
                 theme.background.opacity(0.6),
             )
         };
+        let border = glass::tinted_border(cx);
+        let bar = glass::selection_bar(cx);
         let mut list = v_flex().gap_1();
         for (index, entry) in entries.into_iter().enumerate() {
             let command = entry.command;
+            let icon = icons::for_command(&command);
             list = list.child(
                 h_flex()
                     .id(("palette-entry", index))
-                    .px_2()
-                    .py_1()
+                    .px_3()
+                    .py_1p5()
+                    .gap_2()
                     .rounded_md()
-                    .justify_between()
+                    .items_center()
                     .cursor_pointer()
                     .when(index == selected, |row| {
-                        row.bg(accent).text_color(accent_text)
+                        row.bg(accent).text_color(accent_text).shadow(bar.clone())
                     })
-                    .child(div().text_sm().truncate().child(entry.label))
+                    .child(Icon::new(icon).small().text_color(muted))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .truncate()
+                            .child(entry.label),
+                    )
                     .child(div().text_xs().text_color(muted).child(entry.hint))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run_command(command.clone(), window, cx)
@@ -1441,16 +1479,21 @@ impl AppView {
                         v_flex()
                             .id("palette")
                             .w(px(560.))
-                            .p_2()
-                            .gap_2()
                             .rounded_lg()
                             .border_1()
                             .border_color(border)
                             .bg(popover)
-                            .shadow_lg()
+                            .shadow(glass::glow(cx))
+                            .overflow_hidden()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(Input::new(&self.palette_input))
-                            .child(list),
+                            .child(glass::hairline(cx))
+                            .child(
+                                v_flex()
+                                    .p_2()
+                                    .gap_2()
+                                    .child(Input::new(&self.palette_input))
+                                    .child(list),
+                            ),
                     ),
                 ),
         )
@@ -1947,7 +1990,7 @@ impl AppView {
             .gap_3()
             .p_3()
             .border_l_1()
-            .border_color(cx.theme().border)
+            .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(cx.theme().background))
             .overflow_hidden();
         match &self.page {
@@ -2183,6 +2226,7 @@ impl Render for AppView {
             })
             .when(self.palette_open, |root| root.child(self.palette_view(cx)))
             .child(title_bar)
+            .child(glass::hairline(cx))
             .child(self.body(window, cx))
     }
 }
@@ -2227,7 +2271,7 @@ impl AppView {
 }
 
 fn main() {
-    let app = gpui_kit::application().with_assets(Assets);
+    let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);
         fonts::register(cx);

@@ -15,8 +15,13 @@ tags: [core, cw-wiki, module]
 Main items:
 
 - `head_commit` — commit id of `HEAD`, or `None` outside a repository or before the first commit.
+- `vault_is_behind` — true when the code moved on since the vault was generated at commit `generated`.
 - `changed_files` — Repo-relative paths changed between `base` and `HEAD`.
 - `run` — function
+
+## Depends on
+
+- [[cw-core]] — uses `VAULT_DIR`
 
 ## Used by
 

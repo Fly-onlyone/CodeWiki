@@ -31,8 +31,8 @@ Main items:
 - [[Model Module]] — uses `Edge`, `file_node`
 - [[Lifecycle Module]] — uses `NoteState`, `state`
 - [[Manifest Module]] — uses `NoteEntry`, `Origin`
+- [[Git Module]] — uses `head_commit`, `vault_is_behind`
 - [[Graph]] — uses `from_edges`, `id`
-- [[cw-core]] — uses `VAULT_DIR`
 
 ## Used by
 

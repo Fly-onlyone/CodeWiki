@@ -22,9 +22,9 @@ Main items:
 ## Depends on
 
 - [[cw-core]] — uses `MANIFEST_DIR`, `VAULT_DIR`
+- [[Git Module]] — uses `head_commit`, `vault_is_behind`
 - [[Error Module]] — uses `Result`
 - [[Proposal Module]] — uses `list`
-- [[Git Module]] — uses `head_commit`
 - [[VaultMeta]] — uses `load`
 
 ## Used by

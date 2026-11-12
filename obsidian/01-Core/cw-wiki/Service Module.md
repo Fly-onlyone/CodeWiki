@@ -19,9 +19,9 @@ Main items:
 - `index_notes` — load every vault note into the search index.
 - `update_in` — `update` with an explicit data directory.
 - `META_COMMIT` — meta key holding the commit the index was last built from.
+- `is_stale` — true when code was committed after the vault was last generated.
 - `open_index` — open the index of the repository at `root` in the default data directory.
 - `update` — bring index and vault up to date with the working tree.
-- `is_stale` — true when `HEAD` differs from the commit the vault was last generated at.
 
 ## Depends on
 
@@ -29,10 +29,10 @@ Main items:
 - [[Paths Module]] — uses `data_dir`, `index_path`, `index_path_in`
 - [[Scan Module]] — uses `RepoFacts`, `scan_repo`
 - [[Generate Module]] — uses `Report`, `generate`
+- [[Git Module]] — uses `head_commit`, `vault_is_behind`
 - [[Gitintel Module]] — uses `mine`, `save`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[cw-index]] — uses `replace_documents`
-- [[Error Module]] — uses `Result`
 
 ## Used by
 

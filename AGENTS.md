@@ -4,7 +4,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
 
 ## Hard rules
 
-- **Licenses.** No AGPL, GPL, LGPL or EPL dependencies. `cargo deny check licenses bans sources` must pass. `merman` is used with `default-features = false`; the `forceatlas2` crate is banned.
+- **Licenses.** No AGPL, GPL, LGPL or EPL dependencies. `cargo deny check` must pass. `merman` is used with `default-features = false`; the `forceatlas2` crate is banned.
 - **No WebView.** The UI is native Rust on GPUI (`gpui-kit`). Do not add a browser, WebView2 or Electron dependency.
 - **The app talks HTTP only.** `codewiki-app` gets all data from the backend through `cw-client`. It may link `cw-illustrate`, `cw-mermaid` and `openui-lang` to draw, never the index, parser or wiki crates.
 - **Never overwrite a human-edited note.** Changes to such notes go through the proposal queue.
@@ -45,7 +45,7 @@ A backend feature usually touches four places: the logic in `crates/cw-wiki/src/
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo deny check licenses bans sources
+cargo deny check
 ```
 
 Run all four before reporting work as complete.

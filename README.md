@@ -82,7 +82,7 @@ Point the app or the MCP program at it with `CODEWIKI_URL=http://127.0.0.1:7411`
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo deny check licenses bans sources
+cargo deny check
 ```
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.

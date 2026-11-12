@@ -62,6 +62,11 @@ app_icons! {
     SETTINGS = Settings,
     MOTION = Zap,
     EXTERNAL = ExternalLink,
+    // Alerts.
+    SUCCESS = CircleCheck,
+    INFO = Info,
+    WARNING = TriangleAlert,
+    ERROR = CircleAlert,
 }
 
 /// The arrow of a folder row. gpui-kit embeds this one for its own menus.

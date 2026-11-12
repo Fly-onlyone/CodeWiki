@@ -11,7 +11,6 @@ use std::time::Duration;
 
 use gpui_kit::assets::IconName;
 use gpui_kit::base::motion as kit;
-use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
@@ -21,6 +20,7 @@ use gpui_kit::{
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
+use super::feedback;
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{self, Variant, curve, duration, easing};
 
@@ -402,7 +402,7 @@ impl RenderOnce for Button {
             })
             .child(self.label)
             .when_some(self.tooltip, |button, text| {
-                button.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+                button.tooltip(feedback::tooltip(text))
             });
         let ink = Ink {
             radius,
@@ -504,7 +504,7 @@ impl RenderOnce for IconButton {
             })
             .child(Icon::new(self.icon).with_size(px(icon)).text_color(color))
             .when_some(self.tooltip, |button, text| {
-                button.tooltip(move |window, cx| Tooltip::new(text.clone()).build(window, cx))
+                button.tooltip(feedback::tooltip(text))
             });
         let ink = Ink {
             radius: side / 2.0,

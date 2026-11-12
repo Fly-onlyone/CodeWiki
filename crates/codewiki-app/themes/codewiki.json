@@ -209,11 +209,11 @@
         "secondary.foreground": "#1A1630",
         "secondary.hover.background": "#E7E3F8",
         "secondary.active.background": "#DAD4F3",
-        "success.background": "#0B6B4A",
+        "success.background": "#0A6044",
         "success.foreground": "#FFFFFF",
         "warning.background": "#8A4B00",
         "warning.foreground": "#FFFFFF",
-        "danger.background": "#B42636",
+        "danger.background": "#A31F2E",
         "danger.foreground": "#FFFFFF",
         "info.background": "#1A56BD",
         "info.foreground": "#FFFFFF",
@@ -234,12 +234,12 @@
         "title_bar.border": "#DAD4F3",
         "chart.1": "#6D3FE0",
         "chart.2": "#1A56BD",
-        "chart.3": "#0B6B4A",
+        "chart.3": "#0A6044",
         "chart.4": "#8A4B00",
         "chart.5": "#7A2DB5",
         "chart.grid": "#DAD4F3",
-        "base.red": "#B42636",
-        "base.green": "#0B6B4A",
+        "base.red": "#A31F2E",
+        "base.green": "#0A6044",
         "base.yellow": "#8A4B00",
         "base.blue": "#1A56BD",
         "base.magenta": "#7A2DB5",
@@ -252,10 +252,10 @@
         "editor.line_number": "#55506F",
         "editor.active_line_number": "#1A1630",
         "editor.invisible": "#55506F66",
-        "conflict": "#B42636",
-        "created": "#0B6B4A",
-        "deleted": "#B42636",
-        "error": "#B42636",
+        "conflict": "#A31F2E",
+        "created": "#0A6044",
+        "deleted": "#A31F2E",
+        "error": "#A31F2E",
         "hidden": "#55506F",
         "hint": "#0B5C72",
         "ignored": "#55506F",
@@ -263,7 +263,7 @@
         "modified": "#8A4B00",
         "predictive": "#55506F",
         "renamed": "#1A56BD",
-        "success": "#0B6B4A",
+        "success": "#0A6044",
         "unreachable": "#55506F",
         "warning": "#8A4B00",
         "syntax": {
@@ -294,7 +294,7 @@
             "color": "#1A56BD"
           },
           "keyword": {
-            "color": "#B42636"
+            "color": "#A31F2E"
           },
           "link_text": {
             "color": "#0B5C72",
@@ -308,13 +308,13 @@
             "color": "#7A2DB5"
           },
           "string": {
-            "color": "#0B6B4A"
+            "color": "#0A6044"
           },
           "string.escape": {
             "color": "#0B5C72"
           },
           "string.regex": {
-            "color": "#0B6B4A"
+            "color": "#0A6044"
           },
           "string.special": {
             "color": "#8A4B00"
@@ -323,7 +323,7 @@
             "color": "#8A4B00"
           },
           "tag": {
-            "color": "#B42636"
+            "color": "#A31F2E"
           },
           "text.literal": {
             "color": "#1A1630"
@@ -339,7 +339,7 @@
             "color": "#1A1630"
           },
           "variable.special": {
-            "color": "#B42636"
+            "color": "#A31F2E"
           }
         }
       }
@@ -553,7 +553,7 @@
         "success.foreground": "#FFFFFF",
         "warning.background": "#855000",
         "warning.foreground": "#FFFFFF",
-        "danger.background": "#B3261E",
+        "danger.background": "#A2201A",
         "danger.foreground": "#FFFFFF",
         "info.background": "#125E8A",
         "info.foreground": "#FFFFFF",
@@ -578,7 +578,7 @@
         "chart.4": "#855000",
         "chart.5": "#7A2DB5",
         "chart.grid": "#EBD9BD",
-        "base.red": "#B3261E",
+        "base.red": "#A2201A",
         "base.green": "#17663A",
         "base.yellow": "#855000",
         "base.blue": "#125E8A",
@@ -592,10 +592,10 @@
         "editor.line_number": "#65533A",
         "editor.active_line_number": "#2A1D0C",
         "editor.invisible": "#65533A66",
-        "conflict": "#B3261E",
+        "conflict": "#A2201A",
         "created": "#17663A",
-        "deleted": "#B3261E",
-        "error": "#B3261E",
+        "deleted": "#A2201A",
+        "error": "#A2201A",
         "hidden": "#65533A",
         "hint": "#0B5C72",
         "ignored": "#65533A",
@@ -634,7 +634,7 @@
             "color": "#125E8A"
           },
           "keyword": {
-            "color": "#B3261E"
+            "color": "#A2201A"
           },
           "link_text": {
             "color": "#0B5C72",
@@ -663,7 +663,7 @@
             "color": "#855000"
           },
           "tag": {
-            "color": "#B3261E"
+            "color": "#A2201A"
           },
           "text.literal": {
             "color": "#2A1D0C"
@@ -679,7 +679,7 @@
             "color": "#2A1D0C"
           },
           "variable.special": {
-            "color": "#B3261E"
+            "color": "#A2201A"
           }
         }
       }
@@ -893,7 +893,7 @@
         "success.foreground": "#FFFFFF",
         "warning.background": "#854D0E",
         "warning.foreground": "#FFFFFF",
-        "danger.background": "#B4232F",
+        "danger.background": "#A31D29",
         "danger.foreground": "#FFFFFF",
         "info.background": "#0E5E8C",
         "info.foreground": "#FFFFFF",
@@ -918,7 +918,7 @@
         "chart.4": "#854D0E",
         "chart.5": "#7A2DB5",
         "chart.grid": "#C9E6DC",
-        "base.red": "#B4232F",
+        "base.red": "#A31D29",
         "base.green": "#166534",
         "base.yellow": "#854D0E",
         "base.blue": "#0E5E8C",
@@ -932,10 +932,10 @@
         "editor.line_number": "#435F57",
         "editor.active_line_number": "#0D2520",
         "editor.invisible": "#435F5766",
-        "conflict": "#B4232F",
+        "conflict": "#A31D29",
         "created": "#166534",
-        "deleted": "#B4232F",
-        "error": "#B4232F",
+        "deleted": "#A31D29",
+        "error": "#A31D29",
         "hidden": "#435F57",
         "hint": "#0B5C72",
         "ignored": "#435F57",
@@ -974,7 +974,7 @@
             "color": "#0E5E8C"
           },
           "keyword": {
-            "color": "#B4232F"
+            "color": "#A31D29"
           },
           "link_text": {
             "color": "#0B5C72",
@@ -1003,7 +1003,7 @@
             "color": "#854D0E"
           },
           "tag": {
-            "color": "#B4232F"
+            "color": "#A31D29"
           },
           "text.literal": {
             "color": "#0D2520"
@@ -1019,7 +1019,7 @@
             "color": "#0D2520"
           },
           "variable.special": {
-            "color": "#B4232F"
+            "color": "#A31D29"
           }
         }
       }
@@ -1233,7 +1233,7 @@
         "success.foreground": "#FFFFFF",
         "warning.background": "#854D0E",
         "warning.foreground": "#FFFFFF",
-        "danger.background": "#B4232F",
+        "danger.background": "#A31D29",
         "danger.foreground": "#FFFFFF",
         "info.background": "#4338CA",
         "info.foreground": "#FFFFFF",
@@ -1258,7 +1258,7 @@
         "chart.4": "#854D0E",
         "chart.5": "#7A2DB5",
         "chart.grid": "#C8DDF2",
-        "base.red": "#B4232F",
+        "base.red": "#A31D29",
         "base.green": "#166534",
         "base.yellow": "#854D0E",
         "base.blue": "#4338CA",
@@ -1272,10 +1272,10 @@
         "editor.line_number": "#44596E",
         "editor.active_line_number": "#0C1F30",
         "editor.invisible": "#44596E66",
-        "conflict": "#B4232F",
+        "conflict": "#A31D29",
         "created": "#166534",
-        "deleted": "#B4232F",
-        "error": "#B4232F",
+        "deleted": "#A31D29",
+        "error": "#A31D29",
         "hidden": "#44596E",
         "hint": "#0B5C72",
         "ignored": "#44596E",
@@ -1314,7 +1314,7 @@
             "color": "#4338CA"
           },
           "keyword": {
-            "color": "#B4232F"
+            "color": "#A31D29"
           },
           "link_text": {
             "color": "#0B5C72",
@@ -1343,7 +1343,7 @@
             "color": "#854D0E"
           },
           "tag": {
-            "color": "#B4232F"
+            "color": "#A31D29"
           },
           "text.literal": {
             "color": "#0C1F30"
@@ -1359,7 +1359,7 @@
             "color": "#0C1F30"
           },
           "variable.special": {
-            "color": "#B4232F"
+            "color": "#A31D29"
           }
         }
       }

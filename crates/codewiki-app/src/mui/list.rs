@@ -122,7 +122,7 @@ impl ListItemButton {
     }
 
     /// Something at the far end of the row, such as a folder's arrow.
-    fn trailing(mut self, trailing: impl IntoElement) -> Self {
+    pub fn trailing(mut self, trailing: impl IntoElement) -> Self {
         self.trailing = Some(trailing.into_any_element());
         self
     }

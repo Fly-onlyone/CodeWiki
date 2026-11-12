@@ -251,11 +251,14 @@ mod tests {
                     .unwrap_or_else(|| panic!("{name} has no {key}"));
                 parse_hex(hex).unwrap_or_else(|| panic!("{name}: {key} is not a hex color"))
             };
-            let pane = color("background");
-            for key in TEXT_KEYS {
-                let worst = worst_ratio(color(key), pane, PANE_FLOOR, [BLACK, WHITE]);
-                if worst < AA {
-                    failures.push(format!("{name}: {key} is {worst:.2}:1"));
+            // The page, and a card on it: a card is drawn in the secondary
+            // color, as dense as the page.
+            for surface in ["background", "secondary.background"] {
+                for key in TEXT_KEYS {
+                    let worst = worst_ratio(color(key), color(surface), PANE_FLOOR, [BLACK, WHITE]);
+                    if worst < AA {
+                        failures.push(format!("{name}: {key} on {surface} is {worst:.2}:1"));
+                    }
                 }
             }
             let button = ratio(color("primary.foreground"), color("primary.background"));

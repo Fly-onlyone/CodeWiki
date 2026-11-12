@@ -26,13 +26,14 @@ mod themes;
 use std::collections::BTreeMap;
 
 use cw_client::{Backend, encode};
+use gpui_kit::base::motion::{Presence, Transition};
+use gpui_kit::component::TitleBar;
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
-use gpui_kit::component::{Icon, TitleBar};
+use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -40,10 +41,13 @@ use serde_json::{Value, json};
 use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
 use motion::MotionPref;
 use mui::button::{Button, IconButton};
+use mui::feedback::{self, Tone};
 use mui::list::{self, ListFolder, ListItemButton};
 use mui::motion::{Enter, EnterExt as _};
+use mui::surfaces;
 use mui::tabs::{Tab as TabItem, Tabs};
 use mui::text_field::TextField;
+use mui::tokens::Variant;
 use palette::Command;
 
 actions!(
@@ -1435,48 +1439,25 @@ impl AppView {
             )
     }
 
-    /// The command palette, drawn over everything else.
-    fn palette_view(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The command palette, drawn over everything else. `shown` runs from 0
+    /// to 1 as it opens and back as it closes; while it closes, the palette
+    /// is still drawn but no longer takes input.
+    fn palette_view(&self, shown: f32, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let open = self.palette_open;
         let entries = self.palette_matches(cx);
         let selected = self.palette_selected.min(entries.len().saturating_sub(1));
-        let (popover, accent, accent_text, muted, backdrop) = {
+        let (muted, backdrop) = {
             let theme = cx.theme();
-            (
-                theme.popover,
-                theme.accent,
-                theme.accent_foreground,
-                theme.muted_foreground,
-                theme.background.opacity(0.6),
-            )
+            (theme.muted_foreground, theme.background.opacity(0.6))
         };
-        let border = glass::tinted_border(cx);
-        let bar = glass::selection_bar(cx);
-        let mut list = v_flex().gap_1();
+        let mut list = v_flex();
         for (index, entry) in entries.into_iter().enumerate() {
             let command = entry.command;
-            let icon = icons::for_command(&command);
             list = list.child(
-                h_flex()
-                    .id(("palette-entry", index))
-                    .px_3()
-                    .py_1p5()
-                    .gap_2()
-                    .rounded_md()
-                    .items_center()
-                    .cursor_pointer()
-                    .when(index == selected, |row| {
-                        row.bg(accent).text_color(accent_text).shadow(bar.clone())
-                    })
-                    .child(Icon::new(icon).small().text_color(muted))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .truncate()
-                            .child(entry.label),
-                    )
-                    .child(div().text_xs().text_color(muted).child(entry.hint))
+                ListItemButton::new(("palette-entry", index), entry.label)
+                    .icon(icons::for_command(&command))
+                    .selected(index == selected)
+                    .trailing(surfaces::text(Variant::Caption, entry.hint).text_color(muted))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run_command(command.clone(), window, cx)
                     })),
@@ -1488,39 +1469,33 @@ impl AppView {
                 .top_0()
                 .left_0()
                 .size_full()
-                .occlude()
+                .opacity(shown.clamp(0.0, 1.0))
                 .bg(backdrop)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        if this.palette_open {
-                            this.toggle_palette(window, cx);
-                        }
-                    }),
-                )
+                .when(open, |scrim| {
+                    scrim.occlude().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            if this.palette_open {
+                                this.toggle_palette(window, cx);
+                            }
+                        }),
+                    )
+                })
                 .child(
                     h_flex().w_full().justify_center().pt(px(90.)).child(
-                        v_flex()
+                        surfaces::paper(24, cx)
                             .id("palette")
                             .w(px(560.))
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(border)
-                            .bg(popover)
-                            .shadow(glass::glow(cx))
                             .overflow_hidden()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .child(glass::hairline(cx))
                             .child(
-                                v_flex()
-                                    .p_2()
-                                    .gap_2()
-                                    .child(
-                                        TextField::new("palette-input", &self.palette_input)
-                                            .icon(icons::SEARCH),
-                                    )
-                                    .child(list),
+                                div().p_2().child(
+                                    TextField::new("palette-input", &self.palette_input)
+                                        .icon(icons::SEARCH),
+                                ),
                             )
+                            .child(list.pb_2())
                             // Drops into place as it fades in.
                             .enter("palette-in", Enter::DIALOG),
                     ),
@@ -1636,14 +1611,7 @@ impl AppView {
                 .min_w_0()
                 .h_full()
                 .when_some(self.error.clone(), |this, error| {
-                    this.child(
-                        div()
-                            .p_2()
-                            .text_sm()
-                            .bg(cx.theme().danger)
-                            .text_color(cx.theme().danger_foreground)
-                            .child(error),
-                    )
+                    this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
                 })
                 .child(self.edit_view(editing, cx))
                 .into_any_element(),
@@ -1665,14 +1633,7 @@ impl AppView {
             .min_w_0()
             .h_full()
             .when_some(self.error.clone(), |this, error| {
-                this.child(
-                    div()
-                        .p_2()
-                        .text_sm()
-                        .bg(cx.theme().danger)
-                        .text_color(cx.theme().danger_foreground)
-                        .child(error),
-                )
+                this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
             })
             .when_some(self.proposal_actions(cx), |this, actions| {
                 this.child(actions)
@@ -1966,16 +1927,11 @@ impl AppView {
             );
         }
         view.child(
-            div()
-                .absolute()
-                .left(px(10.))
-                .top(px(8.))
-                .px_2()
-                .rounded(theme.radius)
-                .bg(theme.background.opacity(0.8))
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(hud),
+            div().absolute().left(px(10.)).top(px(8.)).child(
+                feedback::chip(hud, Tone::Neutral, true, cx)
+                    .bg(theme.background.opacity(0.8))
+                    .text_color(theme.muted_foreground),
+            ),
         )
         .into_any_element()
     }
@@ -2014,13 +1970,8 @@ impl AppView {
 
     fn details(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let heading = move |text: &str| {
-            div()
-                .text_xs()
-                .font_bold()
-                .text_color(muted)
-                .child(text.to_string())
-        };
+        let heading =
+            move |text: &str| surfaces::text(Variant::Overline, text.to_string()).text_color(muted);
         let mut pane = v_flex()
             .w(px(DETAILS_WIDTH))
             .h_full()
@@ -2210,8 +2161,16 @@ impl Render for AppView {
             None => "CodeWiki".to_string(),
         };
         self.glass = glass::Levels::for_window(window, cx);
+        // Components that draw their own surfaces read the levels from here.
+        if cx.try_global::<glass::Levels>() != Some(&self.glass) {
+            cx.set_global(self.glass);
+        }
         self.pane_width =
             (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);
+        // The palette stays drawn for a moment after it closes, to fade out.
+        let palette = Presence::new("palette-presence", self.palette_open)
+            .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+            .sample(window, cx);
         let title_bar = TitleBar::new()
             .bg(self.glass.chrome(cx.theme().title_bar))
             .child(
@@ -2257,7 +2216,9 @@ impl Render for AppView {
             }))
             .size_full()
             .text_color(cx.theme().foreground)
-            .when(self.palette_open, |root| root.child(self.palette_view(cx)))
+            .when(palette.should_render(), |root| {
+                root.child(self.palette_view(palette.progress, cx))
+            })
             .child(title_bar)
             .child(glass::hairline(cx))
             .child(self.body(window, cx))
@@ -2278,6 +2239,9 @@ impl AppView {
                     .min_w_0()
                     .h_full()
                     .child(self.toolbar(cx))
+                    .when(self.busy.is_some(), |column| {
+                        column.child(feedback::linear_progress("busy", cx))
+                    })
                     .child(self.tab_bar(cx))
                     .child(
                         h_flex()

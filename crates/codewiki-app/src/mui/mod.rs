@@ -10,10 +10,17 @@
 
 pub mod base;
 pub mod button;
+// TODO(pages): drop this allowance once the generated pages use the module.
+#[allow(dead_code)]
+pub mod feedback;
 pub mod list;
-#[expect(dead_code, reason = "presets wait for the components that use them")]
+// TODO(pages): drop this allowance once the generated pages use the module.
+#[allow(dead_code)]
 pub mod motion;
 pub mod ripple;
+// TODO(pages): drop this allowance once the generated pages use the module.
+#[allow(dead_code)]
+pub mod surfaces;
 pub mod tabs;
 pub mod text_field;
 // A table copied whole from MUI; not every entry has a user.

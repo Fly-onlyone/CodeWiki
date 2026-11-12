@@ -8,7 +8,6 @@
 //! icon grows and takes the primary color, and the selected row carries a
 //! glowing bar on its left edge.
 
-use gpui_kit::assets::IconName;
 use gpui_kit::base::motion::{self as kit, MotionReveal};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -21,6 +20,7 @@ use gpui_kit::{
 use super::base::{Base, Ink, OnClick, focus_ring};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{curve, duration, easing};
+use crate::icons::Glyph;
 
 /// A dense `ListItemButton`: 4 px above and below a 14 px label with MUI's
 /// 4 px text margins.
@@ -85,7 +85,7 @@ pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div {
 pub struct ListItemButton {
     id: ElementId,
     label: SharedString,
-    icon: Option<IconName>,
+    icon: Option<Glyph>,
     selected: bool,
     level: usize,
     trailing: Option<AnyElement>,
@@ -105,7 +105,7 @@ impl ListItemButton {
         }
     }
 
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub fn icon(mut self, icon: Glyph) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -222,8 +222,8 @@ impl RenderOnce for ListItemButton {
 pub struct ListFolder {
     id: SharedString,
     label: SharedString,
-    icon: IconName,
-    arrow: IconName,
+    icon: Glyph,
+    arrow: Glyph,
     open_at_first: bool,
     rows: Vec<ListItemButton>,
 }
@@ -233,8 +233,8 @@ impl ListFolder {
     pub fn new(
         id: impl Into<SharedString>,
         label: impl Into<SharedString>,
-        icon: IconName,
-        arrow: IconName,
+        icon: Glyph,
+        arrow: Glyph,
     ) -> Self {
         Self {
             id: id.into(),

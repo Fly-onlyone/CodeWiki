@@ -32,6 +32,11 @@ JetBrains Mono 2.304, Copyright 2020 The JetBrains Mono Project Authors
 (https://github.com/JetBrains/JetBrainsMono), license text in
 JetBrainsMono-OFL.txt.
 
+The icons in crates/codewiki-app/icons are Material Icons by Google, licensed
+under the Apache License 2.0. Their path data is taken from
+@mui/icons-material 6 (MIT, Copyright (c) 2014 Call-Em-All); each file wraps
+that data in an SVG element and is otherwise unmodified.
+
 The OpenUI Lang parser in crates/openui-lang is an independent implementation
 of the language defined by https://github.com/thesysdev/openui (MIT,
 Copyright Thesys Inc.). Its behavior was checked against that project's

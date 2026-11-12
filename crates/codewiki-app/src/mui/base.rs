@@ -135,6 +135,9 @@ impl Base {
             .on_mouse_down(MouseButton::Left, move |event, window, cx| {
                 // A press with the mouse must not move keyboard focus.
                 window.prevent_default();
+                // A control inside another, such as the close button of a
+                // tab, takes the press alone.
+                cx.stop_propagation();
                 let at = (event.position.x / px(1.), event.position.y / px(1.));
                 down.update(cx, |touch, cx| {
                     touch.press(Some(at));

@@ -26,14 +26,12 @@ mod themes;
 use std::collections::BTreeMap;
 
 use cw_client::{Backend, encode};
-use gpui_kit::component::button::{Button as KitButton, ButtonVariants as _};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
-use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::component::{Icon, TitleBar};
@@ -45,6 +43,7 @@ use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SC
 use motion::MotionPref;
 use mui::button::{Button, IconButton};
 use mui::motion::{Enter, EnterExt as _};
+use mui::tabs::{Tab as TabItem, Tabs};
 use mui::text_field::TextField;
 use palette::Command;
 
@@ -1381,9 +1380,8 @@ impl AppView {
             )
     }
 
-    /// The row of tabs under the toolbar. The underline of the active tab
-    /// slides to the next one; gpui-kit animates it.
-    fn tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
+    /// The row of tabs under the toolbar.
+    fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
         let closable = self.tabs.len() > 1;
         let tabs = (0..self.tabs.len()).map(|index| {
             let title = page_title(if index == self.active_tab {
@@ -1391,37 +1389,42 @@ impl AppView {
             } else {
                 &self.tabs[index].page
             });
-            TabItem::new()
-                .child(div().max_w(px(180.)).truncate().child(title))
-                .when(closable, |tab| {
-                    tab.suffix(
-                        KitButton::new(("close-tab", index))
-                            .icon(icons::CLOSE)
-                            .tooltip("Close tab (Ctrl+W)")
-                            .xsmall()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.close_tab(index, cx);
-                            })),
-                    )
-                })
+            TabItem::new(title).when(closable, |tab| {
+                tab.suffix(
+                    IconButton::new(("close-tab", index), icons::CLOSE)
+                        .tooltip("Close tab (Ctrl+W)")
+                        .small()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab(index, cx);
+                        })),
+                )
+            })
         });
-        TabBar::new("tabs")
-            .underline()
-            .small()
+        let tabs: Vec<TabItem> = tabs.collect();
+        let view = cx.entity().downgrade();
+        h_flex()
             .w_full()
             .px_3()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(cx.theme().background))
-            .selected_index(self.active_tab)
-            .children(tabs.collect::<Vec<_>>())
-            .on_click(cx.listener(|this, index: &usize, _, cx| this.activate_tab(*index, cx)))
-            .suffix(
-                KitButton::new("new-tab")
-                    .icon(icons::NEW_TAB)
+            .child(
+                div().flex_1().min_w_0().overflow_hidden().child(
+                    Tabs::new("tabs")
+                        .tabs(tabs)
+                        .selected(self.active_tab)
+                        .on_select(move |index, _, cx| {
+                            _ = view.update(cx, |this, cx| this.activate_tab(index, cx));
+                        }),
+                ),
+            )
+            .child(
+                IconButton::new("new-tab", icons::NEW_TAB)
                     .tooltip("New tab (Ctrl+T)")
-                    .xsmall()
-                    .ghost()
+                    .small()
                     .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
             )
     }

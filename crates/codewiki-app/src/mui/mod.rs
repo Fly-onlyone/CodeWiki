@@ -10,6 +10,7 @@
 
 pub mod base;
 pub mod button;
+pub mod list;
 #[expect(dead_code, reason = "presets wait for the components that use them")]
 pub mod motion;
 pub mod ripple;

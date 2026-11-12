@@ -29,9 +29,7 @@ use cw_client::{Backend, encode};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
-use gpui_kit::component::sidebar::{
-    Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
-};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::component::{Icon, TitleBar};
@@ -42,6 +40,7 @@ use serde_json::{Value, json};
 use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
 use motion::MotionPref;
 use mui::button::{Button, IconButton};
+use mui::list::{self, ListFolder, ListItemButton};
 use mui::motion::{Enter, EnterExt as _};
 use mui::tabs::{Tab as TabItem, Tabs};
 use mui::text_field::TextField;
@@ -1142,7 +1141,7 @@ impl AppView {
         }
     }
 
-    fn sidebar(&self, cx: &mut Context<Self>) -> Sidebar<SidebarGroup<SidebarMenu>> {
+    fn sidebar(&self, cx: &mut Context<Self>) -> Div {
         let current = match &self.page {
             Page::Note { path, .. } => path.as_str(),
             _ => "",
@@ -1167,7 +1166,7 @@ impl AppView {
                 .or_default()
                 .push(note);
         }
-        let item = |note: &NoteInfo, cx: &mut Context<Self>| {
+        let item = |note: &NoteInfo, level: usize, cx: &mut Context<Self>| {
             let path = note.path.clone();
             let label = match note.title.as_str() {
                 "_index" => "Overview".to_string(),
@@ -1179,70 +1178,77 @@ impl AppView {
                 "_HOME" => icons::HOME,
                 _ => icons::NOTE,
             };
-            let active = note.path == current;
-            let mut item = SidebarMenuItem::new(label)
+            ListItemButton::new(SharedString::from(format!("note:{}", note.path)), label)
                 .icon(icon)
-                .active(active)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)),
-                );
-            if active {
-                item = item.shadow(glass::selection_bar(cx));
-            }
-            item
+                .level(level)
+                .selected(note.path == current)
+                .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
         };
 
-        let glass = self.glass.chrome(cx.theme().sidebar);
-        let mut sidebar = Sidebar::new("vault").w(px(SIDEBAR_WIDTH)).bg(glass).header(
-            SidebarHeader::new().child(
-                v_flex()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(div().font_bold().child("CodeWiki"))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(
-                                self.repo
-                                    .as_ref()
-                                    .map(|r| r.name.clone())
-                                    .unwrap_or_default(),
-                            ),
-                    ),
-            ),
-        );
+        let mut list = v_flex().pb_2();
         for (zone, folders) in &zones {
-            let mut menu = SidebarMenu::new();
+            let label = if zone.is_empty() {
+                "Vault".to_string()
+            } else {
+                zone_label(zone)
+            };
+            list = list.child(list::subheader(label, cx));
             for (folder, notes) in folders {
                 let mut notes = notes.clone();
                 // Map notes first, then the rest by title.
                 notes.sort_by_key(|n| (!n.title.starts_with('_'), n.title.to_lowercase()));
                 if folder.is_empty() {
                     for note in notes {
-                        menu = menu.child(item(note, cx));
+                        list = list.child(item(note, 0, cx));
                     }
                 } else {
                     let open = notes.iter().any(|n| n.path == current);
-                    let children: Vec<SidebarMenuItem> =
-                        notes.iter().map(|n| item(n, cx)).collect();
-                    menu = menu.child(
-                        SidebarMenuItem::new(folder.clone())
-                            .icon(icons::FOLDER)
-                            .default_open(open)
-                            .click_to_toggle(true)
-                            .children(children),
+                    let rows: Vec<ListItemButton> = notes.iter().map(|n| item(n, 1, cx)).collect();
+                    list = list.child(
+                        ListFolder::new(
+                            format!("folder:{zone}/{folder}"),
+                            folder.clone(),
+                            icons::FOLDER,
+                            icons::EXPAND,
+                        )
+                        .open_at_first(open)
+                        .rows(rows),
                     );
                 }
             }
-            let label = if zone.is_empty() {
-                "Vault".to_string()
-            } else {
-                zone_label(zone)
-            };
-            sidebar = sidebar.child(SidebarGroup::new(label).child(menu));
         }
-        sidebar
+
+        let theme = cx.theme();
+        v_flex()
+            .w(px(SIDEBAR_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(glass::tinted_border(cx))
+            .bg(self.glass.chrome(theme.sidebar))
+            .text_color(theme.sidebar_foreground)
+            .child(
+                v_flex()
+                    .px_4()
+                    .py_3()
+                    .child(div().font_bold().child("CodeWiki"))
+                    .child(
+                        div().text_xs().text_color(theme.muted_foreground).child(
+                            self.repo
+                                .as_ref()
+                                .map(|r| r.name.clone())
+                                .unwrap_or_default(),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("vault")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .child(list),
+            )
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {

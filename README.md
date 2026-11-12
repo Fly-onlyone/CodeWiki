@@ -49,7 +49,7 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` from a repository folder, or pass the folder as its first argument. Ctrl+K opens the command palette.
+`codewiki --help` lists every command. Start `codewiki-app` from a repository folder, or pass the folder as its first argument. Ctrl+K opens the command palette. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
 
 ### With an LLM
 
@@ -82,7 +82,7 @@ Point the app or the MCP program at it with `CODEWIKI_URL=http://127.0.0.1:7411`
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo deny check licenses bans sources
+cargo deny check
 ```
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.

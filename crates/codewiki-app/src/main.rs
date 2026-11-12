@@ -6,19 +6,25 @@
 // Release builds are a GUI app: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backdrop;
+mod contrast;
 mod editor;
+mod fonts;
+mod glass;
 mod graph;
+mod icons;
 mod illustration;
 mod markdown;
+mod motion;
 mod pages;
 mod palette;
+mod prefs;
+mod reading;
 mod themes;
 
 use std::collections::BTreeMap;
 
 use cw_client::{Backend, encode};
-use gpui_kit::assets::Assets;
-use gpui_kit::component::TitleBar;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, Input, InputEvent, InputState, MoveDown, MoveUp,
@@ -26,15 +32,18 @@ use gpui_kit::component::input::{
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
 };
+use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::text::TextView;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
 };
+use gpui_kit::component::{Icon, TitleBar};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use markdown::{FILE_SCHEME, NOTE_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
+use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
+use motion::MotionPref;
 use palette::Command;
 
 actions!(
@@ -154,8 +163,16 @@ struct AppView {
     show_figure: bool,
     /// Palette diagrams were last drawn with; redrawn when the theme flips.
     palette: cw_mermaid::Palette,
+    /// How see-through the surfaces are; worked out again on every frame.
+    glass: glass::Levels,
+    /// Width of the centre pane in pixels, from the window size of this frame.
+    pane_width: f32,
     _subscriptions: Vec<Subscription>,
 }
+
+/// Width of the sidebar and of the details pane, in pixels.
+const SIDEBAR_WIDTH: f32 = 280.0;
+const DETAILS_WIDTH: f32 = 260.0;
 
 /// Repository to open at startup: the first argument, else the working directory.
 fn startup_repo() -> Option<String> {
@@ -191,6 +208,8 @@ impl AppView {
                 _ => {}
             },
         );
+        // The glass depends on the system mode as well as on the theme.
+        let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
         let mut this = Self {
             backend: None,
             repos: Vec::new(),
@@ -230,7 +249,9 @@ impl AppView {
             figure: None,
             show_figure: false,
             palette: cw_mermaid::Palette::Dark,
-            _subscriptions: vec![subscription, palette_subscription],
+            glass: glass::Levels::OPAQUE,
+            pane_width: 0.0,
+            _subscriptions: vec![subscription, palette_subscription, appearance],
         };
         this.connect(cx);
         this
@@ -689,7 +710,15 @@ impl AppView {
                 self.open_report("Change coupling", "history", pages::coupling_page, cx)
             }
             Command::Themes => self.open_themes(true, cx),
-            Command::Settings => self.open_settings(cx),
+            Command::Settings => self.open_settings(true, cx),
+            Command::Motion(pref) => {
+                motion::set(pref, cx);
+                // Show the new value where the setting is listed.
+                if self.on_settings_page() {
+                    self.open_settings(false, cx);
+                }
+                cx.notify();
+            }
             Command::NewTab => self.new_tab(cx),
             Command::CloseTab => self.close_tab(self.active_tab, cx),
             Command::OpenInObsidian => self.open_in_obsidian(cx),
@@ -747,7 +776,13 @@ impl AppView {
         );
     }
 
-    fn open_settings(&mut self, cx: &mut Context<Self>) {
+    fn on_settings_page(&self) -> bool {
+        matches!(&self.page, Page::Generated { title, .. } if title == "Settings")
+    }
+
+    /// Show the settings page. `remember` puts the page left on the history;
+    /// pass false when the page only refreshes itself.
+    fn open_settings(&mut self, remember: bool, cx: &mut Context<Self>) {
         let backend = self
             .backend
             .as_ref()
@@ -759,12 +794,13 @@ impl AppView {
             .map(|r| (r.name.clone(), r.path.clone()))
             .collect();
         let theme = cx.theme().theme_name().to_string();
+        let motion = motion::describe(cx);
         self.set_page(
             Page::Generated {
                 title: "Settings".into(),
-                markdown: pages::settings_page(&backend, &theme, &repos),
+                markdown: pages::settings_page(&backend, &theme, &motion, &repos),
             },
-            true,
+            remember,
         );
         cx.notify();
     }
@@ -1091,6 +1127,11 @@ impl AppView {
             if themes::select(&markdown::decode(target), cx) {
                 self.open_themes(false, cx);
             }
+        } else if let Some(target) = url.strip_prefix(SETTING_SCHEME) {
+            if let Some(pref) = target.strip_prefix("motion/").and_then(MotionPref::parse) {
+                motion::set(pref, cx);
+                self.open_settings(false, cx);
+            }
         } else if let Some(target) = url.strip_prefix(FILE_SCHEME) {
             self.open_file(markdown::decode(target), cx);
         } else if let Some(target) = url.strip_prefix(SYMBOL_SCHEME) {
@@ -1132,12 +1173,26 @@ impl AppView {
                 "_HOME" => "Home".to_string(),
                 title => title.to_string(),
             };
-            SidebarMenuItem::new(label)
-                .active(note.path == current)
-                .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
+            let icon = match note.title.as_str() {
+                "_index" => icons::OVERVIEW,
+                "_HOME" => icons::HOME,
+                _ => icons::NOTE,
+            };
+            let active = note.path == current;
+            let mut item = SidebarMenuItem::new(label)
+                .icon(icon)
+                .active(active)
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)),
+                );
+            if active {
+                item = item.shadow(glass::selection_bar(cx));
+            }
+            item
         };
 
-        let mut sidebar = Sidebar::new("vault").w(px(280.)).header(
+        let glass = self.glass.chrome(cx.theme().sidebar);
+        let mut sidebar = Sidebar::new("vault").w(px(SIDEBAR_WIDTH)).bg(glass).header(
             SidebarHeader::new().child(
                 v_flex()
                     .flex_1()
@@ -1172,6 +1227,7 @@ impl AppView {
                         notes.iter().map(|n| item(n, cx)).collect();
                     menu = menu.child(
                         SidebarMenuItem::new(folder.clone())
+                            .icon(icons::FOLDER)
                             .default_open(open)
                             .click_to_toggle(true)
                             .children(children),
@@ -1192,23 +1248,31 @@ impl AppView {
         let pending = self.pending_proposals.len();
         h_flex()
             .w_full()
-            .gap_2()
+            .gap_1()
             .p_2()
             .items_center()
             .border_b_1()
-            .border_color(cx.theme().border)
+            .border_color(glass::tinted_border(cx))
+            .bg(self.glass.chrome(cx.theme().background))
             .child(
                 Button::new("back")
-                    .label("Back")
+                    .icon(icons::BACK)
+                    .tooltip("Back (Alt+Left)")
                     .small()
                     .ghost()
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
-            .child(div().flex_1().child(Input::new(&self.search).small()))
+            .child(
+                div()
+                    .flex_1()
+                    .px_1()
+                    .child(Input::new(&self.search).small()),
+            )
             .when_some(self.busy.clone(), |this, busy| {
                 this.child(
                     div()
+                        .px_1()
                         .text_xs()
                         .text_color(cx.theme().muted_foreground)
                         .child(format!("{busy}…")),
@@ -1218,15 +1282,20 @@ impl AppView {
                 matches!(self.page, Page::Note { .. }) && self.editing.is_none(),
                 |this| {
                     this.child(
-                        Button::new("edit").label("Edit").small().on_click(
-                            cx.listener(|this, _, window, cx| this.start_edit(window, cx)),
-                        ),
+                        Button::new("edit")
+                            .icon(icons::EDIT)
+                            .label("Edit")
+                            .small()
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.start_edit(window, cx)),
+                            ),
                     )
                 },
             )
             .when_some(self.editing.as_ref().map(|e| e.dirty), |this, dirty| {
                 this.child(
                     Button::new("save")
+                        .icon(icons::SAVE)
                         .label("Save")
                         .small()
                         .primary()
@@ -1235,6 +1304,7 @@ impl AppView {
                 )
                 .child(
                     Button::new("discard")
+                        .icon(icons::CLOSE)
                         .label(if dirty { "Discard" } else { "Close editor" })
                         .small()
                         .on_click(cx.listener(|this, _, window, cx| this.discard_edit(window, cx))),
@@ -1243,6 +1313,11 @@ impl AppView {
             .when(self.figure.is_some() && self.editing.is_none(), |this| {
                 this.child(
                     Button::new("figure")
+                        .icon(if self.show_figure {
+                            icons::NOTE
+                        } else {
+                            icons::FIGURE
+                        })
                         .label(if self.show_figure {
                             "Text"
                         } else {
@@ -1257,28 +1332,41 @@ impl AppView {
             })
             .child(
                 Button::new("commands")
-                    .label("Commands  Ctrl+K")
+                    .icon(icons::COMMANDS)
+                    .label("Ctrl+K")
+                    .tooltip("Commands")
                     .small()
                     .ghost()
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))),
             )
             .child(
                 Button::new("graph")
-                    .label("Graph")
+                    .icon(icons::GRAPH)
+                    .tooltip("Graph")
                     .small()
                     .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
             )
             .child(
                 Button::new("hotspots")
-                    .label("Hotspots")
+                    .icon(icons::HOTSPOTS)
+                    .tooltip("Hotspots")
                     .small()
                     .ghost()
                     .disabled(self.repo.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
             )
             .child(
+                Button::new("theme")
+                    .icon(icons::THEME)
+                    .tooltip(format!("Theme: {}", cx.theme().theme_name()))
+                    .small()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
+            )
+            .child(
                 Button::new("sync")
+                    .icon(icons::SYNC)
                     .label("Sync")
                     .small()
                     .disabled(self.busy.is_some() || self.repo.is_none())
@@ -1286,6 +1374,7 @@ impl AppView {
             )
             .child(
                 Button::new("review")
+                    .icon(icons::REVIEW)
                     .label(format!("Review ({pending})"))
                     .small()
                     .when(pending > 0, |b| b.primary())
@@ -1296,102 +1385,94 @@ impl AppView {
                         }
                     })),
             )
-            .child(
-                Button::new("theme")
-                    .label(cx.theme().theme_name().clone())
-                    .small()
-                    .ghost()
-                    .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
-            )
     }
 
-    /// The row of tabs under the toolbar.
-    fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
-        let (border, muted, selected) = {
-            let theme = cx.theme();
-            (theme.border, theme.muted_foreground, theme.secondary)
-        };
-        let mut bar = h_flex()
-            .w_full()
-            .gap_1()
-            .px_2()
-            .py_1()
-            .items_center()
-            .border_b_1()
-            .border_color(border);
-        for index in 0..self.tabs.len() {
-            let active = index == self.active_tab;
-            let title = page_title(if active {
+    /// The row of tabs under the toolbar. The underline of the active tab
+    /// slides to the next one; gpui-kit animates it.
+    fn tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
+        let closable = self.tabs.len() > 1;
+        let tabs = (0..self.tabs.len()).map(|index| {
+            let title = page_title(if index == self.active_tab {
                 &self.page
             } else {
                 &self.tabs[index].page
             });
-            bar = bar.child(
-                h_flex()
-                    .id(("tab", index))
-                    .gap_1()
-                    .px_2()
-                    .rounded_md()
-                    .items_center()
-                    .text_sm()
-                    .cursor_pointer()
-                    .when(active, |tab| tab.bg(selected))
-                    .when(!active, |tab| tab.text_color(muted))
-                    .child(div().max_w(px(180.)).truncate().child(title))
-                    .on_click(cx.listener(move |this, _, _, cx| this.activate_tab(index, cx)))
-                    .when(self.tabs.len() > 1, |tab| {
-                        tab.child(
-                            Button::new(("close-tab", index))
-                                .label("×")
-                                .xsmall()
-                                .ghost()
-                                .on_click(cx.listener(move |this, _, _, cx| {
-                                    cx.stop_propagation();
-                                    this.close_tab(index, cx);
-                                })),
-                        )
-                    }),
-            );
-        }
-        bar.child(
-            Button::new("new-tab")
-                .label("+")
-                .xsmall()
-                .ghost()
-                .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
-        )
+            TabItem::new()
+                .child(div().max_w(px(180.)).truncate().child(title))
+                .when(closable, |tab| {
+                    tab.suffix(
+                        Button::new(("close-tab", index))
+                            .icon(icons::CLOSE)
+                            .tooltip("Close tab (Ctrl+W)")
+                            .xsmall()
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                cx.stop_propagation();
+                                this.close_tab(index, cx);
+                            })),
+                    )
+                })
+        });
+        TabBar::new("tabs")
+            .underline()
+            .small()
+            .w_full()
+            .px_3()
+            .bg(self.glass.chrome(cx.theme().background))
+            .selected_index(self.active_tab)
+            .children(tabs.collect::<Vec<_>>())
+            .on_click(cx.listener(|this, index: &usize, _, cx| this.activate_tab(*index, cx)))
+            .suffix(
+                Button::new("new-tab")
+                    .icon(icons::NEW_TAB)
+                    .tooltip("New tab (Ctrl+T)")
+                    .xsmall()
+                    .ghost()
+                    .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
+            )
     }
 
     /// The command palette, drawn over everything else.
     fn palette_view(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
         let entries = self.palette_matches(cx);
         let selected = self.palette_selected.min(entries.len().saturating_sub(1));
-        let (popover, border, accent, accent_text, muted, backdrop) = {
+        let (popover, accent, accent_text, muted, backdrop) = {
             let theme = cx.theme();
             (
                 theme.popover,
-                theme.border,
                 theme.accent,
                 theme.accent_foreground,
                 theme.muted_foreground,
                 theme.background.opacity(0.6),
             )
         };
+        let border = glass::tinted_border(cx);
+        let bar = glass::selection_bar(cx);
         let mut list = v_flex().gap_1();
         for (index, entry) in entries.into_iter().enumerate() {
             let command = entry.command;
+            let icon = icons::for_command(&command);
             list = list.child(
                 h_flex()
                     .id(("palette-entry", index))
-                    .px_2()
-                    .py_1()
+                    .px_3()
+                    .py_1p5()
+                    .gap_2()
                     .rounded_md()
-                    .justify_between()
+                    .items_center()
                     .cursor_pointer()
                     .when(index == selected, |row| {
-                        row.bg(accent).text_color(accent_text)
+                        row.bg(accent).text_color(accent_text).shadow(bar.clone())
                     })
-                    .child(div().text_sm().truncate().child(entry.label))
+                    .child(Icon::new(icon).small().text_color(muted))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_sm()
+                            .truncate()
+                            .child(entry.label),
+                    )
                     .child(div().text_xs().text_color(muted).child(entry.hint))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run_command(command.clone(), window, cx)
@@ -1419,16 +1500,27 @@ impl AppView {
                         v_flex()
                             .id("palette")
                             .w(px(560.))
-                            .p_2()
-                            .gap_2()
                             .rounded_lg()
                             .border_1()
                             .border_color(border)
                             .bg(popover)
-                            .shadow_lg()
+                            .shadow(glass::glow(cx))
+                            .overflow_hidden()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                            .child(Input::new(&self.palette_input))
-                            .child(list),
+                            .child(glass::hairline(cx))
+                            .child(
+                                v_flex()
+                                    .p_2()
+                                    .gap_2()
+                                    .child(Input::new(&self.palette_input))
+                                    .child(list),
+                            )
+                            // Drops into place as it fades in.
+                            .with_animation(
+                                "palette-in",
+                                Animation::new(motion::ENTER_FAST).with_easing(ease_out_quint()),
+                                |panel, t| panel.opacity(t).relative().top(px((t - 1.0) * 8.0)),
+                            ),
                     ),
                 ),
         )
@@ -1525,10 +1617,13 @@ impl AppView {
                     )
                     .child(strip),
             )
-            .child(div().w_1_2().h_full().p_6().child(
+            .child(div().w_1_2().h_full().py_4().child(reading::frame(
                 // A stable id keeps the preview's scroll position while typing.
                 TextView::markdown("preview", preview).scrollable(true),
-            ))
+                self.pane_width / 2.0,
+                reading::NOTE_MEASURE,
+                cx,
+            )))
     }
 
     /// The centre pane for every page except the graph.
@@ -1558,6 +1653,11 @@ impl AppView {
         let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
+        // Notes are prose; everything else is mostly tables and needs room.
+        let measure = match self.page {
+            Page::Note { .. } => reading::NOTE_MEASURE,
+            _ => reading::WIDE_MEASURE,
+        };
         v_flex()
             .flex_1()
             .min_w_0()
@@ -1591,22 +1691,36 @@ impl AppView {
             )
             .when(!(self.show_figure && self.figure.is_some()), |this| {
                 this.child(
-                    div().flex_1().min_h_0().p_6().child(
-                        // A fresh id per page resets scroll position and selection.
-                        TextView::markdown(("page", self.page_serial), source)
-                            .scrollable(true)
-                            .image_source(move |uri| {
-                                uri.strip_prefix(markdown::DIAGRAM_SCHEME)
-                                    .and_then(|index| index.parse::<usize>().ok())
-                                    .and_then(|index| diagrams.get(index).cloned())
-                                    .map(ImageSource::Image)
-                                    .unwrap_or_else(|| uri.clone().into())
-                            })
-                            .on_link_click(move |url, _, _, cx| {
-                                let url = url.to_string();
-                                _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
-                            }),
-                    ),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .py_4()
+                        .child(reading::frame(
+                            // A fresh id per page resets scroll position and selection.
+                            TextView::markdown(("page", self.page_serial), source)
+                                .scrollable(true)
+                                .image_source(move |uri| {
+                                    uri.strip_prefix(markdown::DIAGRAM_SCHEME)
+                                        .and_then(|index| index.parse::<usize>().ok())
+                                        .and_then(|index| diagrams.get(index).cloned())
+                                        .map(ImageSource::Image)
+                                        .unwrap_or_else(|| uri.clone().into())
+                                })
+                                .on_link_click(move |url, _, _, cx| {
+                                    let url = url.to_string();
+                                    _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
+                                }),
+                            self.pane_width,
+                            measure,
+                            cx,
+                        ))
+                        // A new page fades in. The id changes with the page, so
+                        // the animation runs once per page and not on a redraw.
+                        .with_animation(
+                            ("page-in", self.page_serial),
+                            Animation::new(motion::ENTER).with_easing(ease_out_quint()),
+                            |pane, t| pane.opacity(t),
+                        ),
                 )
             })
     }
@@ -1653,7 +1767,7 @@ impl AppView {
             (bw, bh)
         } else {
             (
-                (viewport.width / px(1.) - 540.0).max(200.0),
+                (viewport.width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(200.0),
                 (viewport.height / px(1.) - 48.0).max(200.0),
             )
         };
@@ -1909,12 +2023,13 @@ impl AppView {
                 .child(text.to_string())
         };
         let mut pane = v_flex()
-            .w(px(260.))
+            .w(px(DETAILS_WIDTH))
             .h_full()
             .gap_3()
             .p_3()
             .border_l_1()
-            .border_color(cx.theme().border)
+            .border_color(glass::tinted_border(cx))
+            .bg(self.glass.chrome(cx.theme().background))
             .overflow_hidden();
         match &self.page {
             Page::Note {
@@ -2095,13 +2210,17 @@ impl Render for AppView {
             Some(repo) => format!("CodeWiki — {}", repo.name),
             None => "CodeWiki".to_string(),
         };
-        // The title bar stays clear so the Mica backdrop shows through it.
-        let title_bar = TitleBar::new().bg(gpui_kit::transparent_black()).child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(title),
-        );
+        self.glass = glass::Levels::for_window(window, cx);
+        self.pane_width =
+            (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);
+        let title_bar = TitleBar::new()
+            .bg(self.glass.chrome(cx.theme().title_bar))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(title),
+            );
         v_flex()
             .id("root")
             .relative()
@@ -2141,6 +2260,7 @@ impl Render for AppView {
             .text_color(cx.theme().foreground)
             .when(self.palette_open, |root| root.child(self.palette_view(cx)))
             .child(title_bar)
+            .child(glass::hairline(cx))
             .child(self.body(window, cx))
     }
 }
@@ -2152,7 +2272,6 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .w_full()
-            .bg(cx.theme().background)
             .child(self.sidebar(cx))
             .child(
                 v_flex()
@@ -2165,11 +2284,20 @@ impl AppView {
                         h_flex()
                             .flex_1()
                             .min_h_0()
-                            .child(if matches!(self.page, Page::Graph) {
-                                self.graph_view(window, cx)
-                            } else {
-                                self.page_view(cx)
-                            })
+                            .child(
+                                // The pane: denser glass than the chrome
+                                // around it, because it carries the text.
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .bg(self.glass.pane(cx.theme().background))
+                                    .child(if matches!(self.page, Page::Graph) {
+                                        self.graph_view(window, cx)
+                                    } else {
+                                        self.page_view(cx)
+                                    }),
+                            )
                             .child(self.details(cx)),
                     ),
             )
@@ -2177,9 +2305,11 @@ impl AppView {
 }
 
 fn main() {
-    let app = gpui_kit::application().with_assets(Assets);
+    let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);
+        motion::init(cx);
+        fonts::register(cx);
         themes::init(cx);
         cx.bind_keys([
             KeyBinding::new("ctrl-k", TogglePalette, None),
@@ -2189,17 +2319,29 @@ fn main() {
             KeyBinding::new("alt-left", GoBack, None),
             KeyBinding::new("ctrl-s", SaveNote, None),
         ]);
-        gpui_kit::open_window(TitleBar::window_options(), cx, |window, cx| {
+        let (window, _) = gpui_kit::open_window(TitleBar::window_options(), cx, |window, cx| {
             window.set_window_title("CodeWiki");
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
-            cx.new(|cx| {
+            let app = cx.new(|cx| {
                 let view = AppView::new(window, cx);
                 // Shortcuts need a focused element to dispatch from.
                 window.focus(&view.focus, cx);
                 view
-            })
+            });
+            // The shell draws the drifting backdrop and holds the app over it.
+            cx.new(|cx| backdrop::Shell::new(app, window, cx))
         })
         .expect("failed to open the main window");
+        // gpui-kit paints the theme background over the whole window, which
+        // hides the backdrop. Clear it; the app's own surfaces are the glass.
+        window
+            .update(cx, |_, window, cx| {
+                gpui_kit::base::Root::update(window, cx, |root, _, cx| {
+                    root.style().background = Some(gpui_kit::transparent_black().into());
+                    cx.notify();
+                });
+            })
+            .expect("the main window was just opened");
     });
 }

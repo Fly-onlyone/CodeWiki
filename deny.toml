@@ -6,7 +6,19 @@ targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
 all-features = true
 
 [advisories]
-ignore = []
+# "Unmaintained" notices for crates that gpui-kit pulls in. None is a direct
+# dependency, and gpui-kit is pinned, so they cannot be upgraded from here.
+# Remove an entry when a gpui-kit bump drops the crate. Any advisory not listed
+# fails the build.
+ignore = [
+    { id = "RUSTSEC-2024-0384", reason = "instant: unmaintained, transitive through gpui-kit" },
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, transitive through gpui-kit" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz: unmaintained, transitive through gpui-kit" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained, transitive through gpui-kit" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, transitive through gpui-kit" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, transitive through gpui-kit" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, transitive through gpui-kit, no safe upgrade" },
+]
 
 [licenses]
 # Permissive licenses only. Anything not listed here fails the check, which is

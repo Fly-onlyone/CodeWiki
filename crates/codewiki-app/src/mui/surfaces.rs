@@ -77,6 +77,46 @@ pub fn card(cx: &App) -> Div {
         .child(div().px(theme.radius_lg).child(glass::hairline(cx)))
 }
 
+/// Which part of a card a piece is, when a card is drawn in pieces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Piece {
+    Top,
+    Middle,
+    Bottom,
+}
+
+/// One piece of a card that is drawn as several elements one under another,
+/// such as a long table whose rows a list builds one at a time. Stacked, the
+/// pieces look like a [`card`], without its shadow, which would show a seam
+/// at every joint.
+pub fn card_piece(piece: Piece, cx: &App) -> Div {
+    let theme = cx.theme();
+    let radius = theme.radius_lg;
+    let body = v_flex()
+        .relative()
+        .overflow_hidden()
+        .border_l_1()
+        .border_r_1()
+        .border_color(glass::tinted_border(cx))
+        .bg(card_fill(cx))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .bg(theme.primary.opacity(CARD_TINT * 0.5)),
+        );
+    match piece {
+        Piece::Top => body
+            .border_t_1()
+            .rounded_t(radius)
+            .child(div().px(radius).child(glass::hairline(cx))),
+        Piece::Middle => body,
+        Piece::Bottom => body.border_b_1().rounded_b(radius),
+    }
+}
+
 /// The padded body of a [`card`].
 pub fn card_content() -> Div {
     v_flex()

@@ -10,13 +10,15 @@
 //! is strongest in the middle and fades to nothing at the rim.
 //!
 //! [`Shell`] is the window's outermost view. It draws the shapes and, on top,
-//! the app as a cached view. Only the shell is redrawn when the shapes move;
-//! the app keeps its last frame until it changes itself.
+//! the app and the generated page, each as a cached view. Only the shell is
+//! redrawn when the shapes move; the app and the page keep their last frames
+//! until they change themselves, and neither is redrawn when the other is.
 //!
 //! The shapes stand still when the window is inactive and under reduced
 //! motion, so an idle or backgrounded window costs nothing.
 
 use std::f32::consts::TAU;
+use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gpui_kit::component::ActiveTheme as _;
@@ -26,6 +28,7 @@ use gpui_kit::{
     Styled as _, Subscription, Window, div, px,
 };
 
+use crate::doc_view::{DocPage, PageSlot};
 use crate::glass;
 
 /// Seconds for the shapes to come back to where they started.
@@ -133,6 +136,9 @@ fn advance(phase: f32, seconds: f32) -> f32 {
 /// The window's outermost view: the drifting shapes, and `content` over them.
 pub struct Shell<V: Render> {
     content: Entity<V>,
+    /// The generated page, and where the app wants it.
+    page: Entity<DocPage>,
+    slot: Rc<PageSlot>,
     /// Opaque color painted under everything in place of the real backdrop.
     debug_backdrop: Option<Hsla>,
     /// Drift even while the window is inactive, so that a capture taken
@@ -146,11 +152,20 @@ pub struct Shell<V: Render> {
 }
 
 impl<V: Render> Shell<V> {
-    pub fn new(content: Entity<V>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        content: Entity<V>,
+        page: Entity<DocPage>,
+        slot: Rc<PageSlot>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        slot.read_by(cx.entity_id());
         // Start and stop drifting as the window gains and loses focus.
         let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
         Self {
             content,
+            page,
+            slot,
             debug_backdrop: glass::debug_backdrop(),
             always_drift: std::env::var_os("CODEWIKI_BACKDROP_DRIFT").is_some(),
             phase: 0.0,
@@ -235,6 +250,22 @@ impl<V: Render> Render for Shell<V> {
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
             )
+            // The page, in the place the app left empty for it.
+            .when_some(self.slot.bounds(), |shell, place| {
+                shell.child(
+                    div()
+                        .absolute()
+                        .left(place.origin.x)
+                        .top(place.origin.y)
+                        .w(place.size.width)
+                        .h(place.size.height)
+                        .child(
+                            self.page
+                                .clone()
+                                .cached(StyleRefinement::default().size_full()),
+                        ),
+                )
+            })
     }
 }
 

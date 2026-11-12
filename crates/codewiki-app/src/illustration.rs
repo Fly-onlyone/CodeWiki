@@ -454,7 +454,8 @@ pub fn render(node: &Node, path: &str, window: &mut Window, cx: &mut App) -> Any
             if let Some(hint) = text_of(props, "hint") {
                 stat = stat.hint(hint);
             }
-            doc_view::stat_tile(&stat, cx).into_any_element()
+            let id = ElementId::Name(format!("figure-stat:{path}").into());
+            doc_view::stat_tile(&stat, id, cx).into_any_element()
         }
         "Badge" => h_flex()
             .child(feedback::chip(

@@ -12,8 +12,8 @@ use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Div, ElementId, FontWeight, HighlightStyle, Hsla, InteractiveElement as _,
-    InteractiveText, IntoElement, ParentElement as _, SharedString,
+    AnimationExt as _, AnyElement, App, Div, ElementId, FontWeight, HighlightStyle, Hsla,
+    InteractiveElement as _, InteractiveText, IntoElement, ParentElement as _, SharedString,
     StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, px, relative,
 };
 
@@ -23,7 +23,7 @@ use crate::mui::base::Hover;
 use crate::mui::button::{Button, CardButton, ToggleButtonGroup};
 use crate::mui::feedback::{self, Tone};
 use crate::mui::list::ListItemButton;
-use crate::mui::motion::scaled;
+use crate::mui::motion::{self, Enter, EnterExt as _, GENTLE, STAGGER_CAP, scaled};
 use crate::mui::surfaces::{self, card, card_content};
 use crate::mui::tokens::{Variant, curve, duration, easing};
 use crate::reading;
@@ -86,7 +86,14 @@ pub fn render(
                 }),
         );
     for (index, block) in doc.blocks.iter().enumerate() {
-        column = column.child(draw(block, &index.to_string(), &page, window, cx));
+        let path = index.to_string();
+        // TradingAgent's `staggerCascade`: the blocks of a page arrive one
+        // after another.
+        column = column.child(
+            div()
+                .child(draw(block, &path, &page, window, cx))
+                .enter(page.id(&format!("{path}:in")), Enter::card(index)),
+        );
     }
     div()
         .id(page.id("scroll"))
@@ -106,7 +113,12 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
             .items_stretch()
             .flex_wrap()
             .gap(px(BLOCK_GAP))
-            .children(stats.iter().map(|stat| stat_tile(stat, cx)))
+            .children(
+                stats
+                    .iter()
+                    .enumerate()
+                    .map(|(index, stat)| stat_tile(stat, page.id(&format!("{path}.{index}")), cx)),
+            )
             .into_any_element(),
         Block::Table(table) => draw_table(table, path, page, window, cx),
         Block::Card { title, chips, body } => {
@@ -282,8 +294,9 @@ fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement {
         .into_any_element()
 }
 
-/// TradingAgent's metric tile: a label, a large figure and a note under it.
-pub fn stat_tile(stat: &Stat, cx: &App) -> Div {
+/// TradingAgent's metric tile: a label, a large figure that counts up when
+/// the tile appears, and a note under it. `id` names the tile.
+pub fn stat_tile(stat: &Stat, id: ElementId, cx: &App) -> Div {
     let theme = cx.theme();
     let figure = if stat.tone == Tone::Neutral {
         theme.foreground
@@ -298,7 +311,18 @@ pub fn stat_tile(stat: &Stat, cx: &App) -> Div {
                     .line_height(px(20.))
                     .text_color(theme.muted_foreground),
             )
-            .child(surfaces::text(Variant::H2, stat.value.clone()).text_color(figure))
+            .child({
+                let value = stat.value.clone();
+                let spec = Variant::H2.spec();
+                div()
+                    .text_size(px(spec.size))
+                    .line_height(px(spec.size * spec.line_height))
+                    .font_weight(spec.weight)
+                    .text_color(figure)
+                    .with_animation(id, GENTLE.animation(), move |figure, progress| {
+                        figure.child(motion::count_up(&value, progress))
+                    })
+            })
             .when_some(stat.hint.clone(), |tile, hint| {
                 tile.child(
                     surfaces::text(Variant::Caption, hint).text_color(theme.muted_foreground),
@@ -388,7 +412,16 @@ fn draw_table(
                     .bg(primary.opacity(lit)),
             )
             .children(cells);
-        body = body.child(hover.attach(element));
+        let element = hover.attach(element);
+        // TradingAgent's `listStagger`, for the rows a reader sees first.
+        body = if row_index < STAGGER_CAP {
+            body.child(element.enter(
+                page.id(&format!("{path}.{row_index}:in")),
+                Enter::row(row_index),
+            ))
+        } else {
+            body.child(element)
+        };
     }
     card(cx).child(body).into_any_element()
 }

@@ -64,6 +64,9 @@ app_icons! {
     EXTERNAL = ExternalLink,
 }
 
+/// The arrow of a folder row. gpui-kit embeds this one for its own menus.
+pub const EXPAND: IconName = IconName::ChevronDown;
+
 /// The icon shown beside a palette entry.
 pub fn for_command(command: &Command) -> IconName {
     match command {

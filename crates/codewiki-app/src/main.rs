@@ -26,7 +26,7 @@ mod themes;
 use std::collections::BTreeMap;
 
 use cw_client::{Backend, encode};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button as KitButton, ButtonVariants as _};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, Input, InputEvent, InputState, MoveDown, MoveUp,
 };
@@ -35,9 +35,7 @@ use gpui_kit::component::sidebar::{
 };
 use gpui_kit::component::tab::{Tab as TabItem, TabBar};
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::component::{Icon, TitleBar};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -45,6 +43,7 @@ use serde_json::{Value, json};
 
 use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
 use motion::MotionPref;
+use mui::button::{Button, IconButton};
 use mui::motion::{Enter, EnterExt as _};
 use palette::Command;
 
@@ -1257,11 +1256,9 @@ impl AppView {
             .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(cx.theme().background))
             .child(
-                Button::new("back")
-                    .icon(icons::BACK)
+                IconButton::new("back", icons::BACK)
                     .tooltip("Back (Alt+Left)")
                     .small()
-                    .ghost()
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
@@ -1300,7 +1297,7 @@ impl AppView {
                         .icon(icons::SAVE)
                         .label("Save")
                         .small()
-                        .primary()
+                        .contained()
                         .disabled(!dirty)
                         .on_click(cx.listener(|this, _, _, cx| this.save_edit(cx))),
                 )
@@ -1338,32 +1335,26 @@ impl AppView {
                     .label("Ctrl+K")
                     .tooltip("Commands")
                     .small()
-                    .ghost()
+                    .text()
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))),
             )
             .child(
-                Button::new("graph")
-                    .icon(icons::GRAPH)
+                IconButton::new("graph", icons::GRAPH)
                     .tooltip("Graph")
                     .small()
-                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
             )
             .child(
-                Button::new("hotspots")
-                    .icon(icons::HOTSPOTS)
+                IconButton::new("hotspots", icons::HOTSPOTS)
                     .tooltip("Hotspots")
                     .small()
-                    .ghost()
                     .disabled(self.repo.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
             )
             .child(
-                Button::new("theme")
-                    .icon(icons::THEME)
+                IconButton::new("theme", icons::THEME)
                     .tooltip(format!("Theme: {}", cx.theme().theme_name()))
                     .small()
-                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
             )
             .child(
@@ -1379,7 +1370,7 @@ impl AppView {
                     .icon(icons::REVIEW)
                     .label(format!("Review ({pending})"))
                     .small()
-                    .when(pending > 0, |b| b.primary())
+                    .when(pending > 0, |b| b.contained())
                     .disabled(pending == 0)
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some((id, _)) = this.pending_proposals.first().cloned() {
@@ -1403,7 +1394,7 @@ impl AppView {
                 .child(div().max_w(px(180.)).truncate().child(title))
                 .when(closable, |tab| {
                     tab.suffix(
-                        Button::new(("close-tab", index))
+                        KitButton::new(("close-tab", index))
                             .icon(icons::CLOSE)
                             .tooltip("Close tab (Ctrl+W)")
                             .xsmall()
@@ -1425,7 +1416,7 @@ impl AppView {
             .children(tabs.collect::<Vec<_>>())
             .on_click(cx.listener(|this, index: &usize, _, cx| this.activate_tab(*index, cx)))
             .suffix(
-                Button::new("new-tab")
+                KitButton::new("new-tab")
                     .icon(icons::NEW_TAB)
                     .tooltip("New tab (Ctrl+T)")
                     .xsmall()
@@ -1576,7 +1567,7 @@ impl AppView {
             strip = strip.child(
                 Button::new(("link", index))
                     .label(name.clone())
-                    .xsmall()
+                    .small()
                     .on_click(move |_, window, cx| {
                         state.update(cx, |state, cx| {
                             // Replace what was typed so the link carries the
@@ -1991,7 +1982,7 @@ impl AppView {
                     Button::new("approve")
                         .label("Approve and write")
                         .small()
-                        .primary()
+                        .contained()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.decide_proposal(approve_id.clone(), true, cx)
                         })),
@@ -2000,6 +1991,7 @@ impl AppView {
                     Button::new("reject")
                         .label("Reject")
                         .small()
+                        .error()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.decide_proposal(reject_id.clone(), false, cx)
                         })),
@@ -2081,7 +2073,7 @@ impl AppView {
                         Button::new(SharedString::from(format!("proposal-{id}")))
                             .label(path.rsplit('/').next().unwrap_or(path).to_string())
                             .small()
-                            .ghost()
+                            .text()
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_proposal(id.clone(), cx)
                             })),
@@ -2106,7 +2098,7 @@ impl AppView {
                     Button::new(SharedString::from(format!("repo-{}", repo.id)))
                         .label(repo.name.clone())
                         .small()
-                        .ghost()
+                        .text()
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.select_repo(target.clone(), cx)),
                         ),

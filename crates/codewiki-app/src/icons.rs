@@ -77,6 +77,10 @@ app_icons! {
     WARNING = "report-problem-outlined",
     ERROR = "error-outline",
     EXPAND = "expand-more",
+    // Pages.
+    CHECK = "check",
+    SYMBOL = "data-object",
+    FILE = "insert-drive-file",
 }
 
 /// The icon shown beside a palette entry.

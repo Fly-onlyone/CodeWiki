@@ -219,6 +219,27 @@ pub fn tooltip(text: impl Into<SharedString>) -> impl Fn(&mut Window, &mut App) 
     }
 }
 
+/// A thin bar filled to `share` (0 to 1) in `color`: MUI's determinate
+/// `LinearProgress`.
+pub fn progress(share: f32, color: Hsla, cx: &App) -> Div {
+    div()
+        .h(px(PROGRESS_HEIGHT))
+        .flex_shrink_0()
+        .relative()
+        .overflow_hidden()
+        .rounded(px(PROGRESS_HEIGHT))
+        .bg(cx.theme().muted_foreground.opacity(0.3))
+        .child(
+            div()
+                .absolute()
+                .top_0()
+                .left_0()
+                .h_full()
+                .w(relative(share.clamp(0.0, 1.0)))
+                .bg(color),
+        )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

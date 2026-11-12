@@ -55,9 +55,37 @@ pub fn ratio(a: Rgb, b: Rgb) -> f32 {
 }
 
 /// The lowest contrast `text` can have on `surface` painted at `alpha` over
-/// an unknown backdrop.
-pub fn worst_ratio(text: Rgb, surface: Rgb, alpha: f32) -> f32 {
-    ratio(text, over(surface, alpha, BLACK)).min(ratio(text, over(surface, alpha, WHITE)))
+/// a backdrop that lies between the two given colors.
+pub fn worst_ratio(text: Rgb, surface: Rgb, alpha: f32, backdrops: [Rgb; 2]) -> f32 {
+    let [a, b] = backdrops;
+    ratio(text, over(surface, alpha, a)).min(ratio(text, over(surface, alpha, b)))
+}
+
+/// A theme whose text is below AA even on its opaque surface cannot be held
+/// to AA. Glass may cost such a text at most this share of what it has.
+const KEEP: f32 = 0.9;
+
+/// The lowest opacity, from `floor` up, at which every color in `texts` stays
+/// readable on `surface` over any backdrop between the two given colors.
+///
+/// Readable means AA, or `KEEP` of the text's own contrast where that is
+/// lower. Returns 1.0 when no translucent surface manages it.
+pub fn fit_alpha(surface: Rgb, texts: &[Rgb], floor: f32, backdrops: [Rgb; 2]) -> f32 {
+    const STEP: f32 = 0.02;
+    let readable = |alpha: f32| {
+        texts.iter().all(|&text| {
+            let required = AA.min(ratio(text, surface) * KEEP);
+            worst_ratio(text, surface, alpha, backdrops) >= required
+        })
+    };
+    let mut alpha = floor;
+    while alpha < 1.0 {
+        if readable(alpha) {
+            return alpha;
+        }
+        alpha += STEP;
+    }
+    1.0
 }
 
 #[cfg(test)]
@@ -87,7 +115,8 @@ mod tests {
         let surface = parse_hex("#0E0C1A").unwrap();
         assert_eq!(over(surface, 1.0, WHITE), surface);
         let text = parse_hex("#E9E7F7").unwrap();
-        assert!((worst_ratio(text, surface, 1.0) - ratio(text, surface)).abs() < 0.001);
+        let any = [BLACK, WHITE];
+        assert!((worst_ratio(text, surface, 1.0, any) - ratio(text, surface)).abs() < 0.001);
     }
 
     #[test]
@@ -95,8 +124,42 @@ mod tests {
         let dark = parse_hex("#0E0C1A").unwrap();
         let text = parse_hex("#E9E7F7").unwrap();
         // Light text on dark glass is worst over a white backdrop.
-        let worst = worst_ratio(text, dark, 0.5);
+        let worst = worst_ratio(text, dark, 0.5, [BLACK, WHITE]);
         assert!((worst - ratio(text, over(dark, 0.5, WHITE))).abs() < 0.001);
         assert!(worst < ratio(text, over(dark, 0.5, BLACK)));
+        // A backdrop known to be dark costs far less.
+        assert!(worst_ratio(text, dark, 0.5, [BLACK, [0.25; 3]]) > worst);
+    }
+
+    #[test]
+    fn fit_alpha_returns_the_floor_when_the_floor_is_readable() {
+        let surface = parse_hex("#0E0C1A").unwrap();
+        let text = parse_hex("#E9E7F7").unwrap();
+        assert_eq!(fit_alpha(surface, &[text], 0.5, [BLACK, BLACK]), 0.5);
+    }
+
+    #[test]
+    fn fit_alpha_rises_until_the_weakest_text_is_readable() {
+        let surface = parse_hex("#0E0C1A").unwrap();
+        let strong = parse_hex("#E9E7F7").unwrap();
+        let weak = parse_hex("#A29DBF").unwrap();
+        let any = [BLACK, WHITE];
+        let for_strong = fit_alpha(surface, &[strong], 0.3, any);
+        let for_both = fit_alpha(surface, &[strong, weak], 0.3, any);
+        assert!(for_both > for_strong);
+        assert!(worst_ratio(weak, surface, for_both, any) >= AA);
+        // One step clearer would not do.
+        assert!(worst_ratio(weak, surface, for_both - 0.02, any) < AA);
+    }
+
+    #[test]
+    fn fit_alpha_asks_less_of_a_text_that_is_weak_even_when_opaque() {
+        // About 3:1 on its own surface: AA is out of reach at any opacity.
+        let surface = parse_hex("#1a1b26").unwrap();
+        let weak = parse_hex("#565f89").unwrap();
+        assert!(ratio(weak, surface) < AA);
+        let alpha = fit_alpha(surface, &[weak], 0.5, [BLACK, WHITE]);
+        assert!(alpha < 1.0, "glass is still possible");
+        assert!(worst_ratio(weak, surface, alpha, [BLACK, WHITE]) >= ratio(weak, surface) * 0.9);
     }
 }

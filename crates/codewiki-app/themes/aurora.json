@@ -11,7 +11,6 @@
         "accent.background": "#F1F5F9",
         "accent.foreground": "#0F172A",
         "accordion.background": "#FFFFFF",
-        "accordion.hover.background": "#F8FAFC",
         "background": "#FFFFFF",
         "border": "#E2E8F0",
         "button.background": "linear-gradient(180deg, #FFFFFF, #F8FAFC)",

@@ -15,6 +15,7 @@ mod illustration;
 mod markdown;
 mod pages;
 mod palette;
+mod reading;
 mod themes;
 
 use std::collections::BTreeMap;
@@ -161,8 +162,14 @@ struct AppView {
     glass: glass::Levels,
     /// Opaque color painted under the glass in place of the real backdrop.
     debug_backdrop: Option<Hsla>,
+    /// Width of the centre pane in pixels, from the window size of this frame.
+    pane_width: f32,
     _subscriptions: Vec<Subscription>,
 }
+
+/// Width of the sidebar and of the details pane, in pixels.
+const SIDEBAR_WIDTH: f32 = 280.0;
+const DETAILS_WIDTH: f32 = 260.0;
 
 /// Repository to open at startup: the first argument, else the working directory.
 fn startup_repo() -> Option<String> {
@@ -241,6 +248,7 @@ impl AppView {
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
             debug_backdrop: glass::debug_backdrop(),
+            pane_width: 0.0,
             _subscriptions: vec![subscription, palette_subscription, appearance],
         };
         this.connect(cx);
@@ -1149,7 +1157,7 @@ impl AppView {
         };
 
         let glass = self.glass.chrome(cx.theme().sidebar);
-        let mut sidebar = Sidebar::new("vault").w(px(280.)).bg(glass).header(
+        let mut sidebar = Sidebar::new("vault").w(px(SIDEBAR_WIDTH)).bg(glass).header(
             SidebarHeader::new().child(
                 v_flex()
                     .flex_1()
@@ -1539,10 +1547,13 @@ impl AppView {
                     )
                     .child(strip),
             )
-            .child(div().w_1_2().h_full().p_6().child(
+            .child(div().w_1_2().h_full().py_4().child(reading::frame(
                 // A stable id keeps the preview's scroll position while typing.
                 TextView::markdown("preview", preview).scrollable(true),
-            ))
+                self.pane_width / 2.0,
+                reading::NOTE_MEASURE,
+                cx,
+            )))
     }
 
     /// The centre pane for every page except the graph.
@@ -1572,6 +1583,11 @@ impl AppView {
         let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
+        // Notes are prose; everything else is mostly tables and needs room.
+        let measure = match self.page {
+            Page::Note { .. } => reading::NOTE_MEASURE,
+            _ => reading::WIDE_MEASURE,
+        };
         v_flex()
             .flex_1()
             .min_w_0()
@@ -1605,7 +1621,7 @@ impl AppView {
             )
             .when(!(self.show_figure && self.figure.is_some()), |this| {
                 this.child(
-                    div().flex_1().min_h_0().p_6().child(
+                    div().flex_1().min_h_0().py_4().child(reading::frame(
                         // A fresh id per page resets scroll position and selection.
                         TextView::markdown(("page", self.page_serial), source)
                             .scrollable(true)
@@ -1620,7 +1636,10 @@ impl AppView {
                                 let url = url.to_string();
                                 _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
                             }),
-                    ),
+                        self.pane_width,
+                        measure,
+                        cx,
+                    )),
                 )
             })
     }
@@ -1667,7 +1686,7 @@ impl AppView {
             (bw, bh)
         } else {
             (
-                (viewport.width / px(1.) - 540.0).max(200.0),
+                (viewport.width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(200.0),
                 (viewport.height / px(1.) - 48.0).max(200.0),
             )
         };
@@ -1923,7 +1942,7 @@ impl AppView {
                 .child(text.to_string())
         };
         let mut pane = v_flex()
-            .w(px(260.))
+            .w(px(DETAILS_WIDTH))
             .h_full()
             .gap_3()
             .p_3()
@@ -2111,6 +2130,8 @@ impl Render for AppView {
             None => "CodeWiki".to_string(),
         };
         self.glass = glass::Levels::for_window(window, cx);
+        self.pane_width =
+            (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);
         let title_bar = TitleBar::new()
             .bg(self.glass.chrome(cx.theme().title_bar))
             .child(

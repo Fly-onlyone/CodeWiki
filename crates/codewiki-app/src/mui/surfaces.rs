@@ -72,7 +72,9 @@ pub fn card(cx: &App) -> Div {
                 .size_full()
                 .bg(theme.primary.opacity(CARD_TINT * 0.5)),
         )
-        .child(glass::hairline(cx))
+        // GPUI clips to rectangles, so a line the full width of the card would
+        // show past its rounded corners. It starts and ends where they do.
+        .child(div().px(theme.radius_lg).child(glass::hairline(cx)))
 }
 
 /// The padded body of a [`card`].

@@ -283,7 +283,7 @@ fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement {
 }
 
 /// TradingAgent's metric tile: a label, a large figure and a note under it.
-fn stat_tile(stat: &Stat, cx: &App) -> Div {
+pub fn stat_tile(stat: &Stat, cx: &App) -> Div {
     let theme = cx.theme();
     let figure = if stat.tone == Tone::Neutral {
         theme.foreground
@@ -305,6 +305,16 @@ fn stat_tile(stat: &Stat, cx: &App) -> Div {
                 )
             }),
     )
+}
+
+/// A table outside a page, such as one in an illustration: no links, and
+/// named by `key` among the other things drawn that frame.
+pub fn plain_table(table: &Table, key: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+    let page = Page {
+        serial: usize::MAX,
+        on_action: Rc::new(|_, _, _| {}),
+    };
+    draw_table(table, key, &page, window, cx)
 }
 
 fn draw_table(

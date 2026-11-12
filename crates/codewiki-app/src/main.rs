@@ -7,6 +7,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod editor;
+mod fonts;
 mod graph;
 mod illustration;
 mod markdown;
@@ -2180,6 +2181,7 @@ fn main() {
     let app = gpui_kit::application().with_assets(Assets);
     app.run(|cx| {
         gpui_kit::init(cx);
+        fonts::register(cx);
         themes::init(cx);
         cx.bind_keys([
             KeyBinding::new("ctrl-k", TogglePalette, None),

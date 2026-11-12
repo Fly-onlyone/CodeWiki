@@ -24,6 +24,14 @@ rose-pine.json were written for CodeWiki. They use the color values published
 by the palette authors named in each file (Dracula, GitHub Primer, Nord,
 Atom One, Rosé Pine), whose projects are MIT licensed.
 
+The fonts in crates/codewiki-app/fonts/ are embedded in the desktop app,
+unmodified, under the SIL Open Font License, Version 1.1:
+Inter 4.1, Copyright 2016 The Inter Project Authors
+(https://github.com/rsms/inter), license text in Inter-OFL.txt; and
+JetBrains Mono 2.304, Copyright 2020 The JetBrains Mono Project Authors
+(https://github.com/JetBrains/JetBrainsMono), license text in
+JetBrainsMono-OFL.txt.
+
 The OpenUI Lang parser in crates/openui-lang is an independent implementation
 of the language defined by https://github.com/thesysdev/openui (MIT,
 Copyright Thesys Inc.). Its behavior was checked against that project's

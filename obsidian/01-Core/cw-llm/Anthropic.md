@@ -29,6 +29,7 @@ Public API:
 
 ## Used by
 
+- [[cw-llm]] — from `anthropic_reports_refusals_and_http_errors`, `anthropic_sends_the_messages_request_and_reads_text_blocks`
 - [[Provider Module]] — from `from_env`
 
 ## See also

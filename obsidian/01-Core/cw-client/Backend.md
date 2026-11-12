@@ -26,6 +26,7 @@ Public API:
 ## Depends on
 
 - [[cw-client]] — uses `BACKEND_FILE`, `STARTUP_TIMEOUT`, `TOKEN_ENV`, `URL_ENV`
+- [[cw-llm]] — uses `header`
 - [[Paths Module]] — uses `data_dir`
 
 ## Used by

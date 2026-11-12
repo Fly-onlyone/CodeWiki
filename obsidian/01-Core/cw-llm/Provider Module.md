@@ -27,14 +27,15 @@ Main items:
 
 - [[Error]] — uses `external`, `invalid`
 - [[AgentCli]] — uses `claude`, `codex`
+- [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
 - [[Anthropic]] — uses `new`
 - [[LlmProvider]] — uses `LlmProvider`
 
 ## Used by
 
+- [[cw-llm]] — from `ollama_sends_a_non_streaming_chat_request`, `openai_compatible_sends_chat_completions_with_a_bearer_token`, `writer_from_env`
 - [[Anthropic]] — from `complete`, `new`
-- [[cw-llm]] — from `writer_from_env`
 - [[Illustrate Module]] — from `draw`
 - [[Api Module]] — from `ask`
 - [[AgentCli]] — from `complete`

@@ -4,12 +4,13 @@ tags: [integration]
 
 # serde_json
 
-> External crate `serde_json`, imported by 12 source files.
+> External crate `serde_json`, imported by 14 source files.
 
 ## Used for
 
-Imported by 12 source files. Main users:
+Imported by 14 source files. Main users:
 
+- [[cw-embed]]
 - [[Api Module]]
 - [[Ci Module]]
 - [[Graph Module (codewiki-app)]]
@@ -17,7 +18,6 @@ Imported by 12 source files. Main users:
 - [[Pages Module]]
 - [[Provider Module]]
 - [[Serve Module]]
-- [[codewiki-app]]
 
 ## Configuration
 

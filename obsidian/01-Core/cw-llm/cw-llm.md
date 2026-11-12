@@ -28,14 +28,21 @@ Defined at the crate root:
 
 ## Depends on
 
+- [[Provider Module]] — uses `Ollama`, `OpenAiCompatible`, `from_env`
 - [[LlmWriter]] — uses `LlmWriter`, `new`
 - [[Error Module]] — uses `Result`
-- [[Provider Module]] — uses `from_env`
+- [[Anthropic]] — uses `Anthropic`
 
 ## Used by
 
+- [[Backend]] — from `get`, `post`, `put`
+- [[cw-server]] — from `call`, `hook`
 - [[codewiki]] — from `run`
+- [[codewiki-app]] — from `sidebar`
+- [[cw-embed]] — from `post_json`
+- [[Provider Module]] — from `post_json`
 - [[Api Module]] — from `run_update`
+- [[Proposal Module]] — from `unified_diff`
 
 ## See also
 

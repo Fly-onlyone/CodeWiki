@@ -50,7 +50,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 | P6 CI outputs | Verified | `check` with text, SARIF and JUnit | |
 | P6 Agent briefing | Verified | Briefing block for `CLAUDE.md` and `AGENTS.md` | |
 | P6 Git webhook | Verified | `POST /v1/hooks/git` with GitHub signature or GitLab token; off unless `CODEWIKI_WEBHOOK_SECRET` is set | Matches a repository by folder name only; no branch filter; no debounce |
-| P6 Agent hooks | Verified | `codewiki hook session-start` briefing, wired to Claude Code's SessionStart hook in the plugin; `claude plugin validate` passes | Not observed inside a live interactive Claude Code session |
+| P6 Agent hooks | Verified | `codewiki hook session-start` briefing, wired to Claude Code's SessionStart hook in the plugin; `claude plugin validate` passes. In a real Claude Code run with the plugin loaded, the briefing arrived in the model's context | |
 | P6 Workspace view | Verified | `GET /v1/workspace`, CLI, MCP tool, app page: per-repository status and shared dependencies | Tried with one repository registered |
 | P6 API contracts | Verified | Provided and consumed HTTP endpoints per repository and matched across the workspace. On this repository: 44 routes provided, 48 calls matched, 3 calls to outside services, 1 route nothing calls (the webhook) | Rust only and lexical. A path parameter matches any one segment, so unused routes are under-reported |
 
@@ -83,5 +83,4 @@ These cannot be done from an automated session on this machine.
 - Run the Anthropic API, OpenAI-compatible and Ollama providers and embedders against the real services. Needs an API key or an Ollama install.
 - Try the Ctrl shortcuts (Ctrl+K, Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+S) and Windows snap layouts by hand. They need real keyboard focus.
 - Confirm the Mica backdrop by eye.
-- Open the session-start briefing in an interactive Claude Code session with the plugin installed.
 - Codex round trip, when a Codex subscription is available.

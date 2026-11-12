@@ -29,6 +29,7 @@ Defined at the crate root:
 ## Depends on
 
 - [[Error]] — uses `external`, `invalid`
+- [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
 - [[Embedder]] — uses `Embedder`
 - [[LocalEmbedder]] — uses `default`

@@ -26,6 +26,7 @@ Main items:
 ## Depends on
 
 - [[Error]] — uses `external`, `invalid`, `io`, `not_found`
+- [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
 - [[Manifest Module]] — uses `body_hash`
 - [[VaultMeta]] — uses `dir`

@@ -33,13 +33,13 @@ Defined at the crate root:
 ## Depends on
 
 - [[codewiki-app]] — uses `body`
+- [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
 - [[Hash Module]] — uses `hmac_sha256`
 - [[Api Module]] — uses `routes`
 - [[Error]] — uses `external`
 - [[AppState]] — uses `AppState`
 - [[Inner]] — uses `Inner`
-- [[ServerConfig]] — uses `ServerConfig`
 
 ## Used by
 

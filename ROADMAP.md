@@ -4,7 +4,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 16 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (285 tests) and `cargo deny check licenses bans sources` all pass.
+- 16 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (285 tests) and `cargo deny check` all pass.
 - CodeWiki documents its own repository: 162 notes, 100% of wikilinks resolve, a second sync writes nothing.
 - The Docker image builds (271 MB) and was exercised over HTTP and through the MCP bridge.
 
@@ -12,7 +12,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 
 | Item | Status | Notes |
 |---|---|---|
-| M0 Scaffold, license policy, CI workflow | Verified | Published at https://github.com/Fly-onlyone/CodeWiki. CI passes on GitHub: format, lint and all tests on Windows; licenses, bans and sources. An advisories job reports 7 "unmaintained" notices for crates the UI kit depends on and does not fail the build |
+| M0 Scaffold, license policy, CI workflow | Verified | Published at https://github.com/Fly-onlyone/CodeWiki. CI passes on GitHub: format, lint and all tests on Windows; licenses, bans, sources and advisories. 7 "unmaintained" advisories for crates the UI kit depends on are ignored by ID in `deny.toml`; any other advisory fails the build |
 | M1 Rust parser and name resolver | Verified | |
 | M2 Graph metrics and layout | Verified | PageRank, betweenness, SCC, Louvain, ForceAtlas2 |
 | M3 Vault model, registry, linter, manifest | Verified | |

@@ -24,17 +24,18 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
 
-  # Licenses, bans and sources gate the build. Advisories are reported but do
-  # not fail it: they change without any change here, and the ones present are
-  # "unmaintained" notices for crates the UI kit depends on.
+  # Both legs gate the build. The advisories leg can fail without any change
+  # here, when a new advisory is published: fix the dependency, or add the ID
+  # to `ignore` in deny.toml with a reason. fail-fast is off so that such a
+  # failure does not cancel the licenses leg.
   deny:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
         checks:
           - advisories
           - licenses bans sources
-    continue-on-error: ${{ matrix.checks == 'advisories' }}
     steps:
       - uses: actions/checkout@v4
       - uses: EmbarkStudios/cargo-deny-action@v2

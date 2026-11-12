@@ -58,8 +58,14 @@ Check crate APIs against docs.rs or the crate source for the pinned version befo
 
 Start `codewiki-app <repo> <view>` where `<view>` is a note name or one of `graph:`, `palette:<query>`, `edit:<note>`, `settings:`, `themes:`, `health:`, `contracts:` and similar. Capture the window with `PrintWindow` and post input with `PostMessage`; do not bring the window to the front, and never capture the whole screen.
 
-The window is glass over the Windows backdrop, which a capture cannot see. Set `CODEWIKI_BACKDROP=#RRGGBB` to paint an opaque color under the glass, and `CODEWIKI_BACKDROP_DRIFT=1` to keep the backdrop drifting while the window is inactive. The app starts a backend process that outlives it; stop that one too when a check ends.
+The window is glass over the Windows backdrop, which a capture cannot see. Set `CODEWIKI_BACKDROP=#RRGGBB` to paint an opaque color under the glass, `CODEWIKI_BACKDROP_DRIFT=1` to keep the backdrop drifting while the window is inactive, and `CODEWIKI_MOTION_SCALE=<n>` to slow every animation by `n` so that a capture can catch one half way. The app starts a backend process that outlives it; stop that one too when a check ends.
 
 ## App look
 
-The look lives in five modules of `crates/codewiki-app/src/`: `glass.rs` (how opaque each surface is), `reading.rs` (page typography), `icons.rs`, `motion.rs` and `backdrop.rs`. Every icon the app draws is a constant in `icons.rs`; an icon named anywhere else is not embedded and draws nothing. A new palette command needs an arm in `icons::for_command`. A text color added to a CodeWiki theme must pass the contrast test in `themes.rs`.
+The look lives in `crates/codewiki-app/src/`: `glass.rs` (how opaque each surface is), `reading.rs` (note typography), `icons.rs`, `motion.rs` (whether things move), `backdrop.rs` and the `mui/` module.
+
+`mui/` holds the controls, drawn to Material UI's measurements with the TradingAgent theme's changes; where the two differ, TradingAgent wins. Draw a control with a `mui` component, not with a gpui-kit one and not by hand. A number copied from MUI or TradingAgent names its source file in a comment. Springs and entrances come from `mui/motion.rs`; do not write a duration or a spring anywhere else. GPUI cannot scale an element, blur what is behind one, or clip to rounded corners; `mui/mod.rs` and `mui/ripple.rs` say how each is worked around.
+
+A generated page is a `Doc` (`doc.rs`): a page function in `pages.rs` or `live.rs` builds it from backend data, `doc_view.rs` draws it, and each link, row and button carries an `Action` that `AppView::run_action` carries out. Do not build a page as Markdown; only notes are Markdown. A page function has a test that reads its `Doc`.
+
+Icons are Material Icons, as SVG files in `crates/codewiki-app/icons/`. Every icon the app draws is a constant in `icons.rs`; a file that is not listed there is not embedded. A new palette command needs an arm in `icons::for_command`. A text color added to a CodeWiki theme must pass the contrast test in `themes.rs`, which checks it on the page and on a card.

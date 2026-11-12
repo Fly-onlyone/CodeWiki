@@ -9,7 +9,6 @@
 
 use std::time::Duration;
 
-use gpui_kit::assets::IconName;
 use gpui_kit::base::motion as kit;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -23,6 +22,7 @@ use super::base::{Base, Ink, OnClick, focus_ring};
 use super::feedback;
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{self, Variant, curve, duration, easing};
+use crate::icons::Glyph;
 
 /// `Button.js`: the narrowest a button gets.
 const MIN_WIDTH: f32 = 64.0;
@@ -202,7 +202,7 @@ fn ease(time: Duration) -> kit::Transition {
 pub struct Button {
     id: ElementId,
     label: SharedString,
-    icon: Option<IconName>,
+    icon: Option<Glyph>,
     kind: Kind,
     tone: Tone,
     scale: Scale,
@@ -232,7 +232,7 @@ impl Button {
     }
 
     /// MUI's `startIcon`.
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub fn icon(mut self, icon: Glyph) -> Self {
         self.icon = Some(icon);
         self
     }
@@ -417,7 +417,7 @@ impl RenderOnce for Button {
 #[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
-    icon: IconName,
+    icon: Glyph,
     scale: Scale,
     disabled: bool,
     tooltip: Option<SharedString>,
@@ -425,7 +425,7 @@ pub struct IconButton {
 }
 
 impl IconButton {
-    pub fn new(id: impl Into<ElementId>, icon: IconName) -> Self {
+    pub fn new(id: impl Into<ElementId>, icon: Glyph) -> Self {
         Self {
             id: id.into(),
             icon,

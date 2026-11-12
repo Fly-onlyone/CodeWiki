@@ -7,7 +7,6 @@
 
 use std::time::Duration;
 
-use gpui_kit::assets::IconName;
 use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::{
@@ -17,7 +16,7 @@ use gpui_kit::{
 
 use super::motion::scaled;
 use super::tokens::easing;
-use crate::icons;
+use crate::icons::{self, Glyph};
 
 /// What kind of news something is. MUI's `severity`, and the `color` of a
 /// chip.
@@ -47,7 +46,7 @@ impl Tone {
         }
     }
 
-    fn icon(self) -> IconName {
+    fn icon(self) -> Glyph {
         match self {
             Self::Success => icons::SUCCESS,
             Self::Warning => icons::WARNING,

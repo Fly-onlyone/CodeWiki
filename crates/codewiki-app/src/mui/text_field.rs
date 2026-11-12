@@ -7,7 +7,6 @@
 //! `InputAdornment/InputAdornment.js`). The outline's colors at rest and
 //! under the pointer are TradingAgent's (`components.ts`, `MuiTextField`).
 
-use gpui_kit::assets::IconName;
 use gpui_kit::base::motion as kit;
 use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
@@ -20,6 +19,7 @@ use gpui_kit::{
 use super::base::Hover;
 use super::motion::scaled;
 use super::tokens::{curve, duration, easing};
+use crate::icons::Glyph;
 
 /// `OutlinedInput.js`, `size: 'small'`: `padding: '8.5px 14px'` around a line
 /// of `1.4375em` at 16 px.
@@ -37,7 +37,7 @@ const OUTLINE_OPACITY: f32 = 0.23;
 pub struct TextField {
     id: ElementId,
     state: Entity<InputState>,
-    icon: Option<IconName>,
+    icon: Option<Glyph>,
 }
 
 impl TextField {
@@ -50,7 +50,7 @@ impl TextField {
     }
 
     /// MUI's start `InputAdornment`.
-    pub fn icon(mut self, icon: IconName) -> Self {
+    pub fn icon(mut self, icon: Glyph) -> Self {
         self.icon = Some(icon);
         self
     }

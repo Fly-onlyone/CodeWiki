@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "codewiki-app")
+summary = TextContent("CodeWiki desktop app for Windows.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "7")
+f1 = Stat("Public types", "6")
+f2 = Stat("Functions", "128")
+f3 = Stat("Used by crates", "0")
+chart = BarChart(["graph", "markdown", "pages", "illustration", "themes", "palette", "editor"], [Series("Symbols per module", [23, 20, 15, 12, 9, 6, 3])], "Symbols per module")

@@ -1,0 +1,18 @@
+[package]
+name = "codewiki-app"
+description = "CodeWiki desktop app for Windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-client = { path = "../cw-client" }
+cw-illustrate = { version = "0.1.0", path = "../cw-illustrate" }
+cw-mermaid = { version = "0.1.0", path = "../cw-mermaid" }
+gpui-kit = "=0.9.1"
+openui-lang = { version = "0.1.0", path = "../openui-lang" }
+serde_json = "1"

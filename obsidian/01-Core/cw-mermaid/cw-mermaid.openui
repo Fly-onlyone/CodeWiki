@@ -1,0 +1,7 @@
+root = Card([summary, figures], "cw-mermaid")
+summary = TextContent("Mermaid diagram rendering for CodeWiki.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "0")
+f1 = Stat("Public types", "1")
+f2 = Stat("Functions", "4")
+f3 = Stat("Used by crates", "1")

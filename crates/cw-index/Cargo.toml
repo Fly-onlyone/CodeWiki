@@ -1,0 +1,20 @@
+[package]
+name = "cw-index"
+description = "SQLite index: files, symbols, edges, metrics and full-text search for CodeWiki"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { path = "../cw-core" }
+cw-parse = { path = "../cw-parse" }
+rusqlite = { version = "0.42.0", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

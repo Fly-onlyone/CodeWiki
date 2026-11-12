@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "cw-core")
+summary = TextContent("Shared identifiers, hashing, configuration and error types for CodeWiki.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "4")
+f1 = Stat("Public types", "9")
+f2 = Stat("Functions", "27")
+f3 = Stat("Used by crates", "11")
+chart = BarChart(["model", "error", "hash", "paths"], [Series("Symbols per module", [23, 6, 5, 5])], "Symbols per module")

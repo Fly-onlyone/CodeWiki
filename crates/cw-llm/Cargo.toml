@@ -1,0 +1,22 @@
+[package]
+name = "cw-llm"
+description = "LLM providers and the prose writer for CodeWiki"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { path = "../cw-core" }
+cw-wiki = { path = "../cw-wiki" }
+cw-vault = { path = "../cw-vault" }
+cw-index = { path = "../cw-index" }
+cw-illustrate = { path = "../cw-illustrate" }
+serde_json = "1"
+ureq = { version = "3.5.1", features = ["json"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

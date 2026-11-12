@@ -1,0 +1,7 @@
+root = Card([summary, figures], "cw-embed")
+summary = TextContent("Text embeddings for CodeWiki's semantic search: a built-in local embedder and HTTP providers.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "0")
+f1 = Stat("Public types", "4")
+f2 = Stat("Functions", "25")
+f3 = Stat("Used by crates", "1")

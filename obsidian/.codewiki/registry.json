@@ -1,0 +1,812 @@
+[
+  {
+    "id": "type:cw_llm::provider::AgentCli",
+    "path": "01-Core/cw-llm/AgentCli.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::agentdocs",
+    "path": "01-Core/cw-wiki/Agentdocs Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::analyze",
+    "path": "01-Core/cw-wiki/Analyze Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_llm::answer",
+    "path": "01-Core/cw-llm/Answer Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_llm::provider::Anthropic",
+    "path": "01-Core/cw-llm/Anthropic.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::api",
+    "path": "01-Core/cw-server/Api Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_server::AppState",
+    "path": "01-Core/cw-server/AppState.md",
+    "kind": "concept"
+  },
+  {
+    "id": "integration:axum",
+    "path": "03-Integrations/axum.md",
+    "kind": "integration"
+  },
+  {
+    "id": "type:cw_client::Backend",
+    "path": "01-Core/cw-client/Backend.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::briefing",
+    "path": "01-Core/cw-wiki/Briefing Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "ops:build",
+    "path": "05-Operations/Build and Test.md",
+    "kind": "operations"
+  },
+  {
+    "id": "type:codewiki_app::graph::Camera",
+    "path": "01-Core/codewiki-app/Camera.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::ci",
+    "path": "01-Core/cw-wiki/Ci Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:codewiki",
+    "path": "01-Core/codewiki/codewiki.md",
+    "kind": "concept"
+  },
+  {
+    "id": "flow:startup:codewiki",
+    "path": "00-Architecture/codewiki Startup Flow.md",
+    "kind": "flow"
+  },
+  {
+    "id": "crate:codewiki_app",
+    "path": "01-Core/codewiki-app/codewiki-app.md",
+    "kind": "concept"
+  },
+  {
+    "id": "flow:startup:codewiki_app",
+    "path": "00-Architecture/codewiki-app Startup Flow.md",
+    "kind": "flow"
+  },
+  {
+    "id": "crate:codewiki_mcp",
+    "path": "01-Core/codewiki-mcp/codewiki-mcp.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_graph::community",
+    "path": "01-Core/cw-graph/Community Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::model::Confidence",
+    "path": "01-Core/cw-core/Confidence.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::contracts",
+    "path": "01-Core/cw-wiki/Contracts Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::coverage",
+    "path": "01-Core/cw-wiki/Coverage Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "flow:crates",
+    "path": "00-Architecture/Crate Dependency Flow.md",
+    "kind": "flow"
+  },
+  {
+    "id": "crate:cw_client",
+    "path": "01-Core/cw-client/cw-client.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_core",
+    "path": "01-Core/cw-core/cw-core.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_embed",
+    "path": "01-Core/cw-embed/cw-embed.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_graph",
+    "path": "01-Core/cw-graph/cw-graph.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_illustrate",
+    "path": "01-Core/cw-illustrate/cw-illustrate.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_index",
+    "path": "01-Core/cw-index/cw-index.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_llm",
+    "path": "01-Core/cw-llm/cw-llm.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_mermaid",
+    "path": "01-Core/cw-mermaid/cw-mermaid.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_parse",
+    "path": "01-Core/cw-parse/cw-parse.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_server",
+    "path": "01-Core/cw-server/cw-server.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_vault",
+    "path": "01-Core/cw-vault/cw-vault.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:cw_wiki",
+    "path": "01-Core/cw-wiki/cw-wiki.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::decisions",
+    "path": "01-Core/cw-wiki/Decisions Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_index::search::Document",
+    "path": "01-Core/cw-index/Document.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::editor",
+    "path": "01-Core/codewiki-app/Editor Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_embed::Embedder",
+    "path": "01-Core/cw-embed/Embedder.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::error::Error",
+    "path": "01-Core/cw-core/Error.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::error",
+    "path": "01-Core/cw-core/Error Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:openui_lang::eval",
+    "path": "01-Core/openui-lang/Eval Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_illustrate::Figure",
+    "path": "01-Core/cw-illustrate/Figure.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::gitintel::FileHistory",
+    "path": "01-Core/cw-wiki/FileHistory.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::generate",
+    "path": "01-Core/cw-wiki/Generate Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::git",
+    "path": "01-Core/cw-wiki/Git Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::gitintel",
+    "path": "01-Core/cw-wiki/Gitintel Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "integration:gpui_kit",
+    "path": "03-Integrations/gpui_kit.md",
+    "kind": "integration"
+  },
+  {
+    "id": "type:cw_graph::graph::Graph",
+    "path": "01-Core/cw-graph/Graph.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_graph::graph",
+    "path": "01-Core/cw-graph/Graph Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::graph",
+    "path": "01-Core/codewiki-app/Graph Module (codewiki-app).md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::graph::GraphData",
+    "path": "01-Core/codewiki-app/GraphData.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::hash",
+    "path": "01-Core/cw-core/Hash Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::health",
+    "path": "01-Core/cw-wiki/Health Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_llm::illustrate",
+    "path": "01-Core/cw-llm/Illustrate Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::illustration",
+    "path": "01-Core/codewiki-app/Illustration Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "pattern:cw_embed::Embedder",
+    "path": "04-Patterns/Implementing Embedder Pattern.md",
+    "kind": "pattern"
+  },
+  {
+    "id": "pattern:cw_llm::provider::LlmProvider",
+    "path": "04-Patterns/Implementing LlmProvider Pattern.md",
+    "kind": "pattern"
+  },
+  {
+    "id": "type:cw_index::store::Index",
+    "path": "01-Core/cw-index/Index.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_server::Inner",
+    "path": "01-Core/cw-server/Inner.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::java",
+    "path": "01-Core/cw-parse/Java Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:openui_lang::eval::Kind",
+    "path": "01-Core/openui-lang/Kind.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::lang",
+    "path": "01-Core/cw-parse/Lang Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::model::Language",
+    "path": "01-Core/cw-core/Language.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_graph::layout",
+    "path": "01-Core/cw-graph/Layout Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::level::Level",
+    "path": "01-Core/cw-wiki/Level.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::level",
+    "path": "01-Core/cw-wiki/Level Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:openui_lang::lexer",
+    "path": "01-Core/openui-lang/Lexer Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:openui_lang::eval::Library",
+    "path": "01-Core/openui-lang/Library.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_vault::lifecycle",
+    "path": "01-Core/cw-vault/Lifecycle Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_vault::lint",
+    "path": "01-Core/cw-vault/Lint Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::rustscan::Literal",
+    "path": "01-Core/cw-wiki/Literal.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_llm::provider::LlmProvider",
+    "path": "01-Core/cw-llm/LlmProvider.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_llm::writer::LlmWriter",
+    "path": "01-Core/cw-llm/LlmWriter.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_embed::LocalEmbedder",
+    "path": "01-Core/cw-embed/LocalEmbedder.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_vault::manifest",
+    "path": "01-Core/cw-vault/Manifest Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::markdown",
+    "path": "01-Core/codewiki-app/Markdown Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_graph::metrics",
+    "path": "01-Core/cw-graph/Metrics Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::model",
+    "path": "01-Core/cw-core/Model Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:openui_lang::eval::Node",
+    "path": "01-Core/openui-lang/Node.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_vault::note::Note",
+    "path": "01-Core/cw-vault/Note.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_vault::note",
+    "path": "01-Core/cw-vault/Note Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_vault::note::NoteKind",
+    "path": "01-Core/cw-vault/NoteKind.md",
+    "kind": "concept"
+  },
+  {
+    "id": "crate:openui_lang",
+    "path": "01-Core/openui-lang/openui-lang.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::pages",
+    "path": "01-Core/codewiki-app/Pages Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_mermaid::Palette",
+    "path": "01-Core/cw-mermaid/Palette.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::palette",
+    "path": "01-Core/codewiki-app/Palette Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::rust::ParsedFile",
+    "path": "01-Core/cw-parse/ParsedFile.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:openui_lang::parser",
+    "path": "01-Core/openui-lang/Parser Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::paths",
+    "path": "01-Core/cw-core/Paths Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::plan",
+    "path": "01-Core/cw-wiki/Plan Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::plan::Planned",
+    "path": "01-Core/cw-wiki/Planned.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_vault::proposal",
+    "path": "01-Core/cw-vault/Proposal Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::generate::ProseWriter",
+    "path": "01-Core/cw-wiki/ProseWriter.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_llm::provider",
+    "path": "01-Core/cw-llm/Provider Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::python",
+    "path": "01-Core/cw-parse/Python Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::query",
+    "path": "01-Core/cw-wiki/Query Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::refactor",
+    "path": "01-Core/cw-wiki/Refactor Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_vault::registry::Registry",
+    "path": "01-Core/cw-vault/Registry.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_vault::registry",
+    "path": "01-Core/cw-vault/Registry Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_vault::registry::RegistryEntry",
+    "path": "01-Core/cw-vault/RegistryEntry.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::render",
+    "path": "01-Core/cw-wiki/Render Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::render::RenderCtx",
+    "path": "01-Core/cw-wiki/RenderCtx.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::plan::Repo",
+    "path": "01-Core/cw-wiki/Repo.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::repos",
+    "path": "01-Core/cw-server/Repos Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::resolve",
+    "path": "01-Core/cw-parse/Resolve Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::resolve::Resolver",
+    "path": "01-Core/cw-parse/Resolver.md",
+    "kind": "concept"
+  },
+  {
+    "id": "integration:rusqlite",
+    "path": "03-Integrations/rusqlite.md",
+    "kind": "integration"
+  },
+  {
+    "id": "mod:cw_parse::rust",
+    "path": "01-Core/cw-parse/Rust Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::rustscan",
+    "path": "01-Core/cw-wiki/Rustscan Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::scan",
+    "path": "01-Core/cw-parse/Scan Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::rustscan::Scanned",
+    "path": "01-Core/cw-wiki/Scanned.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_index::schema",
+    "path": "01-Core/cw-index/Schema Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_index::search",
+    "path": "01-Core/cw-index/Search Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::security",
+    "path": "01-Core/cw-wiki/Security Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::semantic",
+    "path": "01-Core/cw-wiki/Semantic Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "integration:serde",
+    "path": "03-Integrations/serde.md",
+    "kind": "integration"
+  },
+  {
+    "id": "integration:serde_json",
+    "path": "03-Integrations/serde_json.md",
+    "kind": "integration"
+  },
+  {
+    "id": "mod:codewiki::serve",
+    "path": "01-Core/codewiki/Serve Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_server::ServerConfig",
+    "path": "01-Core/cw-server/ServerConfig.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::service",
+    "path": "01-Core/cw-wiki/Service Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::lang::Sink",
+    "path": "01-Core/cw-parse/Sink.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_index::store",
+    "path": "01-Core/cw-index/Store Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::model::Symbol",
+    "path": "01-Core/cw-core/Symbol.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::model::SymbolKind",
+    "path": "01-Core/cw-core/SymbolKind.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::rustscan::TestFn",
+    "path": "01-Core/cw-wiki/TestFn.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::testmap",
+    "path": "01-Core/cw-wiki/Testmap Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::themes",
+    "path": "01-Core/codewiki-app/Themes Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "integration:tree_sitter",
+    "path": "03-Integrations/tree_sitter.md",
+    "kind": "integration"
+  },
+  {
+    "id": "mod:cw_parse::typescript",
+    "path": "01-Core/cw-parse/Typescript Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::units::Unit",
+    "path": "01-Core/cw-wiki/Unit.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::units::Units",
+    "path": "01-Core/cw-wiki/Units.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::units",
+    "path": "01-Core/cw-wiki/Units Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::rust::UseImport",
+    "path": "01-Core/cw-parse/UseImport.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_vault::manifest::VaultMeta",
+    "path": "01-Core/cw-vault/VaultMeta.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_index::vectors",
+    "path": "01-Core/cw-index/Vectors Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::workspace",
+    "path": "01-Core/cw-parse/Workspace Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::workspace",
+    "path": "01-Core/cw-server/Workspace Module (cw-server).md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_llm::writer",
+    "path": "01-Core/cw-llm/Writer Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::generate::WriterUsage",
+    "path": "01-Core/cw-wiki/WriterUsage.md",
+    "kind": "concept"
+  },
+  {
+    "id": "index:00-Architecture",
+    "path": "00-Architecture/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core",
+    "path": "01-Core/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-app",
+    "path": "01-Core/codewiki-app/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-mcp",
+    "path": "01-Core/codewiki-mcp/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki",
+    "path": "01-Core/codewiki/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-client",
+    "path": "01-Core/cw-client/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-core",
+    "path": "01-Core/cw-core/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-embed",
+    "path": "01-Core/cw-embed/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-graph",
+    "path": "01-Core/cw-graph/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-illustrate",
+    "path": "01-Core/cw-illustrate/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-index",
+    "path": "01-Core/cw-index/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-llm",
+    "path": "01-Core/cw-llm/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-mermaid",
+    "path": "01-Core/cw-mermaid/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-parse",
+    "path": "01-Core/cw-parse/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-server",
+    "path": "01-Core/cw-server/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-vault",
+    "path": "01-Core/cw-vault/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-wiki",
+    "path": "01-Core/cw-wiki/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/openui-lang",
+    "path": "01-Core/openui-lang/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:03-Integrations",
+    "path": "03-Integrations/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:04-Patterns",
+    "path": "04-Patterns/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:05-Operations",
+    "path": "05-Operations/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "home",
+    "path": "_HOME.md",
+    "kind": "home"
+  }
+]

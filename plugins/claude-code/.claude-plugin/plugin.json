@@ -1,0 +1,7 @@
+{
+  "name": "codewiki",
+  "version": "0.1.0",
+  "description": "Gives Claude Code a maintained wiki and structural index of the repository through the CodeWiki backend.",
+  "license": "Apache-2.0",
+  "keywords": ["wiki", "documentation", "code-intelligence", "mcp"]
+}

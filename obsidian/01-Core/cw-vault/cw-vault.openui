@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "cw-vault")
+summary = TextContent("Obsidian vault model for CodeWiki: notes, manifest, name registry, linter, lifecycle and proposals.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "7")
+f1 = Stat("Public types", "19")
+f2 = Stat("Functions", "55")
+f3 = Stat("Used by crates", "4")
+chart = BarChart(["manifest", "registry", "proposal", "lint", "note", "lifecycle"], [Series("Symbols per module", [18, 17, 16, 13, 12, 4])], "Symbols per module")

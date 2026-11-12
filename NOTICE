@@ -1,0 +1,31 @@
+CodeWiki
+Copyright 2026 The CodeWiki contributors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Provenance
+----------
+The default note templates are written from a description of the note style
+and contain no text copied from GPL-licensed template files.
+
+Third-party material bundled with this product
+-----------------------------------------------
+
+Most color themes in crates/codewiki-app/themes/ are copied unmodified from the
+gpui-kit project (https://github.com/longbridge/gpui-kit), Copyright 2024-2026
+Longbridge, licensed under the Apache License, Version 2.0. Each theme file
+names the author and source of its palette in its "author" and "url" fields.
+
+The theme files dracula.json, github.json, nord.json, one.json and
+rose-pine.json were written for CodeWiki. They use the color values published
+by the palette authors named in each file (Dracula, GitHub Primer, Nord,
+Atom One, Rosé Pine), whose projects are MIT licensed.
+
+The OpenUI Lang parser in crates/openui-lang is an independent implementation
+of the language defined by https://github.com/thesysdev/openui (MIT,
+Copyright Thesys Inc.). Its behavior was checked against that project's
+reference parser; no source from it is included.
+
+Dependencies under the Mozilla Public License 2.0 (for example cssparser, used
+by the Mermaid renderer) are used unmodified as libraries. Their source is
+available from crates.io.

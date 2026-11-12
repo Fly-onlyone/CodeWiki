@@ -1,0 +1,7 @@
+root = Card([summary, figures], "codewiki")
+summary = TextContent("CodeWiki command line and backend server.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "2")
+f1 = Stat("Public types", "0")
+f2 = Stat("Functions", "13")
+f3 = Stat("Used by crates", "0")

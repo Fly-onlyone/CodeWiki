@@ -1,0 +1,11 @@
+[package]
+name = "spike-s2-mermaid"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[workspace]
+
+[dependencies]
+merman = { version = "0.9.3", default-features = false, features = ["svg", "diagram-flowchart", "diagram-sequence", "diagram-state", "png"] }

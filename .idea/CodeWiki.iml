@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<module type="PYTHON_MODULE" version="4">
+  <component name="NewModuleRootManager">
+    <content url="file://$MODULE_DIR$">
+      <sourceFolder url="file://$MODULE_DIR$/crates/codewiki-app/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/codewiki-mcp/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/codewiki/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-client/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-core/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-graph/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-illustrate/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-index/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-llm/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-mermaid/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-parse/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-server/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-server/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-vault/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-wiki/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-wiki/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/openui-lang/examples" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/openui-lang/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/codewiki/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-embed/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-embed/tests" isTestSource="true" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/cw-llm/tests" isTestSource="true" />
+      <excludeFolder url="file://$MODULE_DIR$/target" />
+    </content>
+    <orderEntry type="inheritedJdk" />
+    <orderEntry type="sourceFolder" forTests="false" />
+  </component>
+</module>

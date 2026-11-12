@@ -1,0 +1,147 @@
+{
+  "name": "Dracula",
+  "author": "Zeno Rocha",
+  "url": "https://draculatheme.com",
+  "$schema": "https://github.com/longbridge/gpui-kit/raw/refs/heads/main/.theme-schema.json",
+  "themes": [
+    {
+      "name": "Dracula",
+      "mode": "dark",
+      "colors": {
+        "accent.background": "#343746",
+        "accent.foreground": "#f8f8f2",
+        "background": "#282a36",
+        "border": "#44475a",
+        "window_border": "#44475a",
+        "ring": "#bd93f9",
+        "foreground": "#f8f8f2",
+        "link.active.foreground": "#bd93f922",
+        "link.foreground": "#bd93f9",
+        "link.hover.foreground": "#bd93f9",
+        "list.active.background": "#bd93f922",
+        "list.active.border": "#bd93f9",
+        "list.even.background": "#34374699",
+        "muted.background": "#34374688",
+        "muted.foreground": "#6272a4",
+        "panel.background": "#343746",
+        "popover.background": "#282a36",
+        "popover.foreground": "#f8f8f2",
+        "primary.background": "#bd93f9",
+        "primary.foreground": "#282a36",
+        "scrollbar.background": "#282a3600",
+        "scrollbar.thumb.background": "#44475a",
+        "secondary.active.background": "#44475a",
+        "secondary.background": "#343746",
+        "secondary.foreground": "#f8f8f2",
+        "secondary.hover.background": "#44475a",
+        "title_bar.background": "#343746",
+        "title_bar.border": "#44475a",
+        "chart.grid": "#44475a",
+        "base.red": "#ff5555",
+        "base.green": "#50fa7b",
+        "base.yellow": "#f1fa8c",
+        "base.blue": "#8be9fd",
+        "base.magenta": "#ff79c6",
+        "base.cyan": "#8be9fd"
+      },
+      "highlight": {
+        "editor.foreground": "#f8f8f2",
+        "editor.background": "#282a36",
+        "editor.active_line.background": "#343746",
+        "editor.line_number": "#6272a4",
+        "editor.active_line_number": "#f8f8f2",
+        "editor.invisible": "#6272a466",
+        "conflict": "#ff5555",
+        "created": "#50fa7b",
+        "deleted": "#ff5555",
+        "error": "#ff5555",
+        "hidden": "#6272a4",
+        "hint": "#8be9fd",
+        "ignored": "#6272a4",
+        "info": "#8be9fd",
+        "modified": "#f1fa8c",
+        "predictive": "#6272a4",
+        "renamed": "#8be9fd",
+        "success": "#50fa7b",
+        "unreachable": "#6272a4",
+        "warning": "#f1fa8c",
+        "syntax": {
+          "attribute": {
+            "color": "#f1fa8c"
+          },
+          "boolean": {
+            "color": "#ff79c6"
+          },
+          "comment": {
+            "color": "#6272a4",
+            "font_style": "italic"
+          },
+          "comment.doc": {
+            "color": "#6272a4",
+            "font_style": "italic"
+          },
+          "constant": {
+            "color": "#ff79c6"
+          },
+          "constructor": {
+            "color": "#f1fa8c"
+          },
+          "embedded": {
+            "color": "#f8f8f2"
+          },
+          "function": {
+            "color": "#8be9fd"
+          },
+          "keyword": {
+            "color": "#ff5555"
+          },
+          "link_text": {
+            "color": "#8be9fd",
+            "font_style": "underline"
+          },
+          "link_uri": {
+            "color": "#8be9fd",
+            "font_style": "italic"
+          },
+          "number": {
+            "color": "#ff79c6"
+          },
+          "string": {
+            "color": "#50fa7b"
+          },
+          "string.escape": {
+            "color": "#8be9fd"
+          },
+          "string.regex": {
+            "color": "#50fa7b"
+          },
+          "string.special": {
+            "color": "#f1fa8c"
+          },
+          "string.special.symbol": {
+            "color": "#f1fa8c"
+          },
+          "tag": {
+            "color": "#ff5555"
+          },
+          "text.literal": {
+            "color": "#f8f8f2"
+          },
+          "title": {
+            "color": "#8be9fd",
+            "font_weight": 600
+          },
+          "type": {
+            "color": "#8be9fd"
+          },
+          "property": {
+            "color": "#f8f8f2"
+          },
+          "variable.special": {
+            "color": "#ff5555"
+          }
+        }
+      }
+    }
+  ]
+}

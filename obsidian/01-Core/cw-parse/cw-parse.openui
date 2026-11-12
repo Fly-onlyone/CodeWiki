@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "cw-parse")
+summary = TextContent("Source parsing and symbol extraction for CodeWiki.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "8")
+f1 = Stat("Public types", "12")
+f2 = Stat("Functions", "154")
+f3 = Stat("Used by crates", "2")
+chart = BarChart(["typescript", "lang", "rust", "java", "python", "resolve", "scan", "workspace"], [Series("Symbols per module", [40, 39, 37, 24, 24, 13, 7, 5])], "Symbols per module")

@@ -1,0 +1,2 @@
+# Paths CodeWiki should not document. Same syntax as .gitignore.
+spikes/

@@ -1,0 +1,15 @@
+[package]
+name = "cw-client"
+description = "Client for the CodeWiki backend: discovery, autostart and HTTP calls"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { path = "../cw-core" }
+serde_json = "1"
+ureq = { version = "3.5.1", features = ["json"] }

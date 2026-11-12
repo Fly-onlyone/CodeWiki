@@ -1,0 +1,7 @@
+root = Card([summary, figures], "cw-illustrate")
+summary = TextContent("CodeWiki's illustration component library and structural illustration builders.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "0")
+f1 = Stat("Public types", "1")
+f2 = Stat("Functions", "6")
+f3 = Stat("Used by crates", "3")

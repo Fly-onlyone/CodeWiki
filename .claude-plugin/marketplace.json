@@ -1,0 +1,13 @@
+{
+  "name": "codewiki",
+  "owner": {
+    "name": "CodeWiki contributors"
+  },
+  "plugins": [
+    {
+      "name": "codewiki",
+      "source": "./plugins/claude-code",
+      "description": "Maintained wiki and structural index of the repository, served to Claude Code over MCP."
+    }
+  ]
+}

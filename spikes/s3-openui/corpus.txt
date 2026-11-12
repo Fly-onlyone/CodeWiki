@@ -1,0 +1,148 @@
+root = Root([header, chart])           // 1. Entry Point
+header = Header("Q4 Revenue", "YTD")   // 2. Component Call
+chart = BarChart(labels, [s1, s2])     // 3. Forward Reference
+labels = ["Jan", "Feb", "Mar"]         // 4. Data Definition
+s1 = Series("Product A", [10, 20, 30])
+s2 = Series("Product B", [5, 15, 25])
+-----
+h1 = Header("Dashboard")
+-----
+root = Root([nav, dashboard])
+nav  = Navbar("Acme Corp", [link1, link2])
+link1 = Link("Home", "/")
+link2 = Link("Settings", "/settings")
+
+dashboard = Section([kpi_row, main_chart])
+kpi_row   = Grid([stat1, stat2])
+stat1     = StatCard("Revenue", "$1.2M", "up")
+stat2     = StatCard("Users", "450k", "flat")
+
+main_chart = LineChart(
+  ["Mon", "Tue", "Wed"],
+  [Series("Visits", [100, 450, 320])]
+)
+-----
+$compact = false
+root = $compact ? compactView : fullView
+compactView = TextContent("3 open")
+fullView = Card([TextContent("3 open tickets")])
+-----
+title = TextContent("Orders")
+page = Card([title])
+-----
+total = TextContent("Total: " + @Total(items))
+root = Card([total])
+-----
+x = 1 + 2 * 3
+-----
+x = (1 + 2) * 3
+-----
+x = 5 - 2 - 1
+-----
+x = 10 / 2 % 3
+-----
+x = -5
+-----
+x = a -5
+-----
+x = a - -5
+-----
+x = [-1, -2.5, 3e2, 1.5e-3, 0]
+-----
+x = !a && b || c
+-----
+x = a == b != c
+-----
+x = a > 1 && b <= 2 || c >= 3 && d < 4
+-----
+x = a ? b : c ? d : e
+-----
+x = a ? b ? 1 : 2 : 3
+-----
+x = cond
+  ? first
+  : second
+-----
+x = data.rows.title
+-----
+x = data.rows[0].title
+-----
+x = data["key"][1 + 2]
+-----
+x = {name: "a", "k 2": [1], 3: null, Type: true}
+-----
+x = {}
+y = []
+z = Card()
+-----
+x = Stack([children], "row", "l")
+-----
+x = @Count(items) + @Sum(items.n)
+-----
+x = @Filter(rows, "status", "==", "open")
+-----
+x = 'single \'quoted\' string'
+-----
+x = "escapes \n \t \" \\ é \/"
+-----
+x = "unterminated string
+-----
+x = Card([TextContent("partial
+-----
+x = [1, 2, {a: [3, 4
+-----
+this line is prose
+= 3
+title = "first"
+42 = x
+title = "second"
+-----
+# hash comment
+x = 1 // trailing
+// whole line
+y = 2 # trailing hash
+-----
+x = true
+y = false
+z = null
+-----
+x = Sidebar
+y = lowercase
+-----
+x = $a + $b
+$count = 3
+-----
+x = a.b.c.d
+-----
+x = !(-a)
+-----
+x = -(a + b) * c
+-----
+x = a + "text" + 3
+-----
+x = [a, b,, c]
+-----
+x = Card([a], )
+-----
+x = a | b & c
+-----
+x = "emoji 😀 text"
+-----
+x = Table([Col("Title", data.rows.title), Col("Count", data.rows.count)])
+-----
+x = a.0
+-----
+x = a.$b
+-----
+x = 1.5.toString
+-----
+x = Card([TextContent("a"), TextContent("b")], "Title")
+y = Tabs([Tab("One", [x]), Tab("Two", [x])])
+-----
+x = 2 * -3
+-----
+x = a ? {k: 1} : [2]
+-----
+x = ((((1))))
+-----
+x = "a" == "a" ? "same" : "different"

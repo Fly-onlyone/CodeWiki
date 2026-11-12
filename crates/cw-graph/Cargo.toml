@@ -1,0 +1,13 @@
+[package]
+name = "cw-graph"
+description = "Graph construction, metrics, community detection and layout for CodeWiki"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { path = "../cw-core" }

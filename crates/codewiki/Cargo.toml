@@ -1,0 +1,25 @@
+[package]
+name = "codewiki"
+description = "CodeWiki command line and backend server"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+cw-core = { path = "../cw-core" }
+cw-index = { path = "../cw-index" }
+cw-llm = { version = "0.1.0", path = "../cw-llm" }
+cw-server = { version = "0.1.0", path = "../cw-server" }
+cw-vault = { path = "../cw-vault" }
+cw-wiki = { path = "../cw-wiki" }
+getrandom = "0.4.3"
+serde_json = "1"
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+
+[dev-dependencies]
+tempfile = "3"

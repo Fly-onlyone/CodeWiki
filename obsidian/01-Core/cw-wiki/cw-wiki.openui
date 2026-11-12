@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "cw-wiki")
+summary = TextContent("Concept selection and wiki generation pipeline for CodeWiki.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "33")
+f1 = Stat("Public types", "69")
+f2 = Stat("Functions", "348")
+f3 = Stat("Used by crates", "3")
+chart = BarChart(["render", "security", "plan", "contracts", "gitintel", "refactor", "units", "coverage"], [Series("Symbols per module", [48, 42, 38, 35, 29, 28, 28, 27])], "Symbols per module")

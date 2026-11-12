@@ -1,0 +1,13 @@
+[package]
+name = "cw-illustrate"
+description = "CodeWiki's illustration component library and structural illustration builders"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+openui-lang = { path = "../openui-lang" }

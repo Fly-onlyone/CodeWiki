@@ -1,0 +1,53 @@
+# License, advisory and source policy for dependencies.
+# CodeWiki is Apache-2.0 and must stay free of copyleft code.
+
+[graph]
+targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
+all-features = true
+
+[advisories]
+ignore = []
+
+[licenses]
+# Permissive licenses only. Anything not listed here fails the check, which is
+# how AGPL, GPL, LGPL and EPL dependencies are kept out. Do not add a copyleft
+# license here without a recorded maintainer decision.
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "MIT",
+    "MIT-0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "0BSD",
+    "BSL-1.0",
+    "CDLA-Permissive-2.0",
+    "OpenSSL",
+    # File-level copyleft: it covers changes to the MPL files themselves, not
+    # code that links them. Used unmodified by the Mermaid renderer's CSS parser.
+    "MPL-2.0",
+]
+confidence-threshold = 0.9
+
+[licenses.private]
+# Workspace crates are not published yet; they carry the workspace license.
+ignore = true
+
+[bans]
+multiple-versions = "allow"
+wildcards = "allow"
+deny = [
+    # AGPL-3.0-only. A ForceAtlas2 layout is implemented in cw-graph instead.
+    { crate = "forceatlas2", reason = "AGPL-3.0-only" },
+]
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []

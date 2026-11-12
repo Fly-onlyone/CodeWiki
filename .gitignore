@@ -1,0 +1,24 @@
+# Rust
+target/
+**/*.rs.bk
+
+# JetBrains
+.idea/workspace.xml
+.idea/shelf/
+.idea/dataSources*
+.idea/httpRequests/
+
+# Claude Code local settings
+.claude/settings.local.json
+
+# Obsidian per-machine state
+obsidian/.obsidian/workspace*.json
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+.env
+
+# Packages built by scripts/package.ps1
+dist/

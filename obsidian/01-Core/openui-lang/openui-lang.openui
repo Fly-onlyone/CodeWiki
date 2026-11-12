@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "openui-lang")
+summary = TextContent("Parser and static evaluator for OpenUI Lang.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "4")
+f1 = Stat("Public types", "12")
+f2 = Stat("Functions", "40")
+f3 = Stat("Used by crates", "2")
+chart = BarChart(["eval", "parser", "lexer"], [Series("Symbols per module", [29, 28, 5])], "Symbols per module")

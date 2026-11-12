@@ -1,0 +1,19 @@
+[package]
+name = "cw-vault"
+description = "Obsidian vault model for CodeWiki: notes, manifest, name registry, linter, lifecycle and proposals"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { path = "../cw-core" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+similar = "3.2.1"
+
+[dev-dependencies]
+tempfile = "3"

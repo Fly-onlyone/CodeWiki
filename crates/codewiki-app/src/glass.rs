@@ -19,6 +19,7 @@ use gpui_kit::{
     linear_gradient, px,
 };
 
+use crate::backdrop;
 use crate::contrast::{self, BLACK, PANE_FLOOR, Rgb, WHITE};
 
 /// Chrome opacity when the backdrop is known to be on the theme's side: a
@@ -29,11 +30,25 @@ const CHROME_MATCHED_FLOOR: f32 = 0.62;
 const CHROME_FLOOR: f32 = 0.86;
 
 /// Mica is the wallpaper, blurred and pulled toward the system mode's base
-/// color. These bound what it can be in each mode.
-const DARK_MICA: [Rgb; 2] = [BLACK, [0.25; 3]];
-const LIGHT_MICA: [Rgb; 2] = [[0.78; 3], WHITE];
+/// color. These are the lightest dark Mica and the darkest light Mica.
+const DARK_MICA_LIMIT: Rgb = [0.25; 3];
+const LIGHT_MICA_LIMIT: Rgb = [0.78; 3];
 /// Any backdrop at all.
 const UNKNOWN: [Rgb; 2] = [BLACK, WHITE];
+
+/// What can be behind the chrome when the system is in the theme's mode:
+/// Mica, with the drifting backdrop over it. The drifting shapes are theme
+/// colors at `backdrop::STRENGTH`; taking them as pure white on a dark system
+/// and pure black on a light one bounds any color they can be.
+fn matched_backdrop(system_dark: bool) -> [Rgb; 2] {
+    if system_dark {
+        let lightest = contrast::over(WHITE, backdrop::STRENGTH, DARK_MICA_LIMIT);
+        [BLACK, lightest]
+    } else {
+        let darkest = contrast::over(BLACK, backdrop::STRENGTH, LIGHT_MICA_LIMIT);
+        [darkest, WHITE]
+    }
+}
 
 /// Opacity of the two kinds of surface, from 0 (clear) to 1 (solid).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,8 +82,8 @@ impl Levels {
     fn compute(surface: Rgb, texts: &[Rgb], theme_dark: bool, system_dark: bool) -> Self {
         let pane = contrast::fit_alpha(surface, texts, PANE_FLOOR, UNKNOWN);
         let chrome = if theme_dark == system_dark {
-            let mica = if system_dark { DARK_MICA } else { LIGHT_MICA };
-            contrast::fit_alpha(surface, texts, CHROME_MATCHED_FLOOR, mica)
+            let behind = matched_backdrop(system_dark);
+            contrast::fit_alpha(surface, texts, CHROME_MATCHED_FLOOR, behind)
         } else {
             contrast::fit_alpha(surface, texts, CHROME_FLOOR, UNKNOWN)
         };

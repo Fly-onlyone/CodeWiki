@@ -15,7 +15,7 @@
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
-    App, BoxShadow, Div, Hsla, Rgba, Styled as _, Window, WindowAppearance, div, linear_color_stop,
+    App, Div, Hsla, Rgba, Styled as _, Window, WindowAppearance, div, linear_color_stop,
     linear_gradient, px,
 };
 
@@ -56,6 +56,10 @@ pub struct Levels {
     pub pane: f32,
     pub chrome: f32,
 }
+
+/// The levels of the frame being drawn, for components that are not handed
+/// them.
+impl gpui_kit::Global for Levels {}
 
 impl Levels {
     /// Solid surfaces, for before the first frame.
@@ -125,21 +129,6 @@ pub fn hairline(cx: &App) -> Div {
         linear_color_stop(primary.opacity(0.75), 0.),
         linear_color_stop(primary.opacity(0.), 1.),
     ))
-}
-
-/// The shadow of a floating surface: a wide glow in the primary color over a
-/// tight dark one that keeps the edge defined.
-pub fn glow(cx: &App) -> Vec<BoxShadow> {
-    let primary = cx.theme().primary;
-    vec![
-        BoxShadow::new(px(0.), px(10.), primary.opacity(0.22)).blur_radius(px(48.)),
-        BoxShadow::new(px(0.), px(2.), gpui_kit::black().opacity(0.35)).blur_radius(px(10.)),
-    ]
-}
-
-/// A bar in the primary color down the left edge of a selected row.
-pub fn selection_bar(cx: &App) -> Vec<BoxShadow> {
-    vec![BoxShadow::new(px(3.), px(0.), cx.theme().primary).inset()]
 }
 
 /// An opaque color to paint under every surface instead of the real backdrop,

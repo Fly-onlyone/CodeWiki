@@ -8,14 +8,18 @@
 
 mod backdrop;
 mod contrast;
+mod doc;
+mod doc_view;
 mod editor;
 mod fonts;
 mod glass;
 mod graph;
 mod icons;
 mod illustration;
+mod live;
 mod markdown;
 mod motion;
+mod mui;
 mod pages;
 mod palette;
 mod prefs;
@@ -23,27 +27,31 @@ mod reading;
 mod themes;
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use cw_client::{Backend, encode};
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::base::motion::{Presence, Transition};
+use gpui_kit::component::TitleBar;
 use gpui_kit::component::input::{
-    Editor, EditorState, Escape, Input, InputEvent, InputState, MoveDown, MoveUp,
+    Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
-use gpui_kit::component::sidebar::{
-    Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
-};
-use gpui_kit::component::tab::{Tab as TabItem, TabBar};
+use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::text::TextView;
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _, StyledExt as _, h_flex, v_flex,
-};
-use gpui_kit::component::{Icon, TitleBar};
+use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
-use motion::MotionPref;
+use doc::{Action, Doc};
+use markdown::NOTE_SCHEME;
+use mui::button::{Button, IconButton};
+use mui::feedback::{self, Tone};
+use mui::list::{self, ListFolder, ListItemButton};
+use mui::motion::{Enter, EnterExt as _};
+use mui::surfaces;
+use mui::tabs::{Tab as TabItem, Tabs};
+use mui::text_field::TextField;
+use mui::tokens::Variant;
 use palette::Command;
 
 actions!(
@@ -104,11 +112,11 @@ enum Page {
     /// Symbol detail, search results and other generated pages.
     Generated {
         title: String,
-        markdown: String,
+        doc: Rc<Doc>,
     },
     Proposal {
         id: String,
-        markdown: String,
+        doc: Rc<Doc>,
     },
     /// The dependency graph canvas.
     Graph,
@@ -730,7 +738,7 @@ impl AppView {
         &mut self,
         title: &'static str,
         route: &'static str,
-        render: fn(&Value) -> String,
+        render: fn(&Value) -> Doc,
         cx: &mut Context<Self>,
     ) {
         let Some(repo) = self.repo.clone() else {
@@ -744,7 +752,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: title.into(),
-                        markdown: render(&data),
+                        doc: Rc::new(render(&data)),
                     },
                     true,
                 );
@@ -757,7 +765,7 @@ impl AppView {
         &mut self,
         title: &'static str,
         route: &'static str,
-        render: fn(&Value) -> String,
+        render: fn(&Value) -> Doc,
         cx: &mut Context<Self>,
     ) {
         self.run(
@@ -768,7 +776,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: title.into(),
-                        markdown: render(&data),
+                        doc: Rc::new(render(&data)),
                     },
                     true,
                 );
@@ -794,11 +802,17 @@ impl AppView {
             .map(|r| (r.name.clone(), r.path.clone()))
             .collect();
         let theme = cx.theme().theme_name().to_string();
-        let motion = motion::describe(cx);
+        let doc = pages::settings_page(
+            &backend,
+            &theme,
+            motion::current(cx),
+            !cx.reduce_motion(),
+            &repos,
+        );
         self.set_page(
             Page::Generated {
                 title: "Settings".into(),
-                markdown: pages::settings_page(&backend, &theme, &motion, &repos),
+                doc: Rc::new(doc),
             },
             remember,
         );
@@ -838,7 +852,6 @@ impl AppView {
         self.diagrams.clear();
         let palette = self.palette;
         self.rendered = match &self.page {
-            Page::Message(text) => text.clone(),
             Page::Note { text, .. } => {
                 let diagrams = &mut self.diagrams;
                 markdown::prepare_note_with(text, |source| {
@@ -854,8 +867,10 @@ impl AppView {
                     ))
                 })
             }
-            Page::Generated { markdown, .. } | Page::Proposal { markdown, .. } => markdown.clone(),
-            Page::Graph => String::new(),
+            // Drawn from their own model, not from Markdown.
+            Page::Message(_) | Page::Generated { .. } | Page::Proposal { .. } | Page::Graph => {
+                String::new()
+            }
         };
     }
 
@@ -938,7 +953,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title,
-                        markdown: markdown::symbol_page(&detail),
+                        doc: Rc::new(live::symbol_page(&detail)),
                     },
                     true,
                 );
@@ -952,7 +967,7 @@ impl AppView {
         let active = cx.theme().theme_name().to_string();
         let page = Page::Generated {
             title: "Themes".into(),
-            markdown: markdown::themes_page(&themes::list(cx), &active),
+            doc: Rc::new(live::themes_page(&themes::list(cx), &active)),
         };
         self.set_page(page, remember);
         cx.notify();
@@ -980,7 +995,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title,
-                        markdown: markdown::file_page(&context, &risk, &radius),
+                        doc: Rc::new(live::file_page(&context, &risk, &radius)),
                     },
                     true,
                 );
@@ -1000,7 +1015,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: "Hotspots".into(),
-                        markdown: markdown::hotspots_page(&rows),
+                        doc: Rc::new(live::hotspots_page(&rows)),
                     },
                     true,
                 );
@@ -1030,7 +1045,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: format!("Search: {shown}"),
-                        markdown: markdown::search_page(&shown, &hits),
+                        doc: Rc::new(live::search_page(&shown, &hits)),
                     },
                     true,
                 );
@@ -1047,18 +1062,13 @@ impl AppView {
             cx,
             move |b| b.post(&format!("/v1/repos/{}/update", repo.id), &json!({})),
             |this, report, cx| {
-                let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
-                let summary = format!(
-                    "# Sync complete\n\n- {} notes written\n- {} unchanged\n- {} proposals queued for review\n- {} removed\n- {} adopted\n- {} total\n- {:.1}% of links resolve\n",
-                    count("written"),
-                    report["kept"],
-                    count("proposed"),
-                    count("removed"),
-                    count("adopted"),
-                    report["notes_total"],
-                    report["link_rate"].as_f64().unwrap_or(0.0) * 100.0
+                this.set_page(
+                    Page::Generated {
+                        title: "Sync".into(),
+                        doc: Rc::new(live::sync_page(&report)),
+                    },
+                    true,
                 );
-                this.set_page(Page::Generated { title: "Sync".into(), markdown: summary }, true);
                 this.refresh(false, cx);
             },
         );
@@ -1077,7 +1087,7 @@ impl AppView {
                 this.set_page(
                     Page::Proposal {
                         id,
-                        markdown: markdown::proposal_page(&detail),
+                        doc: Rc::new(live::proposal_page(&detail)),
                     },
                     true,
                 );
@@ -1119,29 +1129,35 @@ impl AppView {
         );
     }
 
-    /// Follow a link clicked in the viewer.
+    /// Follow a link clicked in a note.
     fn follow_link(&mut self, url: &str, cx: &mut Context<Self>) {
         if let Some(target) = url.strip_prefix(NOTE_SCHEME) {
-            self.open_note(markdown::decode(target), true, cx);
-        } else if let Some(target) = url.strip_prefix(THEME_SCHEME) {
-            if themes::select(&markdown::decode(target), cx) {
-                self.open_themes(false, cx);
-            }
-        } else if let Some(target) = url.strip_prefix(SETTING_SCHEME) {
-            if let Some(pref) = target.strip_prefix("motion/").and_then(MotionPref::parse) {
-                motion::set(pref, cx);
-                self.open_settings(false, cx);
-            }
-        } else if let Some(target) = url.strip_prefix(FILE_SCHEME) {
-            self.open_file(markdown::decode(target), cx);
-        } else if let Some(target) = url.strip_prefix(SYMBOL_SCHEME) {
-            self.open_symbol(markdown::decode(target), cx);
+            self.run_action(&Action::Note(markdown::decode(target)), cx);
         } else if url.starts_with("https://") || url.starts_with("http://") {
             cx.open_url(url);
         }
     }
 
-    fn sidebar(&self, cx: &mut Context<Self>) -> Sidebar<SidebarGroup<SidebarMenu>> {
+    /// Do what a link, row or button of a generated page asks for.
+    fn run_action(&mut self, action: &Action, cx: &mut Context<Self>) {
+        match action {
+            Action::Note(target) => self.open_note(target.clone(), true, cx),
+            Action::Symbol(qualified) => self.open_symbol(qualified.clone(), cx),
+            Action::File(path) => self.open_file(path.clone(), cx),
+            Action::Theme(name) => {
+                if themes::select(name, cx) {
+                    self.open_themes(false, cx);
+                }
+            }
+            Action::Themes => self.open_themes(true, cx),
+            Action::Motion(pref) => {
+                motion::set(*pref, cx);
+                self.open_settings(false, cx);
+            }
+        }
+    }
+
+    fn sidebar(&self, cx: &mut Context<Self>) -> Div {
         let current = match &self.page {
             Page::Note { path, .. } => path.as_str(),
             _ => "",
@@ -1166,7 +1182,7 @@ impl AppView {
                 .or_default()
                 .push(note);
         }
-        let item = |note: &NoteInfo, cx: &mut Context<Self>| {
+        let item = |note: &NoteInfo, level: usize, cx: &mut Context<Self>| {
             let path = note.path.clone();
             let label = match note.title.as_str() {
                 "_index" => "Overview".to_string(),
@@ -1178,70 +1194,77 @@ impl AppView {
                 "_HOME" => icons::HOME,
                 _ => icons::NOTE,
             };
-            let active = note.path == current;
-            let mut item = SidebarMenuItem::new(label)
+            ListItemButton::new(SharedString::from(format!("note:{}", note.path)), label)
                 .icon(icon)
-                .active(active)
-                .on_click(
-                    cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)),
-                );
-            if active {
-                item = item.shadow(glass::selection_bar(cx));
-            }
-            item
+                .level(level)
+                .selected(note.path == current)
+                .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
         };
 
-        let glass = self.glass.chrome(cx.theme().sidebar);
-        let mut sidebar = Sidebar::new("vault").w(px(SIDEBAR_WIDTH)).bg(glass).header(
-            SidebarHeader::new().child(
-                v_flex()
-                    .flex_1()
-                    .overflow_hidden()
-                    .child(div().font_bold().child("CodeWiki"))
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(
-                                self.repo
-                                    .as_ref()
-                                    .map(|r| r.name.clone())
-                                    .unwrap_or_default(),
-                            ),
-                    ),
-            ),
-        );
+        let mut list = v_flex().pb_2();
         for (zone, folders) in &zones {
-            let mut menu = SidebarMenu::new();
+            let label = if zone.is_empty() {
+                "Vault".to_string()
+            } else {
+                zone_label(zone)
+            };
+            list = list.child(list::subheader(label, cx));
             for (folder, notes) in folders {
                 let mut notes = notes.clone();
                 // Map notes first, then the rest by title.
                 notes.sort_by_key(|n| (!n.title.starts_with('_'), n.title.to_lowercase()));
                 if folder.is_empty() {
                     for note in notes {
-                        menu = menu.child(item(note, cx));
+                        list = list.child(item(note, 0, cx));
                     }
                 } else {
                     let open = notes.iter().any(|n| n.path == current);
-                    let children: Vec<SidebarMenuItem> =
-                        notes.iter().map(|n| item(n, cx)).collect();
-                    menu = menu.child(
-                        SidebarMenuItem::new(folder.clone())
-                            .icon(icons::FOLDER)
-                            .default_open(open)
-                            .click_to_toggle(true)
-                            .children(children),
+                    let rows: Vec<ListItemButton> = notes.iter().map(|n| item(n, 1, cx)).collect();
+                    list = list.child(
+                        ListFolder::new(
+                            format!("folder:{zone}/{folder}"),
+                            folder.clone(),
+                            icons::FOLDER,
+                            icons::EXPAND,
+                        )
+                        .open_at_first(open)
+                        .rows(rows),
                     );
                 }
             }
-            let label = if zone.is_empty() {
-                "Vault".to_string()
-            } else {
-                zone_label(zone)
-            };
-            sidebar = sidebar.child(SidebarGroup::new(label).child(menu));
         }
-        sidebar
+
+        let theme = cx.theme();
+        v_flex()
+            .w(px(SIDEBAR_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .border_r_1()
+            .border_color(glass::tinted_border(cx))
+            .bg(self.glass.chrome(theme.sidebar))
+            .text_color(theme.sidebar_foreground)
+            .child(
+                v_flex()
+                    .px_4()
+                    .py_3()
+                    .child(div().font_bold().child("CodeWiki"))
+                    .child(
+                        div().text_xs().text_color(theme.muted_foreground).child(
+                            self.repo
+                                .as_ref()
+                                .map(|r| r.name.clone())
+                                .unwrap_or_default(),
+                        ),
+                    ),
+            )
+            .child(
+                div()
+                    .id("vault")
+                    .flex_1()
+                    .min_h_0()
+                    .overflow_y_scrollbar()
+                    .child(list),
+            )
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
@@ -1255,11 +1278,9 @@ impl AppView {
             .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(cx.theme().background))
             .child(
-                Button::new("back")
-                    .icon(icons::BACK)
+                IconButton::new("back", icons::BACK)
                     .tooltip("Back (Alt+Left)")
                     .small()
-                    .ghost()
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
@@ -1267,7 +1288,7 @@ impl AppView {
                 div()
                     .flex_1()
                     .px_1()
-                    .child(Input::new(&self.search).small()),
+                    .child(TextField::new("search", &self.search).icon(icons::SEARCH)),
             )
             .when_some(self.busy.clone(), |this, busy| {
                 this.child(
@@ -1298,7 +1319,7 @@ impl AppView {
                         .icon(icons::SAVE)
                         .label("Save")
                         .small()
-                        .primary()
+                        .contained()
                         .disabled(!dirty)
                         .on_click(cx.listener(|this, _, _, cx| this.save_edit(cx))),
                 )
@@ -1336,32 +1357,26 @@ impl AppView {
                     .label("Ctrl+K")
                     .tooltip("Commands")
                     .small()
-                    .ghost()
+                    .text()
                     .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))),
             )
             .child(
-                Button::new("graph")
-                    .icon(icons::GRAPH)
+                IconButton::new("graph", icons::GRAPH)
                     .tooltip("Graph")
                     .small()
-                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
             )
             .child(
-                Button::new("hotspots")
-                    .icon(icons::HOTSPOTS)
+                IconButton::new("hotspots", icons::HOTSPOTS)
                     .tooltip("Hotspots")
                     .small()
-                    .ghost()
                     .disabled(self.repo.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
             )
             .child(
-                Button::new("theme")
-                    .icon(icons::THEME)
+                IconButton::new("theme", icons::THEME)
                     .tooltip(format!("Theme: {}", cx.theme().theme_name()))
                     .small()
-                    .ghost()
                     .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
             )
             .child(
@@ -1377,7 +1392,7 @@ impl AppView {
                     .icon(icons::REVIEW)
                     .label(format!("Review ({pending})"))
                     .small()
-                    .when(pending > 0, |b| b.primary())
+                    .when(pending > 0, |b| b.contained())
                     .disabled(pending == 0)
                     .on_click(cx.listener(|this, _, _, cx| {
                         if let Some((id, _)) = this.pending_proposals.first().cloned() {
@@ -1387,9 +1402,8 @@ impl AppView {
             )
     }
 
-    /// The row of tabs under the toolbar. The underline of the active tab
-    /// slides to the next one; gpui-kit animates it.
-    fn tab_bar(&self, cx: &mut Context<Self>) -> TabBar {
+    /// The row of tabs under the toolbar.
+    fn tab_bar(&self, cx: &mut Context<Self>) -> Div {
         let closable = self.tabs.len() > 1;
         let tabs = (0..self.tabs.len()).map(|index| {
             let title = page_title(if index == self.active_tab {
@@ -1397,83 +1411,65 @@ impl AppView {
             } else {
                 &self.tabs[index].page
             });
-            TabItem::new()
-                .child(div().max_w(px(180.)).truncate().child(title))
-                .when(closable, |tab| {
-                    tab.suffix(
-                        Button::new(("close-tab", index))
-                            .icon(icons::CLOSE)
-                            .tooltip("Close tab (Ctrl+W)")
-                            .xsmall()
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.stop_propagation();
-                                this.close_tab(index, cx);
-                            })),
-                    )
-                })
+            TabItem::new(title).when(closable, |tab| {
+                tab.suffix(
+                    IconButton::new(("close-tab", index), icons::CLOSE)
+                        .tooltip("Close tab (Ctrl+W)")
+                        .small()
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            cx.stop_propagation();
+                            this.close_tab(index, cx);
+                        })),
+                )
+            })
         });
-        TabBar::new("tabs")
-            .underline()
-            .small()
+        let tabs: Vec<TabItem> = tabs.collect();
+        let view = cx.entity().downgrade();
+        h_flex()
             .w_full()
             .px_3()
+            .items_center()
+            .justify_between()
+            .border_b_1()
+            .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(cx.theme().background))
-            .selected_index(self.active_tab)
-            .children(tabs.collect::<Vec<_>>())
-            .on_click(cx.listener(|this, index: &usize, _, cx| this.activate_tab(*index, cx)))
-            .suffix(
-                Button::new("new-tab")
-                    .icon(icons::NEW_TAB)
+            .child(
+                div().flex_1().min_w_0().overflow_hidden().child(
+                    Tabs::new("tabs")
+                        .tabs(tabs)
+                        .selected(self.active_tab)
+                        .on_select(move |index, _, cx| {
+                            _ = view.update(cx, |this, cx| this.activate_tab(index, cx));
+                        }),
+                ),
+            )
+            .child(
+                IconButton::new("new-tab", icons::NEW_TAB)
                     .tooltip("New tab (Ctrl+T)")
-                    .xsmall()
-                    .ghost()
+                    .small()
                     .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
             )
     }
 
-    /// The command palette, drawn over everything else.
-    fn palette_view(&self, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+    /// The command palette, drawn over everything else. `shown` runs from 0
+    /// to 1 as it opens and back as it closes; while it closes, the palette
+    /// is still drawn but no longer takes input.
+    fn palette_view(&self, shown: f32, cx: &mut Context<Self>) -> impl IntoElement + use<> {
+        let open = self.palette_open;
         let entries = self.palette_matches(cx);
         let selected = self.palette_selected.min(entries.len().saturating_sub(1));
-        let (popover, accent, accent_text, muted, backdrop) = {
+        let (muted, backdrop) = {
             let theme = cx.theme();
-            (
-                theme.popover,
-                theme.accent,
-                theme.accent_foreground,
-                theme.muted_foreground,
-                theme.background.opacity(0.6),
-            )
+            (theme.muted_foreground, theme.background.opacity(0.6))
         };
-        let border = glass::tinted_border(cx);
-        let bar = glass::selection_bar(cx);
-        let mut list = v_flex().gap_1();
+        let mut list = v_flex();
         for (index, entry) in entries.into_iter().enumerate() {
             let command = entry.command;
-            let icon = icons::for_command(&command);
             list = list.child(
-                h_flex()
-                    .id(("palette-entry", index))
-                    .px_3()
-                    .py_1p5()
-                    .gap_2()
-                    .rounded_md()
-                    .items_center()
-                    .cursor_pointer()
-                    .when(index == selected, |row| {
-                        row.bg(accent).text_color(accent_text).shadow(bar.clone())
-                    })
-                    .child(Icon::new(icon).small().text_color(muted))
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .text_sm()
-                            .truncate()
-                            .child(entry.label),
-                    )
-                    .child(div().text_xs().text_color(muted).child(entry.hint))
+                ListItemButton::new(("palette-entry", index), entry.label)
+                    .icon(icons::for_command(&command))
+                    .selected(index == selected)
+                    .trailing(surfaces::text(Variant::Caption, entry.hint).text_color(muted))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.run_command(command.clone(), window, cx)
                     })),
@@ -1485,42 +1481,35 @@ impl AppView {
                 .top_0()
                 .left_0()
                 .size_full()
-                .occlude()
+                .opacity(shown.clamp(0.0, 1.0))
                 .bg(backdrop)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|this, _, window, cx| {
-                        if this.palette_open {
-                            this.toggle_palette(window, cx);
-                        }
-                    }),
-                )
+                .when(open, |scrim| {
+                    scrim.occlude().on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, window, cx| {
+                            if this.palette_open {
+                                this.toggle_palette(window, cx);
+                            }
+                        }),
+                    )
+                })
                 .child(
                     h_flex().w_full().justify_center().pt(px(90.)).child(
-                        v_flex()
+                        surfaces::paper(24, cx)
                             .id("palette")
                             .w(px(560.))
-                            .rounded_lg()
-                            .border_1()
-                            .border_color(border)
-                            .bg(popover)
-                            .shadow(glass::glow(cx))
                             .overflow_hidden()
                             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .child(glass::hairline(cx))
                             .child(
-                                v_flex()
-                                    .p_2()
-                                    .gap_2()
-                                    .child(Input::new(&self.palette_input))
-                                    .child(list),
+                                div().p_2().child(
+                                    TextField::new("palette-input", &self.palette_input)
+                                        .icon(icons::SEARCH),
+                                ),
                             )
+                            .child(list.pb_2())
                             // Drops into place as it fades in.
-                            .with_animation(
-                                "palette-in",
-                                Animation::new(motion::ENTER_FAST).with_easing(ease_out_quint()),
-                                |panel, t| panel.opacity(t).relative().top(px((t - 1.0) * 8.0)),
-                            ),
+                            .enter("palette-in", Enter::DIALOG),
                     ),
                 ),
         )
@@ -1578,7 +1567,7 @@ impl AppView {
             strip = strip.child(
                 Button::new(("link", index))
                     .label(name.clone())
-                    .xsmall()
+                    .small()
                     .on_click(move |_, window, cx| {
                         state.update(cx, |state, cx| {
                             // Replace what was typed so the link carries the
@@ -1627,29 +1616,22 @@ impl AppView {
     }
 
     /// The centre pane for every page except the graph.
-    fn page_view(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn page_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match &self.editing {
             Some(editing) => v_flex()
                 .flex_1()
                 .min_w_0()
                 .h_full()
                 .when_some(self.error.clone(), |this, error| {
-                    this.child(
-                        div()
-                            .p_2()
-                            .text_sm()
-                            .bg(cx.theme().danger)
-                            .text_color(cx.theme().danger_foreground)
-                            .child(error),
-                    )
+                    this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
                 })
                 .child(self.edit_view(editing, cx))
                 .into_any_element(),
-            None => self.viewer(cx).into_any_element(),
+            None => self.viewer(window, cx).into_any_element(),
         }
     }
 
-    fn viewer(&self, cx: &mut Context<Self>) -> Div {
+    fn viewer(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
@@ -1658,71 +1640,93 @@ impl AppView {
             Page::Note { .. } => reading::NOTE_MEASURE,
             _ => reading::WIDE_MEASURE,
         };
+        let showing_figure = self.show_figure && self.figure.is_some();
+        let figure = self
+            .figure
+            .as_ref()
+            .filter(|_| self.show_figure)
+            .map(|figure| illustration::render(figure, "figure", window, cx));
+        let page = (!showing_figure).then(|| {
+            let content = match &self.page {
+                Page::Note { .. } => div()
+                    .size_full()
+                    .py_4()
+                    .child(reading::frame(
+                        // A fresh id per page resets scroll position and selection.
+                        TextView::markdown(("page", self.page_serial), source)
+                            .scrollable(true)
+                            .image_source(move |uri| {
+                                uri.strip_prefix(markdown::DIAGRAM_SCHEME)
+                                    .and_then(|index| index.parse::<usize>().ok())
+                                    .and_then(|index| diagrams.get(index).cloned())
+                                    .map(ImageSource::Image)
+                                    .unwrap_or_else(|| uri.clone().into())
+                            })
+                            .on_link_click(move |url, _, _, cx| {
+                                let url = url.to_string();
+                                _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
+                            }),
+                        self.pane_width,
+                        measure,
+                        cx,
+                    ))
+                    .into_any_element(),
+                Page::Generated { doc, .. } | Page::Proposal { doc, .. } => {
+                    self.doc_element(doc, window, cx)
+                }
+                Page::Message(message) => {
+                    self.doc_element(&live::message_page(message), window, cx)
+                }
+                Page::Graph => div().into_any_element(),
+            };
+            // A new page rises into place. The id changes with the page, so
+            // this runs once per page and not on a redraw.
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(content)
+                .enter(("page-in", self.page_serial), Enter::PAGE)
+        });
         v_flex()
             .flex_1()
             .min_w_0()
             .h_full()
             .when_some(self.error.clone(), |this, error| {
-                this.child(
-                    div()
-                        .p_2()
-                        .text_sm()
-                        .bg(cx.theme().danger)
-                        .text_color(cx.theme().danger_foreground)
-                        .child(error),
-                )
+                this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
             })
             .when_some(self.proposal_actions(cx), |this, actions| {
                 this.child(actions)
             })
-            .when_some(
-                self.figure.as_ref().filter(|_| self.show_figure),
-                |this, figure| {
-                    this.child(
-                        div()
-                            .id("figure")
-                            .flex_1()
-                            .min_h_0()
-                            .p_6()
-                            .overflow_y_scroll()
-                            .child(illustration::render(figure, cx)),
-                    )
-                },
-            )
-            .when(!(self.show_figure && self.figure.is_some()), |this| {
+            .when_some(figure, |this, figure| {
                 this.child(
                     div()
+                        .id("figure")
                         .flex_1()
                         .min_h_0()
-                        .py_4()
-                        .child(reading::frame(
-                            // A fresh id per page resets scroll position and selection.
-                            TextView::markdown(("page", self.page_serial), source)
-                                .scrollable(true)
-                                .image_source(move |uri| {
-                                    uri.strip_prefix(markdown::DIAGRAM_SCHEME)
-                                        .and_then(|index| index.parse::<usize>().ok())
-                                        .and_then(|index| diagrams.get(index).cloned())
-                                        .map(ImageSource::Image)
-                                        .unwrap_or_else(|| uri.clone().into())
-                                })
-                                .on_link_click(move |url, _, _, cx| {
-                                    let url = url.to_string();
-                                    _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
-                                }),
-                            self.pane_width,
-                            measure,
-                            cx,
-                        ))
-                        // A new page fades in. The id changes with the page, so
-                        // the animation runs once per page and not on a redraw.
-                        .with_animation(
-                            ("page-in", self.page_serial),
-                            Animation::new(motion::ENTER).with_easing(ease_out_quint()),
-                            |pane, t| pane.opacity(t),
-                        ),
+                        .p_6()
+                        .overflow_y_scrollbar()
+                        .child(figure),
                 )
             })
+            .when_some(page, |this, page| this.child(page))
+    }
+
+    /// A generated page, drawn with components. Its links, rows and buttons
+    /// come back through `run_action`.
+    fn doc_element(&self, doc: &Doc, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let view = cx.entity().downgrade();
+        let on_action: doc_view::OnAction = Rc::new(move |action, _, cx| {
+            let action = action.clone();
+            _ = view.update(cx, |this, cx| this.run_action(&action, cx));
+        });
+        doc_view::render(
+            doc,
+            self.page_serial,
+            self.pane_width,
+            on_action,
+            window,
+            cx,
+        )
     }
 
     /// Number of synthetic nodes to draw instead of the real graph, for
@@ -1968,16 +1972,11 @@ impl AppView {
             );
         }
         view.child(
-            div()
-                .absolute()
-                .left(px(10.))
-                .top(px(8.))
-                .px_2()
-                .rounded(theme.radius)
-                .bg(theme.background.opacity(0.8))
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(hud),
+            div().absolute().left(px(10.)).top(px(8.)).child(
+                feedback::chip(hud, Tone::Neutral, true, cx)
+                    .bg(theme.background.opacity(0.8))
+                    .text_color(theme.muted_foreground),
+            ),
         )
         .into_any_element()
     }
@@ -1997,7 +1996,7 @@ impl AppView {
                     Button::new("approve")
                         .label("Approve and write")
                         .small()
-                        .primary()
+                        .contained()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.decide_proposal(approve_id.clone(), true, cx)
                         })),
@@ -2006,6 +2005,7 @@ impl AppView {
                     Button::new("reject")
                         .label("Reject")
                         .small()
+                        .error()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.decide_proposal(reject_id.clone(), false, cx)
                         })),
@@ -2015,13 +2015,8 @@ impl AppView {
 
     fn details(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let heading = move |text: &str| {
-            div()
-                .text_xs()
-                .font_bold()
-                .text_color(muted)
-                .child(text.to_string())
-        };
+        let heading =
+            move |text: &str| surfaces::text(Variant::Overline, text.to_string()).text_color(muted);
         let mut pane = v_flex()
             .w(px(DETAILS_WIDTH))
             .h_full()
@@ -2087,7 +2082,7 @@ impl AppView {
                         Button::new(SharedString::from(format!("proposal-{id}")))
                             .label(path.rsplit('/').next().unwrap_or(path).to_string())
                             .small()
-                            .ghost()
+                            .text()
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.open_proposal(id.clone(), cx)
                             })),
@@ -2112,7 +2107,7 @@ impl AppView {
                     Button::new(SharedString::from(format!("repo-{}", repo.id)))
                         .label(repo.name.clone())
                         .small()
-                        .ghost()
+                        .text()
                         .on_click(
                             cx.listener(move |this, _, _, cx| this.select_repo(target.clone(), cx)),
                         ),
@@ -2211,8 +2206,16 @@ impl Render for AppView {
             None => "CodeWiki".to_string(),
         };
         self.glass = glass::Levels::for_window(window, cx);
+        // Components that draw their own surfaces read the levels from here.
+        if cx.try_global::<glass::Levels>() != Some(&self.glass) {
+            cx.set_global(self.glass);
+        }
         self.pane_width =
             (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);
+        // The palette stays drawn for a moment after it closes, to fade out.
+        let palette = Presence::new("palette-presence", self.palette_open)
+            .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+            .sample(window, cx);
         let title_bar = TitleBar::new()
             .bg(self.glass.chrome(cx.theme().title_bar))
             .child(
@@ -2258,7 +2261,9 @@ impl Render for AppView {
             }))
             .size_full()
             .text_color(cx.theme().foreground)
-            .when(self.palette_open, |root| root.child(self.palette_view(cx)))
+            .when(palette.should_render(), |root| {
+                root.child(self.palette_view(palette.progress, cx))
+            })
             .child(title_bar)
             .child(glass::hairline(cx))
             .child(self.body(window, cx))
@@ -2279,6 +2284,9 @@ impl AppView {
                     .min_w_0()
                     .h_full()
                     .child(self.toolbar(cx))
+                    .when(self.busy.is_some(), |column| {
+                        column.child(feedback::linear_progress("busy", cx))
+                    })
                     .child(self.tab_bar(cx))
                     .child(
                         h_flex()
@@ -2295,7 +2303,7 @@ impl AppView {
                                     .child(if matches!(self.page, Page::Graph) {
                                         self.graph_view(window, cx)
                                     } else {
-                                        self.page_view(cx)
+                                        self.page_view(window, cx)
                                     }),
                             )
                             .child(self.details(cx)),

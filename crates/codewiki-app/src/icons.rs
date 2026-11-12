@@ -1,71 +1,90 @@
 //! Icons, and the asset source that serves them.
 //!
-//! gpui-kit ships the whole Lucide set but embeds only the hundred or so its
-//! own components draw. This module embeds the ones the app adds, by name, so
-//! the binary does not carry the other 1,700.
+//! The app draws Material Icons, as Material UI apps do. Each is an SVG file
+//! in `icons/`, built from the path data of `@mui/icons-material`, and is
+//! embedded in the binary here.
 //!
-//! Every icon the app draws is a constant here. Naming one anywhere else
-//! would bypass the list below and draw nothing.
+//! Every icon the app draws is a constant here. gpui-kit's own components
+//! draw a few Lucide icons of their own; those come from the kit's assets.
 
 use std::borrow::Cow;
 
-use gpui_kit::assets::{Assets, IconName, icon_assets};
+use gpui_kit::assets::{Assets, IconNamed};
 use gpui_kit::{AssetSource, Result, SharedString};
 
 use crate::palette::Command;
 
-/// Declare the app's icons: embed each one, and name it as a constant.
+/// An icon of the app: the path its SVG is served under.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Glyph(&'static str);
+
+impl IconNamed for Glyph {
+    fn path(self) -> SharedString {
+        self.0.into()
+    }
+}
+
+/// Where the app's icons are served, apart from the kit's under `icons/`.
+const FOLDER_PATH: &str = "icons/material/";
+
+/// Declare the app's icons: embed each file, and name it as a constant.
 macro_rules! app_icons {
-    ($($name:ident = $icon:ident),* $(,)?) => {
-        icon_assets!(Embedded, [$($icon),*]);
-        $(pub const $name: IconName = IconName::$icon;)*
-        /// Every icon above, for the test that loads them all.
-        #[cfg(test)]
-        const ALL: &[IconName] = &[$($name),*];
+    ($($name:ident = $file:literal),* $(,)?) => {
+        $(pub const $name: Glyph = Glyph(concat!("icons/material/", $file, ".svg"));)*
+        /// Every icon above, with its bytes.
+        const EMBEDDED: &[(Glyph, &[u8])] = &[
+            $(($name, include_bytes!(concat!("../icons/", $file, ".svg")))),*
+        ];
     };
 }
 
 app_icons! {
-    // Sidebar.
-    HOME = House,
-    OVERVIEW = LayoutDashboard,
-    FOLDER = Folder,
-    NOTE = FileText,
-    // Toolbar and tabs.
-    BACK = ArrowLeft,
-    EDIT = Pencil,
-    SAVE = Save,
-    CLOSE = X,
-    FIGURE = Image,
-    COMMANDS = Command,
-    GRAPH = Network,
-    HOTSPOTS = Flame,
-    SYNC = RefreshCw,
-    REVIEW = ClipboardCheck,
-    THEME = Palette,
-    NEW_TAB = Plus,
-    // Palette commands that have no toolbar button.
-    SEARCH = Search,
-    REPOSITORY = GitBranch,
-    OWNERSHIP = Users,
-    COUPLING = Link2,
-    DECISIONS = Scale,
-    DEAD_CODE = Ghost,
-    HEALTH = HeartPulse,
-    DRIFT = FileDiff,
-    TESTS = FlaskConical,
-    COVERAGE = Percent,
-    SECURITY = ShieldCheck,
-    REFACTOR = Wrench,
-    WORKSPACE = Boxes,
-    CONTRACTS = Handshake,
-    SETTINGS = Settings,
-    MOTION = Zap,
-    EXTERNAL = ExternalLink,
+    HOME = "home",
+    OVERVIEW = "dashboard",
+    FOLDER = "folder",
+    NOTE = "article",
+    BACK = "arrow-back",
+    EDIT = "edit",
+    SAVE = "save",
+    CLOSE = "close",
+    FIGURE = "image",
+    COMMANDS = "keyboard-command-key",
+    GRAPH = "hub",
+    HOTSPOTS = "local-fire-department",
+    SYNC = "sync",
+    REVIEW = "fact-check",
+    THEME = "palette",
+    NEW_TAB = "add",
+    SEARCH = "search",
+    REPOSITORY = "source",
+    OWNERSHIP = "groups",
+    COUPLING = "link",
+    DECISIONS = "balance",
+    DEAD_CODE = "delete-sweep",
+    HEALTH = "monitor-heart",
+    DRIFT = "difference",
+    TESTS = "science",
+    COVERAGE = "percent",
+    SECURITY = "security",
+    REFACTOR = "build",
+    WORKSPACE = "workspaces",
+    CONTRACTS = "handshake",
+    SETTINGS = "settings",
+    MOTION = "animation",
+    EXTERNAL = "open-in-new",
+    SUCCESS = "check-circle-outline",
+    INFO = "info-outlined",
+    WARNING = "report-problem-outlined",
+    ERROR = "error-outline",
+    EXPAND = "expand-more",
+    // Pages.
+    CHECK = "check",
+    SYMBOL = "data-object",
+    FILE = "insert-drive-file",
 }
 
 /// The icon shown beside a palette entry.
-pub fn for_command(command: &Command) -> IconName {
+pub fn for_command(command: &Command) -> Glyph {
     match command {
         Command::Note(_) => NOTE,
         Command::Theme(_) | Command::Themes => THEME,
@@ -100,14 +119,18 @@ pub struct AppAssets;
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
-        match Embedded.load(path)? {
-            Some(bytes) => Ok(Some(bytes)),
+        match EMBEDDED.iter().find(|(glyph, _)| glyph.0 == path) {
+            Some((_, bytes)) => Ok(Some(Cow::Borrowed(bytes))),
             None => Assets.load(path),
         }
     }
 
     fn list(&self, path: &str) -> Result<Vec<SharedString>> {
-        let mut paths = Embedded.list(path)?;
+        let mut paths: Vec<SharedString> = EMBEDDED
+            .iter()
+            .filter(|(glyph, _)| glyph.0.starts_with(path) || FOLDER_PATH.starts_with(path))
+            .map(|(glyph, _)| glyph.0.into())
+            .collect();
         for path in Assets.list(path)? {
             if !paths.contains(&path) {
                 paths.push(path);
@@ -123,13 +146,18 @@ mod tests {
 
     #[test]
     fn every_app_icon_loads_as_svg() {
-        for icon in ALL {
-            let path = icon.path();
+        for (glyph, _) in EMBEDDED {
+            let path = glyph.path();
+            assert!(path.starts_with(FOLDER_PATH), "{path}");
             let bytes = AppAssets
                 .load(&path)
                 .unwrap_or_else(|error| panic!("{path}: {error}"))
                 .unwrap_or_else(|| panic!("{path} is not embedded"));
             assert!(bytes.starts_with(b"<svg"), "{path} is not an SVG");
+            // A Material icon is drawn on a 24 unit grid and filled.
+            let svg = std::str::from_utf8(&bytes).unwrap();
+            assert!(svg.contains(r#"viewBox="0 0 24 24""#), "{path}");
+            assert!(svg.contains("<path d=\""), "{path} has no path");
         }
     }
 
@@ -151,7 +179,7 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(paths.len(), unique.len());
-        assert!(paths.len() > ALL.len());
+        assert!(paths.len() > EMBEDDED.len());
     }
 
     #[test]

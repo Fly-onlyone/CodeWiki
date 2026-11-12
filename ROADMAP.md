@@ -4,7 +4,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 16 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (325 tests) and `cargo deny check` all pass.
+- 16 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (372 tests) and `cargo deny check` all pass.
 - CodeWiki documents its own repository: 162 notes, 100% of wikilinks resolve, a second sync writes nothing.
 - The Docker image builds (271 MB) and was exercised over HTTP and through the MCP bridge.
 
@@ -33,8 +33,10 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 | M9 Report pages | Seen in part | Decisions, health, dead code, drift, tests, coverage, security, refactoring plan, workspace, API contracts. Page builders are unit-tested; the health and contracts pages were seen in the app |
 | M10 Note editor | Verified | Source editor beside a live preview, wikilink completion, unsaved-edit guard. Driven by posted input: typing updates the preview, a suggestion click writes the full `[[Name]]`, Save writes the file and the note comes back marked as edited by hand. Ctrl+S is untried. See Deviations |
 | M11 Glass over Mica, custom title bar | Seen in part | Custom title bar with system caption buttons seen. Every surface is translucent over the backdrop, at an opacity worked out per theme so that text keeps its contrast (unit-tested). The layering was seen over a forced backdrop color (`CODEWIKI_BACKDROP`). The Mica material itself cannot be confirmed from a window capture; snap layouts were not tried by hand |
-| M11 Fonts, reading typography, icons | Seen | Inter and JetBrains Mono are bundled. The page has a bounded line length, a heading scale and styled code blocks and tables. Icons in the sidebar, toolbar, tabs and palette; a test loads every one |
-| M11 Motion and drifting backdrop | Seen in part | A setting follows Windows, reduces or forces animations: clicked, saved and seen again after a restart. The backdrop drifts in a focused window (seen with `CODEWIKI_BACKDROP_DRIFT`) at about 4% of one core in a release build, and the app is not redrawn by it. The page and palette fade-ins were not caught on a capture |
+| M11 Fonts, reading typography, icons | Seen | Inter and JetBrains Mono are bundled. A note has a bounded line length, a heading scale and styled code blocks and tables. Material Icons in the sidebar, toolbar, tabs, palette and pages; a test loads every one |
+| M11 Material UI components | Seen in part | Every control is drawn to MUI's measurements with TradingAgent's look: buttons, text field, tabs, list sidebar, palette, alerts, chips, cards, tooltips. A small button measures 30.7 px high (MUI 30.75) and the text field 40 px. Hover, ripple, the sliding tab bar and folder collapse were seen at reduced speed (`CODEWIKI_MOTION_SCALE`). Tab order and Enter or Space on the new controls were not checked: the checks cannot post keys |
+| M11 Pages built from components | Seen in part | The twenty generated pages are stat tiles, tables, cards and pressable rows, not Markdown; each has a test that reads its content and its actions. Settings, themes, health, tests and a file page were seen in Violet dark and light, and a click on a theme card applied the theme. The proposal and sync pages were not seen. Illustrations use the same components; their tab strip was not seen, as no note here has one |
+| M11 Motion and drifting backdrop | Seen in part | A setting follows Windows, reduces or forces animations: clicked, saved and seen again after a restart. The backdrop drifts in a focused window (seen with `CODEWIKI_BACKDROP_DRIFT`) at about 4% of one core in a release build, and the app is not redrawn by it. Motion runs on springs with TradingAgent's Framer Motion presets. A page entering was caught at one tenth speed: its blocks arriving in turn and its headline numbers counting up. In a release build the app uses 0% of one core at rest, 7 to 12% during a ripple and 9 to 19% during a page entrance of about a second. GPUI cannot scale an element, so Framer's hover and press scale are left out. The palette's fade-out was not caught on a capture |
 | M11 Installer | Verified | `scripts/package.ps1` builds a zip with `install.ps1` and `uninstall.ps1`; install, run and uninstall were tested into a scratch folder. See Deviations |
 
 ## Later phases
@@ -85,5 +87,7 @@ These cannot be done from an automated session on this machine.
 - Run the Anthropic API, OpenAI-compatible and Ollama providers and embedders against the real services. Needs an API key or an Ollama install.
 - Try the Ctrl shortcuts (Ctrl+K, Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+S) and Windows snap layouts by hand. They need real keyboard focus.
 - Look at the glass over the real Mica backdrop, in dark and in light system mode, and at a light theme on a dark system.
-- Watch a page change and the palette open, to see the fade-ins.
+- Press Tab through the toolbar and a page, and press Enter and Space on a button, a tab and a sidebar row.
+- Open a note whose illustration has tabs, and switch between them.
+- Close the palette with Escape, to see it fade out.
 - Codex round trip, when a Codex subscription is available.

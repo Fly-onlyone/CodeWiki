@@ -14,7 +14,10 @@
 //! asks for. A theme with weak contrast therefore gets denser glass.
 
 use gpui_kit::component::ActiveTheme as _;
-use gpui_kit::{App, Hsla, Rgba, Window, WindowAppearance};
+use gpui_kit::{
+    App, BoxShadow, Div, Hsla, Rgba, Styled as _, Window, WindowAppearance, div, linear_color_stop,
+    linear_gradient, px,
+};
 
 use crate::contrast::{self, BLACK, PANE_FLOOR, Rgb, WHITE};
 
@@ -90,6 +93,38 @@ impl Levels {
 fn rgb(color: Hsla) -> Rgb {
     let color = color.to_rgb();
     [color.r, color.g, color.b]
+}
+
+/// The theme's border, pulled a little toward its primary color.
+pub fn tinted_border(cx: &App) -> Hsla {
+    let theme = cx.theme();
+    theme.border.blend(theme.primary.opacity(0.18))
+}
+
+/// A one-pixel strip across the top of a surface that starts in the primary
+/// color and fades out to the right.
+pub fn hairline(cx: &App) -> Div {
+    let primary = cx.theme().primary;
+    div().h(px(1.)).w_full().flex_shrink_0().bg(linear_gradient(
+        90.,
+        linear_color_stop(primary.opacity(0.75), 0.),
+        linear_color_stop(primary.opacity(0.), 1.),
+    ))
+}
+
+/// The shadow of a floating surface: a wide glow in the primary color over a
+/// tight dark one that keeps the edge defined.
+pub fn glow(cx: &App) -> Vec<BoxShadow> {
+    let primary = cx.theme().primary;
+    vec![
+        BoxShadow::new(px(0.), px(10.), primary.opacity(0.22)).blur_radius(px(48.)),
+        BoxShadow::new(px(0.), px(2.), gpui_kit::black().opacity(0.35)).blur_radius(px(10.)),
+    ]
+}
+
+/// A bar in the primary color down the left edge of a selected row.
+pub fn selection_bar(cx: &App) -> Vec<BoxShadow> {
+    vec![BoxShadow::new(px(3.), px(0.), cx.theme().primary).inset()]
 }
 
 /// An opaque color to paint under every surface instead of the real backdrop,

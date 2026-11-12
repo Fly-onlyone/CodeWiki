@@ -6,10 +6,10 @@
 // Release builds are a GUI app: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-#[cfg(test)]
 mod contrast;
 mod editor;
 mod fonts;
+mod glass;
 mod graph;
 mod illustration;
 mod markdown;
@@ -157,6 +157,10 @@ struct AppView {
     show_figure: bool,
     /// Palette diagrams were last drawn with; redrawn when the theme flips.
     palette: cw_mermaid::Palette,
+    /// How see-through the surfaces are; worked out again on every frame.
+    glass: glass::Levels,
+    /// Opaque color painted under the glass in place of the real backdrop.
+    debug_backdrop: Option<Hsla>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -194,6 +198,8 @@ impl AppView {
                 _ => {}
             },
         );
+        // The glass depends on the system mode as well as on the theme.
+        let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
         let mut this = Self {
             backend: None,
             repos: Vec::new(),
@@ -233,7 +239,9 @@ impl AppView {
             figure: None,
             show_figure: false,
             palette: cw_mermaid::Palette::Dark,
-            _subscriptions: vec![subscription, palette_subscription],
+            glass: glass::Levels::OPAQUE,
+            debug_backdrop: glass::debug_backdrop(),
+            _subscriptions: vec![subscription, palette_subscription, appearance],
         };
         this.connect(cx);
         this
@@ -1140,7 +1148,8 @@ impl AppView {
                 .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
         };
 
-        let mut sidebar = Sidebar::new("vault").w(px(280.)).header(
+        let glass = self.glass.chrome(cx.theme().sidebar);
+        let mut sidebar = Sidebar::new("vault").w(px(280.)).bg(glass).header(
             SidebarHeader::new().child(
                 v_flex()
                     .flex_1()
@@ -1200,6 +1209,7 @@ impl AppView {
             .items_center()
             .border_b_1()
             .border_color(cx.theme().border)
+            .bg(self.glass.chrome(cx.theme().background))
             .child(
                 Button::new("back")
                     .label("Back")
@@ -1321,7 +1331,8 @@ impl AppView {
             .py_1()
             .items_center()
             .border_b_1()
-            .border_color(border);
+            .border_color(border)
+            .bg(self.glass.chrome(cx.theme().background));
         for index in 0..self.tabs.len() {
             let active = index == self.active_tab;
             let title = page_title(if active {
@@ -1918,6 +1929,7 @@ impl AppView {
             .p_3()
             .border_l_1()
             .border_color(cx.theme().border)
+            .bg(self.glass.chrome(cx.theme().background))
             .overflow_hidden();
         match &self.page {
             Page::Note {
@@ -2098,13 +2110,15 @@ impl Render for AppView {
             Some(repo) => format!("CodeWiki — {}", repo.name),
             None => "CodeWiki".to_string(),
         };
-        // The title bar stays clear so the Mica backdrop shows through it.
-        let title_bar = TitleBar::new().bg(gpui_kit::transparent_black()).child(
-            div()
-                .text_sm()
-                .text_color(cx.theme().muted_foreground)
-                .child(title),
-        );
+        self.glass = glass::Levels::for_window(window, cx);
+        let title_bar = TitleBar::new()
+            .bg(self.glass.chrome(cx.theme().title_bar))
+            .child(
+                div()
+                    .text_sm()
+                    .text_color(cx.theme().muted_foreground)
+                    .child(title),
+            );
         v_flex()
             .id("root")
             .relative()
@@ -2142,6 +2156,10 @@ impl Render for AppView {
             }))
             .size_full()
             .text_color(cx.theme().foreground)
+            // First, so that it is painted under every surface.
+            .when_some(self.debug_backdrop, |root, color| {
+                root.child(div().absolute().inset_0().bg(color))
+            })
             .when(self.palette_open, |root| root.child(self.palette_view(cx)))
             .child(title_bar)
             .child(self.body(window, cx))
@@ -2155,7 +2173,6 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .w_full()
-            .bg(cx.theme().background)
             .child(self.sidebar(cx))
             .child(
                 v_flex()
@@ -2168,11 +2185,20 @@ impl AppView {
                         h_flex()
                             .flex_1()
                             .min_h_0()
-                            .child(if matches!(self.page, Page::Graph) {
-                                self.graph_view(window, cx)
-                            } else {
-                                self.page_view(cx)
-                            })
+                            .child(
+                                // The pane: denser glass than the chrome
+                                // around it, because it carries the text.
+                                h_flex()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .bg(self.glass.pane(cx.theme().background))
+                                    .child(if matches!(self.page, Page::Graph) {
+                                        self.graph_view(window, cx)
+                                    } else {
+                                        self.page_view(cx)
+                                    }),
+                            )
                             .child(self.details(cx)),
                     ),
             )
@@ -2193,7 +2219,7 @@ fn main() {
             KeyBinding::new("alt-left", GoBack, None),
             KeyBinding::new("ctrl-s", SaveNote, None),
         ]);
-        gpui_kit::open_window(TitleBar::window_options(), cx, |window, cx| {
+        let (window, _) = gpui_kit::open_window(TitleBar::window_options(), cx, |window, cx| {
             window.set_window_title("CodeWiki");
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
@@ -2205,5 +2231,15 @@ fn main() {
             })
         })
         .expect("failed to open the main window");
+        // gpui-kit paints the theme background over the whole window, which
+        // hides the backdrop. Clear it; the app's own surfaces are the glass.
+        window
+            .update(cx, |_, window, cx| {
+                gpui_kit::base::Root::update(window, cx, |root, _, cx| {
+                    root.style().background = Some(gpui_kit::transparent_black().into());
+                    cx.notify();
+                });
+            })
+            .expect("the main window was just opened");
     });
 }

@@ -203,7 +203,7 @@ pub fn next_theme(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{BUNDLED, CODEWIKI, DEFAULT_THEME};
-    use crate::contrast::{AA, PANE_FLOOR, parse_hex, ratio, worst_ratio};
+    use crate::contrast::{AA, BLACK, PANE_FLOOR, WHITE, parse_hex, ratio, worst_ratio};
     use crate::fonts;
     use gpui_kit::component::ThemeConfigColors;
     use std::collections::BTreeSet;
@@ -270,7 +270,7 @@ mod tests {
             };
             let pane = color("background");
             for key in TEXT_KEYS {
-                let worst = worst_ratio(color(key), pane, PANE_FLOOR);
+                let worst = worst_ratio(color(key), pane, PANE_FLOOR, [BLACK, WHITE]);
                 if worst < AA {
                     failures.push(format!("{name}: {key} is {worst:.2}:1"));
                 }

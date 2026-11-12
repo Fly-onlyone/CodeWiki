@@ -11,10 +11,13 @@ and contain no text copied from GPL-licensed template files.
 Third-party material bundled with this product
 -----------------------------------------------
 
-Most color themes in crates/codewiki-app/themes/ are copied unmodified from the
-gpui-kit project (https://github.com/longbridge/gpui-kit), Copyright 2024-2026
-Longbridge, licensed under the Apache License, Version 2.0. Each theme file
-names the author and source of its palette in its "author" and "url" fields.
+Most color themes in crates/codewiki-app/themes/ are copied from the gpui-kit
+project (https://github.com/longbridge/gpui-kit), Copyright 2024-2026
+Longbridge, licensed under the Apache License, Version 2.0. They were changed
+in one way: color keys that gpui-kit 0.9.1 does not read were renamed to the
+keys it reads, or removed where it has no such key. No color value was
+changed. Each theme file names the author and source of its palette in its
+"author" and "url" fields.
 
 The theme files dracula.json, github.json, nord.json, one.json and
 rose-pine.json were written for CodeWiki. They use the color values published

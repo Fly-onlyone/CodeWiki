@@ -143,3 +143,38 @@ pub fn next_theme(cx: &mut App) {
         let _ = std::fs::write(file, next);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::BUNDLED;
+    use gpui_kit::component::ThemeConfigColors;
+    use std::collections::BTreeSet;
+
+    /// The theme loader ignores color keys it does not know, so a misspelt key
+    /// is a color that silently never applies.
+    #[test]
+    fn bundled_themes_use_only_schema_color_keys() {
+        let schema = serde_json::to_value(ThemeConfigColors::default()).unwrap();
+        let known: BTreeSet<&str> = schema
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert!(known.contains("link.hover"), "schema keys were not read");
+
+        let mut unknown = BTreeSet::new();
+        for content in BUNDLED {
+            let set: serde_json::Value = serde_json::from_str(content).unwrap();
+            for theme in set["themes"].as_array().unwrap() {
+                let name = theme["name"].as_str().unwrap();
+                for key in theme["colors"].as_object().unwrap().keys() {
+                    if !known.contains(key.as_str()) {
+                        unknown.insert(format!("{name}: {key}"));
+                    }
+                }
+            }
+        }
+        assert!(unknown.is_empty(), "unknown color keys: {unknown:#?}");
+    }
+}

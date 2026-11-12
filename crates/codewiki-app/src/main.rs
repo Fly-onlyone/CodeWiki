@@ -1641,6 +1641,11 @@ impl AppView {
             _ => reading::WIDE_MEASURE,
         };
         let showing_figure = self.show_figure && self.figure.is_some();
+        let figure = self
+            .figure
+            .as_ref()
+            .filter(|_| self.show_figure)
+            .map(|figure| illustration::render(figure, "figure", window, cx));
         let page = (!showing_figure).then(|| {
             let content = match &self.page {
                 Page::Note { .. } => div()
@@ -1692,20 +1697,17 @@ impl AppView {
             .when_some(self.proposal_actions(cx), |this, actions| {
                 this.child(actions)
             })
-            .when_some(
-                self.figure.as_ref().filter(|_| self.show_figure),
-                |this, figure| {
-                    this.child(
-                        div()
-                            .id("figure")
-                            .flex_1()
-                            .min_h_0()
-                            .p_6()
-                            .overflow_y_scroll()
-                            .child(illustration::render(figure, cx)),
-                    )
-                },
-            )
+            .when_some(figure, |this, figure| {
+                this.child(
+                    div()
+                        .id("figure")
+                        .flex_1()
+                        .min_h_0()
+                        .p_6()
+                        .overflow_y_scrollbar()
+                        .child(figure),
+                )
+            })
             .when_some(page, |this, page| this.child(page))
     }
 

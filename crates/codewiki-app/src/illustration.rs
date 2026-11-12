@@ -1,15 +1,26 @@
 //! Native renderer for illustrations.
 //!
-//! Turns an evaluated OpenUI Lang tree into GPUI elements. Every component of
-//! the CodeWiki library (`cw_illustrate::library`) has a branch here; a
-//! component this renderer does not know is drawn as its name, never dropped
-//! silently.
+//! Turns an evaluated OpenUI Lang tree into GPUI elements, drawn with the
+//! `mui` components. Every component of the CodeWiki library
+//! (`cw_illustrate::library`) has a branch here; a component this renderer
+//! does not know is drawn as its name, never dropped silently.
 
 use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use openui_lang::Node;
 use std::collections::BTreeMap;
+
+use crate::doc;
+use crate::doc_view;
+use crate::mui::feedback::{self, Tone};
+use crate::mui::motion::{Enter, EnterExt as _};
+use crate::mui::surfaces::{self, card, card_content};
+use crate::mui::tabs::{Tab, Tabs};
+use crate::mui::tokens::Variant;
+
+/// MUI's `StepIcon`: a 24 px disc with the step's number in 12 px text.
+const STEP_ICON: f32 = 24.0;
 
 type Props = BTreeMap<String, Node>;
 
@@ -69,11 +80,24 @@ fn series_color(index: usize, cx: &App) -> Hsla {
     ][index % 5]
 }
 
-fn children(nodes: &[Node], cx: &App) -> Vec<AnyElement> {
+/// The tone a component names, as the `mui` components know it.
+fn tone_of(tone: Option<&str>) -> Tone {
+    match tone {
+        Some("success") => Tone::Success,
+        Some("warning") => Tone::Warning,
+        Some("danger") => Tone::Error,
+        _ => Tone::Neutral,
+    }
+}
+
+/// `path` names each node by its place in the tree, so that a component that
+/// remembers something, such as the chosen tab, keeps it between frames.
+fn children(nodes: &[Node], path: &str, window: &mut Window, cx: &mut App) -> Vec<AnyElement> {
     nodes
         .iter()
-        .filter(|n| !matches!(n, Node::Null))
-        .map(|n| render(n, cx))
+        .enumerate()
+        .filter(|(_, n)| !matches!(n, Node::Null))
+        .map(|(index, n)| render(n, &format!("{path}.{index}"), window, cx))
         .collect()
 }
 
@@ -201,7 +225,7 @@ fn pie_chart(props: &Props, cx: &App) -> AnyElement {
     chart.into_any_element()
 }
 
-fn table(props: &Props, cx: &App) -> AnyElement {
+fn table(props: &Props, path: &str, window: &mut Window, cx: &mut App) -> AnyElement {
     let columns: Vec<(String, Vec<String>)> = list_of(props, "columns")
         .iter()
         .filter_map(|c| match c {
@@ -217,60 +241,153 @@ fn table(props: &Props, cx: &App) -> AnyElement {
         .map(|(_, values)| values.len())
         .max()
         .unwrap_or(0);
-    let mut table = v_flex()
-        .w_full()
-        .border_1()
-        .border_color(cx.theme().border)
-        .rounded(cx.theme().radius);
-    let mut header = h_flex().bg(cx.theme().muted);
-    for (name, _) in &columns {
-        header = header.child(
-            div()
-                .flex_1()
-                .px_3()
-                .py_1()
-                .text_sm()
-                .font_semibold()
-                .child(name.clone()),
+    let mut table = doc::Table::new(
+        columns
+            .iter()
+            .map(|(name, _)| doc::Column::new(name.clone())),
+    );
+    for row in 0..rows {
+        table.row(
+            columns
+                .iter()
+                .map(|(_, values)| doc::Cell::text(values.get(row).cloned().unwrap_or_default())),
         );
     }
-    table = table.child(header);
-    for row in 0..rows {
-        let mut line = h_flex().border_t_1().border_color(cx.theme().border);
-        for (_, values) in &columns {
-            line = line.child(
-                div()
-                    .flex_1()
-                    .px_3()
-                    .py_1()
-                    .text_sm()
-                    .child(values.get(row).cloned().unwrap_or_default()),
-            );
-        }
-        table = table.child(line);
-    }
-    table.into_any_element()
+    doc_view::plain_table(&table, path, window, cx)
 }
 
-/// Draw one node of an illustration.
-pub fn render(node: &Node, cx: &App) -> AnyElement {
-    let Node::Element { name, props } = node else {
-        return div().text_sm().child(label(node)).into_any_element();
-    };
-    let theme = cx.theme();
-    match name.as_str() {
-        "Card" => v_flex()
+/// Tabs: one panel shown at a time, the one whose tab was chosen.
+fn tabs(props: &Props, path: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+    let items: Vec<&Props> = list_of(props, "items")
+        .iter()
+        .filter_map(|tab| match tab {
+            Node::Element { props, .. } => Some(props),
+            _ => None,
+        })
+        .collect();
+    let id = SharedString::from(format!("figure-tabs:{path}"));
+    let chosen = window.use_keyed_state(ElementId::Name(id.clone()), cx, |_, _| 0usize);
+    let selected = (*chosen.read(cx)).min(items.len().saturating_sub(1));
+    let strip = Tabs::new(id.clone())
+        .tabs(
+            items
+                .iter()
+                .map(|props| Tab::new(text_of(props, "label").unwrap_or_default())),
+        )
+        .selected(selected)
+        .on_select(move |index, _, cx| {
+            chosen.update(cx, |chosen, cx| {
+                *chosen = index;
+                cx.notify();
+            });
+        });
+    let panel = items.get(selected).map(|props| {
+        v_flex()
             .w_full()
-            .gap_4()
-            .p_4()
-            .border_1()
-            .border_color(theme.border)
-            .rounded(theme.radius)
-            .when_some(text_of(props, "title"), |this, title| {
-                this.child(div().text_lg().font_semibold().child(title))
-            })
-            .children(children(list_of(props, "children"), cx))
-            .into_any_element(),
+            .gap_3()
+            .children(children(
+                list_of(props, "children"),
+                &format!("{path}.{selected}"),
+                window,
+                cx,
+            ))
+            // TradingAgent's `tabSwitch`: the new panel rises into place.
+            .enter(
+                ElementId::NamedInteger(id.clone(), selected as u64),
+                Enter::TAB,
+            )
+    });
+    v_flex()
+        .w_full()
+        .gap_3()
+        .child(
+            div()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(strip),
+        )
+        .children(panel)
+        .into_any_element()
+}
+
+/// MUI's vertical `Stepper`: numbered discs joined by a line.
+fn steps(props: &Props, cx: &App) -> AnyElement {
+    let theme = cx.theme();
+    let items: Vec<&Props> = list_of(props, "items")
+        .iter()
+        .filter_map(|step| match step {
+            Node::Element { props, .. } => Some(props),
+            _ => None,
+        })
+        .collect();
+    let last = items.len().saturating_sub(1);
+    let mut out = v_flex().w_full();
+    for (index, props) in items.into_iter().enumerate() {
+        out = out.child(
+            h_flex()
+                .gap_3()
+                .items_stretch()
+                .child(
+                    v_flex()
+                        .flex_shrink_0()
+                        .items_center()
+                        .child(
+                            div()
+                                .flex_shrink_0()
+                                .size(px(STEP_ICON))
+                                .rounded_full()
+                                .bg(theme.button_primary)
+                                .text_color(theme.button_primary_foreground)
+                                .text_size(px(12.))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(format!("{}", index + 1)),
+                        )
+                        // `StepConnector`: a line down to the next disc.
+                        .when(index != last, |rail| {
+                            rail.child(div().flex_1().min_h(px(16.)).w(px(1.)).bg(theme.border))
+                        }),
+                )
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w_0()
+                        .pb_3()
+                        .child(
+                            surfaces::text(
+                                Variant::Subtitle2,
+                                text_of(props, "title").unwrap_or_default(),
+                            )
+                            .line_height(px(STEP_ICON)),
+                        )
+                        .when_some(text_of(props, "detail"), |this, detail| {
+                            this.child(
+                                surfaces::text(Variant::Body2, detail)
+                                    .text_color(theme.muted_foreground),
+                            )
+                        }),
+                ),
+        );
+    }
+    out.into_any_element()
+}
+
+/// Draw one node of an illustration. `path` names its place in the tree.
+pub fn render(node: &Node, path: &str, window: &mut Window, cx: &mut App) -> AnyElement {
+    let Node::Element { name, props } = node else {
+        return surfaces::text(Variant::Body2, label(node)).into_any_element();
+    };
+    match name.as_str() {
+        "Card" => {
+            let content = card_content()
+                .gap_4()
+                .when_some(text_of(props, "title"), |this, title| {
+                    this.child(surfaces::text(Variant::H4, title))
+                })
+                .children(children(list_of(props, "children"), path, window, cx));
+            card(cx).w_full().child(content).into_any_element()
+        }
         "Stack" => {
             let row = text_of(props, "direction").as_deref() == Some("row");
             let stack = if row {
@@ -284,11 +401,11 @@ pub fn render(node: &Node, cx: &App) -> AnyElement {
                 _ => stack.gap_3(),
             }
             .w_full()
-            .children(children(list_of(props, "children"), cx))
+            .children(children(list_of(props, "children"), path, window, cx))
             .into_any_element()
         }
         "Grid" => {
-            let items = children(list_of(props, "children"), cx);
+            let items = children(list_of(props, "children"), path, window, cx);
             let columns = match props.get("columns") {
                 Some(Node::Number(n)) if *n >= 1.0 => (*n as usize).min(6),
                 _ => items.len().clamp(1, 4),
@@ -297,7 +414,7 @@ pub fn render(node: &Node, cx: &App) -> AnyElement {
             h_flex()
                 .w_full()
                 .flex_wrap()
-                .items_start()
+                .items_stretch()
                 .children(
                     items
                         .into_iter()
@@ -305,155 +422,58 @@ pub fn render(node: &Node, cx: &App) -> AnyElement {
                 )
                 .into_any_element()
         }
-        "Tabs" => {
-            // Static documents show every tab, one under another.
-            let mut out = v_flex().w_full().gap_4();
-            for tab in list_of(props, "items") {
-                if let Node::Element { props, .. } = tab {
-                    out = out.child(
-                        v_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_semibold()
-                                    .text_color(theme.primary)
-                                    .child(text_of(props, "label").unwrap_or_default()),
-                            )
-                            .children(children(list_of(props, "children"), cx)),
-                    );
-                }
-            }
-            out.into_any_element()
-        }
-        "Divider" => div().w_full().h(px(1.)).bg(theme.border).into_any_element(),
+        "Tabs" => tabs(props, path, window, cx),
+        "Divider" => surfaces::divider(cx).into_any_element(),
         "Header" => v_flex()
             .gap_1()
-            .child(
-                div()
-                    .text_xl()
-                    .font_bold()
-                    .child(text_of(props, "title").unwrap_or_default()),
-            )
+            .child(surfaces::text(
+                Variant::H3,
+                text_of(props, "title").unwrap_or_default(),
+            ))
             .when_some(text_of(props, "subtitle"), |this, subtitle| {
                 this.child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(subtitle),
+                    surfaces::text(Variant::Body2, subtitle)
+                        .text_color(cx.theme().muted_foreground),
                 )
             })
             .into_any_element(),
         "TextContent" => {
             let tone = text_of(props, "tone");
-            div()
-                .text_sm()
+            surfaces::text(Variant::Body2, text_of(props, "text").unwrap_or_default())
                 .text_color(tone_color(tone.as_deref(), cx))
                 .when(tone.as_deref() == Some("strong"), |this| {
                     this.font_semibold()
                 })
-                .child(text_of(props, "text").unwrap_or_default())
                 .into_any_element()
         }
-        "Stat" => v_flex()
-            .gap_1()
-            .p_3()
-            .rounded(theme.radius)
-            .bg(theme.muted)
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(text_of(props, "label").unwrap_or_default()),
-            )
-            .child(
-                div()
-                    .text_2xl()
-                    .font_bold()
-                    .child(text_of(props, "value").unwrap_or_default()),
-            )
-            .when_some(text_of(props, "hint"), |this, hint| {
-                this.child(
-                    div()
-                        .text_xs()
-                        .text_color(theme.muted_foreground)
-                        .child(hint),
-                )
-            })
-            .into_any_element(),
-        "Badge" => {
-            let tone = text_of(props, "tone");
-            h_flex()
-                .child(
-                    div()
-                        .px_2()
-                        .rounded(px(999.))
-                        .border_1()
-                        .border_color(tone_color(tone.as_deref(), cx))
-                        .text_xs()
-                        .text_color(tone_color(tone.as_deref(), cx))
-                        .child(text_of(props, "text").unwrap_or_default()),
-                )
-                .into_any_element()
-        }
-        "Steps" => {
-            let mut out = v_flex().w_full().gap_3();
-            for (index, step) in list_of(props, "items").iter().enumerate() {
-                let Node::Element { props, .. } = step else {
-                    continue;
-                };
-                out = out.child(
-                    h_flex()
-                        .gap_3()
-                        .items_start()
-                        .child(
-                            div()
-                                .flex_shrink_0()
-                                .size(px(22.))
-                                .rounded(px(999.))
-                                .bg(theme.primary)
-                                .text_color(theme.primary_foreground)
-                                .text_xs()
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(format!("{}", index + 1)),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .child(
-                                    div()
-                                        .text_sm()
-                                        .font_semibold()
-                                        .child(text_of(props, "title").unwrap_or_default()),
-                                )
-                                .when_some(text_of(props, "detail"), |this, detail| {
-                                    this.child(
-                                        div()
-                                            .text_sm()
-                                            .text_color(theme.muted_foreground)
-                                            .child(detail),
-                                    )
-                                }),
-                        ),
-                );
+        "Stat" => {
+            let mut stat = doc::Stat::new(
+                text_of(props, "label").unwrap_or_default(),
+                text_of(props, "value").unwrap_or_default(),
+            );
+            if let Some(hint) = text_of(props, "hint") {
+                stat = stat.hint(hint);
             }
-            out.into_any_element()
+            doc_view::stat_tile(&stat, cx).into_any_element()
         }
-        "Step" => div()
-            .text_sm()
-            .child(text_of(props, "title").unwrap_or_default())
+        "Badge" => h_flex()
+            .child(feedback::chip(
+                text_of(props, "text").unwrap_or_default(),
+                tone_of(text_of(props, "tone").as_deref()),
+                false,
+                cx,
+            ))
             .into_any_element(),
-        "Table" => table(props, cx),
+        "Steps" => steps(props, cx),
+        "Step" => surfaces::text(Variant::Body2, text_of(props, "title").unwrap_or_default())
+            .into_any_element(),
+        "Table" => table(props, path, window, cx),
         // A line chart is drawn with the same bars: the values are exact,
         // only the shape differs.
         "BarChart" | "LineChart" => bar_chart(props, cx),
         "PieChart" => pie_chart(props, cx),
-        other => div()
-            .text_xs()
-            .text_color(theme.muted_foreground)
-            .child(format!("[{other}]"))
+        other => surfaces::text(Variant::Caption, format!("[{other}]"))
+            .text_color(cx.theme().muted_foreground)
             .into_any_element(),
     }
 }

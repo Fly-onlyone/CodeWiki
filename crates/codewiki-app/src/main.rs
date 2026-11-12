@@ -6,6 +6,7 @@
 // Release builds are a GUI app: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod backdrop;
 mod contrast;
 mod editor;
 mod fonts;
@@ -164,8 +165,6 @@ struct AppView {
     palette: cw_mermaid::Palette,
     /// How see-through the surfaces are; worked out again on every frame.
     glass: glass::Levels,
-    /// Opaque color painted under the glass in place of the real backdrop.
-    debug_backdrop: Option<Hsla>,
     /// Width of the centre pane in pixels, from the window size of this frame.
     pane_width: f32,
     _subscriptions: Vec<Subscription>,
@@ -251,7 +250,6 @@ impl AppView {
             show_figure: false,
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
-            debug_backdrop: glass::debug_backdrop(),
             pane_width: 0.0,
             _subscriptions: vec![subscription, palette_subscription, appearance],
         };
@@ -2260,10 +2258,6 @@ impl Render for AppView {
             }))
             .size_full()
             .text_color(cx.theme().foreground)
-            // First, so that it is painted under every surface.
-            .when_some(self.debug_backdrop, |root, color| {
-                root.child(div().absolute().inset_0().bg(color))
-            })
             .when(self.palette_open, |root| root.child(self.palette_view(cx)))
             .child(title_bar)
             .child(glass::hairline(cx))
@@ -2329,12 +2323,14 @@ fn main() {
             window.set_window_title("CodeWiki");
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
-            cx.new(|cx| {
+            let app = cx.new(|cx| {
                 let view = AppView::new(window, cx);
                 // Shortcuts need a focused element to dispatch from.
                 window.focus(&view.focus, cx);
                 view
-            })
+            });
+            // The shell draws the drifting backdrop and holds the app over it.
+            cx.new(|cx| backdrop::Shell::new(app, window, cx))
         })
         .expect("failed to open the main window");
         // gpui-kit paints the theme background over the whole window, which

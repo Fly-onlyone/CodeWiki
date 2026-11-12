@@ -12,7 +12,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 
 | Item | Status | Notes |
 |---|---|---|
-| M0 Scaffold, license policy, CI workflow | Done | The CI workflow file has never run on a remote |
+| M0 Scaffold, license policy, CI workflow | Verified | Published at https://github.com/Fly-onlyone/CodeWiki. CI passes on GitHub: format, lint and all tests on Windows; licenses, bans and sources. An advisories job reports 7 "unmaintained" notices for crates the UI kit depends on and does not fail the build |
 | M1 Rust parser and name resolver | Verified | |
 | M2 Graph metrics and layout | Verified | PageRank, betweenness, SCC, Louvain, ForceAtlas2 |
 | M3 Vault model, registry, linter, manifest | Verified | |
@@ -68,7 +68,6 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 
 ## Known issues
 
-- **Hotspots are empty for this repository** because it has no commits.
 - Search with the built-in embedder ranks by shared words and word stems; a query such as "resolving names" can put a loosely related symbol first.
 - Dead-code findings in Python, TypeScript, JavaScript and Java are reported as "possible", never "likely", because dynamic dispatch hides references from a static index.
 - The editor has no Markdown syntax colouring. The UI kit's Markdown highlighter needs a different `tree-sitter` version than the parsers use, and Cargo cannot select both.

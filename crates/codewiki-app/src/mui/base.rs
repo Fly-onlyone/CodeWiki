@@ -207,3 +207,32 @@ pub fn focus_ring(primary: Hsla) -> BoxShadow {
         inset: false,
     }
 }
+
+/// Whether the pointer is over an element that is not pressable, such as a
+/// text field or a card.
+pub struct Hover {
+    state: Entity<bool>,
+    pub hovered: bool,
+}
+
+impl Hover {
+    /// The state of the element `id`. Call while rendering it.
+    pub fn new(id: &ElementId, window: &mut Window, cx: &mut App) -> Self {
+        let state = window.use_keyed_state(id.clone(), cx, |_, _| false);
+        Self {
+            hovered: *state.read(cx),
+            state,
+        }
+    }
+
+    /// Make `element` report the pointer.
+    pub fn attach(&self, element: Stateful<Div>) -> Stateful<Div> {
+        let state = self.state.clone();
+        element.on_hover(move |hovered, _, cx| {
+            state.update(cx, |state, cx| {
+                *state = *hovered;
+                cx.notify();
+            });
+        })
+    }
+}

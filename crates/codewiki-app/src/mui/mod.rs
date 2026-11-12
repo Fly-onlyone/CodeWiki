@@ -13,6 +13,7 @@ pub mod button;
 #[expect(dead_code, reason = "presets wait for the components that use them")]
 pub mod motion;
 pub mod ripple;
+pub mod text_field;
 // A table copied whole from MUI; not every entry has a user.
 #[allow(dead_code)]
 pub mod tokens;

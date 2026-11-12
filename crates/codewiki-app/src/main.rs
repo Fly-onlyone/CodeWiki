@@ -28,7 +28,7 @@ use std::collections::BTreeMap;
 use cw_client::{Backend, encode};
 use gpui_kit::component::button::{Button as KitButton, ButtonVariants as _};
 use gpui_kit::component::input::{
-    Editor, EditorState, Escape, Input, InputEvent, InputState, MoveDown, MoveUp,
+    Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::sidebar::{
     Sidebar, SidebarGroup, SidebarHeader, SidebarMenu, SidebarMenuItem,
@@ -45,6 +45,7 @@ use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SC
 use motion::MotionPref;
 use mui::button::{Button, IconButton};
 use mui::motion::{Enter, EnterExt as _};
+use mui::text_field::TextField;
 use palette::Command;
 
 actions!(
@@ -1266,7 +1267,7 @@ impl AppView {
                 div()
                     .flex_1()
                     .px_1()
-                    .child(Input::new(&self.search).small()),
+                    .child(TextField::new("search", &self.search).icon(icons::SEARCH)),
             )
             .when_some(self.busy.clone(), |this, busy| {
                 this.child(
@@ -1505,7 +1506,10 @@ impl AppView {
                                 v_flex()
                                     .p_2()
                                     .gap_2()
-                                    .child(Input::new(&self.palette_input))
+                                    .child(
+                                        TextField::new("palette-input", &self.palette_input)
+                                            .icon(icons::SEARCH),
+                                    )
                                     .child(list),
                             )
                             // Drops into place as it fades in.

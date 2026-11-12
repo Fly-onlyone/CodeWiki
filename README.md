@@ -49,7 +49,7 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` from a repository folder, or pass the folder as its first argument. Ctrl+K opens the command palette.
+`codewiki --help` lists every command. Start `codewiki-app` from a repository folder, or pass the folder as its first argument. Ctrl+K opens the command palette. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
 
 ### With an LLM
 

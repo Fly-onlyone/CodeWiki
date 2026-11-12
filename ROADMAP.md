@@ -4,7 +4,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 16 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (285 tests) and `cargo deny check` all pass.
+- 16 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (325 tests) and `cargo deny check` all pass.
 - CodeWiki documents its own repository: 162 notes, 100% of wikilinks resolve, a second sync writes nothing.
 - The Docker image builds (271 MB) and was exercised over HTTP and through the MCP bridge.
 
@@ -28,11 +28,13 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 | M9 Native Mermaid diagrams | Verified | 62 of 65 real diagrams render |
 | M9 Native illustrations (OpenUI Lang) | Verified | Parser matches the reference on 55 of 55 programs |
 | M9 Graph view | Verified | 60 fps with level of detail; numbers in `spikes/VERDICTS.md` |
-| M9 Theme picker | Seen | 26 theme files; the choice is remembered |
-| M9 Tabs, Ctrl+K palette, settings, Open in Obsidian | Verified in part | Driven by input posted to the window: palette opened by its button, filtered by typing, moved with arrow keys, run with Enter, closed with Escape; new tab by its button. Ctrl chords (Ctrl+K, Ctrl+T, Ctrl+W, Ctrl+Tab) could not be sent that way and are untried |
+| M9 Theme picker | Seen | 53 themes in 27 files; the choice is remembered. The default is CodeWiki Violet, one of eight CodeWiki themes (four hues, each dark and light) whose text colors are held to WCAG AA by tests. A test fails on a color key gpui-kit does not read |
+| M9 Tabs, Ctrl+K palette, settings, Open in Obsidian | Verified in part | Driven by input posted to the window: palette opened by its button, filtered by typing, moved with arrow keys, run with Enter, closed with Escape; new tab by its button. The tab row is gpui-kit's tab bar: opening, switching and closing a tab were driven by posted clicks. Ctrl chords (Ctrl+K, Ctrl+T, Ctrl+W, Ctrl+Tab) could not be sent that way and are untried |
 | M9 Report pages | Seen in part | Decisions, health, dead code, drift, tests, coverage, security, refactoring plan, workspace, API contracts. Page builders are unit-tested; the health and contracts pages were seen in the app |
 | M10 Note editor | Verified | Source editor beside a live preview, wikilink completion, unsaved-edit guard. Driven by posted input: typing updates the preview, a suggestion click writes the full `[[Name]]`, Save writes the file and the note comes back marked as edited by hand. Ctrl+S is untried. See Deviations |
-| M11 Mica and custom title bar | Seen | Custom title bar with system caption buttons seen. Mica is requested from Windows but cannot be confirmed from a window capture; snap layouts were not tried by hand |
+| M11 Glass over Mica, custom title bar | Seen in part | Custom title bar with system caption buttons seen. Every surface is translucent over the backdrop, at an opacity worked out per theme so that text keeps its contrast (unit-tested). The layering was seen over a forced backdrop color (`CODEWIKI_BACKDROP`). The Mica material itself cannot be confirmed from a window capture; snap layouts were not tried by hand |
+| M11 Fonts, reading typography, icons | Seen | Inter and JetBrains Mono are bundled. The page has a bounded line length, a heading scale and styled code blocks and tables. Icons in the sidebar, toolbar, tabs and palette; a test loads every one |
+| M11 Motion and drifting backdrop | Seen in part | A setting follows Windows, reduces or forces animations: clicked, saved and seen again after a restart. The backdrop drifts in a focused window (seen with `CODEWIKI_BACKDROP_DRIFT`) at about 4% of one core in a release build, and the app is not redrawn by it. The page and palette fade-ins were not caught on a capture |
 | M11 Installer | Verified | `scripts/package.ps1` builds a zip with `install.ps1` and `uninstall.ps1`; install, run and uninstall were tested into a scratch folder. See Deviations |
 
 ## Later phases
@@ -82,5 +84,6 @@ These cannot be done from an automated session on this machine.
 
 - Run the Anthropic API, OpenAI-compatible and Ollama providers and embedders against the real services. Needs an API key or an Ollama install.
 - Try the Ctrl shortcuts (Ctrl+K, Ctrl+T, Ctrl+W, Ctrl+Tab, Ctrl+S) and Windows snap layouts by hand. They need real keyboard focus.
-- Confirm the Mica backdrop by eye.
+- Look at the glass over the real Mica backdrop, in dark and in light system mode, and at a light theme on a dark system.
+- Watch a page change and the palette open, to see the fade-ins.
 - Codex round trip, when a Codex subscription is available.

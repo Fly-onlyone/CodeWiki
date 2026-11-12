@@ -435,6 +435,9 @@ pub fn file_page(context: &Value, risk: &Value, radius: &Value) -> String {
 /// URL scheme for links that apply a theme.
 pub const THEME_SCHEME: &str = "codewiki://theme/";
 
+/// URL scheme for links that change a setting: `<setting>/<value>` follows.
+pub const SETTING_SCHEME: &str = "codewiki://setting/";
+
 /// The theme picker: every theme as a link, grouped by mode.
 pub fn themes_page(themes: &[(String, bool)], active: &str) -> String {
     let mut out =

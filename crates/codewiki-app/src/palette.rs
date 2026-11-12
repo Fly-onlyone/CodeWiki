@@ -1,5 +1,7 @@
 //! The command palette's entries and matching. No UI here.
 
+use crate::motion::MotionPref;
+
 /// What running a palette entry does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
@@ -28,6 +30,8 @@ pub enum Command {
     Contracts,
     Themes,
     Settings,
+    /// Choose whether the app animates.
+    Motion(MotionPref),
     NewTab,
     CloseTab,
     OpenInObsidian,
@@ -77,6 +81,13 @@ pub fn actions() -> Vec<Entry> {
     ]
     .into_iter()
     .map(|(label, command)| Entry::new(label, "Command", command))
+    .chain(MotionPref::ALL.into_iter().map(|pref| {
+        Entry::new(
+            format!("Animations: {}", pref.label()),
+            "Setting",
+            Command::Motion(pref),
+        )
+    }))
     .collect()
 }
 

@@ -14,8 +14,10 @@ mod graph;
 mod icons;
 mod illustration;
 mod markdown;
+mod motion;
 mod pages;
 mod palette;
+mod prefs;
 mod reading;
 mod themes;
 
@@ -39,7 +41,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use markdown::{FILE_SCHEME, NOTE_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
+use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
+use motion::MotionPref;
 use palette::Command;
 
 actions!(
@@ -709,7 +712,15 @@ impl AppView {
                 self.open_report("Change coupling", "history", pages::coupling_page, cx)
             }
             Command::Themes => self.open_themes(true, cx),
-            Command::Settings => self.open_settings(cx),
+            Command::Settings => self.open_settings(true, cx),
+            Command::Motion(pref) => {
+                motion::set(pref, cx);
+                // Show the new value where the setting is listed.
+                if self.on_settings_page() {
+                    self.open_settings(false, cx);
+                }
+                cx.notify();
+            }
             Command::NewTab => self.new_tab(cx),
             Command::CloseTab => self.close_tab(self.active_tab, cx),
             Command::OpenInObsidian => self.open_in_obsidian(cx),
@@ -767,7 +778,13 @@ impl AppView {
         );
     }
 
-    fn open_settings(&mut self, cx: &mut Context<Self>) {
+    fn on_settings_page(&self) -> bool {
+        matches!(&self.page, Page::Generated { title, .. } if title == "Settings")
+    }
+
+    /// Show the settings page. `remember` puts the page left on the history;
+    /// pass false when the page only refreshes itself.
+    fn open_settings(&mut self, remember: bool, cx: &mut Context<Self>) {
         let backend = self
             .backend
             .as_ref()
@@ -779,12 +796,13 @@ impl AppView {
             .map(|r| (r.name.clone(), r.path.clone()))
             .collect();
         let theme = cx.theme().theme_name().to_string();
+        let motion = motion::describe(cx);
         self.set_page(
             Page::Generated {
                 title: "Settings".into(),
-                markdown: pages::settings_page(&backend, &theme, &repos),
+                markdown: pages::settings_page(&backend, &theme, &motion, &repos),
             },
-            true,
+            remember,
         );
         cx.notify();
     }
@@ -1110,6 +1128,11 @@ impl AppView {
         } else if let Some(target) = url.strip_prefix(THEME_SCHEME) {
             if themes::select(&markdown::decode(target), cx) {
                 self.open_themes(false, cx);
+            }
+        } else if let Some(target) = url.strip_prefix(SETTING_SCHEME) {
+            if let Some(pref) = target.strip_prefix("motion/").and_then(MotionPref::parse) {
+                motion::set(pref, cx);
+                self.open_settings(false, cx);
             }
         } else if let Some(target) = url.strip_prefix(FILE_SCHEME) {
             self.open_file(markdown::decode(target), cx);
@@ -1493,6 +1516,12 @@ impl AppView {
                                     .gap_2()
                                     .child(Input::new(&self.palette_input))
                                     .child(list),
+                            )
+                            // Drops into place as it fades in.
+                            .with_animation(
+                                "palette-in",
+                                Animation::new(motion::ENTER_FAST).with_easing(ease_out_quint()),
+                                |panel, t| panel.opacity(t).relative().top(px((t - 1.0) * 8.0)),
                             ),
                     ),
                 ),
@@ -1664,25 +1693,36 @@ impl AppView {
             )
             .when(!(self.show_figure && self.figure.is_some()), |this| {
                 this.child(
-                    div().flex_1().min_h_0().py_4().child(reading::frame(
-                        // A fresh id per page resets scroll position and selection.
-                        TextView::markdown(("page", self.page_serial), source)
-                            .scrollable(true)
-                            .image_source(move |uri| {
-                                uri.strip_prefix(markdown::DIAGRAM_SCHEME)
-                                    .and_then(|index| index.parse::<usize>().ok())
-                                    .and_then(|index| diagrams.get(index).cloned())
-                                    .map(ImageSource::Image)
-                                    .unwrap_or_else(|| uri.clone().into())
-                            })
-                            .on_link_click(move |url, _, _, cx| {
-                                let url = url.to_string();
-                                _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
-                            }),
-                        self.pane_width,
-                        measure,
-                        cx,
-                    )),
+                    div()
+                        .flex_1()
+                        .min_h_0()
+                        .py_4()
+                        .child(reading::frame(
+                            // A fresh id per page resets scroll position and selection.
+                            TextView::markdown(("page", self.page_serial), source)
+                                .scrollable(true)
+                                .image_source(move |uri| {
+                                    uri.strip_prefix(markdown::DIAGRAM_SCHEME)
+                                        .and_then(|index| index.parse::<usize>().ok())
+                                        .and_then(|index| diagrams.get(index).cloned())
+                                        .map(ImageSource::Image)
+                                        .unwrap_or_else(|| uri.clone().into())
+                                })
+                                .on_link_click(move |url, _, _, cx| {
+                                    let url = url.to_string();
+                                    _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
+                                }),
+                            self.pane_width,
+                            measure,
+                            cx,
+                        ))
+                        // A new page fades in. The id changes with the page, so
+                        // the animation runs once per page and not on a redraw.
+                        .with_animation(
+                            ("page-in", self.page_serial),
+                            Animation::new(motion::ENTER).with_easing(ease_out_quint()),
+                            |pane, t| pane.opacity(t),
+                        ),
                 )
             })
     }
@@ -2274,6 +2314,7 @@ fn main() {
     let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);
+        motion::init(cx);
         fonts::register(cx);
         themes::init(cx);
         cx.bind_keys([

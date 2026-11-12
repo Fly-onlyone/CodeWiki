@@ -57,3 +57,9 @@ Check crate APIs against docs.rs or the crate source for the pinned version befo
 ## Checking the app without taking focus
 
 Start `codewiki-app <repo> <view>` where `<view>` is a note name or one of `graph:`, `palette:<query>`, `edit:<note>`, `settings:`, `themes:`, `health:`, `contracts:` and similar. Capture the window with `PrintWindow` and post input with `PostMessage`; do not bring the window to the front, and never capture the whole screen.
+
+The window is glass over the Windows backdrop, which a capture cannot see. Set `CODEWIKI_BACKDROP=#RRGGBB` to paint an opaque color under the glass, and `CODEWIKI_BACKDROP_DRIFT=1` to keep the backdrop drifting while the window is inactive. The app starts a backend process that outlives it; stop that one too when a check ends.
+
+## App look
+
+The look lives in five modules of `crates/codewiki-app/src/`: `glass.rs` (how opaque each surface is), `reading.rs` (page typography), `icons.rs`, `motion.rs` and `backdrop.rs`. Every icon the app draws is a constant in `icons.rs`; an icon named anywhere else is not embedded and draws nothing. A new palette command needs an arm in `icons::for_command`. A text color added to a CodeWiki theme must pass the contrast test in `themes.rs`.

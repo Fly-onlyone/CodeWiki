@@ -25,6 +25,9 @@ use crate::icons::Glyph;
 /// A dense `ListItemButton`: 4 px above and below a 14 px label with MUI's
 /// 4 px text margins.
 pub const ROW_HEIGHT: f32 = 36.0;
+/// A dense row with MUI's `secondary` text under its label, at 12 px.
+const TWO_LINE_HEIGHT: f32 = 52.0;
+const SECONDARY_FONT: f32 = 12.0;
 /// `ListItemButton.js`: `paddingLeft: 16`. Half of it is the list's own
 /// inset here, so the row's fill stops short of the edges.
 const INSET: f32 = 8.0;
@@ -88,6 +91,8 @@ pub struct ListItemButton {
     icon: Option<Glyph>,
     selected: bool,
     level: usize,
+    code: bool,
+    secondary: Option<SharedString>,
     trailing: Option<AnyElement>,
     on_click: Option<OnClick>,
 }
@@ -100,6 +105,8 @@ impl ListItemButton {
             icon: None,
             selected: false,
             level: 0,
+            code: false,
+            secondary: None,
             trailing: None,
             on_click: None,
         }
@@ -118,6 +125,19 @@ impl ListItemButton {
     /// How deeply the row is nested: 0 for a top row.
     pub fn level(mut self, level: usize) -> Self {
         self.level = level;
+        self
+    }
+
+    /// Set the label in the code font.
+    pub fn code(mut self, code: bool) -> Self {
+        self.code = code;
+        self
+    }
+
+    /// A second, quieter line under the label: MUI's `secondary` text. The
+    /// row grows to hold it.
+    pub fn secondary(mut self, text: impl Into<SharedString>) -> Self {
+        self.secondary = Some(text.into());
         self
     }
 
@@ -144,6 +164,12 @@ impl RenderOnce for ListItemButton {
             (theme.primary, theme.foreground, theme.muted_foreground);
         let radius = theme.radius / px(1.);
         let (selected, hovered) = (self.selected, base.hovered);
+        let mono = theme.mono_font_family.clone();
+        let height = if self.secondary.is_some() {
+            TWO_LINE_HEIGHT
+        } else {
+            ROW_HEIGHT
+        };
 
         let policy =
             kit::Transition::new(scaled(duration::SHORTEST)).ease(easing(curve::EASE_IN_OUT));
@@ -170,7 +196,7 @@ impl RenderOnce for ListItemButton {
             .relative()
             .left(px(SHIFT * hover))
             .mx(px(INSET))
-            .h(px(ROW_HEIGHT))
+            .h(px(height))
             .pl(px(PADDING + INDENT * self.level as f32))
             .pr(px(PADDING))
             .gap(px(ICON_GAP))
@@ -190,7 +216,7 @@ impl RenderOnce for ListItemButton {
                     div()
                         .absolute()
                         .left_0()
-                        .top(px((ROW_HEIGHT - BAR.1) / 2.0))
+                        .top(px((height - BAR.1) / 2.0))
                         .w(px(BAR.0))
                         .h(px(BAR.1))
                         .rounded_r(px(4.))
@@ -206,7 +232,27 @@ impl RenderOnce for ListItemButton {
                         .transform(Transformation::scale(size(grown, grown))),
                 )
             })
-            .child(div().flex_1().min_w_0().truncate().child(self.label))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .child(
+                        div()
+                            .truncate()
+                            .when(self.code, |label| label.font_family(mono))
+                            .child(self.label),
+                    )
+                    .when_some(self.secondary, |text, secondary| {
+                        text.child(
+                            div()
+                                .truncate()
+                                .text_size(px(SECONDARY_FONT))
+                                .font_weight(FontWeight::NORMAL)
+                                .text_color(muted)
+                                .child(secondary),
+                        )
+                    }),
+            )
             .children(self.trailing);
         let ink = Ink {
             radius,

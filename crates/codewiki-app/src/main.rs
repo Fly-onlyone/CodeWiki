@@ -8,12 +8,15 @@
 
 mod backdrop;
 mod contrast;
+mod doc;
+mod doc_view;
 mod editor;
 mod fonts;
 mod glass;
 mod graph;
 mod icons;
 mod illustration;
+mod live;
 mod markdown;
 mod motion;
 mod mui;
@@ -24,6 +27,7 @@ mod reading;
 mod themes;
 
 use std::collections::BTreeMap;
+use std::rc::Rc;
 
 use cw_client::{Backend, encode};
 use gpui_kit::base::motion::{Presence, Transition};
@@ -38,8 +42,8 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
-use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
-use motion::MotionPref;
+use doc::{Action, Doc};
+use markdown::NOTE_SCHEME;
 use mui::button::{Button, IconButton};
 use mui::feedback::{self, Tone};
 use mui::list::{self, ListFolder, ListItemButton};
@@ -108,11 +112,11 @@ enum Page {
     /// Symbol detail, search results and other generated pages.
     Generated {
         title: String,
-        markdown: String,
+        doc: Rc<Doc>,
     },
     Proposal {
         id: String,
-        markdown: String,
+        doc: Rc<Doc>,
     },
     /// The dependency graph canvas.
     Graph,
@@ -734,7 +738,7 @@ impl AppView {
         &mut self,
         title: &'static str,
         route: &'static str,
-        render: fn(&Value) -> String,
+        render: fn(&Value) -> Doc,
         cx: &mut Context<Self>,
     ) {
         let Some(repo) = self.repo.clone() else {
@@ -748,7 +752,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: title.into(),
-                        markdown: render(&data),
+                        doc: Rc::new(render(&data)),
                     },
                     true,
                 );
@@ -761,7 +765,7 @@ impl AppView {
         &mut self,
         title: &'static str,
         route: &'static str,
-        render: fn(&Value) -> String,
+        render: fn(&Value) -> Doc,
         cx: &mut Context<Self>,
     ) {
         self.run(
@@ -772,7 +776,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: title.into(),
-                        markdown: render(&data),
+                        doc: Rc::new(render(&data)),
                     },
                     true,
                 );
@@ -798,11 +802,17 @@ impl AppView {
             .map(|r| (r.name.clone(), r.path.clone()))
             .collect();
         let theme = cx.theme().theme_name().to_string();
-        let motion = motion::describe(cx);
+        let doc = pages::settings_page(
+            &backend,
+            &theme,
+            motion::current(cx),
+            !cx.reduce_motion(),
+            &repos,
+        );
         self.set_page(
             Page::Generated {
                 title: "Settings".into(),
-                markdown: pages::settings_page(&backend, &theme, &motion, &repos),
+                doc: Rc::new(doc),
             },
             remember,
         );
@@ -842,7 +852,6 @@ impl AppView {
         self.diagrams.clear();
         let palette = self.palette;
         self.rendered = match &self.page {
-            Page::Message(text) => text.clone(),
             Page::Note { text, .. } => {
                 let diagrams = &mut self.diagrams;
                 markdown::prepare_note_with(text, |source| {
@@ -858,8 +867,10 @@ impl AppView {
                     ))
                 })
             }
-            Page::Generated { markdown, .. } | Page::Proposal { markdown, .. } => markdown.clone(),
-            Page::Graph => String::new(),
+            // Drawn from their own model, not from Markdown.
+            Page::Message(_) | Page::Generated { .. } | Page::Proposal { .. } | Page::Graph => {
+                String::new()
+            }
         };
     }
 
@@ -942,7 +953,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title,
-                        markdown: markdown::symbol_page(&detail),
+                        doc: Rc::new(live::symbol_page(&detail)),
                     },
                     true,
                 );
@@ -956,7 +967,7 @@ impl AppView {
         let active = cx.theme().theme_name().to_string();
         let page = Page::Generated {
             title: "Themes".into(),
-            markdown: markdown::themes_page(&themes::list(cx), &active),
+            doc: Rc::new(live::themes_page(&themes::list(cx), &active)),
         };
         self.set_page(page, remember);
         cx.notify();
@@ -984,7 +995,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title,
-                        markdown: markdown::file_page(&context, &risk, &radius),
+                        doc: Rc::new(live::file_page(&context, &risk, &radius)),
                     },
                     true,
                 );
@@ -1004,7 +1015,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: "Hotspots".into(),
-                        markdown: markdown::hotspots_page(&rows),
+                        doc: Rc::new(live::hotspots_page(&rows)),
                     },
                     true,
                 );
@@ -1034,7 +1045,7 @@ impl AppView {
                 this.set_page(
                     Page::Generated {
                         title: format!("Search: {shown}"),
-                        markdown: markdown::search_page(&shown, &hits),
+                        doc: Rc::new(live::search_page(&shown, &hits)),
                     },
                     true,
                 );
@@ -1051,18 +1062,13 @@ impl AppView {
             cx,
             move |b| b.post(&format!("/v1/repos/{}/update", repo.id), &json!({})),
             |this, report, cx| {
-                let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
-                let summary = format!(
-                    "# Sync complete\n\n- {} notes written\n- {} unchanged\n- {} proposals queued for review\n- {} removed\n- {} adopted\n- {} total\n- {:.1}% of links resolve\n",
-                    count("written"),
-                    report["kept"],
-                    count("proposed"),
-                    count("removed"),
-                    count("adopted"),
-                    report["notes_total"],
-                    report["link_rate"].as_f64().unwrap_or(0.0) * 100.0
+                this.set_page(
+                    Page::Generated {
+                        title: "Sync".into(),
+                        doc: Rc::new(live::sync_page(&report)),
+                    },
+                    true,
                 );
-                this.set_page(Page::Generated { title: "Sync".into(), markdown: summary }, true);
                 this.refresh(false, cx);
             },
         );
@@ -1081,7 +1087,7 @@ impl AppView {
                 this.set_page(
                     Page::Proposal {
                         id,
-                        markdown: markdown::proposal_page(&detail),
+                        doc: Rc::new(live::proposal_page(&detail)),
                     },
                     true,
                 );
@@ -1123,25 +1129,31 @@ impl AppView {
         );
     }
 
-    /// Follow a link clicked in the viewer.
+    /// Follow a link clicked in a note.
     fn follow_link(&mut self, url: &str, cx: &mut Context<Self>) {
         if let Some(target) = url.strip_prefix(NOTE_SCHEME) {
-            self.open_note(markdown::decode(target), true, cx);
-        } else if let Some(target) = url.strip_prefix(THEME_SCHEME) {
-            if themes::select(&markdown::decode(target), cx) {
-                self.open_themes(false, cx);
-            }
-        } else if let Some(target) = url.strip_prefix(SETTING_SCHEME) {
-            if let Some(pref) = target.strip_prefix("motion/").and_then(MotionPref::parse) {
-                motion::set(pref, cx);
-                self.open_settings(false, cx);
-            }
-        } else if let Some(target) = url.strip_prefix(FILE_SCHEME) {
-            self.open_file(markdown::decode(target), cx);
-        } else if let Some(target) = url.strip_prefix(SYMBOL_SCHEME) {
-            self.open_symbol(markdown::decode(target), cx);
+            self.run_action(&Action::Note(markdown::decode(target)), cx);
         } else if url.starts_with("https://") || url.starts_with("http://") {
             cx.open_url(url);
+        }
+    }
+
+    /// Do what a link, row or button of a generated page asks for.
+    fn run_action(&mut self, action: &Action, cx: &mut Context<Self>) {
+        match action {
+            Action::Note(target) => self.open_note(target.clone(), true, cx),
+            Action::Symbol(qualified) => self.open_symbol(qualified.clone(), cx),
+            Action::File(path) => self.open_file(path.clone(), cx),
+            Action::Theme(name) => {
+                if themes::select(name, cx) {
+                    self.open_themes(false, cx);
+                }
+            }
+            Action::Themes => self.open_themes(true, cx),
+            Action::Motion(pref) => {
+                motion::set(*pref, cx);
+                self.open_settings(false, cx);
+            }
         }
     }
 
@@ -1604,7 +1616,7 @@ impl AppView {
     }
 
     /// The centre pane for every page except the graph.
-    fn page_view(&self, cx: &mut Context<Self>) -> AnyElement {
+    fn page_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
         match &self.editing {
             Some(editing) => v_flex()
                 .flex_1()
@@ -1615,11 +1627,11 @@ impl AppView {
                 })
                 .child(self.edit_view(editing, cx))
                 .into_any_element(),
-            None => self.viewer(cx).into_any_element(),
+            None => self.viewer(window, cx).into_any_element(),
         }
     }
 
-    fn viewer(&self, cx: &mut Context<Self>) -> Div {
+    fn viewer(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
@@ -1628,6 +1640,48 @@ impl AppView {
             Page::Note { .. } => reading::NOTE_MEASURE,
             _ => reading::WIDE_MEASURE,
         };
+        let showing_figure = self.show_figure && self.figure.is_some();
+        let page = (!showing_figure).then(|| {
+            let content = match &self.page {
+                Page::Note { .. } => div()
+                    .size_full()
+                    .py_4()
+                    .child(reading::frame(
+                        // A fresh id per page resets scroll position and selection.
+                        TextView::markdown(("page", self.page_serial), source)
+                            .scrollable(true)
+                            .image_source(move |uri| {
+                                uri.strip_prefix(markdown::DIAGRAM_SCHEME)
+                                    .and_then(|index| index.parse::<usize>().ok())
+                                    .and_then(|index| diagrams.get(index).cloned())
+                                    .map(ImageSource::Image)
+                                    .unwrap_or_else(|| uri.clone().into())
+                            })
+                            .on_link_click(move |url, _, _, cx| {
+                                let url = url.to_string();
+                                _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
+                            }),
+                        self.pane_width,
+                        measure,
+                        cx,
+                    ))
+                    .into_any_element(),
+                Page::Generated { doc, .. } | Page::Proposal { doc, .. } => {
+                    self.doc_element(doc, window, cx)
+                }
+                Page::Message(message) => {
+                    self.doc_element(&live::message_page(message), window, cx)
+                }
+                Page::Graph => div().into_any_element(),
+            };
+            // A new page rises into place. The id changes with the page, so
+            // this runs once per page and not on a redraw.
+            div()
+                .flex_1()
+                .min_h_0()
+                .child(content)
+                .enter(("page-in", self.page_serial), Enter::PAGE)
+        });
         v_flex()
             .flex_1()
             .min_w_0()
@@ -1652,36 +1706,25 @@ impl AppView {
                     )
                 },
             )
-            .when(!(self.show_figure && self.figure.is_some()), |this| {
-                this.child(
-                    div()
-                        .flex_1()
-                        .min_h_0()
-                        .py_4()
-                        .child(reading::frame(
-                            // A fresh id per page resets scroll position and selection.
-                            TextView::markdown(("page", self.page_serial), source)
-                                .scrollable(true)
-                                .image_source(move |uri| {
-                                    uri.strip_prefix(markdown::DIAGRAM_SCHEME)
-                                        .and_then(|index| index.parse::<usize>().ok())
-                                        .and_then(|index| diagrams.get(index).cloned())
-                                        .map(ImageSource::Image)
-                                        .unwrap_or_else(|| uri.clone().into())
-                                })
-                                .on_link_click(move |url, _, _, cx| {
-                                    let url = url.to_string();
-                                    _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
-                                }),
-                            self.pane_width,
-                            measure,
-                            cx,
-                        ))
-                        // A new page rises into place. The id changes with the
-                        // page, so this runs once per page and not on a redraw.
-                        .enter(("page-in", self.page_serial), Enter::PAGE),
-                )
-            })
+            .when_some(page, |this, page| this.child(page))
+    }
+
+    /// A generated page, drawn with components. Its links, rows and buttons
+    /// come back through `run_action`.
+    fn doc_element(&self, doc: &Doc, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let view = cx.entity().downgrade();
+        let on_action: doc_view::OnAction = Rc::new(move |action, _, cx| {
+            let action = action.clone();
+            _ = view.update(cx, |this, cx| this.run_action(&action, cx));
+        });
+        doc_view::render(
+            doc,
+            self.page_serial,
+            self.pane_width,
+            on_action,
+            window,
+            cx,
+        )
     }
 
     /// Number of synthetic nodes to draw instead of the real graph, for
@@ -2258,7 +2301,7 @@ impl AppView {
                                     .child(if matches!(self.page, Page::Graph) {
                                         self.graph_view(window, cx)
                                     } else {
-                                        self.page_view(cx)
+                                        self.page_view(window, cx)
                                     }),
                             )
                             .child(self.details(cx)),

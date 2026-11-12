@@ -109,13 +109,6 @@ pub fn set(pref: MotionPref, cx: &mut App) {
     prefs::write(SETTING, pref.key());
 }
 
-/// The current choice and what it comes to, for the settings page: for
-/// example "follow Windows (animations are on)".
-pub fn describe(cx: &App) -> String {
-    let state = if cx.reduce_motion() { "off" } else { "on" };
-    format!("{} (animations are {state})", current(cx).label())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

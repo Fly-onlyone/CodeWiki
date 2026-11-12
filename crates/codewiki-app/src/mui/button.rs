@@ -515,6 +515,233 @@ impl RenderOnce for IconButton {
     }
 }
 
+/// `ToggleButton.js`, `size: 'small'`: 7 px of padding around 13 px text.
+const TOGGLE_PADDING: f32 = 7.0;
+const TOGGLE_FONT: f32 = 13.0;
+
+/// What choosing the button at an index does.
+type OnSelect = std::rc::Rc<dyn Fn(usize, &mut Window, &mut App)>;
+
+/// A few buttons side by side, one of them chosen: MUI's exclusive
+/// `ToggleButtonGroup` in the primary color.
+#[derive(IntoElement)]
+pub struct ToggleButtonGroup {
+    id: SharedString,
+    labels: Vec<SharedString>,
+    selected: Option<usize>,
+    on_select: Option<OnSelect>,
+}
+
+impl ToggleButtonGroup {
+    pub fn new(id: impl Into<SharedString>, labels: Vec<SharedString>) -> Self {
+        Self {
+            id: id.into(),
+            labels,
+            selected: None,
+            on_select: None,
+        }
+    }
+
+    pub fn selected(mut self, index: Option<usize>) -> Self {
+        self.selected = index;
+        self
+    }
+
+    pub fn on_select(mut self, on_select: impl Fn(usize, &mut Window, &mut App) + 'static) -> Self {
+        self.on_select = Some(std::rc::Rc::new(on_select));
+        self
+    }
+}
+
+impl RenderOnce for ToggleButtonGroup {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let theme = cx.theme();
+        let states = tokens::states(theme.is_dark());
+        let (primary, muted, foreground, line) = (
+            theme.primary,
+            theme.muted_foreground,
+            theme.foreground,
+            theme.border,
+        );
+        let radius = theme.radius;
+        let last = self.labels.len().saturating_sub(1);
+        let mut group = h_flex().flex_shrink_0();
+        for (index, label) in self.labels.into_iter().enumerate() {
+            let id = ElementId::NamedInteger(self.id.clone(), index as u64);
+            let base = Base::new(&id, false, window, cx);
+            let chosen = self.selected == Some(index);
+            // `ToggleButton.js`: the chosen button is tinted with its color
+            // at the selected opacity, and more under the pointer.
+            let fill_to = match (chosen, base.hovered) {
+                (true, true) => primary.opacity(states.selected + states.hover),
+                (true, false) => primary.opacity(states.selected),
+                (false, true) => foreground.opacity(states.hover),
+                (false, false) => foreground.opacity(0.0),
+            };
+            let fill = kit::transition((id.clone(), "fill"), fill_to, ease(HOVER_TIME), window, cx);
+            let color = if chosen { primary } else { muted };
+            let on_click = self.on_select.clone().map(|on_select| {
+                std::rc::Rc::new(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
+                    on_select(index, window, cx)
+                }) as OnClick
+            });
+            let element = h_flex()
+                .id(id)
+                .relative()
+                .p(px(TOGGLE_PADDING))
+                .px(px(TOGGLE_PADDING + 4.0))
+                .items_center()
+                .justify_center()
+                .border_1()
+                .border_color(line)
+                // Neighbours share one line between them.
+                .when(index > 0, |button| button.ml(px(-1.)))
+                .when(index == 0, |button| button.rounded_l(radius))
+                .when(index == last, |button| button.rounded_r(radius))
+                .bg(fill)
+                .text_color(color)
+                .text_size(px(TOGGLE_FONT))
+                .line_height(px(TOGGLE_FONT * Variant::Button.spec().line_height))
+                .font_weight(Variant::Button.spec().weight)
+                .whitespace_nowrap()
+                .when(base.focused, |button| {
+                    button.shadow(vec![focus_ring(primary)])
+                })
+                .child(label);
+            let ink = Ink {
+                radius: 0.0,
+                centered: false,
+                color,
+            };
+            group = group.child(base.attach(element, ink, false, on_click, cx));
+        }
+        group
+    }
+}
+
+/// TradingAgent, `createCardHover`: a card that can be pressed rises under
+/// the pointer and its shadow deepens. There it rises 8 px and grows 3%;
+/// GPUI cannot scale it, so here it only rises, by half as much.
+const CARD_LIFT: f32 = 4.0;
+
+/// The shadow of a pressable card, `hover` of the way to its hovered state.
+/// `createCardHover`: `0 4px 20px black/.25` at rest; hovered
+/// `0 20px 40px black/.35, 0 0 20px primary/.15`.
+fn card_glow(tint: Hsla, hover: f32) -> Vec<BoxShadow> {
+    let mix = |rest: f32, hovered: f32| (rest + (hovered - rest) * hover).max(0.0);
+    vec![
+        BoxShadow {
+            color: hsla(0., 0., 0., mix(0.25, 0.35)),
+            offset: point(px(0.), px(mix(4.0, 20.0))),
+            blur_radius: px(mix(20.0, 40.0)),
+            spread_radius: px(0.),
+            inset: false,
+        },
+        BoxShadow {
+            color: tint.opacity(mix(0.0, 0.15)),
+            offset: point(px(0.), px(0.)),
+            blur_radius: px(mix(0.0, 20.0)),
+            spread_radius: px(0.),
+            inset: false,
+        },
+    ]
+}
+
+/// A card that can be pressed, such as one of a set to choose from.
+#[derive(IntoElement)]
+pub struct CardButton {
+    id: ElementId,
+    selected: bool,
+    on_click: Option<OnClick>,
+    children: Vec<gpui_kit::AnyElement>,
+}
+
+impl CardButton {
+    pub fn new(id: impl Into<ElementId>) -> Self {
+        Self {
+            id: id.into(),
+            selected: false,
+            on_click: None,
+            children: Vec::new(),
+        }
+    }
+
+    /// Mark the card as the chosen one of its set.
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
+    }
+
+    pub fn on_click(
+        mut self,
+        on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_click = Some(std::rc::Rc::new(on_click));
+        self
+    }
+
+    pub fn child(mut self, child: impl IntoElement) -> Self {
+        self.children.push(child.into_any_element());
+        self
+    }
+}
+
+impl RenderOnce for CardButton {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let base = Base::new(&self.id, false, window, cx);
+        let theme = cx.theme();
+        let (primary, radius) = (theme.primary, theme.radius_lg);
+        let hover_to = if base.hovered && !base.pressed {
+            1.0
+        } else {
+            0.0
+        };
+        let hover = kit::spring(
+            (self.id.clone(), "hover"),
+            hover_to,
+            SNAPPY.policy(0.01),
+            window,
+            cx,
+        );
+        let border_to = if self.selected {
+            primary
+        } else if base.hovered {
+            primary.opacity(0.35)
+        } else {
+            primary.opacity(0.15)
+        };
+        let border = kit::transition(
+            (self.id.clone(), "border"),
+            border_to,
+            ease(HOVER_TIME),
+            window,
+            cx,
+        );
+        let mut shadows = card_glow(primary, hover);
+        if base.focused {
+            shadows.push(focus_ring(primary));
+        }
+        let element = div()
+            .id(self.id.clone())
+            .relative()
+            .top(px(-CARD_LIFT * hover))
+            .w_full()
+            .p(px(super::surfaces::CARD_PADDING))
+            .rounded(radius)
+            .border_1()
+            .border_color(border)
+            .bg(super::surfaces::card_fill(cx))
+            .shadow(shadows)
+            .children(self.children);
+        let ink = Ink {
+            radius: radius / px(1.),
+            centered: false,
+            color: primary,
+        };
+        base.attach(element, ink, false, self.on_click, cx)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

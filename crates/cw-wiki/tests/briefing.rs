@@ -85,9 +85,18 @@ fn reports_a_missing_wiki_then_its_state() {
         "{fresh}"
     );
     assert!(
-        fresh.contains("The wiki is up to date with HEAD."),
+        fresh.contains("The wiki is up to date with the code at HEAD."),
         "{fresh}"
     );
+    // Committing the wiki itself moves HEAD but changes no code, so the wiki
+    // is still current.
+    commit(r, "add the wiki");
+    let committed = briefing::session_start(r).unwrap();
+    assert!(
+        committed.contains("The wiki is up to date with the code at HEAD."),
+        "{committed}"
+    );
+    assert!(!service::is_stale(r).unwrap());
     assert!(fresh.contains("Pending proposals: 0.\n"), "{fresh}");
     assert!(fresh.contains("`get_overview`") && fresh.contains("`get_context`"));
     assert!(

@@ -50,8 +50,8 @@ pub fn session_start(root: &Path) -> Result<String> {
         (_, None) => {
             out.push_str("This folder has no git HEAD, so the wiki cannot be compared with it.\n")
         }
-        (Some(at), Some(head)) if at == head => {
-            out.push_str("The wiki is up to date with HEAD.\n");
+        (at, Some(_)) if !crate::git::vault_is_behind(root, at) => {
+            out.push_str("The wiki is up to date with the code at HEAD.\n");
         }
         (at, Some(head)) => out.push_str(&format!(
             "The wiki is stale: it was generated at commit {}, and HEAD is {}. The MCP tool `sync_wiki` brings it up to date.\n",

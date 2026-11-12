@@ -196,7 +196,7 @@ pub fn status(root: &Path, index: &Index) -> Result<Status> {
         edges: index.edges()?.len(),
         notes: meta.notes.len(),
         pending_proposals: pending,
-        stale: meta.manifest.last_indexed_commit != head,
+        stale: crate::git::vault_is_behind(root, meta.manifest.last_indexed_commit.as_deref()),
         vault_commit: meta.manifest.last_indexed_commit,
         head_commit: head,
     })

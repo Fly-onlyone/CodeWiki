@@ -111,8 +111,11 @@ pub fn update_in(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>)
     Ok(report)
 }
 
-/// True when `HEAD` differs from the commit the vault was last generated at.
+/// True when code was committed after the vault was last generated.
 pub fn is_stale(root: &Path) -> Result<bool> {
     let meta = VaultMeta::load(&root.join(VAULT_DIR))?;
-    Ok(meta.manifest.last_indexed_commit != head_commit(root))
+    Ok(crate::git::vault_is_behind(
+        root,
+        meta.manifest.last_indexed_commit.as_deref(),
+    ))
 }

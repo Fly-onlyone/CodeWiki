@@ -1,15 +1,14 @@
-//! Motion: how long things take to move, and whether they move at all.
+//! Motion: whether things move at all.
 //!
 //! gpui-kit reads the Windows "animation effects" setting at startup and
 //! holds animations still when it is off. This module adds a choice on top:
 //! follow Windows (the default), always reduce, or always animate. The choice
 //! is remembered between runs.
 //!
-//! Animations made with `with_animation` need no check of their own. Under
-//! reduced motion a one-shot animation is drawn in its end state and a
-//! repeating one in its start state, and neither asks for more frames.
-
-use std::time::Duration;
+//! Animations need no check of their own. Under reduced motion a one-shot
+//! animation is drawn in its end state, a repeating one in its start state
+//! and a spring at its target, and none asks for more frames. How things
+//! move when they do is in `mui::motion`.
 
 use gpui_kit::{App, Global};
 
@@ -17,11 +16,6 @@ use crate::prefs;
 
 /// Name of the setting in `prefs`.
 const SETTING: &str = "motion";
-
-/// A page or panel coming into view.
-pub const ENTER: Duration = Duration::from_millis(250);
-/// A small overlay, such as the command palette.
-pub const ENTER_FAST: Duration = Duration::from_millis(150);
 
 /// What the user asked for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

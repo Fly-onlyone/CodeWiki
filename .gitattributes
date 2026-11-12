@@ -1,0 +1,4 @@
+# Keep LF everywhere: note hashes, the Dockerfile and shell snippets depend on it.
+* text=auto eol=lf
+*.png binary
+*.ps1 text eol=crlf

@@ -10,6 +10,11 @@
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Global, Pixels, SharedString};
 
+use crate::prefs;
+
+/// Name of the setting that remembers the chosen theme.
+const SETTING: &str = "theme";
+
 /// Theme applied on first start.
 const DEFAULT_THEME: &str = "CodeWiki Violet";
 
@@ -47,19 +52,7 @@ const BUNDLED: [&str; 27] = [
 ];
 
 fn user_theme_dir() -> Option<std::path::PathBuf> {
-    std::env::var_os("APPDATA").map(|dir| {
-        std::path::PathBuf::from(dir)
-            .join("CodeWiki")
-            .join("themes")
-    })
-}
-
-fn state_file() -> Option<std::path::PathBuf> {
-    std::env::var_os("APPDATA").map(|dir| {
-        std::path::PathBuf::from(dir)
-            .join("CodeWiki")
-            .join("theme.txt")
-    })
+    prefs::dir().map(|dir| dir.join("themes"))
 }
 
 /// Fonts, radius and shadow as they were before any theme was applied.
@@ -141,8 +134,8 @@ pub fn init(cx: &mut App) {
             }
         }
     }
-    let saved = state_file().and_then(|f| std::fs::read_to_string(f).ok());
-    let wanted = saved.as_deref().map(str::trim).unwrap_or(DEFAULT_THEME);
+    let saved = prefs::read(SETTING);
+    let wanted = saved.as_deref().unwrap_or(DEFAULT_THEME);
     if !apply(wanted, cx) {
         apply(DEFAULT_THEME, cx);
     }
@@ -163,12 +156,7 @@ pub fn select(name: &str, cx: &mut App) -> bool {
     if !apply(name, cx) {
         return false;
     }
-    if let Some(file) = state_file() {
-        if let Some(parent) = file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(file, name);
-    }
+    prefs::write(SETTING, name);
     true
 }
 
@@ -190,13 +178,8 @@ pub fn next_theme(cx: &mut App) {
         .map(|i| i + 1)
         .unwrap_or(0);
     let next = &names[position % names.len()];
-    if apply(next, cx)
-        && let Some(file) = state_file()
-    {
-        if let Some(parent) = file.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(file, next);
+    if apply(next, cx) {
+        prefs::write(SETTING, next);
     }
 }
 

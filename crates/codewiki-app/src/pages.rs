@@ -2,7 +2,8 @@
 
 use serde_json::Value;
 
-use crate::markdown::{NOTE_SCHEME, THEME_SCHEME, encode, file_link, symbol_link};
+use crate::markdown::{NOTE_SCHEME, SETTING_SCHEME, THEME_SCHEME, encode, file_link, symbol_link};
+use crate::motion::MotionPref;
 
 fn strings<'a>(value: &'a Value, key: &str) -> Vec<&'a str> {
     value[key]
@@ -150,11 +151,22 @@ pub fn drift_page(report: &Value) -> String {
     out
 }
 
-/// The settings page: where data comes from, and the keyboard shortcuts.
-/// `repos` holds `(name, path)` pairs.
-pub fn settings_page(backend: &str, theme: &str, repos: &[(String, String)]) -> String {
+/// The settings page: appearance, where data comes from, and the keyboard
+/// shortcuts. `motion` describes the current animation setting; `repos` holds
+/// `(name, path)` pairs.
+pub fn settings_page(
+    backend: &str,
+    theme: &str,
+    motion: &str,
+    repos: &[(String, String)],
+) -> String {
+    let choices: Vec<String> = MotionPref::ALL
+        .into_iter()
+        .map(|pref| format!("[{}]({SETTING_SCHEME}motion/{})", pref.label(), pref.key()))
+        .collect();
+    let choices = choices.join(" · ");
     let mut out = format!(
-        "# Settings\n\n## Appearance\n\nTheme: **{theme}** — [choose a theme]({THEME_SCHEME})\n\n## Backend\n\nConnected to `{backend}`.\n\nSet `CODEWIKI_URL` and `CODEWIKI_TOKEN` before starting the app to use a backend in Docker or on another machine. Without them the app starts a local backend.\n\n## Repositories\n\n"
+        "# Settings\n\n## Appearance\n\nTheme: **{theme}** — [choose a theme]({THEME_SCHEME})\n\nAnimations: **{motion}** — {choices}\n\n## Backend\n\nConnected to `{backend}`.\n\nSet `CODEWIKI_URL` and `CODEWIKI_TOKEN` before starting the app to use a backend in Docker or on another machine. Without them the app starts a local backend.\n\n## Repositories\n\n"
     );
     for (name, path) in repos {
         out.push_str(&format!("- **{name}** — `{path}`\n"));
@@ -659,9 +671,15 @@ mod tests {
         let settings = settings_page(
             "http://127.0.0.1:7411",
             "Tokyo Night",
+            "follow Windows (animations are on)",
             &[("demo".into(), "C:/demo".into())],
         );
         assert!(settings.contains("Theme: **Tokyo Night**"));
+        assert!(settings.contains("Animations: **follow Windows (animations are on)**"));
+        // One link per choice, each naming the value it sets.
+        for key in ["system", "reduced", "full"] {
+            assert!(settings.contains(&format!("](codewiki://setting/motion/{key})")));
+        }
         assert!(settings.contains("- **demo** — `C:/demo`"));
         assert!(settings.contains("| Ctrl+K | Command palette |"));
     }

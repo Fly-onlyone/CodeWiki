@@ -60,6 +60,7 @@ app_icons! {
     WORKSPACE = Boxes,
     CONTRACTS = Handshake,
     SETTINGS = Settings,
+    MOTION = Zap,
     EXTERNAL = ExternalLink,
 }
 
@@ -86,6 +87,7 @@ pub fn for_command(command: &Command) -> IconName {
         Command::Workspace => WORKSPACE,
         Command::Contracts => CONTRACTS,
         Command::Settings => SETTINGS,
+        Command::Motion(_) => MOTION,
         Command::NewTab => NEW_TAB,
         Command::CloseTab => CLOSE,
         Command::OpenInObsidian => EXTERNAL,

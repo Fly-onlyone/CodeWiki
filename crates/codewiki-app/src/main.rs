@@ -16,6 +16,7 @@ mod icons;
 mod illustration;
 mod markdown;
 mod motion;
+mod mui;
 mod pages;
 mod palette;
 mod prefs;
@@ -44,6 +45,7 @@ use serde_json::{Value, json};
 
 use markdown::{FILE_SCHEME, NOTE_SCHEME, SETTING_SCHEME, SYMBOL_SCHEME, THEME_SCHEME};
 use motion::MotionPref;
+use mui::motion::{Enter, EnterExt as _};
 use palette::Command;
 
 actions!(
@@ -1516,11 +1518,7 @@ impl AppView {
                                     .child(list),
                             )
                             // Drops into place as it fades in.
-                            .with_animation(
-                                "palette-in",
-                                Animation::new(motion::ENTER_FAST).with_easing(ease_out_quint()),
-                                |panel, t| panel.opacity(t).relative().top(px((t - 1.0) * 8.0)),
-                            ),
+                            .enter("palette-in", Enter::DIALOG),
                     ),
                 ),
         )
@@ -1714,13 +1712,9 @@ impl AppView {
                             measure,
                             cx,
                         ))
-                        // A new page fades in. The id changes with the page, so
-                        // the animation runs once per page and not on a redraw.
-                        .with_animation(
-                            ("page-in", self.page_serial),
-                            Animation::new(motion::ENTER).with_easing(ease_out_quint()),
-                            |pane, t| pane.opacity(t),
-                        ),
+                        // A new page rises into place. The id changes with the
+                        // page, so this runs once per page and not on a redraw.
+                        .enter(("page-in", self.page_serial), Enter::PAGE),
                 )
             })
     }

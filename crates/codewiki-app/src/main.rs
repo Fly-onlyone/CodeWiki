@@ -151,6 +151,12 @@ struct AppView {
     search: Entity<InputState>,
     /// Bumped on every page change so the viewer rebuilds its state.
     page_serial: usize,
+    /// The generated page. The shell draws it, in the place this view
+    /// leaves empty and reports through `page_slot`.
+    doc_page: Entity<doc_view::DocPage>,
+    page_slot: Rc<doc_view::PageSlot>,
+    /// Whether this frame left a place for the page.
+    page_placed: std::cell::Cell<bool>,
     /// Markdown of the current page, ready for the viewer.
     rendered: String,
     /// Diagrams of the current page, addressed by index from `rendered`.
@@ -192,7 +198,15 @@ fn startup_repo() -> Option<String> {
 }
 
 impl AppView {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(page_slot: Rc<doc_view::PageSlot>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // What a link, row or button of a generated page asks for comes back
+        // here.
+        let view = cx.entity().downgrade();
+        let on_action: doc_view::OnAction = Rc::new(move |action, _, cx| {
+            let action = action.clone();
+            _ = view.update(cx, |this, cx| this.run_action(&action, cx));
+        });
+        let doc_page = cx.new(|_| doc_view::DocPage::new(on_action));
         let search =
             cx.new(|cx| InputState::new(window, cx).placeholder("Search notes, symbols, files…"));
         let subscription =
@@ -244,6 +258,9 @@ impl AppView {
             error: None,
             search,
             page_serial: 0,
+            doc_page,
+            page_slot,
+            page_placed: std::cell::Cell::new(false),
             rendered: String::new(),
             diagrams: Vec::new(),
             graph: None,
@@ -1672,20 +1689,21 @@ impl AppView {
                     ))
                     .into_any_element(),
                 Page::Generated { doc, .. } | Page::Proposal { doc, .. } => {
-                    self.doc_element(doc, window, cx)
+                    return self.doc_element(doc, cx);
                 }
                 Page::Message(message) => {
-                    self.doc_element(&live::message_page(message), window, cx)
+                    return self.doc_element(&Rc::new(live::message_page(message)), cx);
                 }
                 Page::Graph => div().into_any_element(),
             };
-            // A new page rises into place. The id changes with the page, so
+            // A new note rises into place. The id changes with the page, so
             // this runs once per page and not on a redraw.
             div()
                 .flex_1()
                 .min_h_0()
                 .child(content)
                 .enter(("page-in", self.page_serial), Enter::PAGE)
+                .into_any_element()
         });
         v_flex()
             .flex_1()
@@ -1711,22 +1729,26 @@ impl AppView {
             .when_some(page, |this, page| this.child(page))
     }
 
-    /// A generated page, drawn with components. Its links, rows and buttons
-    /// come back through `run_action`.
-    fn doc_element(&self, doc: &Doc, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let view = cx.entity().downgrade();
-        let on_action: doc_view::OnAction = Rc::new(move |action, _, cx| {
-            let action = action.clone();
-            _ = view.update(cx, |this, cx| this.run_action(&action, cx));
-        });
-        doc_view::render(
-            doc,
-            self.page_serial,
-            self.pane_width,
-            on_action,
-            window,
-            cx,
-        )
+    /// A generated page. The shell draws it, so that this view and the page
+    /// are not redrawn for each other's sake; here is only the empty place
+    /// it goes in, which reports where it is.
+    fn doc_element(&self, doc: &Rc<Doc>, cx: &mut Context<Self>) -> AnyElement {
+        let (serial, width) = (self.page_serial, self.pane_width);
+        self.doc_page
+            .update(cx, |page, cx| page.show(doc, serial, width, cx));
+        self.page_placed.set(true);
+        let slot = self.page_slot.clone();
+        div()
+            .flex_1()
+            .min_h_0()
+            .child(
+                canvas(
+                    move |bounds, _, cx| slot.set(Some(bounds), cx),
+                    |_, _, _, _| {},
+                )
+                .size_full(),
+            )
+            .into_any_element()
     }
 
     /// Number of synthetic nodes to draw instead of the real graph, for
@@ -2205,10 +2227,13 @@ impl Render for AppView {
             Some(repo) => format!("CodeWiki — {}", repo.name),
             None => "CodeWiki".to_string(),
         };
+        self.page_placed.set(false);
         self.glass = glass::Levels::for_window(window, cx);
         // Components that draw their own surfaces read the levels from here.
         if cx.try_global::<glass::Levels>() != Some(&self.glass) {
             cx.set_global(self.glass);
+            // The page is drawn cached and reads the levels; draw it again.
+            self.doc_page.update(cx, |_, cx| cx.notify());
         }
         self.pane_width =
             (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);
@@ -2224,7 +2249,7 @@ impl Render for AppView {
                     .text_color(cx.theme().muted_foreground)
                     .child(title),
             );
-        v_flex()
+        let root = v_flex()
             .id("root")
             .relative()
             .track_focus(&self.focus)
@@ -2266,7 +2291,12 @@ impl Render for AppView {
             })
             .child(title_bar)
             .child(glass::hairline(cx))
-            .child(self.body(window, cx))
+            .child(self.body(window, cx));
+        // With no generated page in this frame, the shell has none to draw.
+        if !self.page_placed.get() {
+            self.page_slot.set(None, cx);
+        }
+        root
     }
 }
 
@@ -2331,14 +2361,17 @@ fn main() {
             window.set_window_title("CodeWiki");
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
+            let slot = Rc::new(doc_view::PageSlot::default());
             let app = cx.new(|cx| {
-                let view = AppView::new(window, cx);
+                let view = AppView::new(slot.clone(), window, cx);
                 // Shortcuts need a focused element to dispatch from.
                 window.focus(&view.focus, cx);
                 view
             });
-            // The shell draws the drifting backdrop and holds the app over it.
-            cx.new(|cx| backdrop::Shell::new(app, window, cx))
+            let page = app.read(cx).doc_page.clone();
+            // The shell draws the drifting backdrop, the app over it, and
+            // the generated page in the place the app leaves for it.
+            cx.new(|cx| backdrop::Shell::new(app, page, slot, window, cx))
         })
         .expect("failed to open the main window");
         // gpui-kit paints the theme background over the whole window, which

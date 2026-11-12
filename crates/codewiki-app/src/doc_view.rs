@@ -1,5 +1,16 @@
 //! Draws a [`Doc`] with the `mui` components.
 //!
+//! The page is a view of its own, [`DocPage`], drawn cached. A ripple or a
+//! hover in the window's chrome then redraws the chrome and leaves the page
+//! as it was; before this, an animation anywhere rebuilt the page on every
+//! frame, which on a long table took 40% of a processor core.
+//!
+//! GPUI reuses a cached view only while no cached view around it is being
+//! redrawn. The app is itself drawn cached, inside the backdrop's shell, so
+//! a page drawn inside the app would be rebuilt with it. The shell therefore
+//! draws the page, beside the app: the app leaves an empty place for it and
+//! says where that is through a [`PageSlot`].
+//!
 //! A page is a column of blocks, as wide as a table needs and no wider. What
 //! a link, a row or a button does is not decided here: every one reports its
 //! [`Action`] to the caller.
@@ -8,13 +19,14 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui_kit::base::motion as kit;
-use gpui_kit::component::scroll::ScrollableElement as _;
+use gpui_kit::component::scroll::Scrollbar;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnimationExt as _, AnyElement, App, Div, ElementId, FontWeight, HighlightStyle, Hsla,
-    InteractiveElement as _, InteractiveText, IntoElement, ParentElement as _, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, px, relative,
+    AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, EntityId, FontWeight,
+    HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement, ListAlignment,
+    ListState, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
+    Styled as _, StyledText, Window, div, list, px, relative,
 };
 
 use crate::doc::{Action, Block, Cell, Choice, Doc, Row, Span, Stat, Swatch, Table};
@@ -24,7 +36,7 @@ use crate::mui::button::{Button, CardButton, ToggleButtonGroup};
 use crate::mui::feedback::{self, Tone};
 use crate::mui::list::ListItemButton;
 use crate::mui::motion::{self, Enter, EnterExt as _, GENTLE, STAGGER_CAP, scaled};
-use crate::mui::surfaces::{self, card, card_content};
+use crate::mui::surfaces::{self, Piece, card, card_content, card_piece};
 use crate::mui::tokens::{Variant, curve, duration, easing};
 use crate::reading;
 
@@ -59,48 +71,213 @@ impl Page {
     }
 }
 
-/// The whole page, scrolling in the space it is given. `width` is how wide
-/// that space is; `serial` changes with every page shown.
-pub fn render(
-    doc: &Doc,
+/// Where in the window the page goes. The app, which lays the window out,
+/// writes it; the shell, which draws the page, reads it.
+#[derive(Default)]
+pub struct PageSlot {
+    bounds: std::cell::Cell<Option<Bounds<Pixels>>>,
+    /// The view to draw again when the place changes.
+    reader: std::cell::Cell<Option<EntityId>>,
+}
+
+impl PageSlot {
+    /// The place, in window coordinates; `None` while no generated page is
+    /// shown.
+    pub fn bounds(&self) -> Option<Bounds<Pixels>> {
+        self.bounds.get()
+    }
+
+    /// Name the view that draws the page.
+    pub fn read_by(&self, reader: EntityId) {
+        self.reader.set(Some(reader));
+    }
+
+    /// Say where the page goes. Cheap to call on every frame: the reader is
+    /// only told when the place has changed.
+    pub fn set(&self, bounds: Option<Bounds<Pixels>>, cx: &mut App) {
+        if self.bounds.get() == bounds {
+            return;
+        }
+        self.bounds.set(bounds);
+        if let Some(reader) = self.reader.get() {
+            cx.notify(reader);
+        }
+    }
+}
+
+/// A table with more rows than this is drawn a row at a time, so that only
+/// the rows on screen are built.
+const SPLIT_ROWS: usize = 12;
+/// How far past the edges of the view the list builds, so that a scroll does
+/// not show a gap.
+const OVERDRAW: f32 = 400.0;
+
+/// One strip of a page, as the list scrolls it: the title, a whole block, or
+/// a piece of a long table.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Strip {
+    Title,
+    Block(usize),
+    /// The head of the table that is block `.0`.
+    TableHead(usize),
+    /// Row `.1` of the table that is block `.0`.
+    TableRow(usize, usize),
+}
+
+/// The strips of a page, top to bottom.
+fn strips(doc: &Doc) -> Vec<Strip> {
+    let mut out = vec![Strip::Title];
+    for (index, block) in doc.blocks.iter().enumerate() {
+        match block {
+            Block::Table(table) if table.rows.len() > SPLIT_ROWS => {
+                out.push(Strip::TableHead(index));
+                out.extend((0..table.rows.len()).map(|row| Strip::TableRow(index, row)));
+            }
+            _ => out.push(Strip::Block(index)),
+        }
+    }
+    out
+}
+
+/// A generated page as a view of its own, so that it can be drawn cached.
+///
+/// The page is a list of strips, and the list builds only the strips on
+/// screen. A table of two hundred rows then costs what the thirty in view
+/// cost, on every frame of a scroll, a hover or an entrance.
+pub struct DocPage {
+    doc: Rc<Doc>,
+    /// Changes with every page shown.
     serial: usize,
+    /// How wide the space for the page is.
     width: f32,
     on_action: OnAction,
+    strips: Rc<Vec<Strip>>,
+    list: ListState,
+}
+
+impl DocPage {
+    pub fn new(on_action: OnAction) -> Self {
+        let doc = Rc::new(Doc::default());
+        let strips = Rc::new(strips(&doc));
+        Self {
+            list: ListState::new(strips.len(), ListAlignment::Top, px(OVERDRAW)),
+            doc,
+            serial: 0,
+            width: 0.0,
+            on_action,
+            strips,
+        }
+    }
+
+    /// Show `doc` in a space `width` wide. Does nothing when that is what is
+    /// shown already, so it can be called on every frame.
+    pub fn show(&mut self, doc: &Rc<Doc>, serial: usize, width: f32, cx: &mut Context<Self>) {
+        let same_doc = Rc::ptr_eq(&self.doc, doc) || self.doc == *doc;
+        if same_doc && self.serial == serial && self.width == width {
+            return;
+        }
+        if !same_doc || self.serial != serial {
+            self.strips = Rc::new(strips(doc));
+            // A new page starts at its top.
+            self.list.reset(self.strips.len());
+        }
+        self.doc = doc.clone();
+        self.serial = serial;
+        self.width = width;
+        cx.notify();
+    }
+}
+
+impl Render for DocPage {
+    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        let page = Rc::new(Page {
+            serial: self.serial,
+            on_action: self.on_action.clone(),
+        });
+        let entrance = page.id("in");
+        let (doc, strips) = (self.doc.clone(), self.strips.clone());
+        let gutter = reading::gutter(self.width, reading::WIDE_MEASURE);
+        let count = strips.len();
+        let items = list(self.list.clone(), move |index, window, cx| {
+            let last = index + 1 == count;
+            draw_strip(&doc, strips[index], index, last, gutter, &page, window, cx)
+        })
+        .size_full();
+        div()
+            .size_full()
+            .relative()
+            .child(items)
+            .child(Scrollbar::vertical(&self.list))
+            // TradingAgent's `pageEntrance`: the page rises into place.
+            .enter(entrance, Enter::PAGE)
+    }
+}
+
+/// One strip of the page, with the page's gutters beside it.
+#[allow(clippy::too_many_arguments)]
+fn draw_strip(
+    doc: &Doc,
+    strip: Strip,
+    index: usize,
+    last: bool,
+    gutter: f32,
+    page: &Page,
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let page = Page { serial, on_action };
-    let muted = cx.theme().muted_foreground;
-    let gutter = reading::gutter(width, reading::WIDE_MEASURE);
-    let mut column = v_flex()
-        .px(px(gutter))
-        .pt(px(8.))
-        .pb(px(48.))
-        .gap(px(BLOCK_GAP))
-        .child(
-            v_flex()
-                .gap(px(4.))
-                .child(surfaces::text(Variant::H3, doc.title.clone()))
-                .when_some(doc.lead.clone(), |head, lead| {
-                    head.child(surfaces::text(Variant::Body1, lead).text_color(muted))
-                }),
-        );
-    for (index, block) in doc.blocks.iter().enumerate() {
-        let path = index.to_string();
-        // TradingAgent's `staggerCascade`: the blocks of a page arrive one
-        // after another.
-        column = column.child(
-            div()
-                .child(draw(block, &path, &page, window, cx))
-                .enter(page.id(&format!("{path}:in")), Enter::card(index)),
-        );
+    let frame = div().px(px(gutter));
+    let frame = match strip {
+        Strip::Title => {
+            let muted = cx.theme().muted_foreground;
+            frame.pt(px(8.)).pb(px(BLOCK_GAP)).child(
+                v_flex()
+                    .gap(px(4.))
+                    .child(surfaces::text(Variant::H3, doc.title.clone()))
+                    .when_some(doc.lead.clone(), |head, lead| {
+                        head.child(surfaces::text(Variant::Body1, lead).text_color(muted))
+                    }),
+            )
+        }
+        Strip::Block(block) => frame.pb(px(BLOCK_GAP)).child(draw(
+            &doc.blocks[block],
+            &block.to_string(),
+            page,
+            window,
+            cx,
+        )),
+        Strip::TableHead(block) => match &doc.blocks[block] {
+            Block::Table(table) => {
+                frame.child(table_text(card_piece(Piece::Top, cx)).child(table_head(table, cx)))
+            }
+            _ => frame,
+        },
+        Strip::TableRow(block, row) => match &doc.blocks[block] {
+            Block::Table(table) => {
+                let end = row + 1 == table.rows.len();
+                let piece = if end { Piece::Bottom } else { Piece::Middle };
+                frame.when(end, |frame| frame.pb(px(BLOCK_GAP))).child(
+                    table_text(card_piece(piece, cx)).child(table_row(
+                        table,
+                        row,
+                        &block.to_string(),
+                        page,
+                        window,
+                        cx,
+                    )),
+                )
+            }
+            _ => frame,
+        },
+    };
+    let frame = frame.when(last, |frame| frame.pb(px(48.)));
+    // TradingAgent's `staggerCascade`: the first strips of a page arrive one
+    // after another. Table rows make their own, quicker entrance.
+    match strip {
+        Strip::Title | Strip::Block(_) | Strip::TableHead(_) if index < STAGGER_CAP => frame
+            .enter(page.id(&format!("strip{index}:in")), Enter::card(index))
+            .into_any_element(),
+        _ => frame.into_any_element(),
     }
-    div()
-        .id(page.id("scroll"))
-        .size_full()
-        .overflow_y_scrollbar()
-        .child(column)
-        .into_any_element()
 }
 
 fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut App) -> AnyElement {
@@ -341,6 +518,100 @@ pub fn plain_table(table: &Table, key: &str, window: &mut Window, cx: &mut App) 
     draw_table(table, key, &page, window, cx)
 }
 
+/// The text style of a table, on whatever holds its rows.
+fn table_text(holder: Div) -> Div {
+    let spec = Variant::Body2.spec();
+    holder
+        .text_size(px(spec.size))
+        .line_height(px(spec.size * 1.43))
+}
+
+/// A cell of column `index`, taking that column's share of the width.
+fn table_cell(table: &Table, index: usize) -> Div {
+    let total: f32 = table.columns.iter().map(|column| column.weight).sum();
+    let column = &table.columns[index];
+    div()
+        .flex_basis(relative(column.weight / total.max(f32::EPSILON)))
+        .flex_grow(1.)
+        .flex_shrink(1.)
+        .min_w_0()
+        .px(px(CELL_PADDING.0))
+        .py(px(CELL_PADDING.1))
+        .when(column.numeric, |cell| cell.flex().justify_end())
+}
+
+fn table_head(table: &Table, cx: &App) -> Div {
+    let theme = cx.theme();
+    h_flex()
+        .bg(theme.sidebar.opacity(HEAD_FILL))
+        .border_b_1()
+        .border_color(theme.muted_foreground.opacity(ROW_LINE))
+        .font_weight(FontWeight::SEMIBOLD)
+        .children(
+            table
+                .columns
+                .iter()
+                .enumerate()
+                .map(|(index, column)| table_cell(table, index).child(column.label.clone())),
+        )
+}
+
+fn table_row(
+    table: &Table,
+    row_index: usize,
+    path: &str,
+    page: &Page,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let theme = cx.theme();
+    let (primary, rule) = (theme.primary, theme.muted_foreground.opacity(ROW_LINE));
+    let last = row_index + 1 == table.rows.len();
+    let id = page.id(&format!("{path}.{row_index}"));
+    let hover = Hover::new(&id, window, cx);
+    let policy = kit::Transition::new(scaled(duration::SHORTER)).ease(easing(curve::EASE_IN_OUT));
+    let target = if hover.hovered { 1.0 } else { 0.0 };
+    let lit = kit::transition((id.clone(), "lit"), target, policy, window, cx);
+    let cells = table.rows[row_index]
+        .iter()
+        .enumerate()
+        .map(|(index, content)| {
+            let path = format!("{path}.{row_index}.{index}");
+            table_cell(table, index).child(draw_cell(content, &path, page, cx))
+        });
+    let element = h_flex()
+        .id(id)
+        .relative()
+        .items_center()
+        .bg(primary.opacity(ROW_HOVER * lit))
+        .when(!last, |row| row.border_b_1().border_color(rule))
+        // TradingAgent's bar down the left edge of the row under the
+        // pointer. It scales in there; here it fades in.
+        .child(
+            div()
+                .absolute()
+                .left_0()
+                .top_0()
+                .h_full()
+                .w(px(3.))
+                .bg(primary.opacity(lit)),
+        )
+        .children(cells);
+    let element = hover.attach(element);
+    // TradingAgent's `listStagger`, for the rows a reader sees first.
+    if row_index < STAGGER_CAP {
+        element
+            .enter(
+                page.id(&format!("{path}.{row_index}:in")),
+                Enter::row(row_index),
+            )
+            .into_any_element()
+    } else {
+        element.into_any_element()
+    }
+}
+
+/// A whole table in one card: for a short table, or one inside a card.
 fn draw_table(
     table: &Table,
     path: &str,
@@ -348,80 +619,9 @@ fn draw_table(
     window: &mut Window,
     cx: &mut App,
 ) -> AnyElement {
-    let theme = cx.theme();
-    let (primary, muted, sidebar) = (theme.primary, theme.muted_foreground, theme.sidebar);
-    let rule = muted.opacity(ROW_LINE);
-    let total: f32 = table.columns.iter().map(|column| column.weight).sum();
-    // A cell takes its column's share of the width.
-    let cell = |index: usize| {
-        let column = &table.columns[index];
-        div()
-            .flex_basis(relative(column.weight / total.max(f32::EPSILON)))
-            .flex_grow(1.)
-            .flex_shrink(1.)
-            .min_w_0()
-            .px(px(CELL_PADDING.0))
-            .py(px(CELL_PADDING.1))
-            .when(column.numeric, |cell| cell.flex().justify_end())
-    };
-    let spec = Variant::Body2.spec();
-    let head = h_flex()
-        .bg(sidebar.opacity(HEAD_FILL))
-        .border_b_1()
-        .border_color(rule)
-        .font_weight(FontWeight::SEMIBOLD)
-        .children(
-            table
-                .columns
-                .iter()
-                .enumerate()
-                .map(|(index, column)| cell(index).child(column.label.clone())),
-        );
-    let last = table.rows.len().saturating_sub(1);
-    let mut body = v_flex()
-        .relative()
-        .text_size(px(spec.size))
-        .line_height(px(spec.size * 1.43))
-        .child(head);
-    for (row_index, row) in table.rows.iter().enumerate() {
-        let id = page.id(&format!("{path}.{row_index}"));
-        let hover = Hover::new(&id, window, cx);
-        let policy =
-            kit::Transition::new(scaled(duration::SHORTER)).ease(easing(curve::EASE_IN_OUT));
-        let target = if hover.hovered { 1.0 } else { 0.0 };
-        let lit = kit::transition((id.clone(), "lit"), target, policy, window, cx);
-        let cells = row.iter().enumerate().map(|(index, content)| {
-            let path = format!("{path}.{row_index}.{index}");
-            cell(index).child(draw_cell(content, &path, page, cx))
-        });
-        let element = h_flex()
-            .id(id)
-            .relative()
-            .items_center()
-            .bg(primary.opacity(ROW_HOVER * lit))
-            .when(row_index != last, |row| row.border_b_1().border_color(rule))
-            // TradingAgent's bar down the left edge of the row under the
-            // pointer. It scales in there; here it fades in.
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top_0()
-                    .h_full()
-                    .w(px(3.))
-                    .bg(primary.opacity(lit)),
-            )
-            .children(cells);
-        let element = hover.attach(element);
-        // TradingAgent's `listStagger`, for the rows a reader sees first.
-        body = if row_index < STAGGER_CAP {
-            body.child(element.enter(
-                page.id(&format!("{path}.{row_index}:in")),
-                Enter::row(row_index),
-            ))
-        } else {
-            body.child(element)
-        };
+    let mut body = table_text(v_flex().relative()).child(table_head(table, cx));
+    for row_index in 0..table.rows.len() {
+        body = body.child(table_row(table, row_index, path, page, window, cx));
     }
     card(cx).child(body).into_any_element()
 }
@@ -574,4 +774,55 @@ fn swatch_card(swatch: &Swatch, id: ElementId, page: &Page, cx: &App) -> AnyElem
                 ),
         )
         .into_any_element()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::doc::{Cell, Column};
+
+    fn table(rows: usize) -> Block {
+        let mut table = Table::new([Column::new("File")]);
+        for row in 0..rows {
+            table.row([Cell::text(row)]);
+        }
+        Block::Table(table)
+    }
+
+    #[test]
+    fn a_short_table_is_one_strip_and_a_long_one_is_a_strip_a_row() {
+        let mut doc = Doc::new("Report");
+        doc.heading("Short");
+        doc.push(table(SPLIT_ROWS));
+        doc.push(table(SPLIT_ROWS + 1));
+        let strips = strips(&doc);
+        assert_eq!(
+            &strips[..4],
+            [
+                Strip::Title,
+                Strip::Block(0),
+                Strip::Block(1),
+                Strip::TableHead(2)
+            ]
+        );
+        assert_eq!(strips.len(), 4 + SPLIT_ROWS + 1);
+        assert_eq!(strips[4], Strip::TableRow(2, 0));
+        assert_eq!(strips.last(), Some(&Strip::TableRow(2, SPLIT_ROWS)));
+    }
+
+    #[test]
+    fn an_empty_page_is_only_its_title() {
+        assert_eq!(strips(&Doc::default()), [Strip::Title]);
+    }
+
+    #[test]
+    fn a_table_inside_a_card_stays_whole() {
+        let mut doc = Doc::new("Settings");
+        doc.push(Block::Card {
+            title: "Keys".into(),
+            chips: Vec::new(),
+            body: vec![table(SPLIT_ROWS * 3)],
+        });
+        assert_eq!(strips(&doc), [Strip::Title, Strip::Block(0)]);
+    }
 }

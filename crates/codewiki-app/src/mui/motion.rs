@@ -99,6 +99,12 @@ impl Spring {
         SpringConfig::new(spring.stiffness, spring.damping, spring.mass)
     }
 
+    /// One run of the spring from rest at 0 to rest at 1, as an animation.
+    pub fn animation(self) -> Animation {
+        let (travel, easing) = sampled_easing(self.config(), EPSILON);
+        Animation::new(travel).with_easing(easing)
+    }
+
     /// For `gpui_kit::base::motion::spring`, which follows a moving target.
     /// `epsilon` is how close counts as arrived, in the unit of the value.
     pub fn policy(self, epsilon: f32) -> kit::Spring {
@@ -125,6 +131,29 @@ fn parse_scale(value: Option<&str>) -> f32 {
 /// `duration` stretched by [`scale`].
 pub fn scaled(duration: Duration) -> Duration {
     duration.mul_f32(scale())
+}
+
+/// A figure such as `286`, `62.5%` or `1,204 lines`, `progress` of the way
+/// up from zero: TradingAgent's `RollingDigits`. Text that does not start
+/// with a number is returned as it is.
+pub fn count_up(value: &str, progress: f32) -> String {
+    let digits = value
+        .find(|c: char| !(c.is_ascii_digit() || c == '.' || c == ','))
+        .unwrap_or(value.len());
+    let (figure, rest) = value.split_at(digits);
+    let plain: String = figure.chars().filter(|c| *c != ',').collect();
+    let Ok(target) = plain.parse::<f64>() else {
+        return value.to_string();
+    };
+    if progress >= 1.0 {
+        return value.to_string();
+    }
+    let decimals = plain
+        .split_once('.')
+        .map_or(0, |(_, fraction)| fraction.len());
+    // A spring may dip below zero or pass its target; a count does neither.
+    let shown = target * f64::from(progress.clamp(0.0, 1.0));
+    format!("{shown:.decimals$}{rest}")
 }
 
 /// How long item `index` of a staggered group waits before it enters.
@@ -202,11 +231,10 @@ pub trait EnterExt: Styled + IntoElement + Sized + 'static {
     /// whenever `id` changes. Under reduced motion the element is simply
     /// there.
     fn enter(self, id: impl Into<ElementId>, enter: Enter) -> AnimationElement<Self> {
-        let (travel, easing) = sampled_easing(enter.spring.config(), EPSILON);
         // The wait is a first animation that holds the element at its start.
         let animations = vec![
             Animation::new(scaled(enter.delay)),
-            Animation::new(travel).with_easing(easing),
+            enter.spring.animation(),
         ];
         self.with_animations(id, animations, move |element, stage, progress| {
             let progress = if stage == 0 { 0.0 } else { progress };
@@ -284,6 +312,30 @@ mod tests {
         // Motion is never sped up, and nonsense is ignored.
         for bad in ["0.5", "0", "-3", "fast", "", "inf", "NaN"] {
             assert_eq!(parse_scale(Some(bad)), 1.0, "{bad}");
+        }
+    }
+
+    #[test]
+    fn a_figure_counts_up_to_itself() {
+        assert_eq!(count_up("286", 0.0), "0");
+        assert_eq!(count_up("286", 0.5), "143");
+        assert_eq!(count_up("286", 1.0), "286");
+        // Decimals and what follows the number are kept.
+        assert_eq!(count_up("62.5%", 0.5), "31.2%");
+        assert_eq!(count_up("62.5%", 1.0), "62.5%");
+        assert_eq!(count_up("40 lines", 0.25), "10 lines");
+        // The finished figure is the text it was given, separators and all.
+        assert_eq!(count_up("1,204", 1.0), "1,204");
+        assert_eq!(count_up("1,204", 0.5), "602");
+        // An overshooting spring does not show more than the figure.
+        assert_eq!(count_up("10", 1.2), "10");
+        assert_eq!(count_up("10", -0.3), "0");
+    }
+
+    #[test]
+    fn text_that_is_not_a_figure_does_not_count() {
+        for word in ["medium", "rust", "—", "", "v2"] {
+            assert_eq!(count_up(word, 0.3), word);
         }
     }
 

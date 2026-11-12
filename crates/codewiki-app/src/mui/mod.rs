@@ -10,16 +10,10 @@
 
 pub mod base;
 pub mod button;
-// TODO(pages): drop this allowance once the generated pages use the module.
-#[allow(dead_code)]
 pub mod feedback;
 pub mod list;
-// TODO(pages): drop this allowance once the generated pages use the module.
-#[allow(dead_code)]
 pub mod motion;
 pub mod ripple;
-// TODO(pages): drop this allowance once the generated pages use the module.
-#[allow(dead_code)]
 pub mod surfaces;
 pub mod tabs;
 pub mod text_field;

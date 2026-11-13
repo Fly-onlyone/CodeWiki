@@ -1,0 +1,55 @@
+name: Security
+
+# gitleaks looks for committed secrets: on a push or pull request it scans the
+# new commits, on the weekly and manual runs the whole history. A secret it
+# finds stays in the history even after a later commit removes it: rotate it.
+# A confirmed false positive goes in .gitleaksignore by fingerprint.
+#
+# The weekly run also checks RustSec advisories, so a new advisory is seen
+# without waiting for the next push. Push and pull request runs get that check
+# from ci.yml.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      # gitleaks comments on the pull request when it finds a secret.
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      # Free for repositories owned by a personal account; an organization
+      # would need a GITLEAKS_LICENSE secret.
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # Fails when a new advisory is published: fix the dependency, or add the ID
+  # to `ignore` in deny.toml with a reason.
+  advisories:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories

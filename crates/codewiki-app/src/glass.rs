@@ -13,8 +13,9 @@
 //! is as clear as it can be while its text keeps the contrast `contrast`
 //! asks for. A theme with weak contrast therefore gets denser glass.
 //!
-//! Chrome is also tinted toward the theme's primary color, so that every
-//! theme reads in its own hue rather than in plain black or white.
+//! The chrome, the page and the borders are all tinted toward the theme's
+//! primary color, so that every theme reads in its own hue rather than in
+//! plain black or white.
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
@@ -27,15 +28,18 @@ use crate::contrast::{self, BLACK, PANE_FLOOR, Rgb, WHITE};
 
 /// Chrome opacity when the backdrop is known to be on the theme's side: a
 /// dark theme on a dark system, or light on light.
-const CHROME_MATCHED_FLOOR: f32 = 0.62;
+pub(crate) const CHROME_MATCHED_FLOOR: f32 = 0.62;
 /// Chrome opacity when it is not: a dark theme over a light backdrop needs
 /// far denser glass to keep muted text readable.
 const CHROME_FLOOR: f32 = 0.86;
 
-/// Share of the primary color mixed into every chrome surface. TradingAgent
-/// tints its cards by this much (`components.ts`, `MuiCard`); see
-/// `surfaces::CARD_TINT`.
-const CHROME_TINT: f32 = 0.08;
+/// Share of the primary color mixed into every chrome surface.
+pub(crate) const CHROME_TINT: f32 = 0.2;
+/// Share of the primary color mixed into the reading pane, as much as the
+/// chrome so that the page and its frame read as one surface.
+pub const PANE_TINT: f32 = 0.2;
+/// How far borders are pulled toward the primary color.
+const BORDER_PULL: f32 = 0.45;
 
 /// Mica is the wallpaper, blurred and pulled toward the system mode's base
 /// color. These are the lightest dark Mica and the darkest light Mica.
@@ -48,7 +52,7 @@ const UNKNOWN: [Rgb; 2] = [BLACK, WHITE];
 /// Mica, with the drifting backdrop over it. The drifting shapes are theme
 /// colors at `backdrop::STRENGTH`; taking them as pure white on a dark system
 /// and pure black on a light one bounds any color they can be.
-fn matched_backdrop(system_dark: bool) -> [Rgb; 2] {
+pub(crate) fn matched_backdrop(system_dark: bool) -> [Rgb; 2] {
     if system_dark {
         let lightest = contrast::over(WHITE, backdrop::STRENGTH, DARK_MICA_LIMIT);
         [BLACK, lightest]
@@ -84,8 +88,8 @@ impl Levels {
             WindowAppearance::Dark | WindowAppearance::VibrantDark
         );
         Self::compute(
-            rgb(theme.background),
-            rgb(tint(theme.background, theme.primary)),
+            rgb(tint(theme.background, theme.primary, PANE_TINT)),
+            rgb(tint(theme.background, theme.primary, CHROME_TINT)),
             // Links on the page and section labels in the chrome are drawn
             // in the link color.
             &[
@@ -98,7 +102,7 @@ impl Levels {
         )
     }
 
-    /// `chrome_surface` is the pane's surface with the primary tint mixed in.
+    /// Each surface is the theme's background with its tint mixed in.
     fn compute(
         pane_surface: Rgb,
         chrome_surface: Rgb,
@@ -136,21 +140,27 @@ fn rgb(color: Hsla) -> Rgb {
     [color.r, color.g, color.b]
 }
 
-/// `surface` with `primary` mixed in by [`CHROME_TINT`].
-pub fn tint(surface: Hsla, primary: Hsla) -> Hsla {
-    surface.blend(primary.opacity(CHROME_TINT))
+/// `surface` with `share` of `primary` mixed in.
+pub fn tint(surface: Hsla, primary: Hsla, share: f32) -> Hsla {
+    surface.blend(primary.opacity(share))
 }
 
 /// A chrome surface: `surface` tinted toward the active theme's primary
 /// color. Pass the result to [`Levels::chrome`].
 pub fn tinted(surface: Hsla, cx: &App) -> Hsla {
-    tint(surface, cx.theme().primary)
+    tint(surface, cx.theme().primary, CHROME_TINT)
 }
 
-/// The theme's border, pulled a little toward its primary color.
+/// The reading pane's surface: `surface` tinted toward the active theme's
+/// primary color. Pass the result to [`Levels::pane`].
+pub fn tinted_pane(surface: Hsla, cx: &App) -> Hsla {
+    tint(surface, cx.theme().primary, PANE_TINT)
+}
+
+/// The theme's border, pulled toward its primary color.
 pub fn tinted_border(cx: &App) -> Hsla {
     let theme = cx.theme();
-    theme.border.blend(theme.primary.opacity(0.18))
+    theme.border.blend(theme.primary.opacity(BORDER_PULL))
 }
 
 /// A one-pixel strip across the top of a surface that starts in the primary
@@ -187,15 +197,15 @@ mod tests {
 
     // CodeWiki Violet: background, foreground, muted foreground, link,
     // primary.
-    const VIOLET: [&str; 5] = ["#0E0922", "#E9E7F7", "#A29ACE", "#AA8EFD", "#7C4DEE"];
-    const VIOLET_LIGHT: [&str; 5] = ["#FAF9FF", "#1A1630", "#554E79", "#5B2FD1", "#6D3FE0"];
+    const VIOLET: [&str; 5] = ["#0E0922", "#E9E7F7", "#AAA2D7", "#B299FF", "#7C4DEE"];
+    const VIOLET_LIGHT: [&str; 5] = ["#FAF9FF", "#1A1630", "#4F4873", "#5525C9", "#6D3FE0"];
 
     fn levels(theme: [&str; 5], theme_dark: bool, system_dark: bool) -> Levels {
         let background = hex(theme[0]);
-        let chrome = contrast::over(hex(theme[4]), CHROME_TINT, background);
+        let primary = hex(theme[4]);
         Levels::compute(
-            background,
-            chrome,
+            contrast::over(primary, PANE_TINT, background),
+            contrast::over(primary, CHROME_TINT, background),
             &[hex(theme[1]), hex(theme[2]), hex(theme[3])],
             theme_dark,
             system_dark,
@@ -206,11 +216,12 @@ mod tests {
     fn a_tinted_surface_moves_toward_the_primary_color_and_stays_opaque() {
         let surface = gpui_kit::hsla(0.0, 0.0, 0.06, 1.0);
         let primary = gpui_kit::hsla(0.72, 0.8, 0.6, 1.0);
-        let tinted = tint(surface, primary);
+        let share = CHROME_TINT;
+        let tinted = tint(surface, primary, share);
         assert_eq!(tinted.a, 1.0);
         let (from, toward, got) = (rgb(surface), rgb(primary), rgb(tinted));
         for channel in 0..3 {
-            let expected = contrast::over(toward, CHROME_TINT, from)[channel];
+            let expected = contrast::over(toward, share, from)[channel];
             assert!((got[channel] - expected).abs() < 1e-3, "{got:?}");
         }
         assert!(tinted.s > surface.s);
@@ -224,6 +235,23 @@ mod tests {
         let light = levels(VIOLET_LIGHT, false, false);
         assert_eq!(light.pane, PANE_FLOOR);
         assert_eq!(light.chrome, CHROME_MATCHED_FLOOR);
+    }
+
+    #[test]
+    fn the_tinted_page_is_still_glass_and_the_chrome_no_denser() {
+        for (theme, dark) in [(VIOLET, true), (VIOLET_LIGHT, false)] {
+            let background = hex(theme[0]);
+            let primary = hex(theme[4]);
+            let levels = Levels::compute(
+                contrast::over(primary, PANE_TINT, background),
+                contrast::over(primary, CHROME_TINT, background),
+                &[hex(theme[1]), hex(theme[2]), hex(theme[3])],
+                dark,
+                dark,
+            );
+            assert!(levels.pane < 1.0, "{levels:?}");
+            assert!(levels.chrome <= levels.pane, "{levels:?}");
+        }
     }
 
     #[test]

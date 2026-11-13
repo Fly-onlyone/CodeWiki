@@ -26,6 +26,8 @@ pub enum Action {
     Motion(MotionPref),
     /// Try to reach the backend again.
     Reconnect,
+    /// Ask for a folder and open it as a repository.
+    OpenFolder,
 }
 
 /// A stretch of text within a line.

@@ -26,6 +26,7 @@ mod palette;
 mod prefs;
 mod reading;
 mod standard;
+mod startup;
 mod themes;
 
 use std::collections::BTreeMap;
@@ -195,15 +196,6 @@ const DETAILS_WIDTH: f32 = 260.0;
 /// Diameter of the colored dot before each outline entry, in pixels.
 const OUTLINE_DOT: f32 = 6.0;
 
-/// Repository to open at startup: the first argument, else the working directory.
-fn startup_repo() -> Option<String> {
-    std::env::args().nth(1).or_else(|| {
-        std::env::current_dir()
-            .ok()
-            .map(|p| p.to_string_lossy().to_string())
-    })
-}
-
 impl AppView {
     fn new(page_slot: Rc<doc_view::PageSlot>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         // What a link, row or button of a generated page asks for comes back
@@ -332,7 +324,7 @@ impl AppView {
                     let backend = Backend::connect()?;
                     // Register the startup folder; failure here is not fatal,
                     // the user may have other repositories.
-                    let opened = startup_repo().and_then(|path| backend.repo_id(&path).ok());
+                    let opened = startup::repo().and_then(|path| backend.repo_id(&path).ok());
                     let repos = backend.get("/v1/repos")?;
                     Ok::<_, String>((backend, repos, opened))
                 })
@@ -349,7 +341,7 @@ impl AppView {
                         match first {
                             Some(repo) => this.select_repo(repo, cx),
                             None => {
-                                this.set_page(Page::Message("No repository yet. Start the app from a repository folder, or pass its path as the first argument.".into()), false);
+                                this.set_page(Page::Notice(Rc::new(live::welcome_page())), false);
                             }
                         }
                     }
@@ -379,11 +371,54 @@ impl AppView {
         self.connect(cx);
     }
 
+    /// Ask for a folder, then open it as a repository.
+    fn open_folder(&mut self, cx: &mut Context<Self>) {
+        if self.backend.is_none() {
+            return;
+        }
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Open".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let path = path.to_string_lossy().into_owned();
+            _ = this.update(cx, |this, cx| this.open_repo_folder(path, cx));
+        })
+        .detach();
+    }
+
+    /// Register `path` with the backend, if it is new, and open it.
+    fn open_repo_folder(&mut self, path: String, cx: &mut Context<Self>) {
+        self.run(
+            "Opening",
+            cx,
+            move |b| {
+                let id = b.repo_id(&path)?;
+                Ok((id, b.get("/v1/repos")?))
+            },
+            |this, (id, repos), cx| {
+                this.repos = parse_repos(&repos);
+                if let Some(repo) = this.repos.iter().find(|r| r.id == id).cloned() {
+                    this.select_repo(repo, cx);
+                }
+            },
+        );
+    }
+
     fn select_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
         if !self.can_leave() {
             cx.notify();
             return;
         }
+        startup::remember(&repo.path);
         self.repo = Some(repo);
         self.history.clear();
         self.tabs.truncate(1);
@@ -780,6 +815,7 @@ impl AppView {
             Command::CloseTab => self.close_tab(self.active_tab, cx),
             Command::OpenInObsidian => self.open_in_obsidian(cx),
             Command::Reconnect => self.reconnect(cx),
+            Command::OpenFolder => self.open_folder(cx),
         }
     }
 
@@ -1207,6 +1243,7 @@ impl AppView {
                 self.open_settings(false, cx);
             }
             Action::Reconnect => self.reconnect(cx),
+            Action::OpenFolder => self.open_folder(cx),
         }
     }
 

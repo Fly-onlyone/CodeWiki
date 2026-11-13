@@ -388,6 +388,22 @@ pub fn message_page(message: &str) -> Doc {
     doc
 }
 
+/// The first page when no repository is open, with a button that asks for
+/// one.
+pub fn welcome_page() -> Doc {
+    let mut doc = message_page("Open a repository to see its wiki.");
+    doc.push(Block::Text(vec![text(
+        "Choose the folder of a project. Sync then indexes its code and writes \
+         the wiki into an obsidian folder inside it.",
+    )]));
+    doc.push(Block::Setting {
+        label: "Repository".into(),
+        value: "None open".into(),
+        button: Some(("Open folder…".into(), Action::OpenFolder)),
+    });
+    doc
+}
+
 /// The page shown when no backend could be reached: where its log is, and a
 /// button that tries again.
 pub fn offline_page(log: &str) -> Doc {
@@ -411,6 +427,13 @@ mod tests {
         assert!(page.words().contains("not reachable"));
         assert!(page.words().contains(r"C:\data\logs\backend.log"));
         assert_eq!(page.actions(), [Action::Reconnect]);
+    }
+
+    #[test]
+    fn the_welcome_page_asks_for_a_folder() {
+        let page = welcome_page();
+        assert!(page.words().contains("Open a repository"));
+        assert_eq!(page.actions(), [Action::OpenFolder]);
     }
 
     #[test]

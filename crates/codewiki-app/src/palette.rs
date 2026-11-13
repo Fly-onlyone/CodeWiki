@@ -37,6 +37,8 @@ pub enum Command {
     OpenInObsidian,
     /// Try to reach the backend again; listed only while it is unreachable.
     Reconnect,
+    /// Ask for a folder and open it as a repository.
+    OpenFolder,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +82,7 @@ pub fn actions() -> Vec<Entry> {
         ("New tab", Command::NewTab),
         ("Close tab", Command::CloseTab),
         ("Open note in Obsidian", Command::OpenInObsidian),
+        ("Open folder…", Command::OpenFolder),
     ]
     .into_iter()
     .map(|(label, command)| Entry::new(label, "Command", command))

@@ -112,6 +112,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::CloseTab => CLOSE,
         Command::OpenInObsidian => EXTERNAL,
         Command::Reconnect => SYNC,
+        Command::OpenFolder => FOLDER,
     }
 }
 

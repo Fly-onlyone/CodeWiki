@@ -36,9 +36,9 @@ Requires Windows 11, Rust 1.95 or newer and the MSVC toolchain.
 pwsh scripts\package.ps1
 ```
 
-This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Each released version publishes the same zip, with a `.sha256` file beside it, on the repository's Releases page. Unpack it, right-click `install.ps1` and choose Run with PowerShell; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.ps1` reverses it the same way.
+This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Each released version publishes the same zip, with a `.sha256` file beside it, on the repository's Releases page. Unpack it and double-click `install.cmd`; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.cmd` in that folder reverses it; `uninstall.cmd -PurgeData` also deletes the index, the logs and the settings.
 
-From a terminal, Windows refuses a plain `.\install.ps1` unless scripts have been allowed. Use `powershell -ExecutionPolicy Bypass -File install.ps1`.
+The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to run directly unless scripts have been allowed. From a terminal, `powershell -ExecutionPolicy Bypass -File install.ps1` does the same.
 
 ## Use
 
@@ -51,7 +51,9 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` from a repository folder, or pass the folder as its first argument. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. From the Start menu it reopens the repository used last, or asks for a folder. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
+
+The app and the backend it starts write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`). Set `CODEWIKI_LOG=debug` for more.
 
 ### With an LLM
 

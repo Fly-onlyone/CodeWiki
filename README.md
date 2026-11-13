@@ -36,7 +36,7 @@ Requires Windows 11, Rust 1.95 or newer and the MSVC toolchain.
 pwsh scripts\package.ps1
 ```
 
-This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Unpack it and run `install.ps1`; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.ps1` reverses it.
+This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Each released version publishes the same zip, with a `.sha256` file beside it, on the repository's Releases page. Unpack it and run `install.ps1`; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.ps1` reverses it.
 
 ## Use
 
@@ -74,7 +74,7 @@ docker build -t codewiki .
 docker run --rm -p 127.0.0.1:7411:7411 -e CODEWIKI_TOKEN=<secret> -v codewiki-data:/data -v C:\path\to\repos:/repos codewiki
 ```
 
-Point the app or the MCP program at it with `CODEWIKI_URL=http://127.0.0.1:7411` and the same `CODEWIKI_TOKEN`. Set `CODEWIKI_WEBHOOK_SECRET` to let a git host trigger updates through `POST /v1/hooks/git`.
+Each released version is also pushed as `ghcr.io/fly-onlyone/codewiki:<version>`. Point the app or the MCP program at it with `CODEWIKI_URL=http://127.0.0.1:7411` and the same `CODEWIKI_TOKEN`. Set `CODEWIKI_WEBHOOK_SECRET` to let a git host trigger updates through `POST /v1/hooks/git`.
 
 ## Develop
 
@@ -86,6 +86,17 @@ cargo deny check
 ```
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.
+
+CI runs these four on every push and pull request. It also runs `codewiki check` on this repository and reports the findings to code scanning, and gitleaks scans new commits for secrets. Dependabot opens update pull requests weekly.
+
+To release, set `version` in the root `Cargo.toml`, merge it, and push a matching tag:
+
+```
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+The tag publishes the Windows zip as a GitHub Release and pushes the Docker image. A tag that does not match the `Cargo.toml` version fails the release.
 
 ## License
 

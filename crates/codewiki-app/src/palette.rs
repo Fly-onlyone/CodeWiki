@@ -35,6 +35,8 @@ pub enum Command {
     NewTab,
     CloseTab,
     OpenInObsidian,
+    /// Try to reach the backend again; listed only while it is unreachable.
+    Reconnect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

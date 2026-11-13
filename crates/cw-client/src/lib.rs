@@ -15,7 +15,10 @@ use serde_json::Value;
 const URL_ENV: &str = "CODEWIKI_URL";
 const TOKEN_ENV: &str = "CODEWIKI_TOKEN";
 const BACKEND_FILE: &str = "backend.json";
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long a backend started here may take to answer. It answers in under a
+/// second on a warm machine; a cold disk or a virus scan of a new program can
+/// take much longer.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone)]
 pub struct Backend {
@@ -111,10 +114,13 @@ impl Backend {
             return Ok(Self::new(url.trim_end_matches('/').to_string(), token));
         }
         let data_dir = cw_core::paths::data_dir();
-        if let Some((url, token)) = read_backend_file(&data_dir)
-            && is_healthy(&url)
-        {
-            return Ok(Self::new(url, token));
+        let live = || {
+            read_backend_file(&data_dir)
+                .filter(|(url, _)| is_healthy(url))
+                .map(|(url, token)| Self::new(url, token))
+        };
+        if let Some(backend) = live() {
+            return Ok(backend);
         }
         // No live backend: a stale file would only mislead the wait below.
         let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
@@ -137,19 +143,33 @@ impl Backend {
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             serve.creation_flags(CREATE_NO_WINDOW);
         }
-        serve
+        let mut child = serve
             .spawn()
             .map_err(|e| format!("could not start the backend ({}): {e}", binary.display()))?;
+        let log = cw_core::logs::path("backend");
         let started = Instant::now();
         while started.elapsed() < STARTUP_TIMEOUT {
-            if let Some((url, token)) = read_backend_file(&data_dir)
-                && is_healthy(&url)
-            {
-                return Ok(Self::new(url, token));
+            if let Some(backend) = live() {
+                return Ok(backend);
+            }
+            // A backend that has ended will never answer; say so now rather
+            // than at the end of the wait.
+            if let Ok(Some(status)) = child.try_wait() {
+                // Another client may have started one at the same moment.
+                return live().ok_or_else(|| {
+                    format!(
+                        "the backend stopped before it answered ({status}); see {}",
+                        log.display()
+                    )
+                });
             }
             std::thread::sleep(Duration::from_millis(150));
         }
-        Err("the backend did not start within 15 seconds".to_string())
+        Err(format!(
+            "the backend did not start within {} seconds; see {}",
+            STARTUP_TIMEOUT.as_secs(),
+            log.display()
+        ))
     }
 
     /// Base URL of the backend this client talks to.

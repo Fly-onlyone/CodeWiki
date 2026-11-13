@@ -103,6 +103,9 @@ struct Editing {
 enum Page {
     /// Nothing loaded yet, or a message for the user.
     Message(String),
+    /// A message with something to press, such as "Try again". Like a
+    /// message, it is not kept in the history and claims no repository data.
+    Notice(Rc<Doc>),
     Note {
         path: String,
         text: String,
@@ -353,13 +356,27 @@ impl AppView {
                     Err(message) => {
                         log::error!("the backend is not reachable: {message}");
                         this.error = Some(message);
-                        this.set_page(Page::Message("The backend is not reachable.".into()), false);
+                        let log = cw_core::logs::path("backend").display().to_string();
+                        this.set_page(Page::Notice(Rc::new(live::offline_page(&log))), false);
                     }
                 }
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Try the backend again after it could not be reached. Does nothing
+    /// while connected or while another attempt runs.
+    fn reconnect(&mut self, cx: &mut Context<Self>) {
+        if self.backend.is_some() || self.busy.is_some() {
+            return;
+        }
+        self.busy = Some("Connecting".into());
+        self.error = None;
+        self.set_page(Page::Message(String::new()), false);
+        cx.notify();
+        self.connect(cx);
     }
 
     fn select_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
@@ -542,7 +559,7 @@ impl AppView {
             return;
         }
         let previous = std::mem::replace(&mut self.page, page);
-        if remember && !matches!(previous, Page::Message(_)) {
+        if remember && !matches!(previous, Page::Message(_) | Page::Notice(_)) {
             self.history.push(previous);
             if self.history.len() > 50 {
                 self.history.remove(0);
@@ -650,6 +667,12 @@ impl AppView {
     /// Entries the palette lists for what is typed now.
     fn palette_matches(&self, cx: &App) -> Vec<palette::Entry> {
         let mut entries = palette::actions();
+        if self.backend.is_none() && self.busy.is_none() {
+            entries.insert(
+                0,
+                palette::Entry::new("Reconnect to the backend", "Command", Command::Reconnect),
+            );
+        }
         for note in &self.notes {
             let label = match note.title.as_str() {
                 "_HOME" => "Home".to_string(),
@@ -756,6 +779,7 @@ impl AppView {
             Command::NewTab => self.new_tab(cx),
             Command::CloseTab => self.close_tab(self.active_tab, cx),
             Command::OpenInObsidian => self.open_in_obsidian(cx),
+            Command::Reconnect => self.reconnect(cx),
         }
     }
 
@@ -894,9 +918,11 @@ impl AppView {
                 })
             }
             // Drawn from their own model, not from Markdown.
-            Page::Message(_) | Page::Generated { .. } | Page::Proposal { .. } | Page::Graph => {
-                String::new()
-            }
+            Page::Message(_)
+            | Page::Notice(_)
+            | Page::Generated { .. }
+            | Page::Proposal { .. }
+            | Page::Graph => String::new(),
         };
     }
 
@@ -1180,6 +1206,7 @@ impl AppView {
                 motion::set(*pref, cx);
                 self.open_settings(false, cx);
             }
+            Action::Reconnect => self.reconnect(cx),
         }
     }
 
@@ -1703,7 +1730,7 @@ impl AppView {
                         cx,
                     ))
                     .into_any_element(),
-                Page::Generated { doc, .. } | Page::Proposal { doc, .. } => {
+                Page::Generated { doc, .. } | Page::Proposal { doc, .. } | Page::Notice(doc) => {
                     return self.doc_element(doc, cx);
                 }
                 Page::Message(message) => {
@@ -2160,7 +2187,7 @@ impl AppView {
                         .child("Drag to pan, scroll to zoom, click a node to open it. Size shows how much depends on a symbol; color shows its cluster."),
                 );
             }
-            Page::Message(_) => {}
+            Page::Message(_) | Page::Notice(_) => {}
         }
         if self.repos.len() > 1 {
             pane = pane.child(heading("REPOSITORIES"));
@@ -2214,7 +2241,7 @@ fn parse_notes(value: &Value) -> Vec<NoteInfo> {
 /// Short name for a tab.
 fn page_title(page: &Page) -> String {
     match page {
-        Page::Message(_) => "CodeWiki".into(),
+        Page::Message(_) | Page::Notice(_) => "CodeWiki".into(),
         Page::Note { path, .. } => {
             let name = path.rsplit('/').next().unwrap_or(path);
             match name.trim_end_matches(".md") {

@@ -388,10 +388,30 @@ pub fn message_page(message: &str) -> Doc {
     doc
 }
 
+/// The page shown when no backend could be reached: where its log is, and a
+/// button that tries again.
+pub fn offline_page(log: &str) -> Doc {
+    let mut doc = message_page("The backend is not reachable.");
+    doc.push(Block::Setting {
+        label: "Backend log".into(),
+        value: log.into(),
+        button: Some(("Try again".into(), Action::Reconnect)),
+    });
+    doc
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_offline_page_names_the_log_and_offers_to_try_again() {
+        let page = offline_page(r"C:\data\logs\backend.log");
+        assert!(page.words().contains("not reachable"));
+        assert!(page.words().contains(r"C:\data\logs\backend.log"));
+        assert_eq!(page.actions(), [Action::Reconnect]);
+    }
 
     #[test]
     fn renders_hotspots_and_file_pages() {

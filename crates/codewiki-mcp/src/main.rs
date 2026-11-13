@@ -3,7 +3,7 @@
 //! Standard output carries the MCP protocol, so nothing else may be printed
 //! there; diagnostics go to standard error.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex};
 
 use cw_client::{Backend, encode};
 use rmcp::handler::server::wrapper::Parameters;
@@ -18,7 +18,21 @@ use serde_json::{Value, json};
 #[derive(Clone, Default)]
 struct Bridge {
     /// Connected lazily so listing tools never starts a backend.
-    backend: Arc<OnceLock<Result<Backend, String>>>,
+    backend: Arc<Mutex<Option<Backend>>>,
+}
+
+/// The backend in `slot`, connecting on first use. Only a success is kept:
+/// after a failed start the next tool call tries again, where a kept error
+/// disabled the bridge until the agent restarted it. The lock is held while
+/// connecting, so two calls at once never start two backends.
+fn connected(slot: &Mutex<Option<Backend>>) -> Result<Backend, String> {
+    let mut slot = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(backend) = slot.as_ref() {
+        return Ok(backend.clone());
+    }
+    let backend = Backend::connect()?;
+    *slot = Some(backend.clone());
+    Ok(backend)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -166,10 +180,7 @@ impl Bridge {
     {
         let slot = self.backend.clone();
         let outcome = tokio::task::spawn_blocking(move || {
-            let backend = slot
-                .get_or_init(Backend::connect)
-                .as_ref()
-                .map_err(String::clone)?;
+            let backend = connected(&slot)?;
             let path = match repo {
                 Some(path) => path,
                 None => std::env::current_dir()
@@ -178,7 +189,7 @@ impl Bridge {
                     .to_string(),
             };
             let id = backend.repo_id(&path)?;
-            work(backend, &id)
+            work(&backend, &id)
         })
         .await
         .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?;
@@ -191,16 +202,10 @@ impl Bridge {
         F: FnOnce(&Backend) -> Result<Value, String> + Send + 'static,
     {
         let slot = self.backend.clone();
-        tokio::task::spawn_blocking(move || {
-            work(
-                slot.get_or_init(Backend::connect)
-                    .as_ref()
-                    .map_err(String::clone)?,
-            )
-        })
-        .await
-        .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
-        .map_err(|message| McpError::internal_error(message, None))
+        tokio::task::spawn_blocking(move || work(&connected(&slot)?))
+            .await
+            .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
+            .map_err(|message| McpError::internal_error(message, None))
     }
 }
 

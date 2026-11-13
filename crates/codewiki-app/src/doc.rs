@@ -24,6 +24,8 @@ pub enum Action {
     Themes,
     /// Choose how animations behave.
     Motion(MotionPref),
+    /// Try to reach the backend again.
+    Reconnect,
 }
 
 /// A stretch of text within a line.

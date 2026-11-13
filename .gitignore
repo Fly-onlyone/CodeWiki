@@ -22,3 +22,6 @@ obsidian/.obsidian/workspace*.json
 
 # Packages built by scripts/package.ps1
 dist/
+
+# Test reports with screenshots and recordings; kept on the machine that ran them
+report/

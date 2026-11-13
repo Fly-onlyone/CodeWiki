@@ -44,7 +44,9 @@ impl GraphData {
             .flatten()
             .filter_map(|e| {
                 let (a, b) = (e[0].as_u64()?, e[1].as_u64()?);
-                (a < count && b < count).then_some([a as u32, b as u32])
+                // A self-edge draws nothing but still counts against the
+                // edge budget and in the edge count shown.
+                (a < count && b < count && a != b).then_some([a as u32, b as u32])
             })
             .collect();
         Self::new(nodes, edges)
@@ -344,6 +346,15 @@ mod tests {
         assert_eq!(d.nodes.len(), 3);
         assert_eq!(d.edges, [[0, 1], [1, 2]]);
         assert_eq!(d.max_rank, 0.5);
+    }
+
+    #[test]
+    fn drops_self_edges() {
+        let d = GraphData::from_json(&json!({
+            "nodes": [{"id": "a"}, {"id": "b"}],
+            "edges": [[0, 0], [0, 1], [1, 1]],
+        }));
+        assert_eq!(d.edges, [[0, 1]]);
     }
 
     #[test]

@@ -1897,14 +1897,19 @@ impl AppView {
         let edge_color = theme.muted_foreground.opacity(0.22);
         let visible = graph::visible_nodes(&data, &camera, width, height);
         let labels = graph::label_candidates(&data, &visible, 28);
-        let hud = format!(
-            "{} nodes · {} edges · {} in view · paint {:.1} ms · frame {:.1} ms",
+        let mut hud = format!(
+            "{} nodes · {} edges · {} in view · paint {:.1} ms",
             data.nodes.len(),
             data.edges.len(),
             visible.len(),
             self.paint_ms.get(),
-            self.frame_ms.get()
         );
+        // The time between two paints. It is a frame rate only while the
+        // stress test redraws on every frame; otherwise it is how long the
+        // view sat idle, which read as a slow first frame.
+        if stress {
+            hud.push_str(&format!(" · frame {:.1} ms", self.frame_ms.get()));
+        }
 
         let bounds_cell = self.graph_bounds.clone();
         let paint_ms = self.paint_ms.clone();

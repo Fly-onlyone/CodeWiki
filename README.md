@@ -36,7 +36,9 @@ Requires Windows 11, Rust 1.95 or newer and the MSVC toolchain.
 pwsh scripts\package.ps1
 ```
 
-This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Unpack it and run `install.ps1`; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.ps1` reverses it.
+This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Unpack it, right-click `install.ps1` and choose Run with PowerShell; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.ps1` reverses it the same way.
+
+From a terminal, Windows refuses a plain `.\install.ps1` unless scripts have been allowed. Use `powershell -ExecutionPolicy Bypass -File install.ps1`.
 
 ## Use
 
@@ -86,6 +88,20 @@ cargo deny check
 ```
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.
+
+### Test a package in a clean Windows
+
+`scripts\vm` installs the package into a Hyper-V guest, uses it by keyboard and mouse, uninstalls it and keeps screenshots and a recording. It needs Hyper-V with your account in the group "Hyper-V Administrators", a Windows 11 ISO, `oscdimg.exe` from the Windows ADK, `ffmpeg` for the recording, and about 20 GB of disk (40 GB with the graphics-card guest).
+
+```
+pwsh scripts\package.ps1
+pwsh scripts\vm\provision.ps1 -Iso <windows.iso> -MemoryMb 2048    # once per image
+pwsh scripts\vm\test-release.ps1
+pwsh scripts\vm\provision-gpu.ps1          # once, optional: a guest that shares your graphics card
+pwsh scripts\vm\test-release.ps1 -Gpu
+```
+
+Results go to `report\vm-test-<date>\`, which git ignores: a report stays on the machine that ran it. Read the screenshots: the script checks exit codes, files and processes, not what a page looks like.
 
 ## License
 

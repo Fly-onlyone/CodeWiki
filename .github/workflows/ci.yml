@@ -49,3 +49,30 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
+
+  # CodeWiki's own `check` run on this repository. It reports to code
+  # scanning and never fails the build. It also proves that the backend CLI
+  # still compiles on Linux, which the Docker image depends on.
+  wiki-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    env:
+      # The index is a cache; it is built on first use in a scratch folder.
+      CODEWIKI_DATA_DIR: ${{ runner.temp }}/codewiki
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Hotspots, ownership and change coupling read the git history.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --locked -p codewiki -- check --format sarif --fail-on never --output codewiki.sarif
+      # A pull request from a fork gets a read-only token and cannot upload.
+      - if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: codewiki.sarif
+          category: codewiki

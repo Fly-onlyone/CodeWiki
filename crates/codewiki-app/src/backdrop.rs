@@ -15,7 +15,11 @@
 //! until they change themselves, and neither is redrawn when the other is.
 //!
 //! The shapes stand still when the window is inactive and under reduced
-//! motion, so an idle or backgrounded window costs nothing.
+//! motion, so an idle or backgrounded window costs nothing. They also stand
+//! still when Direct3D runs on the processor (a virtual machine, a remote
+//! session, a broken graphics driver): there every frame of the drift is
+//! drawn by the processor, and in a clean-Windows test an idle window kept
+//! both cores of the machine busy and starved everything else.
 
 use std::f32::consts::TAU;
 use std::rc::Rc;
@@ -144,6 +148,9 @@ pub struct Shell<V: Render> {
     /// Drift even while the window is inactive, so that a capture taken
     /// without giving the window focus can see it move.
     always_drift: bool,
+    /// The graphics adapter is a software one, so the shapes stand still
+    /// unless `always_drift` says otherwise.
+    software: bool,
     phase: f32,
     /// When the shapes last moved; `None` while they stand still.
     moved_at: Option<Instant>,
@@ -162,12 +169,24 @@ impl<V: Render> Shell<V> {
         slot.read_by(cx.entity_id());
         // Start and stop drifting as the window gains and loses focus.
         let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
+        let specs = window.gpu_specs();
+        match &specs {
+            Some(gpu) => log::info!(
+                "graphics adapter: {} ({}, {}), software: {}",
+                gpu.device_name,
+                gpu.driver_name,
+                gpu.driver_info,
+                gpu.is_software_emulated
+            ),
+            None => log::info!("graphics adapter: not reported"),
+        }
         Self {
             content,
             page,
             slot,
             debug_backdrop: glass::debug_backdrop(),
             always_drift: std::env::var_os("CODEWIKI_BACKDROP_DRIFT").is_some(),
+            software: specs.is_some_and(|gpu| gpu.is_software_emulated),
             phase: 0.0,
             moved_at: None,
             tick_pending: false,
@@ -178,7 +197,8 @@ impl<V: Render> Shell<V> {
     /// Move the shapes on by the time since the last frame, and ask for the
     /// next frame. Does nothing while the shapes should stand still.
     fn drift(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let moving = !cx.reduce_motion() && (self.always_drift || window.is_window_active());
+        let moving = !cx.reduce_motion()
+            && (self.always_drift || (!self.software && window.is_window_active()));
         if !moving {
             self.moved_at = None;
             return;

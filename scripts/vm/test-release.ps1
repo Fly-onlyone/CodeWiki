@@ -349,6 +349,17 @@ function Get-Registered {
     if ($text.StartsWith("[")) { @($text | ConvertFrom-Json) } else { @() }
 }
 
+# The repository the app shows, from what its log says since it last started.
+# The window's own title is always "CodeWiki"; the name is drawn in the app.
+function Get-OpenedRepo {
+    $run = Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'started with|repository: ' | ForEach-Object { `$_.Line }"
+    $lines = @($run.Output -split "`n" | Where-Object { $_.Trim() })
+    $start = -1
+    for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "started with") { $start = $i } }
+    $opened = @($lines | Select-Object -Skip ([math]::Max($start, 0)) | Where-Object { $_ -match "repository: (\S+)" } | ForEach-Object { $Matches[1] })
+    if ($start -ge 0 -and $opened) { $opened[-1] } else { "" }
+}
+
 $idleLoad = $null
 # True once P1 finds the idle app keeping the guest's processors busy.
 $starved = $false
@@ -414,11 +425,11 @@ Test-Case "E3" "Open a folder from the welcome page" "Open folder… asks for a 
         $probe = Get-Probe "folder-opened-again" -Quick
     }
     $registered = @(Get-Registered $probe)
-    $window = @(Get-App $probe | Where-Object { $_.hasWindow })
-    $ok = [bool]($registered | Where-Object { $_.name -eq "cw-core" }) -and ($window.title -join ",") -match "cw-core"
+    $opened = Get-OpenedRepo
+    $ok = [bool]($registered | Where-Object { $_.name -eq "cw-core" }) -and $opened -eq "cw-core"
     Add-Result -Id "E3" -Title "Open a folder from the welcome page" -Expect "cw-core registered and shown" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) `
-        -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); window title '$($window.title -join ',')'"
+        -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); the app's log says it opened '$opened'"
 }
 
 Test-Case "H1" "Close the app, start it again" "backend outlives the app and is reused" {
@@ -444,9 +455,10 @@ Test-Case "H1" "Close the app, start it again" "backend outlives the app and is 
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($closed, $again) `
         -Observed "after Alt+F4: app processes $appLeft, backend alive $backendAlive; after restart: backend pid $($probe2.backend.pid) (was $firstBackendPid), app processes $((Get-App $probe2).Count)"
     # The Start menu gives no folder: the app reopens the one opened in E3.
-    $title = (@(Get-App $probe2 | Where-Object { $_.hasWindow }).title) -join ","
+    $opened = Get-OpenedRepo
     Add-Result -Id "E4" -Title "The last repository opens again" -Expect "started from the Start menu, the app shows cw-core" `
-        -Status $(if ($title -match "cw-core") { "pass" } else { "fail" }) -Shots @($again) -Observed "window title '$title'"
+        -Status $(if ($opened -eq "cw-core") { "pass" } else { "fail" }) -Shots @($again) `
+        -Observed "the app's log says it opened '$(if ($opened) { $opened } else { 'nothing' })' since it started"
 }
 
 Test-Case "E2" "Backend after first launch" "backend.json written, health answers, token required" {

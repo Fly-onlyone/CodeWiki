@@ -67,6 +67,21 @@ fn ring_alpha(total: f32) -> f32 {
     1.0 - (1.0 - total).powf(1.0 / RINGS as f32)
 }
 
+/// How GPUI names an adapter from Microsoft's vendor ID, 0x1414.
+const MICROSOFT_VENDOR: &str = "(ID: 0x1414)";
+
+/// Whether an adapter draws on the processor, from what GPUI reports of it.
+///
+/// DXGI's software flag is not enough. Without a graphics driver (a virtual
+/// machine without a graphics card, some remote sessions) Windows renders
+/// with the "Microsoft Basic Render Driver", which is software but does not
+/// carry the flag. Microsoft's own adapters are known by their vendor ID.
+fn draws_on_processor(software_flag: bool, device: &str, vendor: &str) -> bool {
+    software_flag
+        || vendor.contains(MICROSOFT_VENDOR)
+        || device.starts_with("Microsoft Basic Render")
+}
+
 /// One shape: where it rests, how far it wanders, and how fast.
 struct Blob {
     /// Resting place, as a share of the window's width and height.
@@ -170,13 +185,15 @@ impl<V: Render> Shell<V> {
         // Start and stop drifting as the window gains and loses focus.
         let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
         let specs = window.gpu_specs();
+        let software = specs.as_ref().is_some_and(|gpu| {
+            draws_on_processor(gpu.is_software_emulated, &gpu.device_name, &gpu.driver_name)
+        });
         match &specs {
             Some(gpu) => log::info!(
-                "graphics adapter: {} ({}, {}), software: {}",
+                "graphics adapter: {} ({}, {}), software: {software}",
                 gpu.device_name,
                 gpu.driver_name,
                 gpu.driver_info,
-                gpu.is_software_emulated
             ),
             None => log::info!("graphics adapter: not reported"),
         }
@@ -186,7 +203,7 @@ impl<V: Render> Shell<V> {
             slot,
             debug_backdrop: glass::debug_backdrop(),
             always_drift: std::env::var_os("CODEWIKI_BACKDROP_DRIFT").is_some(),
-            software: specs.is_some_and(|gpu| gpu.is_software_emulated),
+            software,
             phase: 0.0,
             moved_at: None,
             tick_pending: false,
@@ -292,6 +309,32 @@ impl<V: Render> Render for Shell<V> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_software_adapter_is_known_with_or_without_the_flag() {
+        // What a Hyper-V guest without a graphics card reported: no flag.
+        assert!(draws_on_processor(
+            false,
+            "Microsoft Basic Render Driver",
+            "Unknown Vendor (ID: 0x1414)"
+        ));
+        assert!(draws_on_processor(
+            true,
+            "Some Adapter",
+            "Unknown Vendor (ID: 0x1234)"
+        ));
+        // A real card, as the development machine reported it.
+        assert!(!draws_on_processor(
+            false,
+            "NVIDIA GeForce RTX 4070",
+            "NVIDIA Corporation"
+        ));
+        assert!(!draws_on_processor(
+            false,
+            "Intel(R) UHD Graphics",
+            "Intel Corporation"
+        ));
+    }
 
     #[test]
     fn the_drift_closes_its_loop() {

@@ -419,6 +419,7 @@ impl AppView {
             return;
         }
         startup::remember(&repo.path);
+        log::info!("repository: {} ({})", repo.name, repo.path);
         self.repo = Some(repo);
         self.history.clear();
         self.tabs.truncate(1);

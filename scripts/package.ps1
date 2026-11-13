@@ -1,8 +1,10 @@
 # Build release binaries and assemble a Windows package:
 #   dist\CodeWiki-<version>-windows-x64.zip
 #
-# The zip holds the three programs, the agent plugins, the licence files and
-# install.ps1 / uninstall.ps1. Run from the repository root:
+# The zip holds the three programs, the agent plugins, the licence files,
+# install.ps1 / uninstall.ps1 and the install.cmd / uninstall.cmd launchers
+# that run them past Windows's default script policy. Run from the
+# repository root:
 #   pwsh scripts\package.ps1
 param(
     # Skip `cargo build` and package what is already in target\release.
@@ -34,8 +36,9 @@ foreach ($exe in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe") {
 }
 foreach ($file in "LICENSE", "NOTICE") { Copy-Item (Join-Path $root $file) $stage }
 Copy-Item -Recurse (Join-Path $root "plugins") (Join-Path $stage "plugins")
-Copy-Item (Join-Path $PSScriptRoot "install.ps1") $stage
-Copy-Item (Join-Path $PSScriptRoot "uninstall.ps1") $stage
+foreach ($script in "install.ps1", "uninstall.ps1", "install.cmd", "uninstall.cmd") {
+    Copy-Item (Join-Path $PSScriptRoot $script) $stage
+}
 
 $zip = Join-Path $dist "$name.zip"
 if (Test-Path $zip) { Remove-Item -Force $zip }

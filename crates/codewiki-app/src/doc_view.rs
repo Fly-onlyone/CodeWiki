@@ -100,9 +100,22 @@ impl PageSlot {
         }
         self.bounds.set(bounds);
         if let Some(reader) = self.reader.get() {
-            cx.notify(reader);
+            notify_after_draw(reader, cx);
         }
     }
+}
+
+/// Ask for `view` to be drawn again, from a place that runs while a frame is
+/// being drawn.
+///
+/// GPUI wakes the window only for a notify made outside drawing. One made
+/// during a frame marks the view and asks for no frame, so the change waited
+/// for whatever asked next: the backdrop's drift, or any input. Under reduced
+/// motion nothing drifts, and a new page stayed blank until the pointer
+/// moved. Deferred, the notify runs once the frame is done, and wakes the
+/// window.
+pub fn notify_after_draw(view: EntityId, cx: &mut App) {
+    cx.defer(move |cx| cx.notify(view));
 }
 
 /// A table with more rows than this is drawn a row at a time, so that only
@@ -170,7 +183,8 @@ impl DocPage {
     }
 
     /// Show `doc` in a space `width` wide. Does nothing when that is what is
-    /// shown already, so it can be called on every frame.
+    /// shown already, so it can be called on every frame; the app calls it
+    /// while it is drawn.
     pub fn show(&mut self, doc: &Rc<Doc>, serial: usize, width: f32, cx: &mut Context<Self>) {
         let same_doc = Rc::ptr_eq(&self.doc, doc) || self.doc == *doc;
         if same_doc && self.serial == serial && self.width == width {
@@ -184,7 +198,7 @@ impl DocPage {
         self.doc = doc.clone();
         self.serial = serial;
         self.width = width;
-        cx.notify();
+        notify_after_draw(cx.entity_id(), cx);
     }
 }
 

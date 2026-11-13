@@ -2274,7 +2274,7 @@ impl Render for AppView {
         if cx.try_global::<glass::Levels>() != Some(&self.glass) {
             cx.set_global(self.glass);
             // The page is drawn cached and reads the levels; draw it again.
-            self.doc_page.update(cx, |_, cx| cx.notify());
+            doc_view::notify_after_draw(self.doc_page.entity_id(), cx);
         }
         self.pane_width =
             (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);

@@ -67,7 +67,8 @@ jobs:
           ZIP: ${{ steps.version.outputs.zip }}
         run: |
           $hash = (Get-FileHash -Algorithm SHA256 $env:ZIP).Hash.ToLowerInvariant()
-          "$hash  $(Split-Path -Leaf $env:ZIP)" | Set-Content -Encoding ascii "$env:ZIP.sha256"
+          # LF, not CRLF: `sha256sum -c` reads a carriage return as part of the name.
+          "$hash  $(Split-Path -Leaf $env:ZIP)`n" | Set-Content -NoNewline -Encoding ascii "$env:ZIP.sha256"
           Get-Content "$env:ZIP.sha256"
 
       - uses: actions/upload-artifact@v7

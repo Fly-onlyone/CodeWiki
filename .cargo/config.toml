@@ -1,0 +1,6 @@
+# Link the C runtime into each program. Without this the programs need
+# vcruntime140.dll, which a clean Windows does not have: codewiki-app shows
+# "VCRUNTIME140.dll was not found" and codewiki exits with 0xC0000135
+# (seen in report\vm-test-2026-11-13).
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

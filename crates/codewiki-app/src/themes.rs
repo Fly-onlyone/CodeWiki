@@ -269,6 +269,37 @@ mod tests {
         assert!(failures.is_empty(), "{failures:#?}");
     }
 
+    /// Icons in the sidebar and the toolbar are drawn in these colors
+    /// (`icons::Hue`). An icon is not text, so it needs WCAG's 3:1 for
+    /// graphics (1.4.11), on the page and in the sidebar.
+    #[test]
+    fn the_codewiki_icon_hues_stand_out_from_their_surfaces() {
+        const NON_TEXT: f32 = 3.0;
+        const ICON_KEYS: [&str; 7] = [
+            "link",
+            "base.red",
+            "base.green",
+            "base.yellow",
+            "base.blue",
+            "base.magenta",
+            "base.cyan",
+        ];
+        let mut failures = Vec::new();
+        for theme in codewiki_themes() {
+            let name = theme["name"].as_str().unwrap();
+            let color = |key: &str| parse_hex(theme["colors"][key].as_str().unwrap()).unwrap();
+            for surface in ["background", "sidebar.background"] {
+                for key in ICON_KEYS {
+                    let worst = worst_ratio(color(key), color(surface), PANE_FLOOR, [BLACK, WHITE]);
+                    if worst < NON_TEXT {
+                        failures.push(format!("{name}: {key} on {surface} is {worst:.2}:1"));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
     /// The theme loader ignores color keys it does not know, so a misspelt key
     /// is a color that silently never applies.
     #[test]

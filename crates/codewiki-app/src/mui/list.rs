@@ -6,7 +6,8 @@
 //! How a row answers the pointer is TradingAgent's navigation
 //! (`components/layout/Sidebar.tsx`): it shifts four pixels to the right, its
 //! icon grows and takes the primary color, and the selected row carries a
-//! glowing bar on its left edge.
+//! glowing bar on its left edge. A row may instead give its icon a hue of its
+//! own, which it keeps in every state, so that kinds of row stay apart.
 
 use gpui_kit::base::motion::{self as kit, MotionReveal};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -70,7 +71,18 @@ fn bar_glow(primary: Hsla) -> Vec<BoxShadow> {
         .collect()
 }
 
-/// The heading over a group of rows.
+/// The color of a row's icon: its own hue when it has one, else muted at rest
+/// and primary when the row is active.
+fn icon_color(tint: Option<Hsla>, primary: Hsla, muted: Hsla, active: bool) -> Hsla {
+    match tint {
+        Some(tint) => tint,
+        None if active => primary,
+        None => muted,
+    }
+}
+
+/// The heading over a group of rows, in the theme's link color so that the
+/// sidebar carries the theme's hue.
 pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .px(px(INSET + PADDING))
@@ -79,7 +91,7 @@ pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div {
         .items_center()
         .text_size(px(FONT))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().muted_foreground)
+        .text_color(cx.theme().link)
         .child(label.into())
 }
 
@@ -89,6 +101,7 @@ pub struct ListItemButton {
     id: ElementId,
     label: SharedString,
     icon: Option<Glyph>,
+    tint: Option<Hsla>,
     selected: bool,
     level: usize,
     code: bool,
@@ -103,6 +116,7 @@ impl ListItemButton {
             id: id.into(),
             label: label.into(),
             icon: None,
+            tint: None,
             selected: false,
             level: 0,
             code: false,
@@ -114,6 +128,14 @@ impl ListItemButton {
 
     pub fn icon(mut self, icon: Glyph) -> Self {
         self.icon = Some(icon);
+        self
+    }
+
+    /// Draw the icon in this color at rest, under the pointer and when
+    /// selected, in place of the muted color that turns primary. The row's
+    /// fill, bar and ripple stay primary.
+    pub fn tint(mut self, tint: Option<Hsla>) -> Self {
+        self.tint = tint;
         self
     }
 
@@ -188,7 +210,7 @@ impl RenderOnce for ListItemButton {
             window,
             cx,
         );
-        let icon_color = if selected || hovered { primary } else { muted };
+        let icon_color = icon_color(self.tint, primary, muted, selected || hovered);
         let grown = 1.0 + ICON_GROWTH * hover;
 
         let element = h_flex()
@@ -269,6 +291,7 @@ pub struct ListFolder {
     id: SharedString,
     label: SharedString,
     icon: Glyph,
+    tint: Option<Hsla>,
     arrow: Glyph,
     open_at_first: bool,
     rows: Vec<ListItemButton>,
@@ -286,10 +309,17 @@ impl ListFolder {
             id: id.into(),
             label: label.into(),
             icon,
+            tint: None,
             arrow,
             open_at_first: false,
             rows: Vec::new(),
         }
+    }
+
+    /// The hue of the folder's icon; see [`ListItemButton::tint`].
+    pub fn tint(mut self, tint: Option<Hsla>) -> Self {
+        self.tint = tint;
+        self
     }
 
     /// Whether the folder is open when it first appears. After that it is
@@ -325,6 +355,7 @@ impl RenderOnce for ListFolder {
             self.label,
         )
         .icon(self.icon)
+        .tint(self.tint)
         .trailing(
             Icon::new(self.arrow)
                 .with_size(px(ICON))
@@ -364,6 +395,18 @@ mod tests {
         assert_eq!(fill(primary, false, true).a, 0.08);
         assert_eq!(fill(primary, true, false).a, 0.1);
         assert_eq!(fill(primary, true, true).a, 0.15);
+    }
+
+    #[test]
+    fn a_tinted_icon_keeps_its_hue_in_every_state() {
+        let primary = hsla(0.7, 0.8, 0.6, 1.0);
+        let muted = hsla(0.7, 0.1, 0.6, 1.0);
+        let tint = hsla(0.15, 0.9, 0.6, 1.0);
+        for active in [false, true] {
+            assert_eq!(icon_color(Some(tint), primary, muted, active), tint);
+        }
+        assert_eq!(icon_color(None, primary, muted, false), muted);
+        assert_eq!(icon_color(None, primary, muted, true), primary);
     }
 
     #[test]

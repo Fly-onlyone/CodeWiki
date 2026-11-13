@@ -187,6 +187,8 @@ struct AppView {
 /// Width of the sidebar and of the details pane, in pixels.
 const SIDEBAR_WIDTH: f32 = 280.0;
 const DETAILS_WIDTH: f32 = 260.0;
+/// Diameter of the colored dot before each outline entry, in pixels.
+const OUTLINE_DOT: f32 = 6.0;
 
 /// Repository to open at startup: the first argument, else the working directory.
 fn startup_repo() -> Option<String> {
@@ -1213,6 +1215,7 @@ impl AppView {
             };
             ListItemButton::new(SharedString::from(format!("note:{}", note.path)), label)
                 .icon(icon)
+                .tint(icons::tint(icon, cx))
                 .level(level)
                 .selected(note.path == current)
                 .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
@@ -1244,6 +1247,7 @@ impl AppView {
                             icons::FOLDER,
                             icons::EXPAND,
                         )
+                        .tint(icons::tint(icons::FOLDER, cx))
                         .open_at_first(open)
                         .rows(rows),
                     );
@@ -1258,7 +1262,7 @@ impl AppView {
             .flex_shrink_0()
             .border_r_1()
             .border_color(glass::tinted_border(cx))
-            .bg(self.glass.chrome(theme.sidebar))
+            .bg(self.glass.chrome(glass::tinted(theme.sidebar, cx)))
             .text_color(theme.sidebar_foreground)
             .child(
                 v_flex()
@@ -1293,7 +1297,7 @@ impl AppView {
             .items_center()
             .border_b_1()
             .border_color(glass::tinted_border(cx))
-            .bg(self.glass.chrome(cx.theme().background))
+            .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
             .child(
                 IconButton::new("back", icons::BACK)
                     .tooltip("Back (Alt+Left)")
@@ -1379,12 +1383,14 @@ impl AppView {
             )
             .child(
                 IconButton::new("graph", icons::GRAPH)
+                    .tint(icons::tint(icons::GRAPH, cx))
                     .tooltip("Graph")
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
             )
             .child(
                 IconButton::new("hotspots", icons::HOTSPOTS)
+                    .tint(icons::tint(icons::HOTSPOTS, cx))
                     .tooltip("Hotspots")
                     .small()
                     .disabled(self.repo.is_none())
@@ -1392,6 +1398,7 @@ impl AppView {
             )
             .child(
                 IconButton::new("theme", icons::THEME)
+                    .tint(icons::tint(icons::THEME, cx))
                     .tooltip(format!("Theme: {}", cx.theme().theme_name()))
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
@@ -1449,7 +1456,7 @@ impl AppView {
             .justify_between()
             .border_b_1()
             .border_color(glass::tinted_border(cx))
-            .bg(self.glass.chrome(cx.theme().background))
+            .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
             .child(
                 div().flex_1().min_w_0().overflow_hidden().child(
                     Tabs::new("tabs")
@@ -1462,6 +1469,7 @@ impl AppView {
             )
             .child(
                 IconButton::new("new-tab", icons::NEW_TAB)
+                    .tint(icons::tint(icons::NEW_TAB, cx))
                     .tooltip("New tab (Ctrl+T)")
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.new_tab(cx))),
@@ -2037,8 +2045,10 @@ impl AppView {
 
     fn details(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
-        let heading =
-            move |text: &str| surfaces::text(Variant::Overline, text.to_string()).text_color(muted);
+        let accent = cx.theme().link;
+        let heading = move |text: &str| {
+            surfaces::text(Variant::Overline, text.to_string()).text_color(accent)
+        };
         let mut pane = v_flex()
             .w(px(DETAILS_WIDTH))
             .h_full()
@@ -2046,7 +2056,7 @@ impl AppView {
             .p_3()
             .border_l_1()
             .border_color(glass::tinted_border(cx))
-            .bg(self.glass.chrome(cx.theme().background))
+            .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
             .overflow_hidden();
         match &self.page {
             Page::Note {
@@ -2067,8 +2077,32 @@ impl AppView {
                 };
                 pane = pane.child(div().text_xs().text_color(muted).child(label.to_string()));
                 pane = pane.child(heading("OUTLINE"));
-                for section in markdown::outline(text) {
-                    pane = pane.child(div().text_sm().child(section));
+                // Each section gets a dot in the next chart color, so the
+                // outline carries the theme's palette.
+                let markers = {
+                    let theme = cx.theme();
+                    [
+                        theme.chart_1,
+                        theme.chart_2,
+                        theme.chart_3,
+                        theme.chart_4,
+                        theme.chart_5,
+                    ]
+                };
+                for (index, section) in markdown::outline(text).into_iter().enumerate() {
+                    pane = pane.child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .size(px(OUTLINE_DOT))
+                                    .flex_shrink_0()
+                                    .rounded_full()
+                                    .bg(markers[index % markers.len()]),
+                            )
+                            .child(div().flex_1().min_w_0().text_sm().child(section)),
+                    );
                 }
                 if !sources.is_empty() {
                     pane = pane.child(heading("SOURCE"));
@@ -2242,7 +2276,7 @@ impl Render for AppView {
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
             .sample(window, cx);
         let title_bar = TitleBar::new()
-            .bg(self.glass.chrome(cx.theme().title_bar))
+            .bg(self.glass.chrome(glass::tinted(cx.theme().title_bar, cx)))
             .child(
                 div()
                     .text_sm()

@@ -10,7 +10,8 @@
 use std::borrow::Cow;
 
 use gpui_kit::assets::{Assets, IconNamed};
-use gpui_kit::{AssetSource, Result, SharedString};
+use gpui_kit::component::{ActiveTheme as _, Theme};
+use gpui_kit::{App, AssetSource, Hsla, Result, SharedString};
 
 use crate::palette::Command;
 
@@ -113,6 +114,52 @@ pub fn for_command(command: &Command) -> Glyph {
     }
 }
 
+/// The theme color an icon is drawn in, so that the chrome carries the
+/// theme's palette and each kind of thing keeps the same color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Hue {
+    /// The theme's link color: its accent, drawn to be read on the page.
+    Link,
+    Magenta,
+    Yellow,
+    Blue,
+    Cyan,
+    Red,
+}
+
+impl Hue {
+    /// This hue in `theme`.
+    pub fn color(self, theme: &Theme) -> Hsla {
+        match self {
+            Self::Link => theme.link,
+            Self::Magenta => theme.magenta,
+            Self::Yellow => theme.yellow,
+            Self::Blue => theme.blue,
+            Self::Cyan => theme.cyan,
+            Self::Red => theme.red,
+        }
+    }
+}
+
+/// The hue of `icon` in the sidebar and the toolbar, or `None` for an icon
+/// that stays neutral, such as back or close.
+pub fn hue(icon: Glyph) -> Option<Hue> {
+    match icon {
+        HOME | NEW_TAB => Some(Hue::Link),
+        OVERVIEW | THEME => Some(Hue::Magenta),
+        FOLDER => Some(Hue::Yellow),
+        NOTE => Some(Hue::Blue),
+        GRAPH => Some(Hue::Cyan),
+        HOTSPOTS => Some(Hue::Red),
+        _ => None,
+    }
+}
+
+/// [`hue`] in the active theme.
+pub fn tint(icon: Glyph, cx: &App) -> Option<Hsla> {
+    hue(icon).map(|hue| hue.color(cx.theme()))
+}
+
 /// The app's asset source: its own icons first, then gpui-kit's defaults,
 /// which the kit's components need.
 pub struct AppAssets;
@@ -180,6 +227,16 @@ mod tests {
         unique.dedup();
         assert_eq!(paths.len(), unique.len());
         assert!(paths.len() > EMBEDDED.len());
+    }
+
+    #[test]
+    fn each_kind_of_sidebar_row_has_its_own_hue() {
+        let kinds = [HOME, OVERVIEW, FOLDER, NOTE].map(|icon| hue(icon).unwrap());
+        for (index, kind) in kinds.iter().enumerate() {
+            assert!(!kinds[index + 1..].contains(kind), "{kinds:?}");
+        }
+        assert_eq!(hue(BACK), None);
+        assert_eq!(hue(CLOSE), None);
     }
 
     #[test]

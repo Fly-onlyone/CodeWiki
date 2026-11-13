@@ -418,6 +418,7 @@ impl RenderOnce for Button {
 pub struct IconButton {
     id: ElementId,
     icon: Glyph,
+    tint: Option<Hsla>,
     scale: Scale,
     disabled: bool,
     tooltip: Option<SharedString>,
@@ -429,6 +430,7 @@ impl IconButton {
         Self {
             id: id.into(),
             icon,
+            tint: None,
             scale: Scale::default(),
             disabled: false,
             tooltip: None,
@@ -438,6 +440,13 @@ impl IconButton {
 
     pub fn small(mut self) -> Self {
         self.scale = Scale::Small;
+        self
+    }
+
+    /// Draw the icon, its hover fill and its ripple in this color in place
+    /// of MUI's `action.active`. A disabled button stays neutral.
+    pub fn tint(mut self, tint: Option<Hsla>) -> Self {
+        self.tint = tint;
         self
     }
 
@@ -466,11 +475,11 @@ impl RenderOnce for IconButton {
         let theme = cx.theme();
         let states = tokens::states(theme.is_dark());
         // `palette.action.active`: white on dark, black at 54% on light.
-        let active = if theme.is_dark() {
+        let active = self.tint.unwrap_or(if theme.is_dark() {
             theme.foreground
         } else {
             theme.foreground.opacity(0.54)
-        };
+        });
         let primary = theme.primary;
         let color = if self.disabled {
             theme.foreground.opacity(states.disabled)

@@ -1,6 +1,8 @@
-# CodeWiki
+# CLAUDE.md
 
-Read `AGENTS.md` first; it holds the project rules and commands. `ROADMAP.md` records what is built and what is verified.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Read `AGENTS.md` first; it holds the project rules, commands, architecture and how to check the app. `ROADMAP.md` records what is built and what is verified.
 
 ## IDE
 

@@ -2,6 +2,7 @@
 
 pub mod error;
 pub mod hash;
+pub mod logs;
 pub mod model;
 pub mod paths;
 

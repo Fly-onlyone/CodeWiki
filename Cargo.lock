@@ -1043,9 +1043,11 @@ name = "codewiki-app"
 version = "0.1.0"
 dependencies = [
  "cw-client",
+ "cw-core",
  "cw-illustrate",
  "cw-mermaid",
  "gpui-kit",
+ "log",
  "openui-lang",
  "serde_json",
 ]

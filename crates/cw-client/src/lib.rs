@@ -3,9 +3,10 @@
 //! Clients hold no index of their own. They find a running backend, starting
 //! a local one when none is running, and send every request to it.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use serde_json::Value;
 
@@ -76,6 +77,29 @@ fn codewiki_binary() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
+/// Where a backend started here writes what it prints: the end of
+/// `logs\backend.log` in the data folder, after a line that marks the start.
+/// It has no console to print to, so without this its errors and panics
+/// would be lost.
+fn backend_log() -> Stdio {
+    let path = cw_core::logs::path("backend");
+    match cw_core::logs::open(&path) {
+        Ok(mut file) => {
+            let caller = std::env::current_exe()
+                .ok()
+                .and_then(|exe| Some(exe.file_name()?.to_string_lossy().to_string()))
+                .unwrap_or_default();
+            let _ = writeln!(
+                file,
+                "{} backend started by {caller}",
+                cw_core::logs::timestamp(SystemTime::now())
+            );
+            Stdio::from(file)
+        }
+        Err(_) => Stdio::null(),
+    }
+}
+
 impl Backend {
     /// Find a backend, starting a local one if needed.
     pub fn connect() -> Result<Self, String> {
@@ -100,13 +124,13 @@ impl Backend {
             .arg("serve")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null());
+            .stderr(backend_log());
         // `codewiki` is a console program. Started by the desktop app, which
         // has no console, it would get a console window of its own: a black
         // terminal on top of the app, and on Windows 11 the backend then waits
         // for that terminal before it serves (147 s on a slow machine, against
-        // 0.6 s without one; report\vm-test-2026-11-13). Closing the terminal
-        // would also stop the backend.
+        // 0.6 s without one, in a clean-Windows test on 2026-11-13). Closing
+        // the terminal would also stop the backend.
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;

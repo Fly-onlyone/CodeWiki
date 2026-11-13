@@ -17,6 +17,7 @@ mod graph;
 mod icons;
 mod illustration;
 mod live;
+mod logfile;
 mod markdown;
 mod motion;
 mod mui;
@@ -299,6 +300,7 @@ impl AppView {
         self.busy = Some(label.to_string());
         self.error = None;
         cx.notify();
+        let label = label.to_string();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
@@ -308,7 +310,10 @@ impl AppView {
                 this.busy = None;
                 match result {
                     Ok(value) => done(this, value, cx),
-                    Err(message) => this.error = Some(message),
+                    Err(message) => {
+                        log::warn!("{label}: {message}");
+                        this.error = Some(message);
+                    }
                 }
                 cx.notify();
             });
@@ -346,6 +351,7 @@ impl AppView {
                         }
                     }
                     Err(message) => {
+                        log::error!("the backend is not reachable: {message}");
                         this.error = Some(message);
                         this.set_page(Page::Message("The backend is not reachable.".into()), false);
                     }
@@ -2380,6 +2386,7 @@ impl AppView {
 }
 
 fn main() {
+    logfile::init();
     let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);

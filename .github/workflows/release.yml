@@ -1,0 +1,95 @@
+name: Release
+
+# A version tag (v0.2.0, v0.2.0-rc.1) builds the Windows package with
+# scripts/package.ps1 and publishes it as a GitHub Release. The tag must match
+# the workspace version in Cargo.toml.
+#
+# A pull request that changes the packaging, and a manual run, build the same
+# package as a dry run: it is kept as a workflow artifact and nothing is
+# published.
+
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - scripts/package.ps1
+      - scripts/install.ps1
+      - scripts/uninstall.ps1
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  package:
+    runs-on: windows-latest
+    # A release build of all three programs (thin LTO, one codegen unit) with
+    # no cache to start from.
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Read the version
+        id: version
+        shell: pwsh
+        env:
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # Same pattern as scripts/package.ps1.
+          $manifest = Get-Content Cargo.toml -Raw
+          if ($manifest -notmatch '(?m)^version\s*=\s*"([^"]+)"') { throw "no workspace version in Cargo.toml" }
+          $version = $Matches[1]
+          if ($env:IS_TAG -eq 'true' -and "v$version" -ne $env:GITHUB_REF_NAME) {
+            throw "tag $env:GITHUB_REF_NAME does not match the Cargo.toml version $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "zip=dist/CodeWiki-$version-windows-x64.zip" >> $env:GITHUB_OUTPUT
+
+      - name: Build and package
+        shell: pwsh
+        run: ./scripts/package.ps1
+
+      - name: Write the checksum
+        shell: pwsh
+        env:
+          ZIP: ${{ steps.version.outputs.zip }}
+        run: |
+          $hash = (Get-FileHash -Algorithm SHA256 $env:ZIP).Hash.ToLowerInvariant()
+          # LF, not CRLF: `sha256sum -c` reads a carriage return as part of the name.
+          "$hash  $(Split-Path -Leaf $env:ZIP)`n" | Set-Content -NoNewline -Encoding ascii "$env:ZIP.sha256"
+          Get-Content "$env:ZIP.sha256"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: CodeWiki-${{ steps.version.outputs.version }}-windows-x64
+          path: |
+            ${{ steps.version.outputs.zip }}
+            ${{ steps.version.outputs.zip }}.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Publish the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ZIP: ${{ steps.version.outputs.zip }}
+        run: |
+          $flags = @()
+          # A version with a pre-release part (0.2.0-rc.1) is not the latest release.
+          if ($env:VERSION.Contains('-')) { $flags += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME $env:ZIP "$env:ZIP.sha256" `
+            --title "CodeWiki $env:VERSION" --generate-notes --verify-tag @flags

@@ -8,21 +8,28 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request cancels the run it replaces. Runs on main are
+# never cancelled, so every commit there keeps a result.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
   check:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo test --workspace
+      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --workspace
 
   # Both legs gate the build. The advisories leg can fail without any change
   # here, when a new advisory is published: fix the dependency, or add the ID
@@ -30,6 +37,7 @@ jobs:
   # failure does not cancel the licenses leg.
   deny:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +45,35 @@ jobs:
           - advisories
           - licenses bans sources
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check ${{ matrix.checks }}
+
+  # CodeWiki's own `check` run on this repository. It reports to code
+  # scanning and never fails the build. It also proves that the backend CLI
+  # still compiles on Linux, which the Docker image depends on.
+  wiki-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Hotspots, ownership and change coupling read the git history.
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo run --locked -p codewiki -- check --format sarif --fail-on never --output codewiki.sarif
+        env:
+          # The index is a cache; it is built on first use in a scratch
+          # folder. The runner context exists only at step level.
+          CODEWIKI_DATA_DIR: ${{ runner.temp }}/codewiki
+      # A pull request from a fork gets a read-only token and cannot upload.
+      - if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: codewiki.sarif
+          category: codewiki

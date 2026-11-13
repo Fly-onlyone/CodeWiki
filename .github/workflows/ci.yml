@@ -59,9 +59,6 @@ jobs:
     permissions:
       contents: read
       security-events: write
-    env:
-      # The index is a cache; it is built on first use in a scratch folder.
-      CODEWIKI_DATA_DIR: ${{ runner.temp }}/codewiki
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,6 +67,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo run --locked -p codewiki -- check --format sarif --fail-on never --output codewiki.sarif
+        env:
+          # The index is a cache; it is built on first use in a scratch
+          # folder. The runner context exists only at step level.
+          CODEWIKI_DATA_DIR: ${{ runner.temp }}/codewiki
       # A pull request from a fork gets a read-only token and cannot upload.
       - if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@v4

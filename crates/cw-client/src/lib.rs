@@ -95,11 +95,25 @@ impl Backend {
         // No live backend: a stale file would only mislead the wait below.
         let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
         let binary = codewiki_binary();
-        Command::new(&binary)
+        let mut serve = Command::new(&binary);
+        serve
             .arg("serve")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::null());
+        // `codewiki` is a console program. Started by the desktop app, which
+        // has no console, it would get a console window of its own: a black
+        // terminal on top of the app, and on Windows 11 the backend then waits
+        // for that terminal before it serves (147 s on a slow machine, against
+        // 0.6 s without one; report\vm-test-2026-11-13). Closing the terminal
+        // would also stop the backend.
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            serve.creation_flags(CREATE_NO_WINDOW);
+        }
+        serve
             .spawn()
             .map_err(|e| format!("could not start the backend ({}): {e}", binary.display()))?;
         let started = Instant::now();

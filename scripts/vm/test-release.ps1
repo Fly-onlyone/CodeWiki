@@ -155,11 +155,11 @@ function Start-FromStartMenu {
 }
 
 # ---------------------------------------------------------------- A1, host
-Test-Case "A1" "Package contents" "three programs, licence files, both scripts and the plugins" {
+Test-Case "A1" "Package contents" "three programs, licence files, the scripts and their launchers, and the plugins" {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Zip)
     try { $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace "\\", "/" }) } finally { $archive.Dispose() }
-    $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1"
+    $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1", "install.cmd", "uninstall.cmd"
     $missing = @($needed | Where-Object { $entries -notcontains $_ })
     $plugins = @($entries | Where-Object { $_ -like "plugins/*" }).Count
     $unpacked = Join-Path ([System.IO.Path]::GetTempPath()) "cwvm-zip-$PID"
@@ -173,7 +173,7 @@ Test-Case "A1" "Package contents" "three programs, licence files, both scripts a
     Remove-Item -Recurse -Force $unpacked
     $size = [math]::Round((Get-Item $Zip).Length / 1MB, 1)
     $status = if ($missing.Count -eq 0 -and $plugins -gt 0) { "pass" } else { "fail" }
-    Add-Result -Id "A1" -Title "Package contents" -Expect "three programs, licence files, both scripts and the plugins" -Status $status `
+    Add-Result -Id "A1" -Title "Package contents" -Expect "three programs, licence files, the scripts and their launchers, and the plugins" -Status $status `
         -Observed "$(Split-Path -Leaf $Zip), $size MB, $($entries.Count) entries, $plugins under plugins/, missing: $(if ($missing) { $missing -join ', ' } else { 'none' })" `
         -Output ($imports -join "`n")
 }
@@ -213,29 +213,51 @@ Test-Case "B1" "Guest before install" "recorded only" {
 }
 
 # ---------------------------------------------------------------- C, install
-Test-Case "C1" "Unpack the zip" "Expand-Archive in Windows PowerShell 5.1 gives all eight entries" {
+Test-Case "C1" "Unpack the zip" "Expand-Archive in Windows PowerShell 5.1 gives all ten entries" {
     $run = Invoke-GuestScript -Script @"
 Expand-Archive -Path '$guestZip' -DestinationPath '$guestUnpacked' -Force
 Get-ChildItem '$guestUnpacked' | ForEach-Object { `$_.Name }
 "@
     $names = @($run.Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-    $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1", "plugins"
+    $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1", "install.cmd", "uninstall.cmd", "plugins"
     $missing = @($needed | Where-Object { $names -notcontains $_ })
-    Add-Result -Id "C1" -Title "Unpack the zip" -Expect "all eight entries" -Status $(if ($missing) { "fail" } else { "pass" }) `
+    Add-Result -Id "C1" -Title "Unpack the zip" -Expect "all ten entries" -Status $(if ($missing) { "fail" } else { "pass" }) `
         -Observed "unpacked: $($names -join ', ')" -Output $run.Output
 }
 
-Test-Case "C2" "install.ps1 as README says" "runs under the execution policy Windows ships with" {
+function Test-Installed {
+    param($Probe)
+    $files = @($Probe.install.files | ForEach-Object { $_.path })
+    $problems = @()
+    foreach ($exe in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "uninstall.ps1", "uninstall.cmd", "LICENSE", "NOTICE", "plugins") {
+        if ($files -notcontains $exe) { $problems += "missing $exe" }
+    }
+    if ($Probe.userPath.targetCount -ne 1) { $problems += "user PATH holds the folder $($Probe.userPath.targetCount) times" }
+    if (-not $Probe.shortcut) { $problems += "no Start menu shortcut" }
+    elseif ($Probe.shortcut.target -ne "$guestTarget\codewiki-app.exe") { $problems += "shortcut points at $($Probe.shortcut.target)" }
+    # Started in the profile, the app once took the profile as its repository.
+    elseif ($Probe.shortcut.workingDirectory -ne $guestTarget) { $problems += "shortcut starts in $($Probe.shortcut.workingDirectory)" }
+    $problems
+}
+
+# Windows refuses a plain install.ps1; that is its policy, and why install.cmd
+# exists. Recorded, not judged.
+Test-Case "C2" "install.ps1 started plainly" "refused by the execution policy Windows ships with" {
     $run = Invoke-GuestExe -Exe $powershell -TimeoutSec 120 -Arguments "-NoProfile", "-NonInteractive", "-File", "$guestUnpacked\install.ps1"
     $probe = Get-Probe "after-default-policy"
     $text = ($run.Stdout + "`n" + $run.Stderr).Trim()
-    if ($probe.install.exists) {
-        Add-Result -Id "C2" -Title "install.ps1 as README says" -Expect "runs under the default execution policy" -Status pass `
-            -Observed "installed without any policy switch" -Output $text
-    } else {
-        Add-Result -Id "C2" -Title "install.ps1 as README says" -Expect "runs under the default execution policy" -Status fail `
-            -Observed "blocked: nothing was installed" -Output $text
-    }
+    Add-Result -Id "C2" -Title "install.ps1 started plainly" -Expect "refused by the default execution policy; recorded" -Status note `
+        -Observed $(if ($probe.install.exists) { "installed without any policy switch" } else { "refused: nothing was installed" }) -Output $text
+}
+
+# What a double-click on install.cmd runs: cmd.exe /c with the file.
+Test-Case "C5" "install.cmd, as README says" "installs under the policy Windows ships with" {
+    $run = Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestUnpacked\install.cmd"
+    $probe = Get-Probe "after-install-cmd"
+    $problems = Test-Installed $probe
+    Add-Result -Id "C5" -Title "install.cmd, as README says" -Expect "programs, PATH entry and shortcut in place" `
+        -Status $(if ($problems -or $run.ExitCode -ne 0) { "fail" } else { "pass" }) -Output ($run.Stdout + "`n" + $run.Stderr).Trim() `
+        -Observed "exit $($run.ExitCode); $(if ($problems) { $problems -join '; ' } else { 'all in place' }); shortcut working directory $($probe.shortcut.workingDirectory)"
 }
 
 Test-Case "C2b" "install.ps1 by right-click, Run with PowerShell" "installs" {
@@ -243,22 +265,10 @@ Test-Case "C2b" "install.ps1 by right-click, Run with PowerShell" "installs" {
     $command = "if((Get-ExecutionPolicy ) -ne 'AllSigned') { Set-ExecutionPolicy -Scope Process Bypass }; & '$guestUnpacked\install.ps1'"
     $run = Invoke-GuestExe -Exe $powershell -TimeoutSec 120 -Arguments "-NoProfile", "-NonInteractive", "-Command", $command
     $probe = Get-Probe "after-run-with-powershell"
+    $problems = Test-Installed $probe
     Add-Result -Id "C2b" -Title "install.ps1 by right-click, Run with PowerShell" -Expect "installs" `
-        -Status $(if ($probe.install.exists) { "pass" } else { "fail" }) `
-        -Observed "install folder $(if ($probe.install.exists) { 'created' } else { 'not created' })" -Output ($run.Stdout + "`n" + $run.Stderr).Trim()
-}
-
-function Test-Installed {
-    param($Probe)
-    $files = @($Probe.install.files | ForEach-Object { $_.path })
-    $problems = @()
-    foreach ($exe in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "uninstall.ps1", "LICENSE", "NOTICE", "plugins") {
-        if ($files -notcontains $exe) { $problems += "missing $exe" }
-    }
-    if ($Probe.userPath.targetCount -ne 1) { $problems += "user PATH holds the folder $($Probe.userPath.targetCount) times" }
-    if (-not $Probe.shortcut) { $problems += "no Start menu shortcut" }
-    elseif ($Probe.shortcut.target -ne "$guestTarget\codewiki-app.exe") { $problems += "shortcut points at $($Probe.shortcut.target)" }
-    $problems
+        -Status $(if ($problems -or $run.ExitCode -ne 0) { "fail" } else { "pass" }) `
+        -Observed "exit $($run.ExitCode), over the installation C5 made; $(if ($problems) { $problems -join '; ' } else { 'all in place' })" -Output ($run.Stdout + "`n" + $run.Stderr).Trim()
 }
 
 Test-Case "C3" "install.ps1 with -ExecutionPolicy Bypass" "programs, PATH entry and shortcut in place, no elevation prompt" {
@@ -332,13 +342,22 @@ function Get-ProbeWhenAble {
     $null
 }
 
+# The repositories the backend has registered, from a probe.
+function Get-Registered {
+    param($Probe)
+    $text = "$($Probe.backend.repos)".Trim()
+    if ($text.StartsWith("[")) { @($text | ConvertFrom-Json) } else { @() }
+}
+
 $idleLoad = $null
 # True once P1 finds the idle app keeping the guest's processors busy.
 $starved = $false
 $firstBackendPid = $null
 $firstProbe = $null
 $closedProbe = $null
-Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens" {
+# Nothing is registered yet and the shortcut starts in the install folder, so
+# the app must show its welcome page, not take a folder as the repository.
+Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens on the welcome page; no folder is registered" {
     $script:idleLoad = Wait-GuestIdle
     $search = Start-FromStartMenu
     $shot = Shot "first-launch"
@@ -353,8 +372,9 @@ Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens" {
     $window = @($app | Where-Object { $_.hasWindow })
     $backend = Get-Backend $probe
     $script:firstBackendPid = $probe.backend.pid
-    Add-Result -Id "E1" -Title "Start the app from the Start menu" -Expect "a CodeWiki window opens" `
-        -Status $(if ($window) { "pass" } else { "fail" }) -Shots @($search, $shot) `
+    $registered = @(Get-Registered $probe)
+    Add-Result -Id "E1" -Title "Start the app from the Start menu" -Expect "a window on the welcome page; no folder registered" `
+        -Status $(if ($window -and $registered.Count -eq 0) { "pass" } else { "fail" }) -Shots @($search, $shot) `
         -Observed "codewiki-app processes: $($app.Count), with a window: $($window.Count), title '$($window.title -join ',')'; backend processes: $($backend.Count), backend has its own window: $(@($backend | Where-Object { $_.hasWindow }).Count -gt 0), console hosts under CodeWiki programs: $($probe.consoles.Count); repositories registered: $($probe.backend.repos)"
 }
 
@@ -372,6 +392,33 @@ Test-Case "P1" "Idle processor use, motion as installed" "an idle window leaves 
     Add-Result -Id "P1" -Title "Idle processor use, motion as installed" -Expect "an idle window leaves the processors idle" `
         -Status $(if ($load -le $idleLoad + 15) { "pass" } else { "fail" }) -Shots @($shot) `
         -Observed "the guest's processors were $load percent busy over 20 s with the app's window open and nothing happening; $idleLoad percent just before the app started; graphics drivers loaded by the app: $modules"
+}
+
+# The window from the Start menu has the keyboard focus. The palette's command
+# opens Windows's folder dialog, which takes a typed path.
+Test-Case "E3" "Open a folder from the welcome page" "Open folder… asks for a folder, registers it and opens it" {
+    if ($starved) { throw "the guest is too busy to be driven (P1)" }
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "open folder"; Wait-For 2
+    $a = Shot "palette-open-folder"
+    Send-Keys "enter"; Wait-For 5
+    $b = Shot "folder-dialog"
+    Send-Text $guestRepo; Wait-For 1
+    Send-Keys "enter"; Wait-For 10
+    $c = Shot "folder-chosen"
+    $probe = Get-Probe "folder-opened" -Quick
+    if (-not (Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })) {
+        # The dialog may first have gone into the folder; Enter then picks it.
+        Send-Keys "enter"; Wait-For 10
+        $c = Shot "folder-chosen-again"
+        $probe = Get-Probe "folder-opened-again" -Quick
+    }
+    $registered = @(Get-Registered $probe)
+    $window = @(Get-App $probe | Where-Object { $_.hasWindow })
+    $ok = [bool]($registered | Where-Object { $_.name -eq "cw-core" }) -and ($window.title -join ",") -match "cw-core"
+    Add-Result -Id "E3" -Title "Open a folder from the welcome page" -Expect "cw-core registered and shown" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) `
+        -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); window title '$($window.title -join ',')'"
 }
 
 Test-Case "H1" "Close the app, start it again" "backend outlives the app and is reused" {
@@ -396,6 +443,10 @@ Test-Case "H1" "Close the app, start it again" "backend outlives the app and is 
     Add-Result -Id "H1" -Title "Close the app, start it again" -Expect "backend outlives the app and is reused" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($closed, $again) `
         -Observed "after Alt+F4: app processes $appLeft, backend alive $backendAlive; after restart: backend pid $($probe2.backend.pid) (was $firstBackendPid), app processes $((Get-App $probe2).Count)"
+    # The Start menu gives no folder: the app reopens the one opened in E3.
+    $title = (@(Get-App $probe2 | Where-Object { $_.hasWindow }).title) -join ","
+    Add-Result -Id "E4" -Title "The last repository opens again" -Expect "started from the Start menu, the app shows cw-core" `
+        -Status $(if ($title -match "cw-core") { "pass" } else { "fail" }) -Shots @($again) -Observed "window title '$title'"
 }
 
 Test-Case "E2" "Backend after first launch" "backend.json written, health answers, token required" {
@@ -440,6 +491,34 @@ foreach ($view in $views) {
             -Status $(if ($window) { "pass" } else { "fail" }) -Shots @($shot) -Observed $observed
         Stop-GuestApp
     }
+}
+
+# A page must appear without any input. Start-GuestApp clicks the window to
+# give it the focus, which hid this: here the app is started and left alone.
+# With motion reduced, a page once stayed a lone "CodeWiki" heading until the
+# pointer moved.
+foreach ($mode in "reduced", "system") {
+    Test-Case "F2-$mode" "A page appears without input, motion $mode" "the health page is drawn with no input at all" {
+        if ($starved -and $mode -eq "system") { throw "the guest is too busy to be driven with default motion (P1)" }
+        Set-GuestMotion $mode
+        Start-GuestExe -Exe "$guestTarget\codewiki-app.exe" -Arguments $guestRepo, "health:"
+        Wait-For 25
+        $shot = Shot "no-input-health-$mode"
+        Add-Result -Id "F2-$mode" -Title "A page appears without input, motion $mode" -Expect "the health table is drawn" -Status note -Shots @($shot) `
+            -Observed "started without the focus and given no input for 25 s; read the screenshot: a table of files is the page, a lone 'CodeWiki' heading is the defect"
+        Stop-GuestApp
+    }
+}
+# Back to what the rest of the run uses.
+Set-GuestMotion $(if ($starved) { "reduced" } else { "system" })
+
+Test-Case "L1" "The app writes a log" "logs\app.log names the graphics adapter" {
+    $run = Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'graphics adapter|Using GPU|ERROR|WARN|panic' | Select-Object -Last 8 | ForEach-Object { `$_.Line }"
+    $adapter = if ($run.Output -match "graphics adapter: (.+)") { $Matches[1].Trim() } else { "" }
+    $backendLog = (Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\backend.log`" -ErrorAction SilentlyContinue | Select-Object -First 3").Output
+    Add-Result -Id "L1" -Title "The app writes a log" -Expect "logs\app.log names the graphics adapter" `
+        -Status $(if ($adapter) { "pass" } else { "fail" }) -Output ($run.Output + "`n--- backend.log`n" + $backendLog) `
+        -Observed $(if ($adapter) { "adapter: $adapter" } else { "no adapter line in app.log" })
 }
 
 # ---------------------------------------------------------------- G, keyboard
@@ -584,9 +663,11 @@ foreach (`$line in `$answers) {
 }
 
 # ---------------------------------------------------------------- K, uninstall
+# uninstall.cmd, as a double-click runs it, while the app and backend run.
 Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH entry and shortcut removed" {
     $before = Get-Probe "before-uninstall" -Quick
-    $run = Invoke-GuestScript -Script "& '$powershell' -NoProfile -ExecutionPolicy Bypass -File '$guestTarget\uninstall.ps1'"
+    $exe = Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd"
+    $run = [pscustomobject]@{ ExitCode = $exe.ExitCode; Output = ($exe.Stdout + "`n" + $exe.Stderr).Trim() }
     Wait-For 3
     $shot = Shot "after-uninstall"
     $probe = Get-Probe "uninstalled"
@@ -601,14 +682,16 @@ Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH
         -Observed "exit $($run.ExitCode); running before: $($before.processes.Count) processes; $(if ($problems) { $problems -join '; ' } else { 'removed' }); left in the install folder: $(if ($left) { $left -join ', ' } else { 'nothing' }); data folder files: $(Get-FileCount $probe.dataDir.files); settings folder files: $(Get-FileCount $probe.prefsDir.files)"
 }
 
-Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data folder is removed" {
-    $install = Invoke-GuestScript -Script "& '$powershell' -NoProfile -ExecutionPolicy Bypass -File '$guestUnpacked\install.ps1'"
-    $run = Invoke-GuestScript -Script "& '$powershell' -NoProfile -ExecutionPolicy Bypass -File '$guestTarget\uninstall.ps1' -PurgeData"
+Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and settings folders are removed" {
+    $cmd = "C:\Windows\System32\cmd.exe"
+    $install = Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestUnpacked\install.cmd"
+    $run = Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData"
     $probe = Get-Probe "purged"
     $dataLeft = Get-FileCount $probe.dataDir.files
     $prefsLeft = @($probe.prefsDir.files | Where-Object { $_ } | ForEach-Object { $_.path })
-    Add-Result -Id "K2" -Title "Reinstall, then uninstall with -PurgeData" -Expect "the data folder is removed" `
-        -Status $(if ($dataLeft -eq 0 -and $run.ExitCode -eq 0 -and $install.ExitCode -eq 0) { "pass" } else { "fail" }) -Output ($install.Output + "`n" + $run.Output) `
+    $ok = $dataLeft -eq 0 -and $prefsLeft.Count -eq 0 -and $run.ExitCode -eq 0 -and $install.ExitCode -eq 0
+    Add-Result -Id "K2" -Title "Reinstall, then uninstall with -PurgeData" -Expect "the data and settings folders are removed" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output ($install.Stdout + "`n" + $install.Stderr + "`n" + $run.Stdout + "`n" + $run.Stderr).Trim() `
         -Observed "install exit $($install.ExitCode), uninstall exit $($run.ExitCode); files left in %LOCALAPPDATA%\CodeWiki: $dataLeft; left in %APPDATA%\CodeWiki: $(if ($prefsLeft) { $prefsLeft -join ', ' } else { 'nothing' })"
 }
 

@@ -1,0 +1,30 @@
+# Weekly update pull requests. Each one runs the full CI, so cargo-deny catches
+# a dependency that brings in a license or advisory the policy refuses.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+      include: scope
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      cargo-minor-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # GPUI is pre-1.0 and exact-pinned (AGENTS.md); it is bumped by hand.
+      - dependency-name: gpui-kit
+    commit-message:
+      prefix: chore
+      include: scope

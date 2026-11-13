@@ -7,10 +7,12 @@
 //! Every file carries the palette author's name and URL. User themes dropped
 //! into `%APPDATA%\CodeWiki\themes` are loaded as well.
 
+use std::rc::Rc;
+
 use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
 use gpui_kit::{App, Global, Pixels, SharedString};
 
-use crate::prefs;
+use crate::{prefs, standard};
 
 /// Name of the setting that remembers the chosen theme.
 const SETTING: &str = "theme";
@@ -19,9 +21,9 @@ const SETTING: &str = "theme";
 const DEFAULT_THEME: &str = "CodeWiki Violet";
 
 /// The CodeWiki family. Kept apart from `BUNDLED` so tests can check it alone.
-const CODEWIKI: &str = include_str!("../themes/codewiki.json");
+pub(crate) const CODEWIKI: &str = include_str!("../themes/codewiki.json");
 
-const BUNDLED: [&str; 27] = [
+pub(crate) const BUNDLED: [&str; 27] = [
     CODEWIKI,
     include_str!("../themes/dracula.json"),
     include_str!("../themes/github.json"),
@@ -101,6 +103,8 @@ fn apply(name: &str, cx: &mut App) -> bool {
     let Some(config) = ThemeRegistry::global(cx).themes().get(name).cloned() else {
         return false;
     };
+    // Every theme is drawn on the CodeWiki set's levels, in its own hues.
+    let config = Rc::new(standard::standardize(&config));
     let baseline = cx.try_global::<Baseline>().cloned();
     Theme::update(cx, |theme| {
         if let Some(baseline) = baseline {
@@ -186,8 +190,9 @@ pub fn next_theme(cx: &mut App) {
 #[cfg(test)]
 mod tests {
     use super::{BUNDLED, CODEWIKI, DEFAULT_THEME};
-    use crate::contrast::{AA, BLACK, PANE_FLOOR, WHITE, parse_hex, ratio, worst_ratio};
+    use crate::contrast::{AA, BLACK, PANE_FLOOR, WHITE, over, parse_hex, ratio, worst_ratio};
     use crate::fonts;
+    use crate::glass::PANE_TINT;
     use gpui_kit::component::ThemeConfigColors;
     use std::collections::BTreeSet;
 
@@ -251,11 +256,17 @@ mod tests {
                     .unwrap_or_else(|| panic!("{name} has no {key}"));
                 parse_hex(hex).unwrap_or_else(|| panic!("{name}: {key} is not a hex color"))
             };
-            // The page, and a card on it: a card is drawn in the secondary
-            // color, as dense as the page.
-            for surface in ["background", "secondary.background"] {
+            // The page, a card on it (drawn in the secondary color, as dense
+            // as the page), and the page with its primary tint.
+            let tinted_page = over(color("primary.background"), PANE_TINT, color("background"));
+            let surfaces = [
+                ("background", color("background")),
+                ("secondary.background", color("secondary.background")),
+                ("the tinted page", tinted_page),
+            ];
+            for (surface, fill) in surfaces {
                 for key in TEXT_KEYS {
-                    let worst = worst_ratio(color(key), color(surface), PANE_FLOOR, [BLACK, WHITE]);
+                    let worst = worst_ratio(color(key), fill, PANE_FLOOR, [BLACK, WHITE]);
                     if worst < AA {
                         failures.push(format!("{name}: {key} on {surface} is {worst:.2}:1"));
                     }

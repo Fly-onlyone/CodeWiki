@@ -24,19 +24,20 @@ mod pages;
 mod palette;
 mod prefs;
 mod reading;
+mod standard;
 mod themes;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use cw_client::{Backend, encode};
+use gpui_kit::base::TextView;
 use gpui_kit::base::motion::{Presence, Transition};
 use gpui_kit::component::TitleBar;
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::text::TextView;
 use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
@@ -2363,7 +2364,9 @@ impl AppView {
                                     .flex_1()
                                     .min_w_0()
                                     .h_full()
-                                    .bg(self.glass.pane(cx.theme().background))
+                                    .bg(self
+                                        .glass
+                                        .pane(glass::tinted_pane(cx.theme().background, cx)))
                                     .child(if matches!(self.page, Page::Graph) {
                                         self.graph_view(window, cx)
                                     } else {

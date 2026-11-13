@@ -1,6 +1,6 @@
 # CodeWiki roadmap
 
-Status as of 2026-11-12. "Verified" means covered by automated tests or by a live run recorded here or in `spikes/VERDICTS.md`. "Seen" means checked by eye on a window-only screenshot. 
+Status as of 2026-11-13. "Verified" means covered by automated tests or by a live run recorded here or in `spikes/VERDICTS.md`. "Seen" means checked by eye on a window-only screenshot. 
 
 ## Current state
 
@@ -52,6 +52,7 @@ Status as of 2026-11-12. "Verified" means covered by automated tests or by a liv
 | P5 Refactoring plans | Verified | Split file, extract type, break cycle, move function | |
 | P5 More languages | Verified | Python, TypeScript/TSX, JavaScript and Java: symbols, imports, calls, inheritance, and full wiki planning (package notes, module notes, class notes, startup flows, integrations, operations). A real Python repository produced 184 notes with every link resolving and an idempotent second sync | A Python folder without `__init__.py` gives one package per subfolder. npm is assumed for JavaScript. TypeScript path aliases are not resolved |
 | P6 CI outputs | Verified | `check` with text, SARIF and JUnit | |
+| P6 Release and repository automation | Verified in part | Run on pull request #4. CI runs `codewiki check` on this repository and uploads it to code scanning: 104 results from 22 rules. gitleaks scans new commits. The Docker image builds without being pushed. The Release dry run builds the Windows zip (25 MB) with a `.sha256` file that `sha256sum -c` and `Get-FileHash` accept. Dependabot opens weekly grouped updates and leaves `gpui-kit` alone. Dependabot security updates are on | No version tag has been pushed, so publishing a GitHub Release and pushing to GHCR have not run. gitleaks has not yet scanned the whole history; that runs after merge. The weekly runs have not been seen |
 | P6 Agent briefing | Verified | Briefing block for `CLAUDE.md` and `AGENTS.md` | |
 | P6 Git webhook | Verified | `POST /v1/hooks/git` with GitHub signature or GitLab token; off unless `CODEWIKI_WEBHOOK_SECRET` is set | Matches a repository by folder name only; no branch filter; no debounce |
 | P6 Agent hooks | Verified | `codewiki hook session-start` briefing, wired to Claude Code's SessionStart hook in the plugin; `claude plugin validate` passes. In a real Claude Code run with the plugin loaded, the briefing arrived in the model's context | |

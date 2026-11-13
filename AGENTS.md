@@ -50,6 +50,16 @@ cargo deny check
 
 Run all four before reporting work as complete.
 
+## CI
+
+`.github/workflows/` holds four workflows:
+
+- `ci.yml` runs the four commands above, with `--locked`. It also runs `codewiki check` on this repository and uploads the findings to code scanning; that job never fails the build.
+- `security.yml` runs gitleaks over new commits. Never commit a secret, not even a test value that looks real. A confirmed false positive goes in `.gitleaksignore` by its fingerprint.
+- `release.yml` and `docker.yml` run on a `v*` tag. The tag must equal `v` plus the workspace `version` in the root `Cargo.toml`. A tag publishes the Windows zip as a GitHub Release and pushes the image to GHCR. Do not push a tag unless asked.
+
+Dependabot (`.github/dependabot.yml`) opens weekly update pull requests and leaves `gpui-kit` alone.
+
 ## Verifying third-party APIs
 
 Check crate APIs against docs.rs or the crate source for the pinned version before using them. GPUI is pre-1.0 and exact-pinned; do not bump it as a side effect of other work.

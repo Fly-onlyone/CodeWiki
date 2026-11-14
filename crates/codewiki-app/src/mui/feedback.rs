@@ -25,7 +25,9 @@ pub enum Tone {
     /// No particular kind.
     #[default]
     Neutral,
-    Primary,
+    /// A label that is no news, such as the kind of a thing: the theme's
+    /// tertiary color.
+    Tertiary,
     Success,
     Info,
     Warning,
@@ -38,7 +40,7 @@ impl Tone {
         let theme = cx.theme();
         match self {
             Self::Neutral => theme.muted_foreground,
-            Self::Primary => theme.primary,
+            Self::Tertiary => theme.sidebar_primary,
             Self::Success => theme.success,
             Self::Info => theme.info,
             Self::Warning => theme.warning,
@@ -51,7 +53,7 @@ impl Tone {
             Self::Success => icons::SUCCESS,
             Self::Warning => icons::WARNING,
             Self::Error => icons::ERROR,
-            Self::Neutral | Self::Primary | Self::Info => icons::INFO,
+            Self::Neutral | Self::Tertiary | Self::Info => icons::INFO,
         }
     }
 }

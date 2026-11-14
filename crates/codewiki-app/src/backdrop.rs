@@ -241,7 +241,14 @@ impl<V: Render> Shell<V> {
 
     fn shapes(&self, window: &Window, cx: &App) -> Div {
         let theme = cx.theme();
-        let colors = [theme.primary, theme.info, theme.magenta, theme.primary];
+        // The glow behind the window blends the theme's three brand colors.
+        let brand = crate::themes::Brand::of(theme);
+        let colors = [
+            brand.primary,
+            brand.secondary,
+            brand.tertiary,
+            brand.primary,
+        ];
         let viewport = window.viewport_size();
         let (width, height) = (viewport.width / px(1.), viewport.height / px(1.));
         let unit = width.min(height);

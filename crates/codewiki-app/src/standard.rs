@@ -8,6 +8,11 @@
 //! the lightness and saturation the CodeWiki themes of the same mode give it,
 //! in the theme's own hue. Code syntax colors stay as the author made them.
 //!
+//! A CodeWiki theme has three brand hues: primary, secondary and tertiary
+//! (`themes::Brand`). A foreign theme seldom names more than one, so the
+//! other two are found among the colors it does name, or set beside the
+//! primary hue on the color wheel.
+//!
 //! The levels are read from `codewiki.json` itself, so they follow any change
 //! to the CodeWiki set. Text colors are then nudged until they keep the
 //! contrast `glass` and the theme tests ask of the CodeWiki themes.
@@ -26,10 +31,15 @@ use crate::themes::CODEWIKI;
 /// What a color key is for, which decides the hue it is drawn in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Role {
-    /// Surfaces, borders and plain text, in the theme's accent hue.
+    /// Surfaces, borders and plain text, in the theme's primary hue.
     Neutral,
-    /// The accent itself and what is drawn in it.
-    Accent,
+    /// The primary color and what is drawn in it: buttons, the active tab,
+    /// the selection, the focus ring.
+    Primary,
+    /// The secondary color: links and what is drawn as one.
+    Secondary,
+    /// The tertiary color: marks and labels that stand apart from both.
+    Tertiary,
     /// A color with a meaning of its own (status, palette), in its own hue.
     Own,
     /// Text on the named fill: white or the background, whichever reads
@@ -67,17 +77,17 @@ const ROLES: [(&str, Role); 59] = [
     ("title_bar.background", Role::Neutral),
     ("title_bar.border", Role::Neutral),
     ("chart.grid", Role::Neutral),
-    ("primary.background", Role::Accent),
-    ("ring", Role::Accent),
-    ("link", Role::Accent),
-    ("link.hover", Role::Accent),
-    ("link.active", Role::Accent),
-    ("list.active.background", Role::Accent),
-    ("list.active.border", Role::Accent),
-    ("selection.background", Role::Accent),
-    ("sidebar.accent.background", Role::Accent),
-    ("sidebar.primary.background", Role::Accent),
-    ("chart.1", Role::Accent),
+    ("primary.background", Role::Primary),
+    ("ring", Role::Primary),
+    ("link", Role::Secondary),
+    ("link.hover", Role::Secondary),
+    ("link.active", Role::Secondary),
+    ("list.active.background", Role::Primary),
+    ("list.active.border", Role::Primary),
+    ("selection.background", Role::Primary),
+    ("sidebar.accent.background", Role::Primary),
+    ("sidebar.primary.background", Role::Tertiary),
+    ("chart.1", Role::Primary),
     ("success.background", Role::Own),
     ("warning.background", Role::Own),
     ("danger.background", Role::Own),
@@ -106,10 +116,11 @@ const ROLES: [(&str, Role); 59] = [
 /// Colors that carry text on the page, held to AA as the CodeWiki themes are
 /// (`themes.rs`). The first three are also the texts `glass` fits the
 /// chrome's opacity to.
-const TEXT_KEYS: [&str; 9] = [
+const TEXT_KEYS: [&str; 10] = [
     "foreground",
     "muted.foreground",
     "link",
+    "sidebar.primary.background",
     "success.background",
     "warning.background",
     "danger.background",
@@ -131,7 +142,31 @@ const FOLLOWERS: [(&str, &str); 3] = [
 
 /// A hue is only taken from a color with at least this much chroma; below it
 /// the color reads as gray and its hue is noise.
-const MIN_CHROMA: f64 = 0.03;
+pub(crate) const MIN_CHROMA: f64 = 0.03;
+/// How far, in degrees of hue, a secondary color sits from the primary one:
+/// near enough to go with it, far enough to be told from it.
+pub(crate) const SECONDARY_APART: (f64, f64) = (25.0, 90.0);
+/// Where a secondary hue is set when the theme names none.
+const SECONDARY_AIM: f64 = 40.0;
+/// The least a tertiary color sits from the primary one.
+pub(crate) const TERTIARY_APART: f64 = 80.0;
+/// Where a tertiary hue may be set when the theme names none, from the
+/// primary hue: far round the wheel on either side or, when the secondary
+/// hue is already there, a quarter turn away.
+const TERTIARY_AIMS: [f64; 4] = [150.0, -150.0, 90.0, -90.0];
+/// The least the secondary and tertiary colors sit from each other.
+pub(crate) const BRAND_APART: f64 = 60.0;
+/// Colors a foreign theme may name, whose hues can serve as its secondary or
+/// tertiary one.
+const SPARE_HUES: [&str; 7] = [
+    "base.red",
+    "base.green",
+    "base.yellow",
+    "base.blue",
+    "base.magenta",
+    "base.cyan",
+    "info.background",
+];
 /// How close to the edge of sRGB a color may go: neutrals stay well inside so
 /// no channel is pinned, accents and status colors may go further.
 const NEUTRAL_GAMUT: f64 = 0.8;
@@ -241,6 +276,72 @@ pub fn standardize(config: &ThemeConfig) -> ThemeConfig {
     standardized
 }
 
+/// The distance between two hues, in degrees, the short way round.
+pub(crate) fn hue_apart(a: f64, b: f64) -> f64 {
+    let apart = (a - b).rem_euclid(360.0);
+    apart.min(360.0 - apart)
+}
+
+/// The hues of a theme's primary, secondary and tertiary colors, given the
+/// chromatic colors it names. All are `None` for a theme with no hue at all,
+/// which stays gray.
+///
+/// The secondary hue is the theme's link, when that is not its primary color
+/// again; else whichever spare hue sits nearest to `SECONDARY_AIM` from the
+/// primary; else that aim itself. The tertiary hue is the theme's own, when
+/// it is far enough away; else the spare hue farthest from the other two;
+/// else the one of `TERTIARY_AIMS` farthest from the other two.
+fn brand_hues(own: impl Fn(&str) -> Option<[f64; 3]>) -> [Option<f64>; 3] {
+    let hue = |key: &str| own(key).map(|lch| lch[2]);
+    let Some(primary) = ["primary.background", "link", "ring", "info.background"]
+        .into_iter()
+        .find_map(hue)
+    else {
+        return [None; 3];
+    };
+    let spare: Vec<f64> = SPARE_HUES.into_iter().filter_map(hue).collect();
+    let by = |a: f64, b: f64| a.partial_cmp(&b).unwrap_or(std::cmp::Ordering::Equal);
+
+    let secondary = hue("link")
+        .filter(|link| hue_apart(*link, primary) >= SECONDARY_APART.0)
+        .or_else(|| {
+            spare
+                .iter()
+                .copied()
+                .filter(|spare| {
+                    let apart = hue_apart(*spare, primary);
+                    (SECONDARY_APART.0..=SECONDARY_APART.1).contains(&apart)
+                })
+                .min_by(|a, b| {
+                    let off = |hue: f64| (hue_apart(hue, primary) - SECONDARY_AIM).abs();
+                    by(off(*a), off(*b))
+                })
+        })
+        .unwrap_or((primary + SECONDARY_AIM).rem_euclid(360.0));
+
+    let clear = |hue: f64| hue_apart(hue, primary).min(hue_apart(hue, secondary));
+    let tertiary = hue("sidebar.primary.background")
+        .filter(|own| hue_apart(*own, primary) >= TERTIARY_APART)
+        .or_else(|| {
+            spare
+                .iter()
+                .copied()
+                .filter(|spare| {
+                    hue_apart(*spare, primary) >= TERTIARY_APART
+                        && hue_apart(*spare, secondary) >= BRAND_APART
+                })
+                .max_by(|a, b| by(clear(*a), clear(*b)))
+        })
+        .unwrap_or_else(|| {
+            let aims = TERTIARY_AIMS.map(|turn| (primary + turn).rem_euclid(360.0));
+            aims.into_iter().fold(
+                aims[0],
+                |best, aim| if clear(aim) > clear(best) { aim } else { best },
+            )
+        });
+    [Some(primary), Some(secondary), Some(tertiary)]
+}
+
 /// The standard color of every role key, from the theme's own `colors`.
 fn standard_colors(
     colors: &Map<String, Value>,
@@ -255,11 +356,7 @@ fn standard_colors(
             .map(|(rgb, _)| to_oklch(rgb))
             .filter(|lch| lch[1] >= MIN_CHROMA)
     };
-    // The theme's accent hue; a theme with none stays gray.
-    let accent_hue = ["primary.background", "link", "ring", "info.background"]
-        .into_iter()
-        .find_map(own)
-        .map(|lch| lch[2]);
+    let [primary_hue, secondary_hue, tertiary_hue] = brand_hues(own);
 
     let mut out = HashMap::new();
     for (key, role) in ROLES {
@@ -267,8 +364,10 @@ fn standard_colors(
             continue;
         };
         let (hue, gamut) = match role {
-            Role::Neutral => (accent_hue, NEUTRAL_GAMUT),
-            Role::Accent => (accent_hue, COLOR_GAMUT),
+            Role::Neutral => (primary_hue, NEUTRAL_GAMUT),
+            Role::Primary => (primary_hue, COLOR_GAMUT),
+            Role::Secondary => (secondary_hue, COLOR_GAMUT),
+            Role::Tertiary => (tertiary_hue, COLOR_GAMUT),
             Role::Own => (Some(own(key).map_or(level.h, |lch| lch[2])), COLOR_GAMUT),
             Role::OnFill(_) => continue,
         };
@@ -431,7 +530,7 @@ fn to_gamma(c: f64) -> f64 {
 
 /// sRGB to OKLCH: lightness 0–1, chroma, hue in degrees. Björn Ottosson's
 /// OKLab matrices.
-fn to_oklch(rgb: Rgb) -> [f64; 3] {
+pub(crate) fn to_oklch(rgb: Rgb) -> [f64; 3] {
     let [r, g, b] = rgb.map(|c| to_linear(f64::from(c)));
     let l = (0.412_221_470_8 * r + 0.536_332_536_3 * g + 0.051_445_992_9 * b).cbrt();
     let m = (0.211_903_498_2 * r + 0.680_699_545_1 * g + 0.107_396_956_6 * b).cbrt();
@@ -673,7 +772,10 @@ mod tests {
                         }
                     }
                 }
-                for key in ICON_KEYS.into_iter().chain(["link"]) {
+                for key in ICON_KEYS
+                    .into_iter()
+                    .chain(["link", "sidebar.primary.background"])
+                {
                     for fill in [page, sidebar] {
                         let ratio = worst(color(&theme, key), fill);
                         if ratio < ICON_CONTRAST {
@@ -698,6 +800,83 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// A theme that names one accent still shows three colors, and one that
+    /// names none stays gray.
+    #[test]
+    fn a_foreign_theme_gets_three_hues_that_stand_apart() {
+        for config in configs(FOREIGN) {
+            let theme = standardize(&config);
+            let lch = |key| to_oklch(color(&theme, key));
+            let [primary, secondary, tertiary] =
+                ["primary.background", "link", "sidebar.primary.background"].map(lch);
+            let name = &config.name;
+            // A theme that names no accent has no hue to build on.
+            if ["Gray", "Base Colors Only"].contains(&name.as_ref()) {
+                for brand in [primary, secondary, tertiary] {
+                    assert!(brand[1] < MIN_CHROMA, "{name} gained a hue");
+                }
+                continue;
+            }
+            let near = hue_apart(primary[2], secondary[2]);
+            assert!(
+                near >= SECONDARY_APART.0 - 3.0,
+                "{name}: secondary {near:.0}"
+            );
+            let far = hue_apart(primary[2], tertiary[2]);
+            assert!(far >= TERTIARY_APART - 3.0, "{name}: tertiary {far:.0}");
+            let between = hue_apart(secondary[2], tertiary[2]);
+            assert!(between >= BRAND_APART - 3.0, "{name}: between {between:.0}");
+        }
+    }
+
+    #[test]
+    fn brand_hues_come_from_the_theme_where_it_names_them() {
+        let named = |pairs: &'static [(&'static str, f64)]| {
+            move |key: &str| {
+                pairs
+                    .iter()
+                    .find(|(name, _)| *name == key)
+                    .map(|(_, hue)| [0.7, 0.15, *hue])
+            }
+        };
+        // Nothing but a primary color: both others are set beside it.
+        assert_eq!(
+            brand_hues(named(&[("primary.background", 290.0)])),
+            [Some(290.0), Some(330.0), Some(140.0)]
+        );
+        // A link of its own, and a sidebar accent far enough away, are kept.
+        assert_eq!(
+            brand_hues(named(&[
+                ("primary.background", 290.0),
+                ("link", 340.0),
+                ("sidebar.primary.background", 120.0),
+            ])),
+            [Some(290.0), Some(340.0), Some(120.0)]
+        );
+        // A link in the primary color is no second hue; the spare colors are
+        // searched: blue is the neighbour, yellow the one farthest away.
+        assert_eq!(
+            brand_hues(named(&[
+                ("primary.background", 290.0),
+                ("link", 292.0),
+                ("base.blue", 255.0),
+                ("base.red", 20.0),
+                ("base.yellow", 95.0),
+            ])),
+            [Some(290.0), Some(255.0), Some(95.0)]
+        );
+        // The tertiary hue keeps clear of a link that sits where it would go.
+        assert_eq!(
+            brand_hues(named(&[("primary.background", 0.0), ("link", 150.0)])),
+            [Some(0.0), Some(150.0), Some(270.0)]
+        );
+        assert_eq!(
+            brand_hues(named(&[("primary.background", 0.0), ("link", 180.0)])),
+            [Some(0.0), Some(180.0), Some(90.0)]
+        );
+        assert_eq!(brand_hues(named(&[])), [None; 3]);
     }
 
     #[test]

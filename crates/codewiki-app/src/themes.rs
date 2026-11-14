@@ -61,6 +61,41 @@ pub struct Entry {
     pub swatches: [Hsla; 4],
 }
 
+/// The three colors a theme is known by. Each has its own work, so that a
+/// theme shows more than one hue:
+///
+/// - `primary` fills what the user acts on and what is chosen: buttons, the
+///   active tab, the selection, the focus ring.
+/// - `secondary` is the color of links and of what is drawn as one: section
+///   labels, a note's title, list markers.
+/// - `tertiary` marks what stands apart from both: the bar of the selected
+///   row, kind labels, quotes, table heads and second-level headings.
+///
+/// A theme file carries them in keys the kit already reads:
+/// `primary.background`, `link` and `sidebar.primary.background`. The kit
+/// draws nothing of its own in the third.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Brand {
+    pub primary: Hsla,
+    pub secondary: Hsla,
+    pub tertiary: Hsla,
+}
+
+impl Brand {
+    pub fn of(theme: &Theme) -> Self {
+        Self {
+            primary: theme.primary,
+            secondary: theme.link,
+            tertiary: theme.sidebar_primary,
+        }
+    }
+}
+
+/// The brand colors of the active theme.
+pub fn brand(cx: &App) -> Brand {
+    Brand::of(cx.theme())
+}
+
 /// An icon needs WCAG's 3:1 for graphics against what it is drawn on.
 const ICON_CONTRAST: f32 = 3.0;
 
@@ -440,10 +475,11 @@ mod tests {
     /// there, whatever is behind the window.
     #[test]
     fn the_codewiki_family_passes_aa_on_the_reading_pane() {
-        const TEXT_KEYS: [&str; 9] = [
+        const TEXT_KEYS: [&str; 10] = [
             "foreground",
             "muted.foreground",
             "link",
+            "sidebar.primary.background",
             "success.background",
             "warning.background",
             "danger.background",
@@ -476,9 +512,12 @@ mod tests {
                     }
                 }
             }
-            let button = ratio(color("primary.foreground"), color("primary.background"));
-            if button < AA {
-                failures.push(format!("{name}: primary button text is {button:.2}:1"));
+            for fill in ["primary.background", "sidebar.primary.background"] {
+                let text = fill.replace("background", "foreground");
+                let on_fill = ratio(color(&text), color(fill));
+                if on_fill < AA {
+                    failures.push(format!("{name}: text on {fill} is {on_fill:.2}:1"));
+                }
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
@@ -490,8 +529,9 @@ mod tests {
     #[test]
     fn the_codewiki_icon_hues_stand_out_from_their_surfaces() {
         const NON_TEXT: f32 = 3.0;
-        const ICON_KEYS: [&str; 7] = [
+        const ICON_KEYS: [&str; 8] = [
             "link",
+            "sidebar.primary.background",
             "base.red",
             "base.green",
             "base.yellow",
@@ -510,6 +550,57 @@ mod tests {
                         failures.push(format!("{name}: {key} on {surface} is {worst:.2}:1"));
                     }
                 }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// A theme is told by three hues, not one: the secondary color is a
+    /// neighbour of the primary one, the tertiary color sits far from both,
+    /// and neither can be taken for a status color.
+    #[test]
+    fn the_codewiki_family_has_three_brand_hues_that_stand_apart() {
+        use crate::standard::{
+            BRAND_APART, MIN_CHROMA, SECONDARY_APART, TERTIARY_APART, hue_apart, to_oklch,
+        };
+        /// The least a brand hue sits from a status hue of the same theme.
+        const STATUS_APART: f64 = 30.0;
+        let mut failures = Vec::new();
+        for theme in codewiki_themes() {
+            let name = theme["name"].as_str().unwrap();
+            let hue = |key: &str| {
+                let [_, chroma, hue] =
+                    to_oklch(parse_hex(theme["colors"][key].as_str().unwrap()).unwrap());
+                assert!(chroma >= MIN_CHROMA, "{name}: {key} is gray");
+                hue
+            };
+            let primary = hue("primary.background");
+            let secondary = hue("link");
+            let tertiary = hue("sidebar.primary.background");
+            let near = hue_apart(primary, secondary);
+            if !(SECONDARY_APART.0..=SECONDARY_APART.1).contains(&near) {
+                failures.push(format!("{name}: secondary is {near:.0} from primary"));
+            }
+            let far = hue_apart(primary, tertiary);
+            if far < TERTIARY_APART {
+                failures.push(format!("{name}: tertiary is {far:.0} from primary"));
+            }
+            let between = hue_apart(secondary, tertiary);
+            if between < BRAND_APART {
+                failures.push(format!("{name}: tertiary is {between:.0} from secondary"));
+            }
+            for status in ["success", "warning", "danger", "info"] {
+                let status_hue = hue(&format!("{status}.background"));
+                for (brand, brand_hue) in [("secondary", secondary), ("tertiary", tertiary)] {
+                    let apart = hue_apart(brand_hue, status_hue);
+                    if apart < STATUS_APART {
+                        failures.push(format!("{name}: {brand} is {apart:.0} from {status}"));
+                    }
+                }
+            }
+            // The link and its two states are one color.
+            for state in ["link.hover", "link.active"] {
+                assert_eq!(theme["colors"][state], theme["colors"]["link"], "{name}");
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");

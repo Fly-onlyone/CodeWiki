@@ -13,9 +13,10 @@
 //! is as clear as it can be while its text keeps the contrast `contrast`
 //! asks for. A theme with weak contrast therefore gets denser glass.
 //!
-//! The chrome, the page and the borders are all tinted toward the theme's
-//! primary color, so that every theme reads in its own hue rather than in
-//! plain black or white.
+//! The chrome, the page and the borders are all tinted a little toward the
+//! theme's primary color, so that every theme has a mood of its own. The tint
+//! is faint: the theme's three brand colors carry its hues, and surfaces that
+//! are as colored as they are would drown them.
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
@@ -34,12 +35,12 @@ pub(crate) const CHROME_MATCHED_FLOOR: f32 = 0.62;
 const CHROME_FLOOR: f32 = 0.86;
 
 /// Share of the primary color mixed into every chrome surface.
-pub(crate) const CHROME_TINT: f32 = 0.2;
+pub(crate) const CHROME_TINT: f32 = 0.06;
 /// Share of the primary color mixed into the reading pane, as much as the
 /// chrome so that the page and its frame read as one surface.
-pub const PANE_TINT: f32 = 0.2;
+pub const PANE_TINT: f32 = 0.06;
 /// How far borders are pulled toward the primary color.
-const BORDER_PULL: f32 = 0.45;
+const BORDER_PULL: f32 = 0.25;
 
 /// Mica is the wallpaper, blurred and pulled toward the system mode's base
 /// color. These are the lightest dark Mica and the darkest light Mica.
@@ -197,8 +198,8 @@ mod tests {
 
     // CodeWiki Violet: background, foreground, muted foreground, link,
     // primary.
-    const VIOLET: [&str; 5] = ["#0E0922", "#E9E7F7", "#AAA2D7", "#B299FF", "#7C4DEE"];
-    const VIOLET_LIGHT: [&str; 5] = ["#FAF9FF", "#1A1630", "#4F4873", "#5525C9", "#6D3FE0"];
+    const VIOLET: [&str; 5] = ["#0E0D15", "#E9E8EE", "#AAA8B6", "#E886C9", "#7C4DEE"];
+    const VIOLET_LIGHT: [&str; 5] = ["#FAFAFC", "#1A1A1E", "#4F4D5A", "#910F74", "#6D3FE0"];
 
     fn levels(theme: [&str; 5], theme_dark: bool, system_dark: bool) -> Levels {
         let background = hex(theme[0]);

@@ -105,7 +105,7 @@ pub fn symbol_page(detail: &Value) -> Doc {
     doc.push(Block::Card {
         title: string(symbol, "qualified").to_string(),
         chips: vec![
-            (string(symbol, "kind").replace('_', " "), Tone::Primary),
+            (string(symbol, "kind").replace('_', " "), Tone::Tertiary),
             (string(symbol, "visibility").to_string(), Tone::Neutral),
         ],
         body,

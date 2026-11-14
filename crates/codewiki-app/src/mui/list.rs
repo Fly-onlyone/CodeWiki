@@ -6,8 +6,10 @@
 //! How a row answers the pointer is TradingAgent's navigation
 //! (`components/layout/Sidebar.tsx`): it shifts four pixels to the right, its
 //! icon grows and takes the primary color, and the selected row carries a
-//! glowing bar on its left edge. A row may instead give its icon a hue of its
-//! own, which it keeps in every state, so that kinds of row stay apart.
+//! glowing bar on its left edge. The bar is in the theme's tertiary color, so
+//! that it stands out from the row's primary fill. A row may instead give its
+//! icon a hue of its own, which it keeps in every state, so that kinds of row
+//! stay apart.
 
 use gpui_kit::base::motion::{self as kit, MotionReveal};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -22,6 +24,7 @@ use super::base::{Base, Ink, OnClick, focus_ring};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{curve, duration, easing};
 use crate::icons::Glyph;
+use crate::themes;
 
 /// A dense `ListItemButton`: 4 px above and below a 14 px label with MUI's
 /// 4 px text margins.
@@ -57,7 +60,7 @@ fn fill(primary: Hsla, selected: bool, hovered: bool) -> Hsla {
     })
 }
 
-/// `Sidebar.tsx`: the glow of the selected row's bar.
+/// `Sidebar.tsx`: the glow of the selected row's bar, in the bar's color.
 fn bar_glow(primary: Hsla) -> Vec<BoxShadow> {
     [(16.0, 0.7), (6.0, 0.5), (30.0, 0.2)]
         .into_iter()
@@ -81,8 +84,8 @@ fn icon_color(tint: Option<Hsla>, primary: Hsla, muted: Hsla, active: bool) -> H
     }
 }
 
-/// The heading over a group of rows, in the theme's link color so that the
-/// sidebar carries the theme's hue.
+/// The heading over a group of rows, in the theme's secondary color, which
+/// is its link color.
 pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div {
     div()
         .px(px(INSET + PADDING))
@@ -91,7 +94,7 @@ pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div {
         .items_center()
         .text_size(px(FONT))
         .font_weight(FontWeight::MEDIUM)
-        .text_color(cx.theme().link)
+        .text_color(themes::brand(cx).secondary)
         .child(label.into())
 }
 
@@ -194,6 +197,7 @@ impl RenderOnce for ListItemButton {
         let (primary, foreground, muted) =
             (theme.primary, theme.foreground, theme.muted_foreground);
         let radius = theme.radius / px(1.);
+        let bar = themes::Brand::of(theme).tertiary;
         let (selected, hovered) = (self.selected, base.hovered || self.highlighted);
         let mono = theme.mono_font_family.clone();
         let height = if self.secondary.is_some() {
@@ -251,8 +255,8 @@ impl RenderOnce for ListItemButton {
                         .w(px(BAR.0))
                         .h(px(BAR.1))
                         .rounded_r(px(4.))
-                        .bg(primary)
-                        .shadow(bar_glow(primary)),
+                        .bg(bar)
+                        .shadow(bar_glow(bar)),
                 )
             })
             .when_some(self.icon, |row, icon| {

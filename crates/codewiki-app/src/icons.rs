@@ -146,8 +146,10 @@ pub fn for_command(command: &Command) -> Glyph {
 /// theme's palette and each kind of thing keeps the same color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Hue {
-    /// The theme's link color: its accent, drawn to be read on the page.
+    /// The theme's link color, which is its secondary color.
     Link,
+    /// The theme's tertiary color.
+    Tertiary,
     Magenta,
     Yellow,
     Blue,
@@ -160,6 +162,7 @@ impl Hue {
     pub fn color(self, theme: &Theme) -> Hsla {
         match self {
             Self::Link => theme.link,
+            Self::Tertiary => theme.sidebar_primary,
             Self::Magenta => theme.magenta,
             Self::Yellow => theme.yellow,
             Self::Blue => theme.blue,

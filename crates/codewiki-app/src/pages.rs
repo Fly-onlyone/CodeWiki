@@ -62,7 +62,7 @@ pub fn decisions_page(rows: &Value) -> Doc {
     for row in rows {
         let mut chips = vec![(
             row["status"].as_str().unwrap_or("unknown").to_string(),
-            Tone::Primary,
+            Tone::Tertiary,
         )];
         if row["stale"] == true {
             chips.push(("stale".into(), Tone::Warning));
@@ -483,7 +483,7 @@ pub fn refactor_page(rows: &Value) -> Doc {
         }
         doc.push(Block::Card {
             title: row["title"].as_str().unwrap_or("Suggestion").to_string(),
-            chips: vec![(string(row, "kind").replace('_', " "), Tone::Primary)],
+            chips: vec![(string(row, "kind").replace('_', " "), Tone::Tertiary)],
             body,
         });
     }

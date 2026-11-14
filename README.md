@@ -40,6 +40,12 @@ This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.z
 
 The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to run directly unless scripts have been allowed. From a terminal, `powershell -ExecutionPolicy Bypass -File install.ps1` does the same.
 
+### Updates
+
+An installed app updates itself. Once a day, when it starts, it asks GitHub for the latest release; when there is a newer one, the toolbar shows "Update to <version>". One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
+
+The backend is stopped first and a new one starts with the new app. A coding agent's MCP bridge that is running keeps working and reaches the new backend on its next call; restarting the agent's session gives it the new bridge too. If anything goes wrong, the app says what and leaves the installation as it was. Pre-releases are never offered, and a copy that was only unpacked, or built from source, does not update itself.
+
 ## Use
 
 In a repository:

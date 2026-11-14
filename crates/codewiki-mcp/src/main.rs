@@ -23,12 +23,17 @@ struct Bridge {
 
 /// The backend in `slot`, connecting on first use. Only a success is kept:
 /// after a failed start the next tool call tries again, where a kept error
-/// disabled the bridge until the agent restarted it. The lock is held while
-/// connecting, so two calls at once never start two backends.
+/// disabled the bridge until the agent restarted it. A kept backend that no
+/// longer answers is dropped and a new one found: the app stops the backend
+/// when it installs an update, and the bridge outlives that. The lock is held
+/// while connecting, so two calls at once never start two backends.
 fn connected(slot: &Mutex<Option<Backend>>) -> Result<Backend, String> {
     let mut slot = slot.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     if let Some(backend) = slot.as_ref() {
-        return Ok(backend.clone());
+        if backend.answers() {
+            return Ok(backend.clone());
+        }
+        *slot = None;
     }
     let backend = Backend::connect()?;
     *slot = Some(backend.clone());

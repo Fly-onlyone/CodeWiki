@@ -1412,6 +1412,7 @@ name = "cw-client"
 version = "0.1.0"
 dependencies = [
  "cw-core",
+ "semver",
  "serde_json",
  "ureq",
 ]

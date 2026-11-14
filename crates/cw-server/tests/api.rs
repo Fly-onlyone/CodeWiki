@@ -159,6 +159,64 @@ async fn health_is_open_and_everything_else_needs_the_token() {
 }
 
 #[tokio::test]
+async fn shutdown_needs_the_token() {
+    let h = Harness::new();
+    for token in [None, Some("wrong")] {
+        let (status, _) = h.call("POST", "/v1/shutdown", token, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{token:?}");
+    }
+    let (status, body) = h.call("POST", "/v1/shutdown", Some(TOKEN), None).await;
+    assert_eq!(status, StatusCode::ACCEPTED);
+    assert_eq!(body["status"], "stopping");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn shutdown_route_ends_serve() {
+    let data = tempfile::tempdir().unwrap();
+    let config = ServerConfig {
+        data_dir: data.path().to_path_buf(),
+        token: TOKEN.into(),
+        webhook_secret: None,
+    };
+    let (bound_tx, bound_rx) = std::sync::mpsc::channel();
+    let server = tokio::spawn(cw_server::serve(
+        config,
+        "127.0.0.1:0".parse().unwrap(),
+        move |addr| {
+            bound_tx.send(addr).unwrap();
+            Ok(())
+        },
+        // Never resolves: only the route can stop the server.
+        std::future::pending(),
+    ));
+    let addr = tokio::task::spawn_blocking(move || bound_rx.recv().unwrap())
+        .await
+        .unwrap();
+
+    let reply = tokio::task::spawn_blocking(move || {
+        use std::io::{Read, Write};
+        let mut stream = std::net::TcpStream::connect(addr).unwrap();
+        write!(
+            stream,
+            "POST /v1/shutdown HTTP/1.1\r\nHost: {addr}\r\nAuthorization: Bearer {TOKEN}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        )
+        .unwrap();
+        let mut reply = String::new();
+        stream.read_to_string(&mut reply).unwrap();
+        reply
+    })
+    .await
+    .unwrap();
+    assert!(reply.starts_with("HTTP/1.1 202"), "{reply}");
+
+    let ended = tokio::time::timeout(std::time::Duration::from_secs(10), server).await;
+    assert!(
+        matches!(ended, Ok(Ok(Ok(())))),
+        "serve did not end: {ended:?}"
+    );
+}
+
+#[tokio::test]
 async fn full_repository_flow() {
     let h = Harness::new();
     let path = h.repo.path().to_string_lossy().to_string();

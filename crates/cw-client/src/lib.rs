@@ -36,6 +36,12 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
+/// Whether clients use a backend named by `CODEWIKI_URL`, in Docker or on
+/// another machine, rather than one on this machine.
+pub fn uses_remote() -> bool {
+    std::env::var(URL_ENV).is_ok_and(|url| !url.is_empty())
+}
+
 /// Percent-encode a query-string value.
 pub fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
@@ -58,12 +64,32 @@ fn read_backend_file(data_dir: &Path) -> Option<(String, String)> {
     ))
 }
 
-fn is_healthy(url: &str) -> bool {
-    agent(Duration::from_secs(2))
+/// The version a backend reports, when it answers `/v1/health`. A backend
+/// that answers without a version reports an empty string.
+fn health_version(url: &str) -> Option<String> {
+    let mut response = agent(Duration::from_secs(2))
         .get(&format!("{url}/v1/health"))
         .call()
-        .is_ok_and(|r| r.status().is_success())
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let body: Value = response.body_mut().read_json().unwrap_or_default();
+    Some(body["version"].as_str().unwrap_or_default().to_string())
 }
+
+/// Whether a backend reporting `theirs` is older than this program. One that
+/// cannot be compared counts as not older, so it is kept.
+fn is_older(theirs: &str, ours: &str) -> bool {
+    match (semver::Version::parse(theirs), semver::Version::parse(ours)) {
+        (Ok(theirs), Ok(ours)) => theirs < ours,
+        _ => false,
+    }
+}
+
+/// How long an old backend may take to stop after it is asked to: it first
+/// finishes the requests it is running.
+const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// The `codewiki` binary: beside this executable when installed together,
 /// otherwise whatever `PATH` provides.
@@ -114,13 +140,19 @@ impl Backend {
             return Ok(Self::new(url.trim_end_matches('/').to_string(), token));
         }
         let data_dir = cw_core::paths::data_dir();
-        let live = || {
-            read_backend_file(&data_dir)
-                .filter(|(url, _)| is_healthy(url))
-                .map(|(url, token)| Self::new(url, token))
+        let live_with_version = || {
+            let (url, token) = read_backend_file(&data_dir)?;
+            let version = health_version(&url)?;
+            Some((Self::new(url, token), version))
         };
-        if let Some(backend) = live() {
-            return Ok(backend);
+        let live = || live_with_version().map(|(backend, _)| backend);
+        if let Some((backend, version)) = live_with_version() {
+            // A backend from before an update keeps serving the old code.
+            // Replace it, but never one that is newer: an older client must
+            // not stop the backend a newer one started.
+            if !is_older(&version, cw_core::VERSION) || !backend.stop() {
+                return Ok(backend);
+            }
         }
         // No live backend: a stale file would only mislead the wait below.
         let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
@@ -175,6 +207,38 @@ impl Backend {
     /// Base URL of the backend this client talks to.
     pub fn url(&self) -> &str {
         &self.url
+    }
+
+    /// Ask the backend to stop once its running requests are done.
+    pub fn shutdown(&self) -> Result<(), String> {
+        Self::finish(
+            self.agent
+                .post(&format!("{}/v1/shutdown", self.url))
+                .header("Authorization", &format!("Bearer {}", self.token))
+                .send_empty(),
+        )
+        .map(|_| ())
+    }
+
+    /// Whether the backend still answers `/v1/health`.
+    pub fn answers(&self) -> bool {
+        health_version(&self.url).is_some()
+    }
+
+    /// Stop the backend and wait until it no longer answers. Returns false
+    /// when it could not be asked or is still running after [`STOP_TIMEOUT`].
+    pub fn stop(&self) -> bool {
+        if self.shutdown().is_err() {
+            return false;
+        }
+        let asked = Instant::now();
+        while asked.elapsed() < STOP_TIMEOUT {
+            if !self.answers() {
+                return true;
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+        false
     }
 
     fn new(url: String, token: String) -> Self {
@@ -278,5 +342,78 @@ mod tests {
         assert_eq!(encode("a b&c=d"), "a%20b%26c%3Dd");
         assert_eq!(encode("Ünï"), "%C3%9Cn%C3%AF");
         assert_eq!(encode("safe-_.~09azAZ"), "safe-_.~09azAZ");
+    }
+
+    #[test]
+    fn only_an_older_backend_is_replaced() {
+        assert!(is_older("0.1.0", "0.2.0"));
+        assert!(is_older("0.2.0-rc.1", "0.2.0"));
+        assert!(!is_older("0.2.0", "0.2.0"));
+        // A newer backend was started by a newer client: keep it.
+        assert!(!is_older("0.3.0", "0.2.0"));
+        // A backend that does not say its version is kept.
+        assert!(!is_older("", "0.2.0"));
+    }
+
+    /// A backend that answers `/v1/health` until it is asked to stop.
+    fn stoppable_backend(token: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let stream = stream.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                let mut authorized = false;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    authorized |= line.trim_end() == format!("Authorization: Bearer {token}")
+                        || line.trim_end() == format!("authorization: Bearer {token}");
+                }
+                let shutdown = request_line.starts_with("POST /v1/shutdown ");
+                let stop = shutdown && authorized;
+                let (status, body) = if stop {
+                    ("202 Accepted", r#"{"status":"stopping"}"#)
+                } else if shutdown {
+                    (
+                        "401 Unauthorized",
+                        r#"{"error":"missing or invalid bearer token"}"#,
+                    )
+                } else {
+                    ("200 OK", r#"{"status":"ok","version":"0.0.1"}"#)
+                };
+                let mut stream = reader.into_inner();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                stream.flush().unwrap();
+                if stop {
+                    // Dropping the listener refuses every later connection.
+                    return;
+                }
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn stop_asks_with_the_token_and_waits_until_the_backend_is_gone() {
+        let url = stoppable_backend("secret");
+        assert_eq!(health_version(&url).as_deref(), Some("0.0.1"));
+        let wrong = Backend::new(url.clone(), "wrong".into());
+        assert!(!wrong.stop());
+        assert!(wrong.answers());
+        let backend = Backend::new(url, "secret".into());
+        assert!(backend.stop());
+        assert!(!backend.answers());
     }
 }

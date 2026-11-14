@@ -4,6 +4,9 @@
 //! `/v1/health` requires `Authorization: Bearer <token>`. `/v1/hooks/git` is
 //! the other exception: a git host cannot send the token, so it signs its
 //! request with the webhook secret instead.
+//!
+//! `POST /v1/shutdown` stops the server. The desktop app calls it before an
+//! update replaces the programs, so the old backend does not keep serving.
 
 mod api;
 mod repos;
@@ -15,6 +18,7 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use cw_core::{Error, Result};
+use tokio::sync::Notify;
 
 pub use repos::RepoEntry;
 
@@ -36,21 +40,29 @@ pub(crate) struct Inner {
     pub config: ServerConfig,
     /// Serializes writers: repository list changes and vault updates.
     pub write_lock: Mutex<()>,
+    /// Woken by `POST /v1/shutdown`; [`serve`] stops when it fires.
+    pub stop: Notify,
 }
 
 #[derive(Clone)]
 pub(crate) struct AppState(pub Arc<Inner>);
 
-/// Build the router. Exposed so tests can drive it without a socket.
-pub fn router(config: ServerConfig) -> Router {
-    api::routes(AppState(Arc::new(Inner {
+fn state(config: ServerConfig) -> AppState {
+    AppState(Arc::new(Inner {
         config,
         write_lock: Mutex::new(()),
-    })))
+        stop: Notify::new(),
+    }))
 }
 
-/// Serve until `shutdown` resolves. Returns the bound address through
-/// `on_bound` so callers can publish the port when asking for port 0.
+/// Build the router. Exposed so tests can drive it without a socket.
+pub fn router(config: ServerConfig) -> Router {
+    api::routes(state(config))
+}
+
+/// Serve until `shutdown` resolves or a client calls `POST /v1/shutdown`.
+/// Requests already running are finished first. Returns the bound address
+/// through `on_bound` so callers can publish the port when asking for port 0.
 pub async fn serve(
     config: ServerConfig,
     addr: SocketAddr,
@@ -64,8 +76,16 @@ pub async fn serve(
         .local_addr()
         .map_err(|e| Error::external("reading the bound address", e))?;
     on_bound(bound)?;
-    axum::serve(listener, router(config))
-        .with_graceful_shutdown(shutdown)
+    let state = state(config);
+    let inner = state.0.clone();
+    let stop = async move {
+        tokio::select! {
+            () = shutdown => {}
+            () = inner.stop.notified() => {}
+        }
+    };
+    axum::serve(listener, api::routes(state))
+        .with_graceful_shutdown(stop)
         .await
         .map_err(|e| Error::external("serving HTTP", e))
 }

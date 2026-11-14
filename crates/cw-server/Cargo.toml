@@ -18,9 +18,10 @@ cw-vault = { path = "../cw-vault" }
 cw-wiki = { path = "../cw-wiki" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal", "sync"] }
 
 [dev-dependencies]
 http-body-util = "0.1.5"
 tempfile = "3"
+tokio = { version = "1.54.1", features = ["time"] }
 tower = { version = "0.5.3", features = ["util"] }

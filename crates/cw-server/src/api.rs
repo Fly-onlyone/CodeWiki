@@ -111,6 +111,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/repos/{id}/contracts", get(repo_contracts))
         .route("/workspace", get(workspace_view))
         .route("/workspace/contracts", get(workspace_contracts))
+        .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
         .route("/v1/health", get(health))
@@ -125,6 +126,14 @@ pub fn routes(state: AppState) -> Router {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "name": "codewiki", "version": cw_core::VERSION }))
+}
+
+/// Stop the backend once the requests already running are done. The app calls
+/// this before an update replaces the programs; a client that needs a backend
+/// afterwards starts a new one.
+async fn shutdown(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
+    state.0.stop.notify_one();
+    (StatusCode::ACCEPTED, Json(json!({ "status": "stopping" })))
 }
 
 /// Resolved repository: its root folder and its index.

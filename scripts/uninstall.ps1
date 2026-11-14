@@ -46,6 +46,11 @@ foreach ($item in "codewiki-app.exe", "codewiki-mcp.exe", "codewiki.exe", "plugi
     $file = Join-Path $Target $item
     if (Test-Path $file) { Remove-Patiently $file }
 }
+# What an update by the app leaves until its next start: the files it
+# replaced (`codewiki.exe.old`, `plugins.old2`) and its download folder.
+Get-ChildItem -Force $Target |
+    Where-Object { $_.Name -match '\.old\d*$' -or $_.Name -eq ".update" } |
+    ForEach-Object { Remove-Patiently $_.FullName }
 
 $path = [Environment]::GetEnvironmentVariable("Path", "User")
 $parts = @($path -split ";" | Where-Object { $_ })

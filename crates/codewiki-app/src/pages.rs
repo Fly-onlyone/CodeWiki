@@ -9,6 +9,7 @@ use crate::doc::{
 };
 use crate::motion::MotionPref;
 use crate::mui::feedback::Tone;
+use crate::update;
 
 fn strings<'a>(value: &'a Value, key: &str) -> Vec<&'a str> {
     value[key]
@@ -227,15 +228,18 @@ pub fn drift_page(report: &Value) -> Doc {
     doc
 }
 
-/// The settings page: appearance, where data comes from, and the keyboard
-/// shortcuts. `animations_on` is what the choice in `motion` comes to;
-/// `repos` holds `(name, path)` pairs.
+/// The settings page: appearance, where data comes from, updates and the
+/// keyboard shortcuts. `animations_on` is what the choice in `motion` comes
+/// to; `repos` holds `(name, path)` pairs; `auto_update` is whether the app
+/// looks for updates by itself.
 pub fn settings_page(
     backend: &str,
     theme: &str,
     motion: MotionPref,
     animations_on: bool,
     repos: &[(String, String)],
+    update: &update::State,
+    auto_update: bool,
 ) -> Doc {
     let mut doc = Doc::new("Settings");
     doc.push(Block::Card {
@@ -299,6 +303,7 @@ pub fn settings_page(
         chips: Vec::new(),
         body: vec![Block::Table(repositories)],
     });
+    doc.push(updates_card(update, auto_update));
     let mut keys = Table::new([
         Column::new("Keys").weight(0.6),
         Column::new("Action").weight(1.6),
@@ -318,6 +323,43 @@ pub fn settings_page(
         body: vec![Block::Table(keys)],
     });
     doc
+}
+
+/// The version, what the last check found, and whether the app checks by
+/// itself.
+fn updates_card(update: &update::State, auto_update: bool) -> Block {
+    use update::State;
+    let button = match update {
+        State::Available(_) => Some(("Install and restart".to_string(), Action::InstallUpdate)),
+        State::Idle | State::UpToDate | State::Unavailable(_) => {
+            Some(("Check now".to_string(), Action::CheckUpdates))
+        }
+        State::NotInstalled | State::Checking | State::Installing(_) | State::Installed(_) => None,
+    };
+    let mut body = vec![Block::Setting {
+        label: "Version".into(),
+        value: update.describe(),
+        button,
+    }];
+    if *update != State::NotInstalled {
+        body.push(Block::Setting {
+            label: "Check automatically".into(),
+            value: if auto_update {
+                "On, once a day when CodeWiki starts".into()
+            } else {
+                "Off".into()
+            },
+            button: Some((
+                if auto_update { "Turn off" } else { "Turn on" }.into(),
+                Action::AutoUpdate(!auto_update),
+            )),
+        });
+    }
+    Block::Card {
+        title: "Updates".into(),
+        chips: Vec::new(),
+        body,
+    }
 }
 
 /// The test map: where the tests are and which files have none.
@@ -987,6 +1029,8 @@ mod tests {
             MotionPref::Reduced,
             false,
             &[("demo".into(), "C:/demo".into())],
+            &update::State::UpToDate,
+            true,
         );
         let words = settings.words();
         assert!(words.contains("Theme: Nord"));
@@ -1014,5 +1058,75 @@ mod tests {
             .map(|choice| choice.label.as_str())
             .collect();
         assert_eq!(chosen, ["reduced"]);
+    }
+
+    fn updates(settings: &Doc) -> Vec<Block> {
+        settings
+            .blocks
+            .iter()
+            .find_map(|block| match block {
+                Block::Card { title, body, .. } if title == "Updates" => Some(body.clone()),
+                _ => None,
+            })
+            .expect("no updates card")
+    }
+
+    fn settings_with(state: update::State, auto: bool) -> Doc {
+        settings_page("", "", MotionPref::Full, true, &[], &state, auto)
+    }
+
+    #[test]
+    fn settings_offer_what_the_update_state_allows() {
+        let version = cw_core::VERSION;
+
+        let checked = settings_with(update::State::UpToDate, true);
+        assert!(
+            checked
+                .words()
+                .contains(&format!("Version: {version}, the latest version"))
+        );
+        assert!(
+            checked
+                .words()
+                .contains("Check automatically: On, once a day when CodeWiki starts")
+        );
+        assert!(checked.actions().contains(&Action::CheckUpdates));
+        assert!(checked.actions().contains(&Action::AutoUpdate(false)));
+
+        let release = cw_update::Release {
+            version: cw_update::Version::new(9, 0, 0),
+            zip_name: "CodeWiki-9.0.0-windows-x64.zip".into(),
+            zip_url: String::new(),
+            sha256_url: String::new(),
+        };
+        let available = settings_with(update::State::Available(release), false);
+        assert!(
+            available
+                .words()
+                .contains(&format!("Version: {version}; 9.0.0 is available"))
+        );
+        assert!(available.actions().contains(&Action::InstallUpdate));
+        assert!(!available.actions().contains(&Action::CheckUpdates));
+        assert!(available.actions().contains(&Action::AutoUpdate(true)));
+
+        // Nothing to press while a check or an install runs.
+        let busy = settings_with(update::State::Checking, true);
+        assert!(
+            busy.actions()
+                .iter()
+                .all(|a| !matches!(a, Action::CheckUpdates | Action::InstallUpdate))
+        );
+
+        // A development build says so, and offers neither a check nor the
+        // daily setting.
+        let dev = settings_with(update::State::NotInstalled, true);
+        let rows = updates(&dev);
+        assert_eq!(rows.len(), 1);
+        assert!(dev.words().contains("development build"));
+        assert!(
+            dev.actions()
+                .iter()
+                .all(|a| !matches!(a, Action::CheckUpdates | Action::AutoUpdate(_)))
+        );
     }
 }

@@ -1,7 +1,9 @@
 //! CodeWiki desktop app.
 //!
 //! A native viewer for the vault and the live index. All data comes from the
-//! backend over HTTP; this binary links none of the engine crates.
+//! backend over HTTP; this binary links none of the engine crates. The one
+//! thing it does outside the backend is update its own installation
+//! (`cw-update`).
 
 // Release builds are a GUI app: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
@@ -28,6 +30,7 @@ mod reading;
 mod standard;
 mod startup;
 mod themes;
+mod update;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -168,6 +171,8 @@ struct AppView {
     editing: Option<Editing>,
     busy: Option<String>,
     error: Option<String>,
+    /// Where the app stands with updates.
+    update: update::State,
     search: Entity<InputState>,
     /// Bumped on every page change so the viewer rebuilds its state.
     page_serial: usize,
@@ -278,6 +283,7 @@ impl AppView {
             editing: None,
             busy: Some("Connecting".into()),
             error: None,
+            update: update::State::NotInstalled,
             search,
             page_serial: 0,
             doc_page,
@@ -306,10 +312,12 @@ impl AppView {
             ],
         };
         this.connect(cx);
+        this.start_updates(cx);
         this
     }
 
     /// Run blocking backend work off the UI thread, then apply the result.
+    /// Nothing starts while an update is installed: it stops the backend.
     fn run<T: Send + 'static>(
         &mut self,
         label: &str,
@@ -317,6 +325,9 @@ impl AppView {
         work: impl FnOnce(&Backend) -> Result<T, String> + Send + 'static,
         done: impl FnOnce(&mut Self, T, &mut Context<Self>) + 'static,
     ) {
+        if self.update.installing() {
+            return;
+        }
         let Some(backend) = self.backend.clone() else {
             return;
         };
@@ -397,6 +408,196 @@ impl AppView {
         self.set_page(Page::Message(String::new()), false);
         cx.notify();
         self.connect(cx);
+    }
+
+    /// At start: undo an update that did not finish or clear what a finished
+    /// one left, then look for a new release if the daily check is due. Only
+    /// an installed copy does either.
+    fn start_updates(&mut self, cx: &mut Context<Self>) {
+        let Some(install) = cw_update::installed_dir() else {
+            return;
+        };
+        let check = update::auto_check() && update::due();
+        self.update = if check {
+            update::State::Checking
+        } else {
+            update::State::Idle
+        };
+        cx.spawn(async move |this, cx| {
+            let found = cx
+                .background_executor()
+                .spawn(async move {
+                    for line in cw_update::recover_and_clean(&install) {
+                        log::info!("update: {line}");
+                    }
+                    check.then(update::check)
+                })
+                .await;
+            if let Some(found) = found {
+                _ = this.update(cx, |this, cx| this.show_check(found, cx));
+            }
+        })
+        .detach();
+    }
+
+    /// Look for a newer release now.
+    fn check_for_update(&mut self, cx: &mut Context<Self>) {
+        if !self.update.can_check() {
+            return;
+        }
+        self.update = update::State::Checking;
+        self.refresh_settings(cx);
+        cx.spawn(async move |this, cx| {
+            let found = cx
+                .background_executor()
+                .spawn(async { update::check() })
+                .await;
+            _ = this.update(cx, |this, cx| this.show_check(found, cx));
+        })
+        .detach();
+    }
+
+    fn show_check(&mut self, found: cw_update::Check, cx: &mut Context<Self>) {
+        match &found {
+            cw_update::Check::Newer(release) => {
+                log::info!("update: {} is available", release.version);
+            }
+            cw_update::Check::UpToDate => log::info!("update: this is the latest version"),
+            cw_update::Check::Unavailable(why) => log::warn!("update: could not check: {why}"),
+        }
+        self.update = update::State::from_check(found);
+        self.refresh_settings(cx);
+    }
+
+    /// Show what changed on the settings page, when it is open.
+    fn refresh_settings(&mut self, cx: &mut Context<Self>) {
+        if self.on_settings_page() {
+            self.open_settings(false, cx);
+        }
+        cx.notify();
+    }
+
+    /// Download the release the last check found, put it in place of this
+    /// installation and restart. The backend is stopped first: it would keep
+    /// serving the old code.
+    fn install_update(&mut self, cx: &mut Context<Self>) {
+        let Some(release) = self.update.available().cloned() else {
+            return;
+        };
+        if let Some(busy) = &self.busy {
+            self.error = Some(format!(
+                "Wait for “{busy}” to finish, then install the update."
+            ));
+            cx.notify();
+            return;
+        }
+        // A restart would lose unsaved edits.
+        if !self.can_leave() {
+            cx.notify();
+            return;
+        }
+        let Some(install) = cw_update::installed_dir() else {
+            return;
+        };
+        let version = release.version.clone();
+        log::info!("update: installing {version} into {}", install.display());
+        self.update = update::State::Installing(version.clone());
+        self.busy = Some(format!("Updating to {version}"));
+        self.error = None;
+        self.refresh_settings(cx);
+        // A backend named by CODEWIKI_URL runs elsewhere; it is not ours.
+        let backend = self.backend.clone().filter(|_| !cw_client::uses_remote());
+        // The new app opens the same repository; without one, the one used
+        // last.
+        let args: Vec<std::ffi::OsString> = self
+            .repo
+            .as_ref()
+            .map(|repo| repo.path.clone())
+            .filter(|path| std::path::Path::new(path).is_dir())
+            .map(Into::into)
+            .into_iter()
+            .collect();
+        cx.spawn(async move |this, cx| {
+            let (outcome, backend_answers) = cx
+                .background_executor()
+                .spawn(async move {
+                    let installed = cw_update::install(&install, &release, || match &backend {
+                        Some(backend) if !backend.stop() => Err(
+                            "CodeWiki's backend is still busy with other work; try again when it finishes"
+                                .to_string(),
+                        ),
+                        _ => Ok(()),
+                    });
+                    let outcome = match installed {
+                        Ok(how) => {
+                            log::info!("update: {how:?}; restarting");
+                            match cw_update::relaunch(&install, &args) {
+                                Ok(()) => Ok(true),
+                                Err(e) => {
+                                    log::error!("update: {e}");
+                                    Ok(false)
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("update: {e}");
+                            Err((release, e))
+                        }
+                    };
+                    // A backend that was not ours to stop is still there.
+                    let answers = backend.as_ref().is_none_or(Backend::answers);
+                    (outcome, answers)
+                })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                this.busy = None;
+                if !backend_answers {
+                    this.backend = None;
+                }
+                match outcome {
+                    Ok(true) => {
+                        cx.quit();
+                        return;
+                    }
+                    Ok(false) => {
+                        this.update = update::State::Installed(version.clone());
+                        this.error = Some(format!(
+                            "CodeWiki {version} is installed, but it could not restart itself. Close CodeWiki and open it again."
+                        ));
+                    }
+                    Err((release, e)) => {
+                        this.update = update::State::Available(release);
+                        this.error = Some(format!("The update to {version} failed: {e}."));
+                        // The swap failed after the backend was stopped. The
+                        // old programs are back in place: start it again.
+                        if this.backend.is_none() {
+                            this.restart_backend(cx);
+                        }
+                    }
+                }
+                this.refresh_settings(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Find or start a backend again without leaving the page or clearing
+    /// the message shown. On failure the palette offers "Reconnect".
+    fn restart_backend(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async { Backend::connect() })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                match result {
+                    Ok(backend) => this.backend = Some(backend),
+                    Err(message) => log::warn!("the backend did not start again: {message}"),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     /// Ask for a folder, then open it as a repository.
@@ -743,6 +944,17 @@ impl AppView {
                 palette::Entry::new("Reconnect to the backend", "Command", Command::Reconnect),
             );
         }
+        if let Some(release) = self.update.available() {
+            entries.insert(
+                0,
+                palette::Entry::new(
+                    // "Update" in the label: it is what someone types.
+                    format!("Update CodeWiki to {} and restart", release.version),
+                    "Command",
+                    Command::InstallUpdate,
+                ),
+            );
+        }
         for note in &self.notes {
             let label = match note.title.as_str() {
                 "_HOME" => "Home".to_string(),
@@ -848,6 +1060,12 @@ impl AppView {
             Command::OpenInObsidian => self.open_in_obsidian(cx),
             Command::Reconnect => self.reconnect(cx),
             Command::OpenFolder => self.open_folder(cx),
+            Command::CheckUpdates => {
+                // The result shows on the settings page.
+                self.open_settings(true, cx);
+                self.check_for_update(cx);
+            }
+            Command::InstallUpdate => self.install_update(cx),
         }
     }
 
@@ -926,6 +1144,8 @@ impl AppView {
             motion::current(cx),
             !cx.reduce_motion(),
             &repos,
+            &self.update,
+            update::auto_check(),
         );
         self.set_page(
             Page::Generated {
@@ -1312,6 +1532,12 @@ impl AppView {
             }
             Action::Reconnect => self.reconnect(cx),
             Action::OpenFolder => self.open_folder(cx),
+            Action::CheckUpdates => self.check_for_update(cx),
+            Action::InstallUpdate => self.install_update(cx),
+            Action::AutoUpdate(on) => {
+                update::set_auto_check(*on);
+                self.open_settings(false, cx);
+            }
         }
     }
 
@@ -1511,6 +1737,21 @@ impl AppView {
                         })),
                 )
             })
+            .when_some(
+                self.update.available().map(|r| r.version.to_string()),
+                |this, version| {
+                    this.child(
+                        Button::new("update")
+                            .icon(icons::UPDATE)
+                            .label(format!("Update to {version}"))
+                            .tooltip("Download it, install it and restart CodeWiki")
+                            .small()
+                            .contained()
+                            .disabled(self.busy.is_some())
+                            .on_click(cx.listener(|this, _, _, cx| this.install_update(cx))),
+                    )
+                },
+            )
             .child(
                 Button::new("commands")
                     .icon(icons::COMMANDS)

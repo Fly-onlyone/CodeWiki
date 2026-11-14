@@ -26,6 +26,12 @@ pub enum Action {
     Reconnect,
     /// Ask for a folder and open it as a repository.
     OpenFolder,
+    /// Look for a newer release now.
+    CheckUpdates,
+    /// Download the newer release, install it and restart.
+    InstallUpdate,
+    /// Turn the daily check for updates on or off.
+    AutoUpdate(bool),
 }
 
 /// A stretch of text within a line.

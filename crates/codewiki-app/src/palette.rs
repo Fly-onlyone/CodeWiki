@@ -39,6 +39,10 @@ pub enum Command {
     Reconnect,
     /// Ask for a folder and open it as a repository.
     OpenFolder,
+    /// Look for a newer release and show the result in the settings.
+    CheckUpdates,
+    /// Install the newer release and restart; listed only when there is one.
+    InstallUpdate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +87,7 @@ pub fn actions() -> Vec<Entry> {
         ("Close tab", Command::CloseTab),
         ("Open note in Obsidian", Command::OpenInObsidian),
         ("Open folder…", Command::OpenFolder),
+        ("Check for updates", Command::CheckUpdates),
     ]
     .into_iter()
     .map(|(label, command)| Entry::new(label, "Command", command))

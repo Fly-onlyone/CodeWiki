@@ -72,6 +72,7 @@ app_icons! {
     CONTRACTS = "handshake",
     SETTINGS = "settings",
     MOTION = "animation",
+    UPDATE = "system-update-alt",
     EXTERNAL = "open-in-new",
     SUCCESS = "check-circle-outline",
     INFO = "info-outlined",
@@ -139,6 +140,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::OpenInObsidian => EXTERNAL,
         Command::Reconnect => SYNC,
         Command::OpenFolder => FOLDER,
+        Command::CheckUpdates | Command::InstallUpdate => UPDATE,
     }
 }
 

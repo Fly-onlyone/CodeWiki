@@ -6,7 +6,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
 
 - **Licenses.** No AGPL, GPL, LGPL or EPL dependencies. `cargo deny check` must pass. `merman` is used with `default-features = false`; the `forceatlas2` crate is banned.
 - **No WebView.** The UI is native Rust on GPUI (`gpui-kit`). Do not add a browser, WebView2 or Electron dependency.
-- **The app talks HTTP only.** `codewiki-app` gets all data from the backend through `cw-client`. It may link `cw-illustrate`, `cw-mermaid` and `openui-lang` to draw, never the index, parser or wiki crates.
+- **The app talks HTTP only.** `codewiki-app` gets all data from the backend through `cw-client`. It may link `cw-illustrate`, `cw-mermaid` and `openui-lang` to draw, never the index, parser or wiki crates. The one exception is its own installation: it links `cw-update` to ask GitHub for a newer release and to replace its programs.
 - **Never overwrite a human-edited note.** Changes to such notes go through the proposal queue.
 - **The index is a cache.** Everything in it must be rebuildable from the repository and the vault. Bump `SCHEMA_VERSION` in `crates/cw-index/src/schema.rs` on any schema change; old indexes are dropped and rebuilt.
 - **Keep builds small.** Do not loosen the `[profile.dev]` settings in the root `Cargo.toml`; debug builds once reached 44 GB. Run `pwsh scripts\clean.ps1` after long sessions; it keeps what the `codewiki-app` run configuration builds, so starting the app afterwards compiles nothing, and `-All` removes everything.

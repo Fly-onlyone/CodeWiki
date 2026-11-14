@@ -238,6 +238,36 @@ mod tests {
         assert_eq!(light.chrome, CHROME_MATCHED_FLOOR);
     }
 
+    /// A bundled theme whose text were too weak would get denser glass than
+    /// the others, and would look like another app.
+    #[test]
+    fn every_bundled_theme_gets_the_clearest_glass_on_a_matching_system() {
+        for content in crate::themes::BUNDLED {
+            let set: serde_json::Value = serde_json::from_str(content).unwrap();
+            for theme in set["themes"].as_array().unwrap() {
+                let color = |key: &str| hex(theme["colors"][key].as_str().unwrap());
+                let dark = theme["mode"] == "dark";
+                let (background, primary) = (color("background"), color("primary.background"));
+                let levels = Levels::compute(
+                    contrast::over(primary, PANE_TINT, background),
+                    contrast::over(primary, CHROME_TINT, background),
+                    &[
+                        color("foreground"),
+                        color("muted.foreground"),
+                        color("link"),
+                    ],
+                    dark,
+                    dark,
+                );
+                let expected = Levels {
+                    pane: PANE_FLOOR,
+                    chrome: CHROME_MATCHED_FLOOR,
+                };
+                assert_eq!(levels, expected, "{}", theme["name"]);
+            }
+        }
+    }
+
     #[test]
     fn the_tinted_page_is_still_glass_and_the_chrome_no_denser() {
         for (theme, dark) in [(VIOLET, true), (VIOLET_LIGHT, false)] {

@@ -3,8 +3,13 @@
 //! `codewiki.json` is CodeWiki's own family: four hues, each dark and light,
 //! with the bundled fonts and a tighter radius. Dracula, Nord, Gruvbox and
 //! Rosé Pine were written for CodeWiki from the palettes their authors
-//! publish; every file carries the palette author's name and URL. User themes
-//! dropped into `%APPDATA%\CodeWiki\themes` are loaded as well.
+//! publish; every file carries the palette author's name and URL. Their
+//! backgrounds, surfaces, borders and fills are the published values. A
+//! color drawn as text or as an icon keeps its published hue and is as much
+//! lighter as it takes to be read on the app's glass.
+//!
+//! User themes dropped into `%APPDATA%\CodeWiki\themes` are loaded as well,
+//! and redrawn on the CodeWiki set's levels (`standard.rs`).
 
 use std::rc::Rc;
 
@@ -154,7 +159,8 @@ fn apply(name: &str, cx: &mut App) -> bool {
     let Some(config) = ThemeRegistry::global(cx).themes().get(name).cloned() else {
         return false;
     };
-    // Every theme is drawn on the CodeWiki set's levels, in its own hues.
+    // A bundled theme is drawn as its file has it; one of the user's own, on
+    // the CodeWiki set's levels in its own hues.
     let config = Rc::new(standard::standardize(&config));
     let baseline = cx.try_global::<Baseline>().cloned();
     Theme::update(cx, |theme| {
@@ -321,6 +327,16 @@ mod tests {
         set["themes"].as_array().unwrap().clone()
     }
 
+    fn bundled_themes() -> Vec<serde_json::Value> {
+        BUNDLED
+            .into_iter()
+            .flat_map(|content| {
+                let set: serde_json::Value = serde_json::from_str(content).unwrap();
+                set["themes"].as_array().unwrap().clone()
+            })
+            .collect()
+    }
+
     #[test]
     fn the_codewiki_family_is_four_hues_each_dark_and_light() {
         let themes = codewiki_themes();
@@ -464,8 +480,8 @@ mod tests {
     }
 
     #[test]
-    fn the_codewiki_family_names_the_bundled_fonts() {
-        for theme in codewiki_themes() {
+    fn every_bundled_theme_names_the_bundled_fonts() {
+        for theme in bundled_themes() {
             assert_eq!(theme["font.family"], fonts::UI_FAMILY);
             assert_eq!(theme["mono_font.family"], fonts::MONO_FAMILY);
         }
@@ -474,7 +490,7 @@ mod tests {
     /// Every color that carries text in the reading pane must pass WCAG AA
     /// there, whatever is behind the window.
     #[test]
-    fn the_codewiki_family_passes_aa_on_the_reading_pane() {
+    fn every_bundled_theme_passes_aa_on_the_reading_pane() {
         const TEXT_KEYS: [&str; 10] = [
             "foreground",
             "muted.foreground",
@@ -488,7 +504,7 @@ mod tests {
             "base.cyan",
         ];
         let mut failures = Vec::new();
-        for theme in codewiki_themes() {
+        for theme in bundled_themes() {
             let name = theme["name"].as_str().unwrap();
             let color = |key: &str| {
                 let hex = theme["colors"][key]
@@ -527,7 +543,7 @@ mod tests {
     /// (`icons::Hue`). An icon is not text, so it needs WCAG's 3:1 for
     /// graphics (1.4.11), on the page and in the sidebar.
     #[test]
-    fn the_codewiki_icon_hues_stand_out_from_their_surfaces() {
+    fn every_bundled_theme_has_icon_hues_that_stand_out() {
         const NON_TEXT: f32 = 3.0;
         const ICON_KEYS: [&str; 8] = [
             "link",
@@ -540,7 +556,7 @@ mod tests {
             "base.cyan",
         ];
         let mut failures = Vec::new();
-        for theme in codewiki_themes() {
+        for theme in bundled_themes() {
             let name = theme["name"].as_str().unwrap();
             let color = |key: &str| parse_hex(theme["colors"][key].as_str().unwrap()).unwrap();
             for surface in ["background", "sidebar.background"] {
@@ -559,14 +575,18 @@ mod tests {
     /// neighbour of the primary one, the tertiary color sits far from both,
     /// and neither can be taken for a status color.
     #[test]
-    fn the_codewiki_family_has_three_brand_hues_that_stand_apart() {
+    fn every_bundled_theme_has_three_brand_hues_that_stand_apart() {
         use crate::standard::{
             BRAND_APART, MIN_CHROMA, SECONDARY_APART, TERTIARY_APART, hue_apart, to_oklch,
         };
         /// The least a brand hue sits from a status hue of the same theme.
         const STATUS_APART: f64 = 30.0;
+        /// Rosé Pine publishes six hues, and a theme has seven jobs for
+        /// them: three brand colors and four status colors. Its rose sits
+        /// beside its red, and its foam serves as both tertiary and info.
+        const TOO_FEW_HUES: [&str; 1] = ["Rosé Pine"];
         let mut failures = Vec::new();
-        for theme in codewiki_themes() {
+        for theme in bundled_themes() {
             let name = theme["name"].as_str().unwrap();
             let hue = |key: &str| {
                 let [_, chroma, hue] =
@@ -589,7 +609,12 @@ mod tests {
             if between < BRAND_APART {
                 failures.push(format!("{name}: tertiary is {between:.0} from secondary"));
             }
-            for status in ["success", "warning", "danger", "info"] {
+            let statuses: &[&str] = if TOO_FEW_HUES.contains(&name) {
+                &[]
+            } else {
+                &["success", "warning", "danger", "info"]
+            };
+            for status in statuses {
                 let status_hue = hue(&format!("{status}.background"));
                 for (brand, brand_hue) in [("secondary", secondary), ("tertiary", tertiary)] {
                     let apart = hue_apart(brand_hue, status_hue);
@@ -604,6 +629,35 @@ mod tests {
             }
         }
         assert!(failures.is_empty(), "{failures:#?}");
+    }
+
+    /// In the theme menu, the icon of each theme is drawn on the menu of
+    /// whichever theme is in use.
+    #[test]
+    fn a_theme_icon_stands_out_on_the_menu_of_every_other_theme() {
+        use crate::standard::readable_on;
+        let themes = bundled_themes();
+        let color = |theme: &serde_json::Value, key: &str| {
+            parse_hex(theme["colors"][key].as_str().unwrap()).unwrap()
+        };
+        for active in &themes {
+            let menu = color(active, "popover.background");
+            let dark = active["mode"] == "dark";
+            for listed in &themes {
+                let icon = readable_on(
+                    color(listed, "primary.background"),
+                    menu,
+                    dark,
+                    super::ICON_CONTRAST,
+                );
+                assert!(
+                    ratio(icon, menu) >= super::ICON_CONTRAST,
+                    "{} on the menu of {}",
+                    listed["name"],
+                    active["name"]
+                );
+            }
+        }
     }
 
     /// The theme loader ignores color keys it does not know, so a misspelt key

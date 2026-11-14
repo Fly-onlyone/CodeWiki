@@ -1,14 +1,16 @@
-//! Standard levels for every theme.
+//! Standard levels for a theme the app did not ship.
 //!
-//! The bundled themes come from many authors and sit at very different
-//! levels: some are near black with a dark accent, some sit on a light gray
-//! with a pastel one. Under the app's tinted glass that spread shows as themes
-//! that are far too dark or too bright. Every theme other than CodeWiki's own
-//! is therefore redrawn on the CodeWiki set's levels: each color role takes
-//! the lightness and saturation the CodeWiki themes of the same mode give it,
-//! in the theme's own hue. Code syntax colors stay as the author made them.
+//! Themes come from many authors and sit at very different levels: some are
+//! near black with a dark accent, some sit on a light gray with a pastel
+//! one. Under the app's glass that spread shows as themes that are far too
+//! dark or too bright, with text that cannot be read. A bundled theme was
+//! written for this app and is drawn as its file has it. Any other theme,
+//! which is one of the user's own, is redrawn on the CodeWiki set's levels:
+//! each color role takes the lightness and saturation the CodeWiki themes of
+//! the same mode give it, in the theme's own hue. Code syntax colors stay as
+//! the author made them.
 //!
-//! A CodeWiki theme has three brand hues: primary, secondary and tertiary
+//! A bundled theme has three brand hues: primary, secondary and tertiary
 //! (`themes::Brand`). A foreign theme seldom names more than one, so the
 //! other two are found among the colors it does name, or set beside the
 //! primary hue on the color wheel.
@@ -26,7 +28,7 @@ use serde_json::{Map, Value};
 
 use crate::contrast::{self, AA, BLACK, PANE_FLOOR, Rgb, WHITE};
 use crate::glass;
-use crate::themes::CODEWIKI;
+use crate::themes::{BUNDLED_NAMES, CODEWIKI};
 
 /// What a color key is for, which decides the hue it is drawn in.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -188,8 +190,8 @@ struct Level {
 struct Reference {
     dark: HashMap<String, Level>,
     light: HashMap<String, Level>,
-    /// The CodeWiki themes, which are the reference and stay as they are.
-    names: HashSet<String>,
+    /// The bundled themes, which stay as their files have them.
+    bundled: HashSet<&'static str>,
 }
 
 static REFERENCE: LazyLock<Reference> = LazyLock::new(|| Reference::from_json(CODEWIKI));
@@ -207,9 +209,7 @@ impl Reference {
         }
         let set: Value = serde_json::from_str(content).expect("codewiki.json is valid JSON");
         let mut sums: [HashMap<String, Sum>; 2] = Default::default();
-        let mut names = HashSet::new();
         for theme in set["themes"].as_array().into_iter().flatten() {
-            names.insert(theme["name"].as_str().unwrap_or_default().to_string());
             let mode = usize::from(theme["mode"] == "dark");
             for (key, value) in theme["colors"].as_object().into_iter().flatten() {
                 let Some((rgb, alpha)) = value.as_str().and_then(parse_rgba) else {
@@ -239,15 +239,19 @@ impl Reference {
                 })
                 .collect()
         });
-        Self { dark, light, names }
+        Self {
+            dark,
+            light,
+            bundled: BUNDLED_NAMES.into_iter().collect(),
+        }
     }
 }
 
-/// `config` on the CodeWiki set's levels. CodeWiki's own themes, and any
+/// `config` on the CodeWiki set's levels. The bundled themes, and any
 /// theme whose colors cannot be read, are returned unchanged.
 pub fn standardize(config: &ThemeConfig) -> ThemeConfig {
     let reference = &*REFERENCE;
-    if reference.names.contains(config.name.as_ref()) {
+    if reference.bundled.contains(config.name.as_ref()) {
         return config.clone();
     }
     let Ok(Value::Object(mut colors)) = serde_json::to_value(&config.colors) else {
@@ -682,11 +686,13 @@ mod tests {
         parse_rgba(value).unwrap().0
     }
 
+    /// A bundled theme sets every role key and no other, so that none of its
+    /// colors is left to the kit's fallbacks.
     #[test]
-    fn every_codewiki_color_key_has_a_role() {
+    fn every_bundled_theme_sets_exactly_the_role_keys() {
         let roles: HashSet<&str> = ROLES.iter().map(|(key, _)| *key).collect();
         assert_eq!(roles.len(), ROLES.len(), "a key is listed twice");
-        for config in configs(CODEWIKI) {
+        for config in BUNDLED.into_iter().flat_map(configs) {
             let keys: HashSet<String> = colors(&config)
                 .into_iter()
                 .filter(|(_, value)| !value.is_null())
@@ -734,8 +740,8 @@ mod tests {
     }
 
     #[test]
-    fn the_codewiki_themes_are_left_as_they_are() {
-        for config in configs(CODEWIKI) {
+    fn the_bundled_themes_are_left_as_they_are() {
+        for config in BUNDLED.into_iter().flat_map(configs) {
             assert_eq!(
                 colors(&standardize(&config)),
                 colors(&config),
@@ -785,7 +791,7 @@ mod tests {
                 }
                 // The CodeWiki themes are the reference; each sits near, not
                 // on, their mean.
-                if !REFERENCE.names.contains(&name) {
+                if !REFERENCE.bundled.contains(name.as_str()) {
                     let levels = if theme.mode.is_dark() {
                         &REFERENCE.dark
                     } else {

@@ -479,6 +479,72 @@ mod tests {
     use super::*;
     use crate::themes::BUNDLED;
 
+    /// Themes as a user might write them, each hard for the standard in its
+    /// own way: an accent too dark to read, a pastel light theme, no hue at
+    /// all, base colors only, and a link in the accent's own color.
+    const FOREIGN: &str = r##"{
+      "name": "Foreign",
+      "themes": [
+        {
+          "name": "Dark Red Accent",
+          "mode": "dark",
+          "colors": {
+            "background": "#000000",
+            "foreground": "#FFFFCE",
+            "primary.background": "#720202",
+            "link": "#720202",
+            "base.red": "#CDA074",
+            "base.blue": "#720202"
+          }
+        },
+        {
+          "name": "Pastel Light",
+          "mode": "light",
+          "colors": {
+            "background": "#FBF1C7",
+            "foreground": "#665C54",
+            "primary.background": "#B8E0D2",
+            "link": "#EAC4D5",
+            "muted.foreground": "#C9BFA6"
+          }
+        },
+        {
+          "name": "Gray",
+          "mode": "dark",
+          "colors": {
+            "background": "#1E1E1E",
+            "foreground": "#D4D4D4",
+            "primary.background": "#808080"
+          }
+        },
+        {
+          "name": "Base Colors Only",
+          "mode": "light",
+          "colors": {
+            "background": "#FFFFFF",
+            "foreground": "#000000",
+            "base.red": "#FF0000",
+            "base.green": "#00FF00",
+            "base.yellow": "#FFFF00",
+            "base.blue": "#0000FF",
+            "base.magenta": "#FF00FF",
+            "base.cyan": "#00FFFF"
+          }
+        },
+        {
+          "name": "Link Is Primary",
+          "mode": "dark",
+          "colors": {
+            "background": "#002B36",
+            "foreground": "#839496",
+            "primary.background": "#268BD2",
+            "link": "#268BD2",
+            "ring": "#268BD2"
+          }
+        }
+      ]
+    }"##;
+
     fn configs(content: &str) -> Vec<ThemeConfig> {
         let set: Value = serde_json::from_str(content).unwrap();
         set["themes"]
@@ -548,13 +614,14 @@ mod tests {
         }
     }
 
-    /// Every bundled theme, standardized, reads as the CodeWiki themes are
-    /// required to: text at AA on the page, a card and the tinted page; icons
-    /// at 3:1; the page itself at the CodeWiki set's lightness.
+    /// Every bundled theme and every foreign one, standardized, reads as the
+    /// CodeWiki themes are required to: text at AA on the page, a card and
+    /// the tinted page; icons at 3:1; the page itself at the CodeWiki set's
+    /// lightness.
     #[test]
-    fn every_bundled_theme_meets_the_codewiki_rules_once_standardized() {
+    fn every_theme_meets_the_codewiki_rules_once_standardized() {
         let mut failures = Vec::new();
-        for content in BUNDLED {
+        for content in BUNDLED.into_iter().chain([FOREIGN]) {
             for config in configs(content) {
                 let theme = standardize(&config);
                 let name = theme.name.to_string();
@@ -602,12 +669,12 @@ mod tests {
     }
 
     #[test]
-    fn fahrenheit_keeps_its_red_and_gains_readable_links() {
-        let fahrenheit = configs(include_str!("../themes/fahrenheit.json"))
+    fn a_dark_red_accent_keeps_its_hue_and_gains_readable_links() {
+        let foreign = configs(FOREIGN)
             .into_iter()
-            .find(|config| config.name.as_ref() == "Fahrenheit")
+            .find(|config| config.name.as_ref() == "Dark Red Accent")
             .unwrap();
-        let theme = standardize(&fahrenheit);
+        let theme = standardize(&foreign);
         let link = color(&theme, "link");
         let page = color(&theme, "background");
         assert!(contrast::ratio(link, page) >= AA);

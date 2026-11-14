@@ -724,11 +724,11 @@ impl AppView {
                 Command::Note(note.path.clone()),
             ));
         }
-        for (name, _) in themes::list(cx) {
+        for theme in themes::entries(cx) {
             entries.push(palette::Entry::new(
-                format!("Theme: {name}"),
+                format!("Theme: {}", theme.name),
                 "Theme",
-                Command::Theme(name),
+                Command::Theme(theme.name.to_string()),
             ));
         }
         if self.repos.len() > 1 {
@@ -1054,9 +1054,13 @@ impl AppView {
     /// after a selection, so Back does not walk through every choice.
     fn open_themes(&mut self, remember: bool, cx: &mut Context<Self>) {
         let active = cx.theme().theme_name().to_string();
+        let offered: Vec<(String, bool)> = themes::entries(cx)
+            .iter()
+            .map(|theme| (theme.name.to_string(), theme.dark))
+            .collect();
         let page = Page::Generated {
             title: "Themes".into(),
-            doc: Rc::new(live::themes_page(&themes::list(cx), &active)),
+            doc: Rc::new(live::themes_page(&offered, &active)),
         };
         self.set_page(page, remember);
         cx.notify();

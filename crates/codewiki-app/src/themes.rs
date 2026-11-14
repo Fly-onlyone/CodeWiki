@@ -1,11 +1,10 @@
 //! Bundled color themes and theme switching.
 //!
 //! `codewiki.json` is CodeWiki's own family: four hues, each dark and light,
-//! with the bundled fonts and a tighter radius. Most other theme files come
-//! from the gpui-kit project (Apache-2.0). Dracula, GitHub, Nord, One and Rosé
-//! Pine were written for CodeWiki from the palettes their authors publish.
-//! Every file carries the palette author's name and URL. User themes dropped
-//! into `%APPDATA%\CodeWiki\themes` are loaded as well.
+//! with the bundled fonts and a tighter radius. Dracula, Nord, Gruvbox and
+//! Rosé Pine were written for CodeWiki from the palettes their authors
+//! publish; every file carries the palette author's name and URL. User themes
+//! dropped into `%APPDATA%\CodeWiki\themes` are loaded as well.
 
 use std::rc::Rc;
 
@@ -20,38 +19,48 @@ const SETTING: &str = "theme";
 /// Theme applied on first start.
 const DEFAULT_THEME: &str = "CodeWiki Violet";
 
+/// Theme applied when the saved one is gone and its name says it was light.
+const DEFAULT_LIGHT_THEME: &str = "CodeWiki Violet Light";
+
+/// The bundled themes, in the order the theme menu lists them. The menu
+/// groups them by mode, so the dark ones come first.
+pub(crate) const BUNDLED_NAMES: [&str; 12] = [
+    "CodeWiki Violet",
+    "CodeWiki Ember",
+    "CodeWiki Lagoon",
+    "CodeWiki Tide",
+    "Dracula",
+    "Nord",
+    "Gruvbox Dark",
+    "Rosé Pine",
+    "CodeWiki Violet Light",
+    "CodeWiki Ember Light",
+    "CodeWiki Lagoon Light",
+    "CodeWiki Tide Light",
+];
+
 /// The CodeWiki family. Kept apart from `BUNDLED` so tests can check it alone.
 pub(crate) const CODEWIKI: &str = include_str!("../themes/codewiki.json");
 
-pub(crate) const BUNDLED: [&str; 27] = [
+pub(crate) const BUNDLED: [&str; 5] = [
     CODEWIKI,
     include_str!("../themes/dracula.json"),
-    include_str!("../themes/github.json"),
     include_str!("../themes/nord.json"),
-    include_str!("../themes/one.json"),
-    include_str!("../themes/rose-pine.json"),
-    include_str!("../themes/adventure.json"),
-    include_str!("../themes/alduin.json"),
-    include_str!("../themes/asciinema.json"),
-    include_str!("../themes/aurora.json"),
-    include_str!("../themes/ayu.json"),
-    include_str!("../themes/catppuccin.json"),
-    include_str!("../themes/everforest.json"),
-    include_str!("../themes/fahrenheit.json"),
-    include_str!("../themes/flexoki.json"),
     include_str!("../themes/gruvbox.json"),
-    include_str!("../themes/harper.json"),
-    include_str!("../themes/hybrid.json"),
-    include_str!("../themes/jellybeans.json"),
-    include_str!("../themes/kibble.json"),
-    include_str!("../themes/macos-classic.json"),
-    include_str!("../themes/mellifluous.json"),
-    include_str!("../themes/molokai.json"),
-    include_str!("../themes/solarized.json"),
-    include_str!("../themes/spaceduck.json"),
-    include_str!("../themes/tokyonight.json"),
-    include_str!("../themes/twilight.json"),
+    include_str!("../themes/rose-pine.json"),
 ];
+
+/// A theme the user can choose.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Entry {
+    pub name: SharedString,
+    pub dark: bool,
+}
+
+/// The themes on offer, built once at start.
+struct Catalog(Vec<Entry>);
+
+impl Global for Catalog {}
 
 fn user_theme_dir() -> Option<std::path::PathBuf> {
     prefs::dir().map(|dir| dir.join("themes"))
@@ -138,20 +147,57 @@ pub fn init(cx: &mut App) {
             }
         }
     }
-    let saved = prefs::read(SETTING);
-    let wanted = saved.as_deref().unwrap_or(DEFAULT_THEME);
-    if !apply(wanted, cx) {
+    // The kit's own two themes stay loaded but are not on offer.
+    let entries = catalog(
+        ThemeRegistry::global(cx)
+            .sorted_themes()
+            .iter()
+            .filter(|theme| !theme.is_default)
+            .map(|theme| (theme.name.clone(), theme.mode.is_dark())),
+    );
+    let (wanted, stale) = resolve(prefs::read(SETTING).as_deref(), &entries);
+    cx.set_global(Catalog(entries));
+    if !apply(&wanted, cx) {
         apply(DEFAULT_THEME, cx);
+    }
+    if stale {
+        prefs::write(SETTING, &wanted);
     }
 }
 
-/// Every loaded theme as `(name, is dark)`, in name order.
-pub fn list(cx: &App) -> Vec<(String, bool)> {
-    ThemeRegistry::global(cx)
-        .sorted_themes()
-        .iter()
-        .map(|t| (t.name.to_string(), t.mode.is_dark()))
-        .collect()
+/// The themes on offer, from every loaded theme as `(name, is dark)`: the
+/// bundled ones in `BUNDLED_NAMES` order, then the user's own by name.
+fn catalog(loaded: impl Iterator<Item = (SharedString, bool)>) -> Vec<Entry> {
+    let position = |name: &str| BUNDLED_NAMES.iter().position(|bundled| *bundled == name);
+    let mut entries: Vec<Entry> = loaded.map(|(name, dark)| Entry { name, dark }).collect();
+    entries.sort_by(|a, b| {
+        let (a_at, b_at) = (position(&a.name), position(&b.name));
+        a_at.is_none()
+            .cmp(&b_at.is_none())
+            .then(a_at.cmp(&b_at))
+            .then_with(|| a.name.cmp(&b.name))
+    });
+    entries
+}
+
+/// The theme to start with, and whether the saved name must be replaced. A
+/// saved theme that is no longer on offer gives way to the default of its
+/// mode, as far as its name tells the mode.
+fn resolve(saved: Option<&str>, entries: &[Entry]) -> (String, bool) {
+    match saved {
+        None => (DEFAULT_THEME.to_string(), false),
+        Some(name) if entries.iter().any(|entry| entry.name.as_ref() == name) => {
+            (name.to_string(), false)
+        }
+        Some(name) if name.ends_with(" Light") => (DEFAULT_LIGHT_THEME.to_string(), true),
+        Some(_) => (DEFAULT_THEME.to_string(), true),
+    }
+}
+
+/// The themes the user can choose, in menu order.
+pub fn entries(cx: &App) -> &[Entry] {
+    cx.try_global::<Catalog>()
+        .map_or(&[], |catalog| catalog.0.as_slice())
 }
 
 /// Apply a theme by name and remember the choice. Returns false when no
@@ -164,32 +210,12 @@ pub fn select(name: &str, cx: &mut App) -> bool {
     true
 }
 
-/// Switch to the next theme in name order and remember the choice.
-#[allow(dead_code)]
-pub fn next_theme(cx: &mut App) {
-    let current = cx.theme().theme_name().to_string();
-    let names: Vec<String> = ThemeRegistry::global(cx)
-        .sorted_themes()
-        .iter()
-        .map(|t| t.name.to_string())
-        .collect();
-    if names.is_empty() {
-        return;
-    }
-    let position = names
-        .iter()
-        .position(|n| *n == current)
-        .map(|i| i + 1)
-        .unwrap_or(0);
-    let next = &names[position % names.len()];
-    if apply(next, cx) {
-        prefs::write(SETTING, next);
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{BUNDLED, CODEWIKI, DEFAULT_THEME};
+    use super::{
+        BUNDLED, BUNDLED_NAMES, CODEWIKI, DEFAULT_LIGHT_THEME, DEFAULT_THEME, Entry, catalog,
+        resolve,
+    };
     use crate::contrast::{AA, BLACK, PANE_FLOOR, WHITE, over, parse_hex, ratio, worst_ratio};
     use crate::fonts;
     use crate::glass::PANE_TINT;
@@ -222,6 +248,83 @@ mod tests {
             };
             assert!(names.contains(&twin.as_str()), "{name} has no twin");
         }
+    }
+
+    fn offered() -> Vec<Entry> {
+        BUNDLED_NAMES
+            .iter()
+            .enumerate()
+            .map(|(index, name)| Entry {
+                name: (*name).into(),
+                dark: index < 8,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_bundled_themes_are_the_twelve_on_the_menu() {
+        let mut found = Vec::new();
+        for content in BUNDLED {
+            let set: serde_json::Value = serde_json::from_str(content).unwrap();
+            for theme in set["themes"].as_array().unwrap() {
+                let name = theme["name"].as_str().unwrap().to_string();
+                found.push((name, theme["mode"] == "dark"));
+            }
+        }
+        found.sort();
+        // Eight dark themes, then the four light ones.
+        let mut expected: Vec<(String, bool)> = offered()
+            .into_iter()
+            .map(|entry| (entry.name.to_string(), entry.dark))
+            .collect();
+        expected.sort();
+        assert_eq!(found, expected);
+        assert!(BUNDLED_NAMES.contains(&DEFAULT_THEME));
+        assert!(BUNDLED_NAMES.contains(&DEFAULT_LIGHT_THEME));
+    }
+
+    #[test]
+    fn the_catalog_lists_bundled_themes_in_menu_order_then_the_users() {
+        let loaded = [
+            ("Zebra", true),
+            ("Nord", true),
+            ("CodeWiki Tide Light", false),
+            ("Apricot", false),
+            ("CodeWiki Violet", true),
+        ];
+        let entries = catalog(loaded.into_iter().map(|(name, dark)| (name.into(), dark)));
+        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_ref()).collect();
+        assert_eq!(
+            names,
+            [
+                "CodeWiki Violet",
+                "Nord",
+                "CodeWiki Tide Light",
+                "Apricot",
+                "Zebra"
+            ]
+        );
+        assert!(!entries[3].dark);
+    }
+
+    #[test]
+    fn a_saved_theme_that_is_gone_gives_way_to_the_default_of_its_mode() {
+        let entries = offered();
+        assert_eq!(resolve(None, &entries), (DEFAULT_THEME.to_string(), false));
+        assert_eq!(resolve(Some("Nord"), &entries), ("Nord".to_string(), false));
+        assert_eq!(
+            resolve(Some("One Dark"), &entries),
+            (DEFAULT_THEME.to_string(), true)
+        );
+        assert_eq!(
+            resolve(Some("One Light"), &entries),
+            (DEFAULT_LIGHT_THEME.to_string(), true)
+        );
+        // The kit's own themes are loaded but not on offer.
+        assert_eq!(
+            resolve(Some("Default Dark"), &entries),
+            (DEFAULT_THEME.to_string(), true)
+        );
     }
 
     #[test]

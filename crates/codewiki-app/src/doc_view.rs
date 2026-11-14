@@ -29,10 +29,10 @@ use gpui_kit::{
     Styled as _, StyledText, Window, div, list, px, relative,
 };
 
-use crate::doc::{Action, Block, Cell, Choice, Doc, Row, Span, Stat, Swatch, Table};
+use crate::doc::{Action, Block, Cell, Choice, Doc, Row, Span, Stat, Table};
 use crate::icons;
 use crate::mui::base::Hover;
-use crate::mui::button::{Button, CardButton, ToggleButtonGroup};
+use crate::mui::button::{Button, ToggleButtonGroup};
 use crate::mui::feedback::{self, Tone};
 use crate::mui::list::ListItemButton;
 use crate::mui::motion::{self, Enter, EnterExt as _, GENTLE, STAGGER_CAP, scaled};
@@ -397,13 +397,6 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
             })
             .into_any_element(),
         Block::Choices { label, choices } => choices_row(label, choices, path, page, cx),
-        Block::Swatches(swatches) => h_flex()
-            .flex_wrap()
-            .gap(px(12.))
-            .children(swatches.iter().enumerate().map(|(index, swatch)| {
-                swatch_card(swatch, page.id(&format!("{path}.{index}")), page, cx)
-            }))
-            .into_any_element(),
     }
 }
 
@@ -753,39 +746,6 @@ fn choices_row(label: &str, choices: &[Choice], path: &str, page: &Page, cx: &Ap
                         on_action(action, window, cx);
                     }
                 }),
-        )
-        .into_any_element()
-}
-
-/// A theme to pick: a card that can be pressed, marked when it is the one in
-/// use.
-fn swatch_card(swatch: &Swatch, id: ElementId, page: &Page, cx: &App) -> AnyElement {
-    let on_action = page.on_action.clone();
-    let action = Action::Theme(swatch.name.clone());
-    div()
-        .w(px(TILE_MIN + 40.0))
-        .child(
-            CardButton::new(id)
-                .selected(swatch.active)
-                .on_click(move |_, window, cx| on_action(&action, window, cx))
-                .child(
-                    h_flex()
-                        .gap(px(8.))
-                        .items_center()
-                        .child(
-                            surfaces::text(Variant::Subtitle2, swatch.name.clone())
-                                .flex_1()
-                                .min_w_0()
-                                .truncate(),
-                        )
-                        .when(swatch.active, |row| {
-                            row.child(
-                                Icon::new(icons::CHECK)
-                                    .with_size(px(18.))
-                                    .text_color(cx.theme().primary),
-                            )
-                        }),
-                ),
         )
         .into_any_element()
 }

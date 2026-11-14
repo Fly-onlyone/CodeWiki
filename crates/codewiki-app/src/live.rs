@@ -6,8 +6,7 @@
 use serde_json::Value;
 
 use crate::doc::{
-    Action, Block, Cell, Column, Doc, Line, Row, Stat, Swatch, Table, code, file, rich, strong,
-    text,
+    Action, Block, Cell, Column, Doc, Line, Row, Stat, Table, code, file, rich, strong, text,
 };
 use crate::icons;
 use crate::mui::feedback::Tone;
@@ -295,34 +294,6 @@ pub fn file_page(context: &Value, risk: &Value, radius: &Value) -> Doc {
     doc
 }
 
-/// The theme picker: every theme as a card, grouped by mode. `themes` holds
-/// each name and whether it is dark.
-pub fn themes_page(themes: &[(String, bool)], active: &str) -> Doc {
-    let mut doc = Doc::new("Themes").lead("Select a theme to apply it. The choice is remembered.");
-    for (dark, heading) in [(true, "Dark"), (false, "Light")] {
-        let swatches: Vec<Swatch> = themes
-            .iter()
-            .filter(|(_, is_dark)| *is_dark == dark)
-            .map(|(name, _)| Swatch {
-                name: name.clone(),
-                active: name == active,
-            })
-            .collect();
-        if !swatches.is_empty() {
-            doc.heading(heading);
-            doc.push(Block::Swatches(swatches));
-        }
-    }
-    doc.push(Block::Text(vec![
-        text("Your own themes load from the "),
-        code("themes"),
-        text(" folder in "),
-        code("%APPDATA%\\CodeWiki"),
-        text(", in the same JSON format."),
-    ]));
-    doc
-}
-
 /// One proposal for review.
 pub fn proposal_page(detail: &Value) -> Doc {
     let proposal = &detail["proposal"];
@@ -489,31 +460,6 @@ mod tests {
         assert!(actions.contains(&Action::Symbol("demo::core::compute".into())));
         assert!(actions.contains(&Action::Note("01-Core/demo/Core Module".into())));
         assert!(actions.contains(&Action::File("src/cli.rs".into())));
-    }
-
-    #[test]
-    fn renders_the_theme_picker() {
-        let themes = vec![("Nord".to_string(), true), ("One Light".to_string(), false)];
-        let page = themes_page(&themes, "Nord");
-        assert_eq!(page.headings(), ["Dark", "Light"]);
-        let picked: Vec<(&str, bool)> = page
-            .blocks
-            .iter()
-            .filter_map(|block| match block {
-                Block::Swatches(swatches) => Some(swatches),
-                _ => None,
-            })
-            .flatten()
-            .map(|swatch| (swatch.name.as_str(), swatch.active))
-            .collect();
-        assert_eq!(picked, [("Nord", true), ("One Light", false)]);
-        assert_eq!(
-            page.actions(),
-            [
-                Action::Theme("Nord".into()),
-                Action::Theme("One Light".into())
-            ]
-        );
     }
 
     #[test]

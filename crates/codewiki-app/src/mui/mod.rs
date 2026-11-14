@@ -12,6 +12,7 @@ pub mod base;
 pub mod button;
 pub mod feedback;
 pub mod list;
+pub mod menu;
 pub mod motion;
 pub mod ripple;
 pub mod surfaces;

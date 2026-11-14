@@ -18,9 +18,7 @@ pub enum Action {
     Symbol(String),
     /// Open the page of a source file.
     File(String),
-    /// Apply a theme.
-    Theme(String),
-    /// Open the theme picker.
+    /// Open the theme menu.
     Themes,
     /// Choose how animations behave.
     Motion(MotionPref),
@@ -303,13 +301,6 @@ pub struct Choice {
     pub selected: bool,
 }
 
-/// A theme in the theme picker.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Swatch {
-    pub name: String,
-    pub active: bool,
-}
-
 /// A part of a page.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
@@ -350,8 +341,6 @@ pub enum Block {
         label: String,
         choices: Vec<Choice>,
     },
-    /// Themes to pick from, under a heading for each mode.
-    Swatches(Vec<Swatch>),
 }
 
 /// A generated page.
@@ -458,7 +447,6 @@ impl Doc {
                     let names: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
                     out.push(format!("{label}: {}", names.join(" / ")));
                 }
-                Block::Swatches(swatches) => out.extend(swatches.iter().map(|s| s.name.clone())),
             }
         }
         out.join("\n")
@@ -491,9 +479,6 @@ impl Doc {
                 }
                 Block::Choices { choices, .. } => {
                     out.extend(choices.iter().map(|choice| choice.action.clone()))
-                }
-                Block::Swatches(swatches) => {
-                    out.extend(swatches.iter().map(|s| Action::Theme(s.name.clone())))
                 }
                 _ => {}
             }

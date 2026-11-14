@@ -8,9 +8,10 @@
 
 use std::rc::Rc;
 
-use gpui_kit::component::{ActiveTheme as _, Theme, ThemeRegistry};
-use gpui_kit::{App, Global, Pixels, SharedString};
+use gpui_kit::component::{ActiveTheme as _, Theme, ThemeConfig, ThemeRegistry};
+use gpui_kit::{App, Global, Hsla, Pixels, Rgba, SharedString};
 
+use crate::contrast::{self, Rgb};
 use crate::{prefs, standard};
 
 /// Name of the setting that remembers the chosen theme.
@@ -22,8 +23,8 @@ const DEFAULT_THEME: &str = "CodeWiki Violet";
 /// Theme applied when the saved one is gone and its name says it was light.
 const DEFAULT_LIGHT_THEME: &str = "CodeWiki Violet Light";
 
-/// The bundled themes, in the order the theme menu lists them. The menu
-/// groups them by mode, so the dark ones come first.
+/// The bundled themes, in the order the theme menu lists them: the dark
+/// ones, then the light ones.
 pub(crate) const BUNDLED_NAMES: [&str; 12] = [
     "CodeWiki Violet",
     "CodeWiki Ember",
@@ -51,11 +52,17 @@ pub(crate) const BUNDLED: [&str; 5] = [
 ];
 
 /// A theme the user can choose.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Entry {
     pub name: SharedString,
     pub dark: bool,
+    /// Samples of the theme as it is drawn: its page, then its primary,
+    /// secondary and tertiary colors.
+    pub swatches: [Hsla; 4],
 }
+
+/// An icon needs WCAG's 3:1 for graphics against what it is drawn on.
+const ICON_CONTRAST: f32 = 3.0;
 
 /// The themes on offer, built once at start.
 struct Catalog(Vec<Entry>);
@@ -153,7 +160,11 @@ pub fn init(cx: &mut App) {
             .sorted_themes()
             .iter()
             .filter(|theme| !theme.is_default)
-            .map(|theme| (theme.name.clone(), theme.mode.is_dark())),
+            .map(|theme| Entry {
+                name: theme.name.clone(),
+                dark: theme.mode.is_dark(),
+                swatches: swatches(&standard::standardize(theme)),
+            }),
     );
     let (wanted, stale) = resolve(prefs::read(SETTING).as_deref(), &entries);
     cx.set_global(Catalog(entries));
@@ -165,19 +176,67 @@ pub fn init(cx: &mut App) {
     }
 }
 
-/// The themes on offer, from every loaded theme as `(name, is dark)`: the
-/// bundled ones in `BUNDLED_NAMES` order, then the user's own by name.
-fn catalog(loaded: impl Iterator<Item = (SharedString, bool)>) -> Vec<Entry> {
+/// The themes on offer, in menu order: the dark ones, then the light ones.
+/// In each mode the bundled themes come first, in `BUNDLED_NAMES` order,
+/// then the user's own by name.
+fn catalog(loaded: impl Iterator<Item = Entry>) -> Vec<Entry> {
     let position = |name: &str| BUNDLED_NAMES.iter().position(|bundled| *bundled == name);
-    let mut entries: Vec<Entry> = loaded.map(|(name, dark)| Entry { name, dark }).collect();
+    let mut entries: Vec<Entry> = loaded.collect();
     entries.sort_by(|a, b| {
         let (a_at, b_at) = (position(&a.name), position(&b.name));
-        a_at.is_none()
-            .cmp(&b_at.is_none())
+        b.dark
+            .cmp(&a.dark)
+            .then(a_at.is_none().cmp(&b_at.is_none()))
             .then(a_at.cmp(&b_at))
             .then_with(|| a.name.cmp(&b.name))
     });
     entries
+}
+
+fn to_hsla(rgb: Rgb) -> Hsla {
+    Rgba {
+        r: rgb[0],
+        g: rgb[1],
+        b: rgb[2],
+        a: 1.0,
+    }
+    .into()
+}
+
+fn to_rgb(color: Hsla) -> Rgb {
+    let rgba = Rgba::from(color);
+    [rgba.r, rgba.g, rgba.b]
+}
+
+/// The samples of a theme for the menu. A color the theme does not set is
+/// drawn as the kit would draw it: a link or a sidebar accent falls back to
+/// the primary color.
+fn swatches(config: &ThemeConfig) -> [Hsla; 4] {
+    let colors = &config.colors;
+    let read = |value: &Option<SharedString>| value.as_deref().and_then(contrast::parse_hex);
+    let gray = [0.5; 3];
+    let primary = read(&colors.primary).unwrap_or(gray);
+    [
+        read(&colors.background).unwrap_or(gray),
+        primary,
+        read(&colors.link).unwrap_or(primary),
+        read(&colors.sidebar_primary).unwrap_or(primary),
+    ]
+    .map(to_hsla)
+}
+
+/// `color` for an icon on the active theme's menu. The icon of a theme in
+/// the menu is drawn in that theme's primary color, which was chosen for
+/// its own surfaces, not for these; it is lightened or darkened here, in its
+/// own hue, until it stands out.
+pub fn glyph_tint(color: Hsla, cx: &App) -> Hsla {
+    let theme = cx.theme();
+    to_hsla(standard::readable_on(
+        to_rgb(color),
+        to_rgb(theme.popover),
+        theme.is_dark(),
+        ICON_CONTRAST,
+    ))
 }
 
 /// The theme to start with, and whether the saved name must be replaced. A
@@ -214,7 +273,7 @@ pub fn select(name: &str, cx: &mut App) -> bool {
 mod tests {
     use super::{
         BUNDLED, BUNDLED_NAMES, CODEWIKI, DEFAULT_LIGHT_THEME, DEFAULT_THEME, Entry, catalog,
-        resolve,
+        resolve, swatches, to_hsla,
     };
     use crate::contrast::{AA, BLACK, PANE_FLOOR, WHITE, over, parse_hex, ratio, worst_ratio};
     use crate::fonts;
@@ -250,14 +309,19 @@ mod tests {
         }
     }
 
+    fn entry(name: &str, dark: bool) -> Entry {
+        Entry {
+            name: name.to_string().into(),
+            dark,
+            swatches: [gpui_kit::black(); 4],
+        }
+    }
+
     fn offered() -> Vec<Entry> {
         BUNDLED_NAMES
             .iter()
             .enumerate()
-            .map(|(index, name)| Entry {
-                name: (*name).into(),
-                dark: index < 8,
-            })
+            .map(|(index, name)| entry(name, index < 8))
             .collect()
     }
 
@@ -284,7 +348,7 @@ mod tests {
     }
 
     #[test]
-    fn the_catalog_lists_bundled_themes_in_menu_order_then_the_users() {
+    fn the_catalog_lists_each_mode_with_bundled_themes_before_the_users() {
         let loaded = [
             ("Zebra", true),
             ("Nord", true),
@@ -292,19 +356,56 @@ mod tests {
             ("Apricot", false),
             ("CodeWiki Violet", true),
         ];
-        let entries = catalog(loaded.into_iter().map(|(name, dark)| (name.into(), dark)));
-        let names: Vec<&str> = entries.iter().map(|entry| entry.name.as_ref()).collect();
+        let entries = catalog(loaded.into_iter().map(|(name, dark)| entry(name, dark)));
+        let listed: Vec<(&str, bool)> = entries
+            .iter()
+            .map(|entry| (entry.name.as_ref(), entry.dark))
+            .collect();
         assert_eq!(
-            names,
+            listed,
             [
-                "CodeWiki Violet",
-                "Nord",
-                "CodeWiki Tide Light",
-                "Apricot",
-                "Zebra"
+                ("CodeWiki Violet", true),
+                ("Nord", true),
+                ("Zebra", true),
+                ("CodeWiki Tide Light", false),
+                ("Apricot", false),
             ]
         );
-        assert!(!entries[3].dark);
+    }
+
+    #[test]
+    fn a_theme_is_sampled_by_its_page_and_its_three_hues() {
+        let theme = |colors: serde_json::Value| -> gpui_kit::component::ThemeConfig {
+            serde_json::from_value(serde_json::json!({
+                "name": "Sample",
+                "mode": "dark",
+                "colors": colors,
+            }))
+            .unwrap()
+        };
+        let hex = |value: &str| to_hsla(crate::contrast::parse_hex(value).unwrap());
+        let full = swatches(&theme(serde_json::json!({
+            "background": "#101010",
+            "primary.background": "#7C4DEE",
+            "link": "#F59F2E",
+            "sidebar.primary.background": "#2DD4A7",
+        })));
+        assert_eq!(
+            full,
+            [
+                hex("#101010"),
+                hex("#7C4DEE"),
+                hex("#F59F2E"),
+                hex("#2DD4A7")
+            ]
+        );
+        // The kit draws a missing link or sidebar accent in the primary color.
+        let bare = swatches(&theme(serde_json::json!({
+            "background": "#101010",
+            "primary.background": "#7C4DEE",
+        })));
+        assert_eq!(bare[2], hex("#7C4DEE"));
+        assert_eq!(bare[3], hex("#7C4DEE"));
     }
 
     #[test]

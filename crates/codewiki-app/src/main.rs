@@ -40,7 +40,7 @@ use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::scroll::ScrollableElement as _;
-use gpui_kit::component::{ActiveTheme as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -50,6 +50,7 @@ use markdown::NOTE_SCHEME;
 use mui::button::{Button, IconButton};
 use mui::feedback::{self, Tone};
 use mui::list::{self, ListFolder, ListItemButton};
+use mui::menu::{AnchorBounds, Menu, MenuItem, MenuSection};
 use mui::motion::{Enter, EnterExt as _};
 use mui::surfaces;
 use mui::tabs::{Tab as TabItem, Tabs};
@@ -64,6 +65,12 @@ actions!(
 
 /// Most entries the palette lists at once.
 const PALETTE_ROWS: usize = 14;
+
+/// Width of the theme menu: an icon, the longest bundled name, four color
+/// samples and the mark of the theme in use.
+const THEME_MENU_WIDTH: f32 = 340.0;
+/// The mark of the theme in use, and the place kept for it in every row.
+const THEME_MARK: f32 = 18.0;
 
 #[derive(Clone)]
 struct NoteInfo {
@@ -150,6 +157,13 @@ struct AppView {
     /// Open the editor once the first note has loaded; set by a startup argument.
     pending_edit: bool,
     focus: FocusHandle,
+    theme_menu_open: bool,
+    /// The row of the theme menu that the keys act on.
+    theme_menu_highlight: usize,
+    /// Holds the focus while the theme menu is open.
+    theme_menu_focus: FocusHandle,
+    /// Where the toolbar's theme button is, for the menu to hang under.
+    theme_anchor: AnchorBounds,
     /// Set while the current note is open in the editor.
     editing: Option<Editing>,
     busy: Option<String>,
@@ -231,6 +245,11 @@ impl AppView {
         );
         // The glass depends on the system mode as well as on the theme.
         let appearance = cx.observe_window_appearance(window, |_, _, cx| cx.notify());
+        // Tab moves the focus on from the theme menu, which then closes.
+        let theme_menu_focus = cx.focus_handle();
+        let theme_menu_blur = cx.on_blur(&theme_menu_focus, window, |this, window, cx| {
+            this.close_theme_menu(false, window, cx);
+        });
         let mut this = Self {
             backend: None,
             repos: Vec::new(),
@@ -252,6 +271,10 @@ impl AppView {
             pending_command: None,
             pending_edit: false,
             focus: cx.focus_handle(),
+            theme_menu_open: false,
+            theme_menu_highlight: 0,
+            theme_menu_focus,
+            theme_anchor: AnchorBounds::default(),
             editing: None,
             busy: Some("Connecting".into()),
             error: None,
@@ -275,7 +298,12 @@ impl AppView {
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
             pane_width: 0.0,
-            _subscriptions: vec![subscription, palette_subscription, appearance],
+            _subscriptions: vec![
+                subscription,
+                palette_subscription,
+                appearance,
+                theme_menu_blur,
+            ],
         };
         this.connect(cx);
         this
@@ -498,7 +526,12 @@ impl AppView {
                         _ => None,
                     };
                     if let Some(command) = command {
+                        // The theme menu opens over a page, not in place of one.
+                        let over_home = command == Command::Themes;
                         this.pending_command = Some(command);
+                        if over_home {
+                            this.open_note("_HOME".into(), false, cx);
+                        }
                         cx.notify();
                         return;
                     }
@@ -687,6 +720,7 @@ impl AppView {
     }
 
     fn toggle_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_theme_menu(false, window, cx);
         self.palette_open = !self.palette_open;
         self.palette_selected = 0;
         if self.palette_open {
@@ -758,10 +792,7 @@ impl AppView {
         }
         match command {
             Command::Note(path) => self.open_note(path, true, cx),
-            Command::Theme(name) => {
-                themes::select(&name, cx);
-                cx.notify();
-            }
+            Command::Theme(name) => self.select_theme(&name, cx),
             Command::Repo(id) => {
                 if let Some(repo) = self.repos.iter().find(|r| r.id == id).cloned() {
                     self.select_repo(repo, cx);
@@ -802,7 +833,7 @@ impl AppView {
             Command::Coupling => {
                 self.open_report("Change coupling", "history", pages::coupling_page, cx)
             }
-            Command::Themes => self.open_themes(true, cx),
+            Command::Themes => self.open_theme_menu(window, cx),
             Command::Settings => self.open_settings(true, cx),
             Command::Motion(pref) => {
                 motion::set(pref, cx);
@@ -1050,19 +1081,51 @@ impl AppView {
         );
     }
 
-    /// The theme picker page. `remember` is false when it replaces itself
-    /// after a selection, so Back does not walk through every choice.
-    fn open_themes(&mut self, remember: bool, cx: &mut Context<Self>) {
-        let active = cx.theme().theme_name().to_string();
-        let offered: Vec<(String, bool)> = themes::entries(cx)
+    /// Open the theme menu under the toolbar's theme button, with the theme
+    /// in use highlighted, or close it when it is open.
+    fn open_theme_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.theme_menu_open {
+            self.close_theme_menu(true, window, cx);
+            return;
+        }
+        if self.palette_open {
+            self.toggle_palette(window, cx);
+        }
+        let active = cx.theme().theme_name().clone();
+        self.theme_menu_highlight = themes::entries(cx)
             .iter()
-            .map(|theme| (theme.name.to_string(), theme.dark))
-            .collect();
-        let page = Page::Generated {
-            title: "Themes".into(),
-            doc: Rc::new(live::themes_page(&offered, &active)),
-        };
-        self.set_page(page, remember);
+            .position(|entry| entry.name == active)
+            .unwrap_or(0);
+        self.theme_menu_open = true;
+        window.focus(&self.theme_menu_focus, cx);
+        cx.notify();
+    }
+
+    /// Close the theme menu. `restore_focus` is false when the focus has
+    /// already gone where it should be.
+    fn close_theme_menu(
+        &mut self,
+        restore_focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.theme_menu_open {
+            return;
+        }
+        self.theme_menu_open = false;
+        if restore_focus {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// Apply a theme and remember it. An open theme menu stays open, so that
+    /// several can be tried in a row.
+    fn select_theme(&mut self, name: &str, cx: &mut Context<Self>) {
+        if themes::select(name, cx) && self.on_settings_page() {
+            // Show the new value where the setting is listed.
+            self.open_settings(false, cx);
+        }
         cx.notify();
     }
 
@@ -1237,12 +1300,12 @@ impl AppView {
             Action::Note(target) => self.open_note(target.clone(), true, cx),
             Action::Symbol(qualified) => self.open_symbol(qualified.clone(), cx),
             Action::File(path) => self.open_file(path.clone(), cx),
-            Action::Theme(name) => {
-                if themes::select(name, cx) {
-                    self.open_themes(false, cx);
-                }
+            // The menu takes the focus, which needs the window: the next
+            // frame has it.
+            Action::Themes => {
+                self.pending_command = Some(Command::Themes);
+                cx.notify();
             }
-            Action::Themes => self.open_themes(true, cx),
             Action::Motion(pref) => {
                 motion::set(*pref, cx);
                 self.open_settings(false, cx);
@@ -1472,13 +1535,20 @@ impl AppView {
                     .disabled(self.repo.is_none())
                     .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
             )
-            .child(
-                IconButton::new("theme", icons::THEME)
-                    .tint(icons::tint(icons::THEME, cx))
-                    .tooltip(format!("Theme: {}", cx.theme().theme_name()))
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.open_themes(true, cx))),
-            )
+            .child({
+                let view = cx.entity_id();
+                self.theme_anchor.track(
+                    IconButton::new("theme", icons::THEME)
+                        .tint(icons::tint(icons::THEME, cx))
+                        .tooltip(format!("Theme: {}", cx.theme().theme_name()))
+                        .small()
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_theme_menu(window, cx)),
+                        ),
+                    // An open menu follows its button when the window is resized.
+                    move |_, cx| doc_view::notify_after_draw(view, cx),
+                )
+            })
             .child(
                 Button::new("sync")
                     .icon(icons::SYNC)
@@ -1615,6 +1685,76 @@ impl AppView {
                 ),
         )
         .with_priority(1)
+    }
+
+    /// The theme menu, hung under the toolbar's theme button. `shown` runs
+    /// from 0 to 1 as for the palette. `None` until the button has been
+    /// drawn once, which tells where it is.
+    fn theme_menu_view(&self, shown: f32, cx: &mut Context<Self>) -> Option<Menu> {
+        let anchor = self.theme_anchor.get()?;
+        let active = cx.theme().theme_name().clone();
+        let mark = cx.theme().primary;
+        let entries = themes::entries(cx);
+        let mut menu = Menu::new("theme-menu", anchor, &self.theme_menu_focus)
+            .width(THEME_MENU_WIDTH)
+            .highlighted(self.theme_menu_highlight)
+            .open(self.theme_menu_open)
+            .shown(shown);
+        for (dark, label) in [(true, "Dark"), (false, "Light")] {
+            let items: Vec<MenuItem> = entries
+                .iter()
+                .filter(|entry| entry.dark == dark)
+                .map(|entry| {
+                    let in_use = entry.name == active;
+                    MenuItem::new(entry.name.clone())
+                        .icon(icons::for_theme(&entry.name))
+                        .tint(Some(themes::glyph_tint(entry.swatches[1], cx)))
+                        .selected(in_use)
+                        .trailing(
+                            h_flex()
+                                .flex_shrink_0()
+                                .gap_2()
+                                .items_center()
+                                .child(feedback::dots(entry.swatches, cx))
+                                .child(div().size(px(THEME_MARK)).when(in_use, |slot| {
+                                    slot.child(
+                                        Icon::new(icons::CHECK)
+                                            .with_size(px(THEME_MARK))
+                                            .text_color(mark),
+                                    )
+                                })),
+                        )
+                })
+                .collect();
+            if !items.is_empty() {
+                menu = menu.section(MenuSection::new(label).items(items));
+            }
+        }
+        let (select, highlight, close) = (
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+        );
+        Some(
+            menu.on_select(move |index, _, cx| {
+                _ = select.update(cx, |this, cx| {
+                    this.theme_menu_highlight = index;
+                    let name = themes::entries(cx).get(index).map(|e| e.name.clone());
+                    if let Some(name) = name {
+                        this.select_theme(&name, cx);
+                    }
+                });
+            })
+            .on_highlight(move |index, _, cx| {
+                _ = highlight.update(cx, |this, cx| {
+                    this.theme_menu_highlight = index;
+                    cx.notify();
+                });
+            })
+            .on_close(move |window, cx| {
+                _ = close.update(cx, |this, cx| this.close_theme_menu(true, window, cx));
+            }),
+        )
     }
 
     /// The editor beside a live preview of what is typed.
@@ -2356,6 +2496,9 @@ impl Render for AppView {
         let palette = Presence::new("palette-presence", self.palette_open)
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
             .sample(window, cx);
+        let theme_menu = Presence::new("theme-menu-presence", self.theme_menu_open)
+            .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+            .sample(window, cx);
         let title_bar = TitleBar::new()
             .bg(self.glass.chrome(glass::tinted(cx.theme().title_bar, cx)))
             .child(
@@ -2403,6 +2546,9 @@ impl Render for AppView {
             .text_color(cx.theme().foreground)
             .when(palette.should_render(), |root| {
                 root.child(self.palette_view(palette.progress, cx))
+            })
+            .when(theme_menu.should_render(), |root| {
+                root.children(self.theme_menu_view(theme_menu.progress, cx))
             })
             .child(title_bar)
             .child(glass::hairline(cx))

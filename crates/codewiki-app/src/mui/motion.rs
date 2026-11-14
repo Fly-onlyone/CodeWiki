@@ -178,6 +178,9 @@ impl Enter {
     pub const TAB: Self = Self::rise(TAB_RISE, SNAPPY);
     /// `scaleIn`, without the scale: a short drop on the bouncy spring.
     pub const DIALOG: Self = Self::rise(-12.0, BOUNCY);
+    /// A menu under its button. MUI grows a menu out of its anchor
+    /// (`Grow/Grow.js`), which is a scale; this is the drop that is left.
+    pub const MENU: Self = Self::rise(-8.0, SNAPPY);
 
     /// Comes up from `distance` pixels below.
     pub const fn rise(distance: f32, spring: Spring) -> Self {
@@ -352,7 +355,13 @@ mod tests {
 
     #[test]
     fn an_entrance_ends_in_place_and_fully_visible() {
-        for enter in [Enter::PAGE, Enter::TAB, Enter::card(4), Enter::row(2)] {
+        for enter in [
+            Enter::PAGE,
+            Enter::TAB,
+            Enter::MENU,
+            Enter::card(4),
+            Enter::row(2),
+        ] {
             let (x, y, opacity) = enter.at(0.0);
             assert_eq!((x, y), enter.from);
             assert_eq!(opacity, 0.0);

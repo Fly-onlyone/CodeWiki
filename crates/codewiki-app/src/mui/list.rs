@@ -103,6 +103,7 @@ pub struct ListItemButton {
     icon: Option<Glyph>,
     tint: Option<Hsla>,
     selected: bool,
+    highlighted: bool,
     level: usize,
     code: bool,
     secondary: Option<SharedString>,
@@ -118,6 +119,7 @@ impl ListItemButton {
             icon: None,
             tint: None,
             selected: false,
+            highlighted: false,
             level: 0,
             code: false,
             secondary: None,
@@ -141,6 +143,13 @@ impl ListItemButton {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// Draw the row as if the pointer were over it: the row the keys act on
+    /// in a menu, MUI's `focusVisible`.
+    pub fn highlighted(mut self, highlighted: bool) -> Self {
+        self.highlighted = highlighted;
         self
     }
 
@@ -185,7 +194,7 @@ impl RenderOnce for ListItemButton {
         let (primary, foreground, muted) =
             (theme.primary, theme.foreground, theme.muted_foreground);
         let radius = theme.radius / px(1.);
-        let (selected, hovered) = (self.selected, base.hovered);
+        let (selected, hovered) = (self.selected, base.hovered || self.highlighted);
         let mono = theme.mono_font_family.clone();
         let height = if self.secondary.is_some() {
             TWO_LINE_HEIGHT

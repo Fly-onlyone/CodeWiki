@@ -82,6 +82,32 @@ app_icons! {
     CHECK = "check",
     SYMBOL = "data-object",
     FILE = "insert-drive-file",
+    // Themes. The bat is from Pictogrammers' Material Design Icons.
+    THEME_VIOLET = "diamond",
+    THEME_EMBER = "whatshot",
+    THEME_LAGOON = "water",
+    THEME_TIDE = "tsunami",
+    THEME_DRACULA = "bat",
+    THEME_NORD = "ac-unit",
+    THEME_GRUVBOX = "album",
+    THEME_ROSE_PINE = "park",
+}
+
+/// The icon that stands for the theme `name` in the theme menu. A light
+/// theme shares the icon of its dark twin; a theme the app does not know,
+/// such as one of the user's own, takes the palette.
+pub fn for_theme(name: &str) -> Glyph {
+    match name.strip_suffix(" Light").unwrap_or(name) {
+        "CodeWiki Violet" => THEME_VIOLET,
+        "CodeWiki Ember" => THEME_EMBER,
+        "CodeWiki Lagoon" => THEME_LAGOON,
+        "CodeWiki Tide" => THEME_TIDE,
+        "Dracula" => THEME_DRACULA,
+        "Nord" => THEME_NORD,
+        "Gruvbox Dark" => THEME_GRUVBOX,
+        "Rosé Pine" => THEME_ROSE_PINE,
+        _ => THEME,
+    }
 }
 
 /// The icon shown beside a palette entry.
@@ -239,6 +265,23 @@ mod tests {
         }
         assert_eq!(hue(BACK), None);
         assert_eq!(hue(CLOSE), None);
+    }
+
+    #[test]
+    fn every_bundled_theme_has_an_icon_of_its_own() {
+        use crate::themes::BUNDLED_NAMES;
+        let dark = &BUNDLED_NAMES[..8];
+        let icons: Vec<Glyph> = dark.iter().map(|name| for_theme(name)).collect();
+        for (index, icon) in icons.iter().enumerate() {
+            assert_ne!(*icon, THEME, "{} has no icon", dark[index]);
+            assert!(!icons[index + 1..].contains(icon), "{}", dark[index]);
+        }
+        // A light theme shares its dark twin's icon.
+        for name in &BUNDLED_NAMES[8..] {
+            assert_eq!(for_theme(name), for_theme(name.trim_end_matches(" Light")));
+            assert_ne!(for_theme(name), THEME, "{name}");
+        }
+        assert_eq!(for_theme("My Own Theme"), THEME);
     }
 
     #[test]

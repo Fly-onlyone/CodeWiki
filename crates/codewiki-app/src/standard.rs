@@ -358,6 +358,19 @@ fn nudge_texts(out: &mut HashMap<&'static str, (Rgb, f32)>, dark: bool) {
     }
 }
 
+/// `color` moved in lightness, away from `surface`, until the two are
+/// `target` apart in contrast. Its hue and chroma are kept as far as sRGB
+/// allows. On a dark surface the color gets lighter, on a light one darker.
+pub fn readable_on(color: Rgb, surface: Rgb, dark: bool, target: f32) -> Rgb {
+    let [mut l, c, h] = to_oklch(color);
+    let mut rgb = color;
+    while contrast::ratio(rgb, surface) < target && (0.0..=1.0).contains(&l) {
+        l += if dark { NUDGE } else { -NUDGE };
+        rgb = from_oklch(l.clamp(0.0, 1.0), c, h, COLOR_GAMUT);
+    }
+    rgb
+}
+
 /// The theme's highlight section with its editor colors set from the
 /// standard ones, or `None` when the theme has no highlight section.
 fn editor_colors(config: &ThemeConfig, new: &HashMap<&'static str, (Rgb, f32)>) -> Option<Value> {
@@ -600,6 +613,25 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_color_is_moved_until_it_stands_out_and_no_further() {
+        let parse = |value| contrast::parse_hex(value).unwrap();
+        let (dark, light) = (parse("#16122B"), parse("#F6F4FF"));
+        // A deep violet is lost on a dark surface and a pale one on a light.
+        for (color, surface, is_dark) in [("#3B1D8F", dark, true), ("#D9CCFF", light, false)] {
+            let before = parse(color);
+            assert!(contrast::ratio(before, surface) < 3.0, "{color}");
+            let after = readable_on(before, surface, is_dark, 3.0);
+            assert!(contrast::ratio(after, surface) >= 3.0, "{color}");
+            let (from, to) = (to_oklch(before)[2], to_oklch(after)[2]);
+            let apart = (from - to).abs().min(360.0 - (from - to).abs());
+            assert!(apart < 12.0, "{color}: hue moved {apart:.0} degrees");
+        }
+        // A color that already stands out is returned as it is.
+        let fine = parse("#B299FF");
+        assert_eq!(readable_on(fine, dark, true, 3.0), fine);
     }
 
     #[test]

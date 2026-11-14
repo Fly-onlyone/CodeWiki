@@ -30,6 +30,11 @@ under the Apache License 2.0. Their path data is taken from
 @mui/icons-material 6 (MIT, Copyright (c) 2014 Call-Em-All); each file wraps
 that data in an SVG element and is otherwise unmodified.
 
+The icon bat.svg in the same folder is from Material Design Icons by
+Pictogrammers (https://pictogrammers.com/library/mdi/), licensed under the
+Apache License 2.0. Its path data is taken from @mdi/svg 7.4.47, wrapped the
+same way.
+
 The OpenUI Lang parser in crates/openui-lang is an independent implementation
 of the language defined by https://github.com/thesysdev/openui (MIT,
 Copyright Thesys Inc.). Its behavior was checked against that project's

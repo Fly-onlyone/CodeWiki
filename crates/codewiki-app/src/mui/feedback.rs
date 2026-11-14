@@ -134,6 +134,27 @@ pub fn chip(label: impl Into<SharedString>, tone: Tone, filled: bool, cx: &App) 
     }
 }
 
+/// A dot of a color sample, and the space between two.
+const DOT: f32 = 12.0;
+const DOT_GAP: f32 = 4.0;
+
+/// A row of color samples, such as the colors of a theme. Each has a thin
+/// ring, so that a sample in the color of the surface under it still shows.
+pub fn dots(colors: impl IntoIterator<Item = Hsla>, cx: &App) -> Div {
+    let ring = cx.theme().border;
+    h_flex()
+        .flex_shrink_0()
+        .gap(px(DOT_GAP))
+        .children(colors.into_iter().map(|color| {
+            div()
+                .size(px(DOT))
+                .rounded_full()
+                .border_1()
+                .border_color(ring)
+                .bg(color)
+        }))
+}
+
 /// `LinearProgress.js`: a 4 px track; `MuiLinearProgress`: corners of 4 px.
 const PROGRESS_HEIGHT: f32 = 4.0;
 /// `LinearProgress.js`, `indeterminate1Keyframe`: one pass takes 2.1 s.

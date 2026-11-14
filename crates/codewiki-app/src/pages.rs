@@ -247,6 +247,13 @@ pub fn settings_page(
                 value: theme.into(),
                 button: Some(("Choose a theme".into(), Action::Themes)),
             },
+            Block::Text(vec![
+                text("Your own themes load from the "),
+                code("themes"),
+                text(" folder in "),
+                code("%APPDATA%\\CodeWiki"),
+                text(", in the same JSON format."),
+            ]),
             Block::Choices {
                 label: "Animations".into(),
                 choices: MotionPref::ALL
@@ -976,13 +983,14 @@ mod tests {
         );
         let settings = settings_page(
             "http://127.0.0.1:7411",
-            "Tokyo Night",
+            "Nord",
             MotionPref::Reduced,
             false,
             &[("demo".into(), "C:/demo".into())],
         );
         let words = settings.words();
-        assert!(words.contains("Theme: Tokyo Night"));
+        assert!(words.contains("Theme: Nord"));
+        assert!(words.contains("Your own themes load from the themes folder"));
         assert!(words.contains("Animations: follow Windows / reduced / full"));
         assert!(words.contains("Animations are off."));
         assert!(words.contains("Connected to http://127.0.0.1:7411."));
@@ -997,7 +1005,7 @@ mod tests {
         let Some(Block::Card { body, .. }) = settings.blocks.first() else {
             panic!("no appearance card");
         };
-        let Some(Block::Choices { choices, .. }) = body.get(1) else {
+        let Some(Block::Choices { choices, .. }) = body.get(2) else {
             panic!("no animation choices");
         };
         let chosen: Vec<&str> = choices

@@ -1,0 +1,24 @@
+[package]
+name = "cw-update"
+description = "Self-update of an installed CodeWiki: release check, download, verification and file swap"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+hex = "0.4.3"
+log = "0.4"
+semver = "1.0.28"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.1"
+ureq = { version = "3.5.1", features = ["json"] }
+# Compress-Archive writes deflate; nothing else is needed to read the package.
+zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[dev-dependencies]
+tempfile = "3.27.0"

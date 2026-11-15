@@ -43,9 +43,9 @@ Defined at the crate root:
 
 ## Used by
 
+- [[Swap Module]] — from `journal_path`, `leftovers`, `recover_and_clean`
 - [[codewiki-app]] — from `install_update`, `start_updates`
 - [[Release Module]] — from `check`, `from_repository`
-- [[Swap Module]] — from `journal_path`, `recover_and_clean`
 - [[Update Module]] — from `check`
 - [[Stage Module]] — from `stage`
 

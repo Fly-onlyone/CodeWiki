@@ -15,13 +15,13 @@ tags: [core, cw-update, module]
 Main items:
 
 - `swap` — move every entry of `stage` into `install`, renaming what it replaces to `<name>.old`.
+- `leftovers` — what `recover_and_clean` has still to delete: the `.old` entries and the `.update` folder, by name.
 - `recover_and_clean` — run when the app starts.
 - `Move` — struct
 - `journal_path` — function
 - `remove` — function
 - `rename_patiently` — function
 - `JOURNAL` — const
-- `ATTEMPTS` — A file that was just written, or a program that just ended, can be held by Windows Defender or the search indexer for a moment.
 
 ## Depends on
 

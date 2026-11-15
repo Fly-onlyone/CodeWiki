@@ -51,7 +51,7 @@ Defined at the crate root:
 - `WIKI_MAP` — the vault's map note, which the app calls "Wiki map".
 - `NoteInfo` — struct
 - `registered_repos` — the registered repositories whose folders are there, and those whose folders are not found.
-- `parse_repos` — the registered repositories, split into those whose folders are there and those whose folders are gone.
+- `MIN_WINDOW` — the smallest window: the sidebar, the details pane, and a reading pane about as wide as the two together.
 
 ## Depends on
 

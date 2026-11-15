@@ -512,8 +512,22 @@ impl RenderOnce for IconButton {
                 button.shadow(vec![focus_ring(primary)])
             })
             .child(Icon::new(self.icon).with_size(px(icon)).text_color(color))
+            // The tooltip hangs on a layer of its own, named after its text.
+            // GPUI keeps a tooltip that waits to show, text included, with
+            // its element, and lets go of it only when the pointer moves. A
+            // button whose press changes its text or its place (a toggle)
+            // would show the old text where the button was. A new text is a
+            // new layer, and the old one's tooltip goes with it.
             .when_some(self.tooltip, |button, text| {
-                button.tooltip(feedback::tooltip(text))
+                button.child(
+                    div()
+                        .id(text.clone())
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .tooltip(feedback::tooltip(text)),
+                )
             });
         let ink = Ink {
             radius: side / 2.0,

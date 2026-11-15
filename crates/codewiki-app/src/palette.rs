@@ -36,6 +36,10 @@ pub enum Command {
     Motion(MotionPref),
     NewTab,
     CloseTab,
+    /// Hide the sidebar, or show it again.
+    ToggleSidebar,
+    /// Hide the details pane, or show it again.
+    ToggleDetails,
     OpenInObsidian,
     /// Try to reach the backend again; listed only while it is unreachable.
     Reconnect,
@@ -88,6 +92,8 @@ pub fn actions() -> Vec<Entry> {
         ("Open settings", Command::Settings),
         ("New tab", Command::NewTab),
         ("Close tab", Command::CloseTab),
+        ("Toggle sidebar", Command::ToggleSidebar),
+        ("Toggle details pane", Command::ToggleDetails),
         ("Open note in Obsidian", Command::OpenInObsidian),
         ("Open folder…", Command::OpenFolder),
         ("Check for updates", Command::CheckUpdates),

@@ -16,9 +16,11 @@ use std::time::Duration;
 
 use gpui_kit::base::motion as kit;
 use gpui_kit::{
-    Animation, AnimationElement, AnimationExt as _, ElementId, IntoElement, SpringConfig, Styled,
-    px, sampled_easing,
+    Animation, AnimationElement, AnimationExt as _, App, ElementId, IntoElement, SpringConfig,
+    Styled, Window, px, sampled_easing,
 };
+
+use super::tokens::{curve, duration, easing};
 
 /// A spring as Framer Motion describes one.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -131,6 +133,25 @@ fn parse_scale(value: Option<&str>) -> f32 {
 /// `duration` stretched by [`scale`].
 pub fn scaled(duration: Duration) -> Duration {
     duration.mul_f32(scale())
+}
+
+/// How much of a side pane shows, from 0 (hidden) to 1 (shown), on the way
+/// to `open`: MUI's persistent `Drawer`. It enters over `enteringScreen` on
+/// `easeOut` and leaves over `leavingScreen` on `sharp` (`Drawer/Drawer.js`,
+/// `Slide/Slide.js`). A pane that starts hidden starts at 0, with no motion.
+pub fn drawer(
+    id: impl Into<kit::TransitionId>,
+    open: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> f32 {
+    let policy = if open {
+        kit::Transition::new(scaled(duration::ENTERING_SCREEN)).ease(easing(curve::EASE_OUT))
+    } else {
+        kit::Transition::new(scaled(duration::LEAVING_SCREEN)).ease(easing(curve::SHARP))
+    };
+    let target = if open { 1.0 } else { 0.0 };
+    kit::transition(id, target, policy, window, cx)
 }
 
 /// A figure such as `286`, `62.5%` or `1,204 lines`, `progress` of the way

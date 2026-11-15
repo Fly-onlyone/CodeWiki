@@ -26,6 +26,7 @@ mod motion;
 mod mui;
 mod pages;
 mod palette;
+mod panes;
 mod prefs;
 mod reading;
 mod standard;
@@ -61,10 +62,20 @@ use mui::tabs::{Tab as TabItem, Tabs};
 use mui::text_field::TextField;
 use mui::tokens::Variant;
 use palette::Command;
+use panes::Pane;
 
 actions!(
     codewiki,
-    [TogglePalette, NewTab, CloseTab, NextTab, GoBack, SaveNote]
+    [
+        TogglePalette,
+        NewTab,
+        CloseTab,
+        NextTab,
+        GoBack,
+        SaveNote,
+        ToggleSidebar,
+        ToggleDetails
+    ]
 );
 
 /// Most entries the palette lists at once.
@@ -249,6 +260,14 @@ struct AppView {
     glass: glass::Levels,
     /// Width of the centre pane in pixels, from the window size of this frame.
     pane_width: f32,
+    /// Whether the sidebar and the details pane are shown; the user hides
+    /// and shows each, and `panes` remembers it.
+    sidebar_open: bool,
+    details_open: bool,
+    /// How much of each shows in this frame, from 0 to 1: between the two
+    /// while a pane slides in or out.
+    sidebar_shown: f32,
+    details_shown: f32,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -298,6 +317,8 @@ impl AppView {
         let theme_menu_blur = cx.on_blur(&theme_menu_focus, window, |this, window, cx| {
             this.close_theme_menu(false, window, cx);
         });
+        let sidebar_open = panes::load(Pane::Sidebar);
+        let details_open = panes::load(Pane::Details);
         let mut this = Self {
             backend: None,
             repos: Vec::new(),
@@ -351,6 +372,10 @@ impl AppView {
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
             pane_width: 0.0,
+            sidebar_open,
+            details_open,
+            sidebar_shown: if sidebar_open { 1.0 } else { 0.0 },
+            details_shown: if details_open { 1.0 } else { 0.0 },
             _subscriptions: vec![
                 subscription,
                 palette_subscription,
@@ -1099,6 +1124,24 @@ impl AppView {
         cx.notify();
     }
 
+    /// Hide the sidebar or the details pane, or show it again, and remember
+    /// the choice.
+    fn toggle_pane(&mut self, pane: Pane, cx: &mut Context<Self>) {
+        let open = match pane {
+            Pane::Sidebar => &mut self.sidebar_open,
+            Pane::Details => &mut self.details_open,
+        };
+        *open = !*open;
+        panes::store(pane, *open);
+        cx.notify();
+    }
+
+    /// The width the sidebar and the details pane take of this frame, in
+    /// pixels.
+    fn side_width(&self) -> f32 {
+        SIDEBAR_WIDTH * self.sidebar_shown + DETAILS_WIDTH * self.details_shown
+    }
+
     /// Entries the palette lists for what is typed now.
     fn palette_matches(&self, cx: &App) -> Vec<palette::Entry> {
         let mut entries = palette::actions();
@@ -1218,6 +1261,8 @@ impl AppView {
             }
             Command::NewTab => self.new_tab(cx),
             Command::CloseTab => self.close_tab(self.active_tab, cx),
+            Command::ToggleSidebar => self.toggle_pane(Pane::Sidebar, cx),
+            Command::ToggleDetails => self.toggle_pane(Pane::Details, cx),
             Command::OpenInObsidian => self.open_in_obsidian(cx),
             Command::Reconnect => self.reconnect(cx),
             Command::OpenFolder => self.open_folder(cx),
@@ -1869,6 +1914,16 @@ impl AppView {
             .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
             .child(
+                IconButton::new("toggle-sidebar", icons::SIDEBAR)
+                    .tooltip(if self.sidebar_open {
+                        "Hide sidebar (Ctrl+B)"
+                    } else {
+                        "Show sidebar (Ctrl+B)"
+                    })
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_pane(Pane::Sidebar, cx))),
+            )
+            .child(
                 IconButton::new("home", icons::HOME)
                     .tint(icons::tint(icons::HOME, cx))
                     .tooltip("Home")
@@ -2023,6 +2078,16 @@ impl AppView {
                             this.open_proposal(id, cx);
                         }
                     })),
+            )
+            .child(
+                IconButton::new("toggle-details", icons::DETAILS)
+                    .tooltip(if self.details_open {
+                        "Hide details (Ctrl+Alt+B)"
+                    } else {
+                        "Show details (Ctrl+Alt+B)"
+                    })
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_pane(Pane::Details, cx))),
             )
     }
 
@@ -2514,7 +2579,7 @@ impl AppView {
             (bw, bh)
         } else {
             (
-                (viewport.width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(200.0),
+                (viewport.width / px(1.) - self.side_width()).max(200.0),
                 (viewport.height / px(1.) - 48.0).max(200.0),
             )
         };
@@ -2770,6 +2835,7 @@ impl AppView {
         let mut pane = v_flex()
             .w(px(DETAILS_WIDTH))
             .h_full()
+            .flex_shrink_0()
             .gap_3()
             .p_3()
             .border_l_1()
@@ -2997,10 +3063,14 @@ impl Render for AppView {
             // The page is drawn cached and reads the levels; draw it again.
             doc_view::notify_after_draw(self.doc_page.entity_id(), cx);
         }
+        // A pane the user hides or shows slides out or in; the page takes
+        // the width that is left, frame by frame.
+        self.sidebar_shown = mui::motion::drawer("sidebar-shown", self.sidebar_open, window, cx);
+        self.details_shown = mui::motion::drawer("details-shown", self.details_open, window, cx);
         let chrome = if self.fills_window() {
             0.0
         } else {
-            SIDEBAR_WIDTH + DETAILS_WIDTH
+            self.side_width()
         };
         self.pane_width = (window.viewport_size().width / px(1.) - chrome).max(0.0);
         // The palette stays drawn for a moment after it closes, to fade out.
@@ -3022,6 +3092,12 @@ impl Render for AppView {
             .on_action(cx.listener(|this, _: &NextTab, _, cx| this.next_tab(cx)))
             .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
             .on_action(cx.listener(|this, _: &SaveNote, _, cx| this.save_edit(cx)))
+            .on_action(
+                cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_pane(Pane::Sidebar, cx)),
+            )
+            .on_action(
+                cx.listener(|this, _: &ToggleDetails, _, cx| this.toggle_pane(Pane::Details, cx)),
+            )
             // The palette's input would otherwise use these keys itself.
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                 if this.palette_open {
@@ -3168,7 +3244,22 @@ impl AppView {
             .flex_1()
             .min_h_0()
             .w_full()
-            .child(self.sidebar(cx))
+            // A pane keeps its width inside a frame that narrows, so its
+            // text does not wrap anew while it slides. The sidebar is held
+            // to the frame's right edge and so leaves to the left. Hidden
+            // and at rest, a pane is not built at all.
+            .when(self.sidebar_shown > 0.0, |row| {
+                row.child(
+                    div()
+                        .flex()
+                        .w(px(SIDEBAR_WIDTH * self.sidebar_shown))
+                        .h_full()
+                        .flex_none()
+                        .justify_end()
+                        .overflow_hidden()
+                        .child(self.sidebar(cx)),
+                )
+            })
             .child(
                 v_flex()
                     .flex_1()
@@ -3199,7 +3290,17 @@ impl AppView {
                                         self.page_view(window, cx)
                                     }),
                             )
-                            .child(self.details(cx)),
+                            .when(self.details_shown > 0.0, |row| {
+                                row.child(
+                                    div()
+                                        .flex()
+                                        .w(px(DETAILS_WIDTH * self.details_shown))
+                                        .h_full()
+                                        .flex_none()
+                                        .overflow_hidden()
+                                        .child(self.details(cx)),
+                                )
+                            }),
                     ),
             )
     }
@@ -3220,6 +3321,8 @@ fn main() {
             KeyBinding::new("ctrl-tab", NextTab, None),
             KeyBinding::new("alt-left", GoBack, None),
             KeyBinding::new("ctrl-s", SaveNote, None),
+            KeyBinding::new("ctrl-b", ToggleSidebar, None),
+            KeyBinding::new("ctrl-alt-b", ToggleDetails, None),
         ]);
         let (window, _) = gpui_kit::open_window(window_options(cx), cx, |window, cx| {
             window.set_window_title("CodeWiki");

@@ -80,6 +80,10 @@ app_icons! {
     WARNING = "report-problem-outlined",
     ERROR = "error-outline",
     EXPAND = "expand-more",
+    // The side panes. Material has `ViewSidebar` only with the pane on the
+    // right; the left one is the same path mirrored.
+    SIDEBAR = "view-sidebar-left",
+    DETAILS = "view-sidebar",
     // Pages.
     CHECK = "check",
     SYMBOL = "data-object",
@@ -144,6 +148,8 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::Motion(_) => MOTION,
         Command::NewTab => NEW_TAB,
         Command::CloseTab => CLOSE,
+        Command::ToggleSidebar => SIDEBAR,
+        Command::ToggleDetails => DETAILS,
         Command::OpenInObsidian => EXTERNAL,
         Command::Reconnect => SYNC,
         Command::OpenFolder => FOLDER,

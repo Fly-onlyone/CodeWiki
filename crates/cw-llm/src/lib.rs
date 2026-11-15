@@ -10,11 +10,16 @@ pub mod writer;
 
 pub use provider::{
     AgentCli, Anthropic, Completion, LlmProvider, MODEL_ENV, Ollama, OpenAiCompatible,
-    PROVIDER_ENV, from_env,
+    PROVIDER_ENV, PROVIDERS, from_config, from_env, from_settings,
 };
 pub use writer::LlmWriter;
 
 /// The writer selected by the environment, or `None` for keyless mode.
 pub fn writer_from_env() -> cw_core::Result<Option<LlmWriter>> {
     Ok(from_env()?.map(LlmWriter::new))
+}
+
+/// The writer selected by the settings in effect, or `None` for keyless mode.
+pub fn writer_from(resolved: &cw_core::settings::Resolved) -> cw_core::Result<Option<LlmWriter>> {
+    Ok(from_settings(resolved)?.map(LlmWriter::new))
 }

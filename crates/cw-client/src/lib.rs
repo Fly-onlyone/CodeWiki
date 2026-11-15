@@ -24,7 +24,16 @@ pub struct Backend {
     url: String,
     token: String,
     agent: ureq::Agent,
+    /// What this client says it is in [`cw_core::CLIENT_HEADER`], if anything.
+    client: Option<&'static str>,
 }
+
+/// What the MCP bridge names itself with [`Backend::with_client`].
+pub use cw_core::MCP_CLIENT;
+
+/// How long `GET /v1/status` may take. It is asked every few seconds and
+/// answers from memory, so a backend that takes longer is not answering.
+const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
@@ -205,9 +214,7 @@ impl Backend {
     /// Ask the backend to stop once its running requests are done.
     pub fn shutdown(&self) -> Result<(), String> {
         Self::finish(
-            self.agent
-                .post(&format!("{}/v1/shutdown", self.url))
-                .header("Authorization", &format!("Bearer {}", self.token))
+            self.authorized(self.agent.post(&format!("{}/v1/shutdown", self.url)))
                 .send_empty(),
         )
         .map(|_| ())
@@ -240,7 +247,47 @@ impl Backend {
             token,
             // Generation on a large repository can take minutes.
             agent: agent(Duration::from_secs(600)),
+            client: None,
         }
+    }
+
+    /// The same backend, with every request saying what this client is. The
+    /// MCP bridge passes [`MCP_CLIENT`], so the backend can tell the app when
+    /// an agent last called. The app itself sends nothing.
+    pub fn with_client(mut self, client: &'static str) -> Self {
+        self.client = Some(client);
+        self
+    }
+
+    /// `request` with the token, and with what this client is when it says.
+    fn authorized<B>(&self, request: ureq::RequestBuilder<B>) -> ureq::RequestBuilder<B> {
+        let request = request.header("Authorization", &format!("Bearer {}", self.token));
+        match self.client {
+            Some(client) => request.header(cw_core::CLIENT_HEADER, client),
+            None => request,
+        }
+    }
+
+    /// What the backend is doing (`GET /v1/status`): the wiki updates that
+    /// are running and when a bridge last called. `None` from a backend too
+    /// old to have the route.
+    pub fn status(&self) -> Result<Option<Value>, String> {
+        let mut response = self
+            .authorized(agent(STATUS_TIMEOUT).get(&format!("{}/v1/status", self.url)))
+            .call()
+            .map_err(|e| format!("backend request failed: {e}"))?;
+        let status = response.status();
+        if status == ureq::http::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(format!("backend returned {status}"));
+        }
+        response
+            .body_mut()
+            .read_json()
+            .map(Some)
+            .map_err(|e| format!("reading the backend response failed: {e}"))
     }
 
     fn finish(
@@ -265,36 +312,28 @@ impl Backend {
 
     pub fn get(&self, path: &str) -> Result<Value, String> {
         Self::finish(
-            self.agent
-                .get(&format!("{}{path}", self.url))
-                .header("Authorization", &format!("Bearer {}", self.token))
+            self.authorized(self.agent.get(&format!("{}{path}", self.url)))
                 .call(),
         )
     }
 
     pub fn put(&self, path: &str, body: &Value) -> Result<Value, String> {
         Self::finish(
-            self.agent
-                .put(&format!("{}{path}", self.url))
-                .header("Authorization", &format!("Bearer {}", self.token))
+            self.authorized(self.agent.put(&format!("{}{path}", self.url)))
                 .send_json(body),
         )
     }
 
     pub fn post(&self, path: &str, body: &Value) -> Result<Value, String> {
         Self::finish(
-            self.agent
-                .post(&format!("{}{path}", self.url))
-                .header("Authorization", &format!("Bearer {}", self.token))
+            self.authorized(self.agent.post(&format!("{}{path}", self.url)))
                 .send_json(body),
         )
     }
 
     pub fn delete(&self, path: &str) -> Result<Value, String> {
         Self::finish(
-            self.agent
-                .delete(&format!("{}{path}", self.url))
-                .header("Authorization", &format!("Bearer {}", self.token))
+            self.authorized(self.agent.delete(&format!("{}{path}", self.url)))
                 .call(),
         )
     }
@@ -405,6 +444,87 @@ mod tests {
             }
         });
         url
+    }
+
+    /// A backend that answers each request with the headers it was sent, as
+    /// a JSON object with lower-case names. `/v1/status` is unknown to it, as
+    /// to a backend from before that route.
+    fn echoing_backend() -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let stream = stream.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                let mut headers = serde_json::Map::new();
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let Some((name, value)) = line.trim_end().split_once(": ") else {
+                        break;
+                    };
+                    headers.insert(name.to_ascii_lowercase(), value.into());
+                }
+                // Closing on a body nobody read resets the connection, and
+                // the client then never sees the answer.
+                let length = headers
+                    .get("content-length")
+                    .and_then(Value::as_str)
+                    .and_then(|length| length.parse().ok())
+                    .unwrap_or(0);
+                reader.read_exact(&mut vec![0; length]).unwrap();
+                let (status, body) = if request_line.starts_with("GET /v1/status ") {
+                    ("404 Not Found", String::new())
+                } else {
+                    ("200 OK", Value::Object(headers).to_string())
+                };
+                let mut stream = reader.into_inner();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn only_a_client_that_names_itself_sends_the_client_header() {
+        let url = echoing_backend();
+        let app = Backend::new(url.clone(), "secret".into());
+        let sent = app.get("/v1/repos").unwrap();
+        assert_eq!(sent["authorization"], "Bearer secret");
+        assert_eq!(sent[cw_core::CLIENT_HEADER], Value::Null);
+
+        let bridge = Backend::new(url, "secret".into()).with_client(MCP_CLIENT);
+        for sent in [
+            bridge.get("/v1/repos").unwrap(),
+            bridge.post("/v1/repos", &serde_json::json!({})).unwrap(),
+            bridge
+                .put("/v1/repos/a/note", &serde_json::json!({}))
+                .unwrap(),
+            bridge.delete("/v1/repos/a").unwrap(),
+        ] {
+            assert_eq!(sent["authorization"], "Bearer secret");
+            assert_eq!(sent[cw_core::CLIENT_HEADER], "mcp");
+        }
+    }
+
+    #[test]
+    fn a_backend_without_the_status_route_has_no_status() {
+        let backend = Backend::new(echoing_backend(), "secret".into());
+        assert_eq!(backend.status(), Ok(None));
+        // A backend that is gone is an error, not "no status".
+        let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", gone.local_addr().unwrap());
+        drop(gone);
+        assert!(Backend::new(url, "secret".into()).status().is_err());
     }
 
     #[test]

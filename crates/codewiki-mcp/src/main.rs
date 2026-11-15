@@ -39,7 +39,8 @@ fn connected(slot: &Mutex<Option<Backend>>) -> Result<Backend, String> {
         );
         *slot = None;
     }
-    let backend = Backend::connect()?;
+    // Named, so that the backend can tell the app when an agent last called.
+    let backend = Backend::connect()?.with_client(cw_client::MCP_CLIENT);
     *slot = Some(backend.clone());
     Ok(backend)
 }

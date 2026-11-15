@@ -7,7 +7,11 @@
 //!
 //! `POST /v1/shutdown` stops the server. The desktop app calls it before an
 //! update replaces the programs, so the old backend does not keep serving.
+//!
+//! `GET /v1/status` says what the backend is doing: the wiki updates that are
+//! running and when an agent's MCP bridge last called (`activity`).
 
+mod activity;
 mod api;
 mod repos;
 pub mod workspace;
@@ -42,6 +46,8 @@ pub(crate) struct Inner {
     pub write_lock: Mutex<()>,
     /// Woken by `POST /v1/shutdown`; [`serve`] stops when it fires.
     pub stop: Notify,
+    /// Running updates and the last bridge call, for `GET /v1/status`.
+    pub activity: activity::Activity,
 }
 
 #[derive(Clone)]
@@ -52,6 +58,7 @@ fn state(config: ServerConfig) -> AppState {
         config,
         write_lock: Mutex::new(()),
         stop: Notify::new(),
+        activity: activity::Activity::default(),
     }))
 }
 

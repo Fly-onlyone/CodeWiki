@@ -83,6 +83,10 @@ const CLEANUP_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
 /// The smallest window: the sidebar, the details pane, and a reading pane
 /// about as wide as the two together.
 const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
+/// Kept free around the first window on a screen it would otherwise fill. A
+/// window as large as the free area has its unseen frame, and with it a few
+/// pixels of the title bar, outside the screen.
+const SCREEN_MARGIN: f32 = 16.0;
 
 /// The vault's map note, which the app calls "Wiki map".
 const WIKI_MAP: &str = "_HOME";
@@ -3031,9 +3035,14 @@ fn window_options(cx: &App) -> WindowOptions {
     options
 }
 
-/// The first window's place on a screen whose free area is `free`.
+/// The first window's place on a screen whose free area is `free`: GPUI's
+/// default size, or what the free area holds with a margin around it.
 fn first_bounds(free: Bounds<Pixels>) -> Bounds<Pixels> {
-    let fitted = DEFAULT_WINDOW_SIZE.min(&free.size);
+    let room = size(
+        (free.size.width - px(2.0 * SCREEN_MARGIN)).max(px(MIN_WINDOW.0)),
+        (free.size.height - px(2.0 * SCREEN_MARGIN)).max(px(MIN_WINDOW.1)),
+    );
+    let fitted = DEFAULT_WINDOW_SIZE.min(&room);
     let centre = free.center();
     Bounds::new(
         point(
@@ -3247,11 +3256,12 @@ mod tests {
     #[test]
     fn the_first_window_stays_inside_the_free_part_of_the_screen() {
         // A 1600x900 screen with a 48 px taskbar at the bottom: the window
-        // is as wide as GPUI's default and no taller than what is free.
+        // is as wide as GPUI's default, and less tall than what is free by a
+        // margin above and below.
         let free = Bounds::new(point(px(0.), px(0.)), size(px(1600.), px(852.)));
         let window = first_bounds(free);
-        assert_eq!(window.size, size(DEFAULT_WINDOW_SIZE.width, px(852.)));
-        assert_eq!(window.origin, point(px(32.), px(0.)));
+        assert_eq!(window.size, size(DEFAULT_WINDOW_SIZE.width, px(820.)));
+        assert_eq!(window.origin, point(px(32.), px(16.)));
 
         // A taskbar on the left moves the free area, and the window with it.
         let free = Bounds::new(point(px(60.), px(0.)), size(px(3780.), px(2160.)));

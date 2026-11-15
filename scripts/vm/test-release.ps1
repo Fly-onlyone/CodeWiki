@@ -33,6 +33,14 @@ param(
     # release's package inside the guest and checks it against its .sha256
     # file and against -Zip, which must be the same package.
     [string]$ReleaseTag,
+    # Memory for the guest in this run, in megabytes. Default: what the
+    # checkpoint holds. Lower it on a host that has little free; a restored
+    # checkpoint brings its own figure back, so it is set after each restore.
+    [int]$MemoryMb,
+    # Run only these cases (their IDs), after the usual setup of the guest.
+    # For one case that can stand alone, such as U2; most cases build on the
+    # ones before them.
+    [string[]]$Only,
     # Multiplies every wait; raise it on a slow host.
     [double]$Pace = 1.0
 )
@@ -102,6 +110,7 @@ function Add-Result {
 # Run one case; a thrown error becomes an "error" result and the run goes on.
 function Test-Case {
     param([string]$Id, [string]$Title, [string]$Expect, [scriptblock]$Body)
+    if ($Only -and $Only -notcontains $Id) { return }
     try {
         & $Body
     } catch {
@@ -201,6 +210,12 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
 if ($Gpu -and -not $PSBoundParameters.ContainsKey("Snapshot")) { $Snapshot = "clean-gpu" }
 "restoring checkpoint '$Snapshot'"
 Restore-Guest -Snapshot $Snapshot
+if ($MemoryMb) {
+    # Startup and ceiling alike: a guest that grows later takes what the
+    # host does not have.
+    Set-VMMemory -VMName $VmName -StartupBytes ($MemoryMb * 1MB) -MaximumBytes ($MemoryMb * 1MB)
+    "guest memory set to $MemoryMb MB for this run"
+}
 # A checkpoint does not keep the card, so it is attached after every restore.
 if ($Gpu) { Enable-GuestGpu }
 Start-Guest
@@ -673,7 +688,8 @@ $views = @(
     @{ name = "health"; args = @($guestRepo, "health:") }
     @{ name = "tests"; args = @($guestRepo, "tests:") }
     @{ name = "settings"; args = @($guestRepo, "settings:") }
-    @{ name = "themes"; args = @($guestRepo, "themes:") }
+    # No "themes:" here: it opens the theme menu, and the click that gives the
+    # window the focus closes a menu. T1 and T2 open it by keyboard instead.
 )
 foreach ($view in $views) {
     $id = "F1-$($view.name)"
@@ -780,17 +796,23 @@ Test-Case "N1" "Toolbar by mouse" "a click on the Ctrl+K button opens the palett
     Add-Result -Id "N1" -Title "Toolbar by mouse" -Expect "the palette opens; a tab opens" -Status note -Shots @($a, $b, $c) `
         -Observed "clicked the Ctrl+K button at ($paletteX,$paletteY), pressed Escape, clicked + at ($tabX,$tabY), pressed Ctrl+W; read the screenshots"
 }
-Test-Case "G4" "Focus by keyboard" "Tab moves a visible focus; Enter and Space press the focused control" {
-    Send-Keys "tab", "tab", "tab"; Wait-For 2
+# Tab must walk through the controls, the sidebar's first. It once went to the
+# search box and stayed there: no other control was a tab stop.
+Test-Case "G4" "Focus by keyboard" "Tab moves a visible focus from control to control; Enter and Space press the focused control" {
+    Send-Keys "tab"; Wait-For 1
+    Send-Keys "tab"; Wait-For 1
+    Send-Keys "tab"; Wait-For 2
     $a = Shot "focus-tab-3"
-    Send-Keys "tab", "tab", "tab"; Wait-For 2
+    Send-Keys "tab"; Wait-For 1
+    Send-Keys "tab"; Wait-For 1
+    Send-Keys "tab"; Wait-For 2
     $b = Shot "focus-tab-6"
     Send-Keys "enter"; Wait-For 4
     $c = Shot "focus-enter"
     Send-Keys "tab"; Send-Keys "space"; Wait-For 4
     $d = Shot "focus-space"
     Add-Result -Id "G4" -Title "Focus by keyboard" -Expect "focus moves and controls fire" -Status note -Shots @($a, $b, $c, $d) `
-        -Observed "keys sent: Tab x3, Tab x3, Enter, Tab, Space; read the screenshots"
+        -Observed "keys sent: Tab x3, Tab x3, Enter, Tab, Space; read the screenshots: the highlight must be on a different control after three and after six Tabs, and Enter must open what was focused"
     Stop-GuestApp
 }
 

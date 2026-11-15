@@ -36,6 +36,25 @@ fn publish(data_dir: &Path, addr: SocketAddr, token: &str) -> Result<()> {
     std::fs::write(&path, body.to_string() + "\n").map_err(|e| Error::io(path, e))
 }
 
+/// Whether the connection file `text` was written by the process `pid`.
+fn names_process(text: &str, pid: u32) -> bool {
+    serde_json::from_str::<serde_json::Value>(text)
+        .is_ok_and(|file| file["pid"].as_u64() == Some(u64::from(pid)))
+}
+
+/// Delete the connection file, if it is still this backend's. A backend
+/// asked to stop first finishes its running requests; a client that finds it
+/// not listening may by then have started the next backend, whose file must
+/// stay.
+fn withdraw(data_dir: &Path) {
+    let path = data_dir.join(BACKEND_FILE);
+    let ours =
+        std::fs::read_to_string(&path).is_ok_and(|text| names_process(&text, std::process::id()));
+    if ours {
+        let _ = std::fs::remove_file(path);
+    }
+}
+
 pub fn run(host: IpAddr, port: u16) -> Result<()> {
     let data_dir = cw_core::paths::data_dir();
     let token = match std::env::var(TOKEN_ENV).ok().filter(|t| !t.is_empty()) {
@@ -76,7 +95,22 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         )
         .await?;
         // Leave no stale connection file behind.
-        let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
+        withdraw(&data_dir);
         Ok(())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::names_process;
+
+    #[test]
+    fn a_connection_file_belongs_to_the_process_it_names() {
+        let file = r#"{"url":"http://127.0.0.1:51051","token":"t","pid":4760}"#;
+        assert!(names_process(file, 4760));
+        // The next backend has written the file since: it is not ours to delete.
+        assert!(!names_process(file, 4761));
+        assert!(!names_process("not json", 4760));
+        assert!(!names_process(r#"{"url":"http://127.0.0.1:1"}"#, 4760));
+    }
 }

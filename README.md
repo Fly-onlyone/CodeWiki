@@ -4,6 +4,8 @@
 
 A native Windows app and a Rust backend that write and maintain a wiki for a codebase, for both people and coding agents.
 
+**[User guide](https://fly-3.gitbook.io/codewiki/)**: install, your first wiki, the app, coding agents, the command line and troubleshooting.
+
 The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives in the repository, so it is versioned with the code and readable without CodeWiki.
 
 > Status: version 0.1.0, the first release. See `ROADMAP.md` for what is verified and what is not.

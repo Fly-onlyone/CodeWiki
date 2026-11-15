@@ -422,6 +422,12 @@ pub fn from_env() -> Result<Option<Box<dyn Embedder>>> {
     from_config(env)
 }
 
+/// The embedder chosen by the settings in effect: the environment over the
+/// settings file.
+pub fn from_settings(resolved: &cw_core::settings::Resolved) -> Result<Option<Box<dyn Embedder>>> {
+    from_config(|name| resolved.get(name))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

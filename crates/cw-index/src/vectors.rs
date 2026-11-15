@@ -61,6 +61,19 @@ impl Index {
         Ok(out)
     }
 
+    /// The kinds of document that have a stored vector.
+    pub fn vector_kinds(&self) -> Result<Vec<String>> {
+        let err = db("reading vector kinds");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT kind FROM vectors ORDER BY kind")
+            .map_err(&err)?;
+        let rows = stmt
+            .query_map([], |r| r.get::<_, String>(0))
+            .map_err(&err)?;
+        rows.collect::<std::result::Result<_, _>>().map_err(&err)
+    }
+
     /// Insert or replace vectors, and delete every vector of `kinds` whose
     /// `(kind, key)` is not in `keep`.
     pub fn store_vectors(
@@ -196,6 +209,7 @@ mod tests {
         assert_eq!(keys, ["a", "b", "s"]);
         assert!((hits[1].score - 0.6).abs() < 1e-6);
         assert_eq!(hits[0].title, "A");
+        assert_eq!(index.vector_kinds().unwrap(), ["note", "symbol"]);
 
         let only_symbols = index.nearest(&[1.0, 0.0], Some("symbol"), 10).unwrap();
         assert_eq!(only_symbols.len(), 1);

@@ -74,10 +74,15 @@ Closing the app also stops the local backend it used; one named by `CODEWIKI_URL
 | `CODEWIKI_LLM` | `anthropic`, `openai`, `ollama`, `claude-cli`, `codex-cli`, `none` |
 | `CODEWIKI_MODEL` | Model name for the chosen provider |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Credentials and endpoint for the API providers |
+| `OLLAMA_HOST` | Address of Ollama; `http://127.0.0.1:11434` when not set |
 
 ### Search
 
-Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default, built in, no model needed), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for the last two.
+Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default, built in, no model needed), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for the last two. After a change of embedder, search is full-text alone until the next `codewiki update` embeds the documents again.
+
+### Saved settings
+
+The backend also keeps the LLM and search settings in `settings.json` in its data folder, so they need not be set before every start. A variable that is set wins over the saved value. `GET /v1/settings` shows each setting and where its value comes from, `PUT /v1/settings` changes the saved ones, and `POST /v1/settings/test/llm` and `/test/embed` check that the chosen provider answers. API keys are stored encrypted for your Windows user and are never sent back. A backend that listens beyond its own machine, as the one in Docker does, takes its settings from its variables only. The app's Settings page does not show these settings yet.
 
 ### Claude Code plugin
 

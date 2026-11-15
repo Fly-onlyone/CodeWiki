@@ -788,7 +788,7 @@ Test-Case "N1" "Toolbar by mouse" "a click on the Ctrl+K button opens the palett
     # Distances from the window's top right corner, read off the screenshot
     # "keys-before": the Ctrl+K button and the + at the end of the tab bar.
     # (The window's own numbers include an unseen 8 pixel border.)
-    $paletteX = $appWindow.Right - 344; $paletteY = $appWindow.Top + 61
+    $paletteX = $appWindow.Right - 376; $paletteY = $appWindow.Top + 61
     $tabX = $appWindow.Right - 33; $tabY = $appWindow.Top + 112
     Send-Click -X $paletteX -Y $paletteY; Wait-For 2
     $a = Shot "click-palette-button"

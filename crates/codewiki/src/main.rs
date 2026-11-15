@@ -779,8 +779,21 @@ fn main() -> ExitCode {
         let _ = std::panic::catch_unwind(|| session_start_hook(&cli.repo));
         return ExitCode::SUCCESS;
     }
+    // The backend has no console when the app or an agent starts it: it keeps
+    // `backend.log`, and prints the same lines when run from a terminal. A
+    // command prints only warnings and errors, as it always has.
+    let serving = matches!(cli.command, Command::Serve { .. });
+    if serving {
+        cw_core::logs::init("backend", log::LevelFilter::Info);
+    } else {
+        cw_core::logs::init_console(log::LevelFilter::Warn);
+    }
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
+        Err(e) if serving => {
+            log::error!("the backend stopped: {e}");
+            ExitCode::FAILURE
+        }
         Err(e) => {
             eprintln!("error: {e}");
             ExitCode::FAILURE

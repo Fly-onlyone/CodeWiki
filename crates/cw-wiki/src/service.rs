@@ -1,6 +1,7 @@
 //! High-level operations shared by the CLI, the server and the MCP tools.
 
 use std::path::Path;
+use std::time::Instant;
 
 use cw_core::paths::{index_path, index_path_in};
 use cw_core::{Result, VAULT_DIR};
@@ -33,6 +34,10 @@ const META_BUILT: &str = "built";
 /// exists, and every query would then answer as if the repository were empty.
 fn built(root: &Path, mut index: Index) -> Result<Index> {
     if index.meta(META_BUILT)?.is_none() {
+        log::info!(
+            "building the index of {} for the first time",
+            root.display()
+        );
         reindex(root, &mut index)?;
         if root.join(VAULT_DIR).is_dir() {
             index_notes(root, &mut index)?;
@@ -43,6 +48,7 @@ fn built(root: &Path, mut index: Index) -> Result<Index> {
 
 /// Scan the repository and rewrite the structural index. Notes are not touched.
 pub fn reindex(root: &Path, index: &mut Index) -> Result<RepoFacts> {
+    let started = Instant::now();
     let facts = scan_repo(root)?;
     let metrics = analyze(&facts);
     index.replace_facts(&facts)?;
@@ -68,11 +74,19 @@ pub fn reindex(root: &Path, index: &mut Index) -> Result<RepoFacts> {
     crate::semantic::refresh(index, &["symbol", "file"], &documents);
     index.set_meta(META_COMMIT, head_commit(root).as_deref().unwrap_or(""))?;
     crate::gitintel::save(index, &crate::gitintel::mine(root))?;
+    log::info!(
+        "indexed {} files and {} symbols of {} in {} ms",
+        facts.files.len(),
+        facts.symbols.len(),
+        root.display(),
+        started.elapsed().as_millis()
+    );
     Ok(facts)
 }
 
 /// Load every vault note into the search index.
 pub fn index_notes(root: &Path, index: &mut Index) -> Result<usize> {
+    let started = Instant::now();
     let vault = root.join(VAULT_DIR);
     let meta = VaultMeta::load(&vault)?;
     let mut documents = Vec::new();
@@ -93,6 +107,12 @@ pub fn index_notes(root: &Path, index: &mut Index) -> Result<usize> {
     }
     index.replace_documents(&["note"], &documents)?;
     crate::semantic::refresh(index, &["note"], &documents);
+    log::info!(
+        "indexed {} notes of {} in {} ms",
+        documents.len(),
+        root.display(),
+        started.elapsed().as_millis()
+    );
     Ok(documents.len())
 }
 
@@ -103,10 +123,45 @@ pub fn update(root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report> {
 
 /// [`update`] with an explicit data directory.
 pub fn update_in(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report> {
+    let started = Instant::now();
+    log::info!(
+        "update of {} started; writer: {}",
+        root.display(),
+        writer.map_or_else(|| "none".to_string(), |w| w.name())
+    );
+    let result = run_update(data_dir, root, writer);
+    let ms = started.elapsed().as_millis();
+    match &result {
+        Ok(report) => log::info!(
+            "update of {} done in {ms} ms: {} notes written, {} proposed, {} removed, {} kept, {} in all; {} lint warnings; LLM: {} calls, {} fell back, {} input and {} output tokens",
+            root.display(),
+            report.written.len(),
+            report.proposed.len(),
+            report.removed.len(),
+            report.kept,
+            report.notes_total,
+            report.lint_warnings,
+            report.llm.calls,
+            report.llm.fallbacks,
+            report.llm.input_tokens,
+            report.llm.output_tokens
+        ),
+        Err(e) => log::warn!("update of {} failed after {ms} ms: {e}", root.display()),
+    }
+    result
+}
+
+fn run_update(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report> {
     let mut index = open_index_in(data_dir, root)?;
     let facts = reindex(root, &mut index)?;
     let metrics = index.metrics()?;
+    let started = Instant::now();
     let report = generate(root, &facts, &metrics, head_commit(root), writer)?;
+    log::info!(
+        "generated the notes of {} in {} ms",
+        root.display(),
+        started.elapsed().as_millis()
+    );
     index_notes(root, &mut index)?;
     Ok(report)
 }

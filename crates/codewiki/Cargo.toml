@@ -18,6 +18,7 @@ cw-server = { version = "0.1.0", path = "../cw-server" }
 cw-vault = { path = "../cw-vault" }
 cw-wiki = { path = "../cw-wiki" }
 getrandom = "0.4.3"
+log = "0.4"
 serde_json = "1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 

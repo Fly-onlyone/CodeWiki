@@ -26,3 +26,6 @@ dist/
 
 # Test reports with screenshots and recordings; kept on the machine that ran them
 report/
+
+# Logs of a run from the RustRover configurations (CODEWIKI_LOG_DIR=logs)
+/logs/

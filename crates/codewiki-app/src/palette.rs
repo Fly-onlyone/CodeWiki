@@ -49,6 +49,8 @@ pub enum Command {
     CheckUpdates,
     /// Install the newer release and restart; listed only when there is one.
     InstallUpdate,
+    /// Show the folder of the log files in Explorer.
+    OpenLogs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -97,6 +99,7 @@ pub fn actions() -> Vec<Entry> {
         ("Open note in Obsidian", Command::OpenInObsidian),
         ("Open folder…", Command::OpenFolder),
         ("Check for updates", Command::CheckUpdates),
+        ("Open logs folder", Command::OpenLogs),
     ]
     .into_iter()
     .map(|(label, command)| Entry::new(label, "Command", command))
@@ -182,6 +185,13 @@ mod tests {
         assert_eq!(all.len(), 3);
         assert_eq!(all[0].command, Command::Sync);
         assert!(all.iter().all(|e| e.hint != "Search"));
+    }
+
+    #[test]
+    fn the_logs_folder_opens_from_the_palette() {
+        let found = filter(&actions(), "logs", 5);
+        assert_eq!(found[0].label, "Open logs folder");
+        assert_eq!(found[0].command, Command::OpenLogs);
     }
 
     #[test]

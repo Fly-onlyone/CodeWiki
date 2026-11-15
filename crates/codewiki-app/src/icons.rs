@@ -152,7 +152,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::ToggleDetails => DETAILS,
         Command::OpenInObsidian => EXTERNAL,
         Command::Reconnect => SYNC,
-        Command::OpenFolder => FOLDER,
+        Command::OpenFolder | Command::OpenLogs => FOLDER,
         Command::CheckUpdates | Command::InstallUpdate => UPDATE,
     }
 }

@@ -2,7 +2,7 @@
 
 use std::io::Write;
 use std::process::{Command, Stdio};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use cw_core::{Error, Result};
 use serde_json::{Value, json};
@@ -28,6 +28,32 @@ pub trait LlmProvider: Send + Sync {
     /// `anthropic:claude-opus-5-5`.
     fn name(&self) -> String;
     fn complete(&self, system: &str, user: &str) -> Result<Completion>;
+}
+
+/// A provider whose calls are logged: how long each took and the tokens it
+/// used, never the prompt or the answer. A failure is a warning.
+struct Logged(Box<dyn LlmProvider>);
+
+impl LlmProvider for Logged {
+    fn name(&self) -> String {
+        self.0.name()
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let started = Instant::now();
+        let result = self.0.complete(system, user);
+        let ms = started.elapsed().as_millis();
+        match &result {
+            Ok(completion) => log::debug!(
+                "{} answered in {ms} ms: {} input and {} output tokens",
+                self.0.name(),
+                completion.input_tokens,
+                completion.output_tokens
+            ),
+            Err(e) => log::warn!("{} failed after {ms} ms: {e}", self.0.name()),
+        }
+        result
+    }
 }
 
 fn agent() -> ureq::Agent {
@@ -334,5 +360,5 @@ pub fn from_env() -> Result<Option<Box<dyn LlmProvider>>> {
             )));
         }
     };
-    Ok(Some(provider))
+    Ok(Some(Box::new(Logged(provider))))
 }

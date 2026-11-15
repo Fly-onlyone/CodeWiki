@@ -88,7 +88,12 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
             SocketAddr::new(host, port),
             |bound| {
                 publish(&data_dir, bound, &token)?;
-                eprintln!("codewiki backend listening on http://{bound}");
+                log::info!(
+                    "codewiki backend listening on http://{bound}; data in {}; writer: {}; embedder: {}",
+                    data_dir.display(),
+                    writer_name(),
+                    cw_wiki::semantic::embedder().map_or("none".into(), |e| e.name())
+                );
                 Ok(())
             },
             shutdown,
@@ -96,8 +101,18 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         .await?;
         // Leave no stale connection file behind.
         withdraw(&data_dir);
+        log::info!("codewiki backend stopped");
         Ok(())
     })
+}
+
+/// The LLM provider the environment chooses, by name; never its key.
+fn writer_name() -> String {
+    match cw_llm::provider::from_env() {
+        Ok(Some(provider)) => provider.name(),
+        Ok(None) => "none".into(),
+        Err(e) => format!("not set up ({e})"),
+    }
 }
 
 #[cfg(test)]

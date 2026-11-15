@@ -137,7 +137,7 @@ impl ProseWriter for LlmWriter {
             Err(error) => {
                 // One failed note must not abort a whole run; the structural
                 // draft is used and the failure is counted and shown.
-                eprintln!("codewiki: writer failed for '{}': {error}", note.title);
+                log::warn!("writer failed for '{}': {error}", note.title);
                 self.record(|u| {
                     u.calls += 1;
                     u.fallbacks += 1;
@@ -167,10 +167,7 @@ impl ProseWriter for LlmWriter {
                 program
             }
             Err(error) => {
-                eprintln!(
-                    "codewiki: illustration failed for '{}': {error}",
-                    note.title
-                );
+                log::warn!("illustration failed for '{}': {error}", note.title);
                 self.record(|u| {
                     u.calls += 1;
                     u.fallbacks += 1;

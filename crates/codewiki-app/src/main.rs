@@ -20,7 +20,6 @@ mod graph;
 mod icons;
 mod illustration;
 mod live;
-mod logfile;
 mod markdown;
 mod motion;
 mod mui;
@@ -458,7 +457,11 @@ impl AppView {
                         log::error!("the backend is not reachable: {message}");
                         this.error = Some(message);
                         let log = cw_core::logs::path("backend").display().to_string();
-                        this.set_page(Page::Notice(Rc::new(live::offline_page(&log))), false);
+                        let logs = cw_core::logs::dir().display().to_string();
+                        this.set_page(
+                            Page::Notice(Rc::new(live::offline_page(&log, &logs))),
+                            false,
+                        );
                     }
                 }
                 cx.notify();
@@ -1266,6 +1269,7 @@ impl AppView {
             Command::OpenInObsidian => self.open_in_obsidian(cx),
             Command::Reconnect => self.reconnect(cx),
             Command::OpenFolder => self.open_folder(cx),
+            Command::OpenLogs => self.open_logs(cx),
             Command::CheckUpdates => {
                 // The result shows on the settings page.
                 self.open_settings(true, cx);
@@ -1788,7 +1792,19 @@ impl AppView {
             Action::OpenRepo(id) => self.open_repo(id, cx),
             Action::ForgetRepo(id) => self.forget_repo(id.clone(), cx),
             Action::Sync => self.sync(cx),
+            Action::OpenLogs => self.open_logs(cx),
         }
+    }
+
+    /// Show the folder of the log files in Explorer, so that a user can
+    /// attach `app.log` and `backend.log` to a bug report.
+    fn open_logs(&self, cx: &mut Context<Self>) {
+        let dir = cw_core::logs::dir();
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            log::warn!("could not create the logs folder {}: {e}", dir.display());
+        }
+        log::info!("opening the logs folder {}", dir.display());
+        cx.open_with_system(&dir);
     }
 
     fn sidebar(&self, cx: &mut Context<Self>) -> Div {
@@ -3307,7 +3323,11 @@ impl AppView {
 }
 
 fn main() {
-    logfile::init();
+    // A release build has no console, so nothing the app or GPUI reports
+    // would be kept anywhere: every record at Info and above goes to
+    // `logs\app.log`, GPUI's own included (it names the graphics adapter it
+    // picked), and so does every panic.
+    cw_core::logs::init("app", log::LevelFilter::Info);
     let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);

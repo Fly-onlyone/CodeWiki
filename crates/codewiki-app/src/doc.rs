@@ -39,6 +39,8 @@ pub enum Action {
     ForgetRepo(String),
     /// Bring the open repository's wiki up to date.
     Sync,
+    /// Show the folder of the log files in Explorer.
+    OpenLogs,
 }
 
 /// A stretch of text within a line.

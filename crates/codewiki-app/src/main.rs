@@ -38,12 +38,12 @@ use std::rc::Rc;
 use cw_client::{Backend, encode};
 use gpui_kit::base::TextView;
 use gpui_kit::base::motion::{Presence, Transition};
-use gpui_kit::component::TitleBar;
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, StyledExt as _, h_flex, v_flex};
+use gpui_kit::component::{TITLE_BAR_HEIGHT, TitleBar};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
@@ -2887,10 +2887,6 @@ impl Render for AppView {
         }
         // Read once so unused-field lints stay honest about what the UI shows.
         let _ = self.notes.iter().filter(|n| n.state == "stale").count();
-        let title = match &self.repo {
-            Some(repo) => format!("CodeWiki — {}", repo.name),
-            None => "CodeWiki".to_string(),
-        };
         self.page_placed.set(false);
         self.glass = glass::Levels::for_window(window, cx);
         // Components that draw their own surfaces read the levels from here.
@@ -2912,20 +2908,6 @@ impl Render for AppView {
         let theme_menu = Presence::new("theme-menu-presence", self.theme_menu_open)
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
             .sample(window, cx);
-        let title_bar = TitleBar::new()
-            .bg(self.glass.chrome(glass::tinted(cx.theme().title_bar, cx)))
-            .child(
-                h_flex()
-                    .gap_2()
-                    .items_center()
-                    .child(img(icons::LOGO).size(px(16.)).flex_none())
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(title),
-                    ),
-            );
         let root = v_flex()
             .id("root")
             .relative()
@@ -2969,7 +2951,8 @@ impl Render for AppView {
             .when(theme_menu.should_render(), |root| {
                 root.children(self.theme_menu_view(theme_menu.progress, cx))
             })
-            .child(title_bar)
+            // The place of the title bar, which the shell draws.
+            .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())
             .child(glass::hairline(cx))
             .child(self.body(window, cx));
         // With no generated page in this frame, the shell has none to draw.
@@ -2978,6 +2961,32 @@ impl Render for AppView {
         }
         root
     }
+}
+
+/// The window's title bar. The shell draws it, not the app's view: the
+/// buttons of a title bar that is part of a cached view stop answering (see
+/// `backdrop`).
+fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyElement {
+    let title = match &app.read(cx).repo {
+        Some(repo) => format!("CodeWiki — {}", repo.name),
+        None => "CodeWiki".to_string(),
+    };
+    let levels = glass::Levels::for_window(window, cx);
+    TitleBar::new()
+        .bg(levels.chrome(glass::tinted(cx.theme().title_bar, cx)))
+        .child(
+            h_flex()
+                .gap_2()
+                .items_center()
+                .child(img(icons::LOGO).size(px(16.)).flex_none())
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child(title),
+                ),
+        )
+        .into_any_element()
 }
 
 impl AppView {
@@ -3084,7 +3093,11 @@ fn main() {
             let page = app.read(cx).doc_page.clone();
             // The shell draws the drifting backdrop, the app over it, and
             // the generated page in the place the app leaves for it.
-            cx.new(|cx| backdrop::Shell::new(app, page, slot, window, cx))
+            let bar = {
+                let app = app.clone();
+                Box::new(move |window: &mut Window, cx: &mut App| title_bar(&app, window, cx))
+            };
+            cx.new(|cx| backdrop::Shell::new(app, bar, page, slot, window, cx))
         })
         .expect("failed to open the main window");
         // gpui-kit paints the theme background over the whole window, which

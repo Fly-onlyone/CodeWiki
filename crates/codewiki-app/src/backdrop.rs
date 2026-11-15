@@ -14,6 +14,15 @@
 //! redrawn when the shapes move; the app and the page keep their last frames
 //! until they change themselves, and neither is redrawn when the other is.
 //!
+//! The title bar is the exception: the shell draws it itself, in every frame.
+//! GPUI keeps the hit areas of a cached view but not its window control
+//! areas (the minimize, maximize and close buttons and the part that drags
+//! the window; `window_control_hitboxes` in gpui's `window.rs` is cleared for
+//! each frame and filled only by a view that is drawn anew). While the title
+//! bar was part of the cached app, the buttons and the bar did nothing in
+//! every frame where only the shapes had moved, which with the drift on is
+//! nearly every frame.
+//!
 //! The shapes stand still when the window is inactive and under reduced
 //! motion, so an idle or backgrounded window costs nothing. They also stand
 //! still when Direct3D runs on the processor (a virtual machine, a remote
@@ -28,8 +37,8 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Context, Div, Entity, Hsla, IntoElement, ParentElement as _, Render, StyleRefinement,
-    Styled as _, Subscription, Window, div, px,
+    AnyElement, App, Context, Div, Entity, Hsla, IntoElement, ParentElement as _, Render,
+    StyleRefinement, Styled as _, Subscription, Window, div, px,
 };
 
 use crate::doc_view::{DocPage, PageSlot};
@@ -152,9 +161,15 @@ fn advance(phase: f32, seconds: f32) -> f32 {
     (phase + seconds.clamp(0.0, MAX_STEP) / PERIOD).rem_euclid(1.0)
 }
 
+/// Draws the window's title bar.
+pub type TitleBarFn = Box<dyn Fn(&mut Window, &mut App) -> AnyElement>;
+
 /// The window's outermost view: the drifting shapes, and `content` over them.
 pub struct Shell<V: Render> {
     content: Entity<V>,
+    /// The title bar, drawn over the top of `content`, which leaves the
+    /// place empty. See the module's note for why it is not part of it.
+    title_bar: TitleBarFn,
     /// The generated page, and where the app wants it.
     page: Entity<DocPage>,
     slot: Rc<PageSlot>,
@@ -176,6 +191,7 @@ pub struct Shell<V: Render> {
 impl<V: Render> Shell<V> {
     pub fn new(
         content: Entity<V>,
+        title_bar: TitleBarFn,
         page: Entity<DocPage>,
         slot: Rc<PageSlot>,
         window: &mut Window,
@@ -199,6 +215,7 @@ impl<V: Render> Shell<V> {
         }
         Self {
             content,
+            title_bar,
             page,
             slot,
             debug_backdrop: glass::debug_backdrop(),
@@ -293,6 +310,15 @@ impl<V: Render> Render for Shell<V> {
                 self.content
                     .clone()
                     .cached(StyleRefinement::default().size_full()),
+            )
+            // Never cached, so that its buttons always answer.
+            .child(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .w_full()
+                    .child((self.title_bar)(window, cx)),
             )
             // The page, in the place the app left empty for it.
             .when_some(self.slot.bounds(), |shell, place| {

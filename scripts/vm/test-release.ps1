@@ -367,8 +367,8 @@ $firstBackendPid = $null
 $firstProbe = $null
 $closedProbe = $null
 # Nothing is registered yet and the shortcut starts in the install folder, so
-# the app must show its welcome page, not take a folder as the repository.
-Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens on the welcome page; no folder is registered" {
+# the app must show Home, not take a folder as the repository.
+Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens on Home; no folder is registered" {
     $script:idleLoad = Wait-GuestIdle
     $search = Start-FromStartMenu
     $shot = Shot "first-launch"
@@ -384,7 +384,7 @@ Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens on t
     $backend = Get-Backend $probe
     $script:firstBackendPid = $probe.backend.pid
     $registered = @(Get-Registered $probe)
-    Add-Result -Id "E1" -Title "Start the app from the Start menu" -Expect "a window on the welcome page; no folder registered" `
+    Add-Result -Id "E1" -Title "Start the app from the Start menu" -Expect "a window on Home; no folder registered" `
         -Status $(if ($window -and $registered.Count -eq 0) { "pass" } else { "fail" }) -Shots @($search, $shot) `
         -Observed "codewiki-app processes: $($app.Count), with a window: $($window.Count), title '$($window.title -join ',')'; backend processes: $($backend.Count), backend has its own window: $(@($backend | Where-Object { $_.hasWindow }).Count -gt 0), console hosts under CodeWiki programs: $($probe.consoles.Count); repositories registered: $($probe.backend.repos)"
 }
@@ -407,7 +407,7 @@ Test-Case "P1" "Idle processor use, motion as installed" "an idle window leaves 
 
 # The window from the Start menu has the keyboard focus. The palette's command
 # opens Windows's folder dialog, which takes a typed path.
-Test-Case "E3" "Open a folder from the welcome page" "Open folder… asks for a folder, registers it and opens it" {
+Test-Case "E3" "Open a folder from Home" "Open folder… asks for a folder, registers it and opens it" {
     if ($starved) { throw "the guest is too busy to be driven (P1)" }
     Send-Keys "ctrl+k"; Wait-For 2
     Send-Text "open folder"; Wait-For 2
@@ -427,7 +427,7 @@ Test-Case "E3" "Open a folder from the welcome page" "Open folder… asks for a 
     $registered = @(Get-Registered $probe)
     $opened = Get-OpenedRepo
     $ok = [bool]($registered | Where-Object { $_.name -eq "cw-core" }) -and $opened -eq "cw-core"
-    Add-Result -Id "E3" -Title "Open a folder from the welcome page" -Expect "cw-core registered and shown" `
+    Add-Result -Id "E3" -Title "Open a folder from Home" -Expect "cw-core registered and shown" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) `
         -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); the app's log says it opened '$opened'"
 }

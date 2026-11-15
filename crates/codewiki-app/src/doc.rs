@@ -32,6 +32,10 @@ pub enum Action {
     InstallUpdate,
     /// Turn the daily check for updates on or off.
     AutoUpdate(bool),
+    /// Open the registered repository with this id.
+    OpenRepo(String),
+    /// Bring the open repository's wiki up to date.
+    Sync,
 }
 
 /// A stretch of text within a line.
@@ -274,6 +278,8 @@ pub struct Row {
     pub code: bool,
     /// A second, quieter text after the label.
     pub detail: Option<String>,
+    /// Drawn as the current item of the list.
+    pub selected: bool,
     pub action: Action,
 }
 
@@ -284,6 +290,7 @@ impl Row {
             label: label.into(),
             code: false,
             detail: None,
+            selected: false,
             action,
         }
     }
@@ -295,6 +302,11 @@ impl Row {
 
     pub fn detail(mut self, detail: impl Into<String>) -> Self {
         self.detail = Some(detail.into());
+        self
+    }
+
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
         self
     }
 }
@@ -334,6 +346,8 @@ pub enum Block {
     Alert {
         tone: Tone,
         text: String,
+        /// One thing to press at the alert's end.
+        button: Option<(String, Action)>,
     },
     /// What a page says when it has nothing to show.
     Empty(String),
@@ -480,7 +494,7 @@ impl Doc {
                 }
                 Block::List { items, .. } => items.iter().for_each(|line| of_line(line, &mut out)),
                 Block::Rows(rows) => out.extend(rows.iter().map(|row| row.action.clone())),
-                Block::Setting { button, .. } => {
+                Block::Alert { button, .. } | Block::Setting { button, .. } => {
                     out.extend(button.iter().map(|(_, action)| action.clone()))
                 }
                 Block::Choices { choices, .. } => {

@@ -365,7 +365,18 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
                 .into_any_element()
         }
         Block::Code { language, text } => code_block(language, text, cx),
-        Block::Alert { tone, text } => feedback::alert(*tone, text.clone(), cx).into_any_element(),
+        Block::Alert { tone, text, button } => feedback::alert(*tone, text.clone(), cx)
+            .when_some(button.clone(), |alert, (label, action)| {
+                let on_action = page.on_action.clone();
+                alert.child(feedback::alert_action(
+                    Button::new(page.id(path))
+                        .label(label)
+                        .text()
+                        .small()
+                        .on_click(move |_, window, cx| on_action(&action, window, cx)),
+                ))
+            })
+            .into_any_element(),
         Block::Empty(text) => empty(text, cx),
         Block::Setting {
             label,
@@ -663,6 +674,7 @@ fn draw_row(row: &Row, id: ElementId, page: &Page) -> ListItemButton {
     ListItemButton::new(id, row.label.clone())
         .icon(row.icon)
         .code(row.code)
+        .selected(row.selected)
         .when_some(row.detail.clone(), |item, detail| item.secondary(detail))
         .on_click(move |_, window, cx| on_action(&action, window, cx))
 }

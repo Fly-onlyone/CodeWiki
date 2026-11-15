@@ -91,6 +91,24 @@ pub fn alert(tone: Tone, message: impl Into<SharedString>, cx: &App) -> Div {
         .child(div().flex_1().min_w_0().py(px(8.)).child(message.into()))
 }
 
+/// `Alert.js`, `AlertAction`: `padding: '4px 0 0 16px'`, `marginRight: -8`.
+const ALERT_ACTION_PADDING: (f32, f32) = (4.0, 16.0);
+const ALERT_ACTION_END: f32 = -8.0;
+
+/// The slot at the end of an [`alert`] that holds its one action, such as a
+/// small text button.
+pub fn alert_action(action: impl IntoElement) -> Div {
+    let (top, left) = ALERT_ACTION_PADDING;
+    h_flex()
+        .flex_shrink_0()
+        .items_start()
+        .ml_auto()
+        .pt(px(top))
+        .pl(px(left))
+        .mr(px(ALERT_ACTION_END))
+        .child(action)
+}
+
 /// `Chip.js`, `size: 'small'`: 24 px high, with 8 px beside a 13 px label.
 const CHIP_SMALL: (f32, f32) = (24.0, 8.0);
 const CHIP_FONT: f32 = 13.0;

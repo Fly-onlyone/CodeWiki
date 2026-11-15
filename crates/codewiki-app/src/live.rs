@@ -1,5 +1,6 @@
 //! The live pages: one symbol, one file, search results, hotspots, the theme
-//! picker, a proposal and the result of a sync. Like the reports in `pages`,
+//! picker, a proposal, the result of a sync, and Home, the page the app
+//! starts on. Like the reports in `pages`,
 //! each turns what the backend sent into a [`Doc`]. These show code that the
 //! vault deliberately does not hold as notes.
 
@@ -306,6 +307,7 @@ pub fn proposal_page(detail: &Value) -> Doc {
     doc.push(Block::Alert {
         tone: Tone::Info,
         text: "This note was edited by hand, so the change waits for your decision. Nothing is written until you approve.".into(),
+        button: None,
     });
     doc.push(Block::Code {
         language: "diff".into(),
@@ -325,6 +327,7 @@ pub fn sync_page(report: &Value) -> Doc {
             count("written"),
             number(&report["kept"])
         ),
+        button: None,
     });
     doc.push(Block::Stats(vec![
         Stat::new("Written", count("written")),
@@ -359,20 +362,113 @@ pub fn message_page(message: &str) -> Doc {
     doc
 }
 
-/// The first page when no repository is open, with a button that asks for
-/// one.
-pub fn welcome_page() -> Doc {
-    let mut doc = message_page("Open a repository to see its wiki.");
-    doc.push(Block::Text(vec![text(
-        "Choose the folder of a project. Sync then indexes its code and writes \
-         the wiki into an obsidian folder inside it.",
-    )]));
-    doc.push(Block::Setting {
-        label: "Repository".into(),
-        value: "None open".into(),
-        button: Some(("Open folder…".into(), Action::OpenFolder)),
-    });
+/// A registered repository, as Home lists it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Project<'a> {
+    pub id: &'a str,
+    pub name: &'a str,
+    /// The repository's folder.
+    pub path: &'a str,
+}
+
+/// What Home is made from.
+pub struct HomeInput<'a> {
+    /// The registered repositories whose folders are there.
+    pub projects: &'a [Project<'a>],
+    /// Folders of the repositories opened in the app, newest first.
+    pub recent: &'a [String],
+    /// Id of the open repository.
+    pub current: Option<&'a str>,
+    /// Name of the open repository, when it has no wiki yet.
+    pub no_wiki: Option<&'a str>,
+    /// Names of the repositories just forgotten because their folders are
+    /// gone.
+    pub removed: &'a [String],
+}
+
+/// The page the app starts on: a way to open a folder, and every registered
+/// repository, the ones opened most recently first.
+pub fn home_page(home: &HomeInput) -> Doc {
+    // Home fills the window, so it carries the app's name, as a welcome
+    // screen does.
+    let mut doc = Doc::new("CodeWiki").lead("Open a project, or pick up one you opened before.");
+    if let Some(name) = home.no_wiki {
+        doc.push(Block::Alert {
+            tone: Tone::Info,
+            text: format!("{name} has no wiki yet. Sync indexes its code and writes one."),
+            button: Some(("Sync".into(), Action::Sync)),
+        });
+    }
+    if !home.removed.is_empty() {
+        doc.push(Block::Alert {
+            tone: Tone::Info,
+            text: removed_notice(home.removed),
+            button: None,
+        });
+    }
+    doc.push(Block::Rows(vec![
+        Row::new(icons::FOLDER, "Open folder…", Action::OpenFolder).detail(
+            "Choose a project. Sync then indexes its code and writes the wiki into an \
+             obsidian folder inside it.",
+        ),
+    ]));
+    if home.projects.is_empty() {
+        doc.push(Block::Empty(
+            "No projects yet. Open a folder to add one.".into(),
+        ));
+        return doc;
+    }
+    doc.heading("Recent projects");
+    doc.push(Block::Rows(
+        by_recency(home.projects, home.recent)
+            .into_iter()
+            .map(|project| {
+                let open = home.current == Some(project.id);
+                // The mark goes first: a long path is cut short at its end.
+                let detail = if open {
+                    format!("Open now · {}", project.path)
+                } else {
+                    project.path.to_string()
+                };
+                Row::new(
+                    icons::REPOSITORY,
+                    project.name,
+                    Action::OpenRepo(project.id.to_string()),
+                )
+                .detail(detail)
+                .selected(open)
+            })
+            .collect(),
+    ));
     doc
+}
+
+/// `projects` in the order of `recent`, then the ones never opened in the
+/// app, by name.
+fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a>> {
+    let mut ordered: Vec<Project> = recent
+        .iter()
+        .filter_map(|path| projects.iter().find(|project| project.path == path))
+        .copied()
+        .collect();
+    let mut rest: Vec<Project> = projects
+        .iter()
+        .filter(|project| !recent.iter().any(|path| path == project.path))
+        .copied()
+        .collect();
+    rest.sort_by_key(|project| project.name.to_lowercase());
+    ordered.extend(rest);
+    ordered
+}
+
+/// What Home says about repositories forgotten because their folders are
+/// gone.
+fn removed_notice(names: &[String]) -> String {
+    let list = names.join(", ");
+    match names.len() {
+        1 => format!("Removed 1 project whose folder is gone: {list}."),
+        count => format!("Removed {count} projects whose folders are gone: {list}."),
+    }
 }
 
 /// The page shown when no backend could be reached: where its log is, and a
@@ -400,11 +496,123 @@ mod tests {
         assert_eq!(page.actions(), [Action::Reconnect]);
     }
 
+    fn home<'a>(projects: &'a [Project<'a>], recent: &'a [String]) -> HomeInput<'a> {
+        HomeInput {
+            projects,
+            recent,
+            current: None,
+            no_wiki: None,
+            removed: &[],
+        }
+    }
+
+    const ALPHA: Project = Project {
+        id: "a1",
+        name: "alpha",
+        path: r"C:\code\alpha",
+    };
+    const BETA: Project = Project {
+        id: "b2",
+        name: "Beta",
+        path: r"C:\code\beta",
+    };
+    const GAMMA: Project = Project {
+        id: "g3",
+        name: "gamma",
+        path: r"D:\gamma",
+    };
+
     #[test]
-    fn the_welcome_page_asks_for_a_folder() {
-        let page = welcome_page();
-        assert!(page.words().contains("Open a repository"));
+    fn home_without_projects_asks_for_a_folder() {
+        let page = home_page(&home(&[], &[]));
+        assert_eq!(page.title, "CodeWiki");
+        assert!(page.words().contains("Open folder…"));
+        assert!(page.words().contains("No projects yet"));
+        assert!(page.headings().is_empty());
         assert_eq!(page.actions(), [Action::OpenFolder]);
+    }
+
+    #[test]
+    fn home_lists_recent_projects_first_then_the_rest_by_name() {
+        // A folder in the recent list that is no longer registered is left
+        // out.
+        let recent = [GAMMA.path.to_string(), r"C:\gone".to_string()];
+        let page = home_page(&home(&[ALPHA, BETA, GAMMA], &recent));
+        assert_eq!(page.headings(), ["Recent projects"]);
+        assert_eq!(
+            page.actions(),
+            [
+                Action::OpenFolder,
+                Action::OpenRepo("g3".into()),
+                Action::OpenRepo("a1".into()),
+                Action::OpenRepo("b2".into()),
+            ]
+        );
+        assert!(page.words().contains(r"gamma — D:\gamma"));
+    }
+
+    #[test]
+    fn home_marks_the_open_project() {
+        let page = home_page(&HomeInput {
+            current: Some("b2"),
+            ..home(&[ALPHA, BETA], &[])
+        });
+        let Some(Block::Rows(rows)) = page.blocks.last() else {
+            panic!("the projects are not the last block: {page:?}");
+        };
+        let selected: Vec<&str> = rows
+            .iter()
+            .filter(|row| row.selected)
+            .map(|row| row.label.as_str())
+            .collect();
+        assert_eq!(selected, ["Beta"]);
+        assert!(page.words().contains(r"Beta — Open now · C:\code\beta"));
+        assert!(page.words().contains(r"alpha — C:\code\alpha"));
+        assert_eq!(page.words().matches("Open now").count(), 1);
+    }
+
+    #[test]
+    fn home_offers_sync_when_the_open_project_has_no_wiki() {
+        let page = home_page(&HomeInput {
+            current: Some("a1"),
+            no_wiki: Some("alpha"),
+            ..home(&[ALPHA], &[])
+        });
+        assert!(page.words().contains("alpha has no wiki yet"));
+        assert_eq!(page.actions()[0], Action::Sync);
+
+        let page = home_page(&HomeInput {
+            current: Some("a1"),
+            ..home(&[ALPHA], &[])
+        });
+        assert!(!page.words().contains("no wiki yet"));
+        assert!(!page.actions().contains(&Action::Sync));
+    }
+
+    #[test]
+    fn home_names_projects_removed_because_their_folders_are_gone() {
+        let one = ["zzzbot".to_string()];
+        let page = home_page(&HomeInput {
+            removed: &one,
+            ..home(&[ALPHA], &[])
+        });
+        assert!(
+            page.words()
+                .contains("Removed 1 project whose folder is gone: zzzbot.")
+        );
+
+        let two = ["zzzbot".to_string(), "old-demo".to_string()];
+        let page = home_page(&HomeInput {
+            removed: &two,
+            ..home(&[], &[])
+        });
+        assert!(
+            page.words()
+                .contains("Removed 2 projects whose folders are gone: zzzbot, old-demo.")
+        );
+
+        let page = home_page(&home(&[ALPHA], &[]));
+        assert!(!page.words().contains("Removed"));
     }
 
     #[test]

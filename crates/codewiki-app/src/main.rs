@@ -75,6 +75,21 @@ const THEME_MENU_WIDTH: f32 = 340.0;
 /// The mark of the theme in use, and the place kept for it in every row.
 const THEME_MARK: f32 = 18.0;
 
+/// The vault's map note, which the app calls "Wiki map".
+const WIKI_MAP: &str = "_HOME";
+
+/// Where the app goes once a repository's notes have loaded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Landing {
+    /// Stay on the current page.
+    Stay,
+    /// The app has just started: the view the second argument names, or
+    /// Home.
+    Startup,
+    /// The user picked the repository: its wiki map.
+    WikiMap,
+}
+
 #[derive(Clone)]
 struct NoteInfo {
     path: String,
@@ -136,14 +151,29 @@ enum Page {
     },
     /// The dependency graph canvas.
     Graph,
+    /// The page the app starts on: Open folder and the registered
+    /// repositories. Its page is built from the app's state on every frame,
+    /// so going back to it never shows an old list.
+    Home,
 }
 
 struct AppView {
     backend: Option<Backend>,
+    /// The registered repositories whose folders are there.
     repos: Vec<Repo>,
     repo: Option<Repo>,
     notes: Vec<NoteInfo>,
+    /// Whether `notes` holds the open repository's notes yet.
+    notes_loaded: bool,
     pending_proposals: Vec<(String, String)>,
+    /// Folders of the repositories opened in the app, newest first.
+    recent: Vec<String>,
+    /// Repositories forgotten because their folders are gone, by name, that
+    /// Home has not shown yet.
+    removed: Vec<String>,
+    /// The names Home shows now. They go when Home is left, so each is
+    /// shown once.
+    removed_shown: Vec<String>,
     page: Page,
     /// Pages visited before the current one.
     history: Vec<Page>,
@@ -260,7 +290,11 @@ impl AppView {
             repos: Vec::new(),
             repo: None,
             notes: Vec::new(),
+            notes_loaded: false,
             pending_proposals: Vec::new(),
+            recent: startup::recent(),
+            removed: Vec::new(),
+            removed_shown: Vec::new(),
             page: Page::Message(String::new()),
             history: Vec::new(),
             tabs: vec![Tab {
@@ -364,24 +398,22 @@ impl AppView {
                     // Register the startup folder; failure here is not fatal,
                     // the user may have other repositories.
                     let opened = startup::repo().and_then(|path| backend.repo_id(&path).ok());
-                    let repos = backend.get("/v1/repos")?;
-                    Ok::<_, String>((backend, repos, opened))
+                    let (repos, removed) = registered_repos(&backend)?;
+                    Ok::<_, String>((backend, repos, removed, opened))
                 })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.busy = None;
                 match result {
-                    Ok((backend, repos, opened)) => {
+                    Ok((backend, repos, removed, opened)) => {
                         this.backend = Some(backend);
-                        this.repos = parse_repos(&repos);
+                        this.take_repos(repos, removed);
                         let first = opened
                             .and_then(|id| this.repos.iter().find(|r| r.id == id).cloned())
-                            .or_else(|| this.repos.first().cloned());
+                            .or_else(|| this.newest_recent());
                         match first {
-                            Some(repo) => this.select_repo(repo, cx),
-                            None => {
-                                this.set_page(Page::Notice(Rc::new(live::welcome_page())), false);
-                            }
+                            Some(repo) => this.select_repo(repo, Landing::Startup, cx),
+                            None => this.set_page(Page::Home, false),
                         }
                     }
                     Err(message) => {
@@ -631,33 +663,86 @@ impl AppView {
             cx,
             move |b| {
                 let id = b.repo_id(&path)?;
-                Ok((id, b.get("/v1/repos")?))
+                let (repos, removed) = registered_repos(b)?;
+                Ok((id, repos, removed))
             },
-            |this, (id, repos), cx| {
-                this.repos = parse_repos(&repos);
-                if let Some(repo) = this.repos.iter().find(|r| r.id == id).cloned() {
-                    this.select_repo(repo, cx);
-                }
+            |this, (id, repos, removed), cx| {
+                this.take_repos(repos, removed);
+                this.open_repo(&id, cx);
             },
         );
     }
 
-    fn select_repo(&mut self, repo: Repo, cx: &mut Context<Self>) {
+    /// Keep the repositories the backend listed, and the names of those it
+    /// forgot, for Home to report. The recent list loses every folder that
+    /// is no longer registered.
+    fn take_repos(&mut self, repos: Vec<Repo>, removed: Vec<String>) {
+        let paths: Vec<&str> = repos.iter().map(|repo| repo.path.as_str()).collect();
+        self.recent = startup::keep_recent(&paths);
+        self.repos = repos;
+        self.removed.extend(removed);
+    }
+
+    /// The registered repository opened most recently, if any.
+    fn newest_recent(&self) -> Option<Repo> {
+        self.recent
+            .iter()
+            .find_map(|path| self.repos.iter().find(|repo| &repo.path == path))
+            .cloned()
+    }
+
+    /// Show Home, unless it is on screen already.
+    fn open_home(&mut self, cx: &mut Context<Self>) {
+        if self.backend.is_none() || matches!(self.page, Page::Home) {
+            return;
+        }
+        self.set_page(Page::Home, true);
+        cx.notify();
+    }
+
+    /// Open the registered repository `id`, as the user picked it: its wiki
+    /// map, or Home while it has no wiki. The open repository keeps its tabs.
+    fn open_repo(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.repo.as_ref().is_some_and(|repo| repo.id == id) {
+            if self.notes_loaded && self.notes.is_empty() {
+                self.open_home(cx);
+            } else {
+                self.open_note(WIKI_MAP.into(), true, cx);
+            }
+            return;
+        }
+        if let Some(repo) = self.repos.iter().find(|repo| repo.id == id).cloned() {
+            self.select_repo(repo, Landing::WikiMap, cx);
+        }
+    }
+
+    fn select_repo(&mut self, repo: Repo, landing: Landing, cx: &mut Context<Self>) {
         if !self.can_leave() {
             cx.notify();
             return;
         }
-        startup::remember(&repo.path);
+        self.recent = startup::remember(&repo.path);
         log::info!("repository: {} ({})", repo.name, repo.path);
+        let from_home = matches!(self.page, Page::Home);
         self.repo = Some(repo);
+        // Nothing of the repository left behind may show, on Home least of
+        // all, while the new one loads.
+        self.notes.clear();
+        self.notes_loaded = false;
+        self.pending_proposals.clear();
         self.history.clear();
+        if from_home && landing == Landing::WikiMap {
+            // Back leads to Home, where the repository was picked.
+            self.history.push(Page::Home);
+        }
         self.tabs.truncate(1);
         self.active_tab = 0;
-        self.refresh(true, cx);
+        self.refresh(landing, cx);
     }
 
-    /// Reload the note list and proposals. `open_home` also shows `_HOME`.
-    fn refresh(&mut self, open_home: bool, cx: &mut Context<Self>) {
+    /// Reload the note list and proposals, then go where `landing` says. A
+    /// repository with no wiki lands on Home, which offers to sync it.
+    fn refresh(&mut self, landing: Landing, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
@@ -671,6 +756,7 @@ impl AppView {
             },
             move |this, (notes, proposals), cx| {
                 this.notes = parse_notes(&notes);
+                this.notes_loaded = true;
                 this.pending_proposals = proposals
                     .as_array()
                     .into_iter()
@@ -683,66 +769,75 @@ impl AppView {
                         ))
                     })
                     .collect();
-                if this.notes.is_empty() {
-                    this.set_page(
-                        Page::Message(
-                            "This repository has no wiki yet. Press Sync to generate it.".into(),
-                        ),
-                        false,
-                    );
-                } else if open_home {
-                    // A second argument names the note to show first, so other
-                    // tools can open the app at a specific note.
-                    let first = std::env::args().nth(2).unwrap_or_else(|| "_HOME".into());
-                    if first == "graph:" {
-                        this.open_graph(cx);
-                        return;
+                match landing {
+                    Landing::Stay => {}
+                    _ if this.notes.is_empty() => {
+                        this.history.clear();
+                        this.set_page(Page::Home, false);
                     }
-                    // Forms used to open the app on a view from a script.
-                    if let Some(note) = first.strip_prefix("edit:") {
-                        this.pending_edit = true;
-                        this.open_note(note.to_string(), false, cx);
-                        return;
-                    }
-                    if let Some(query) = first.strip_prefix("palette:") {
-                        this.pending_palette = Some(query.to_string());
-                        this.open_note("_HOME".into(), false, cx);
-                        return;
-                    }
-                    let command = match first.as_str() {
-                        "settings:" => Some(Command::Settings),
-                        "themes:" => Some(Command::Themes),
-                        "decisions:" => Some(Command::Decisions),
-                        "health:" => Some(Command::Health),
-                        "dead-code:" => Some(Command::DeadCode),
-                        "drift:" => Some(Command::Drift),
-                        "tests:" => Some(Command::Tests),
-                        "ownership:" => Some(Command::Ownership),
-                        "coupling:" => Some(Command::Coupling),
-                        "workspace:" => Some(Command::Workspace),
-                        "contracts:" => Some(Command::Contracts),
-                        "coverage:" => Some(Command::Coverage),
-                        "security:" => Some(Command::Security),
-                        "refactor:" => Some(Command::Refactor),
-                        _ => None,
-                    };
-                    if let Some(command) = command {
-                        // The theme menu opens over a page, not in place of one.
-                        let over_home = command == Command::Themes;
-                        this.pending_command = Some(command);
-                        if over_home {
-                            this.open_note("_HOME".into(), false, cx);
-                        }
-                        cx.notify();
-                        return;
-                    }
-                    match first.strip_prefix("file:") {
-                        Some(path) => this.open_file(path.to_string(), cx),
-                        None => this.open_note(first, false, cx),
-                    }
+                    Landing::WikiMap => this.open_note(WIKI_MAP.into(), false, cx),
+                    Landing::Startup => this.open_startup_view(cx),
                 }
             },
         );
+    }
+
+    /// Show the view the second argument names, so that other tools can open
+    /// the app on a note or a view; Home when there is none.
+    fn open_startup_view(&mut self, cx: &mut Context<Self>) {
+        let first = std::env::args().nth(2).unwrap_or_default();
+        if first.is_empty() || first == "home:" {
+            self.set_page(Page::Home, false);
+            return;
+        }
+        if first == "graph:" {
+            self.open_graph(cx);
+            return;
+        }
+        // Forms used to open the app on a view from a script.
+        if let Some(note) = first.strip_prefix("edit:") {
+            self.pending_edit = true;
+            self.open_note(note.to_string(), false, cx);
+            return;
+        }
+        if let Some(query) = first.strip_prefix("palette:") {
+            self.pending_palette = Some(query.to_string());
+            self.set_page(Page::Home, false);
+            cx.notify();
+            return;
+        }
+        let command = match first.as_str() {
+            "settings:" => Some(Command::Settings),
+            "themes:" => Some(Command::Themes),
+            "decisions:" => Some(Command::Decisions),
+            "health:" => Some(Command::Health),
+            "dead-code:" => Some(Command::DeadCode),
+            "drift:" => Some(Command::Drift),
+            "tests:" => Some(Command::Tests),
+            "ownership:" => Some(Command::Ownership),
+            "coupling:" => Some(Command::Coupling),
+            "workspace:" => Some(Command::Workspace),
+            "contracts:" => Some(Command::Contracts),
+            "coverage:" => Some(Command::Coverage),
+            "security:" => Some(Command::Security),
+            "refactor:" => Some(Command::Refactor),
+            _ => None,
+        };
+        if let Some(command) = command {
+            // The theme menu opens over a page, not in place of one, and it
+            // hangs from the toolbar, which Home does not have.
+            let over_map = command == Command::Themes;
+            self.pending_command = Some(command);
+            if over_map {
+                self.open_note(WIKI_MAP.into(), false, cx);
+            }
+            cx.notify();
+            return;
+        }
+        match first.strip_prefix("file:") {
+            Some(path) => self.open_file(path.to_string(), cx),
+            None => self.open_note(first, false, cx),
+        }
     }
 
     /// Close the editor before leaving the page. Returns false, with a
@@ -818,7 +913,7 @@ impl AppView {
             },
             move |this, _, cx| {
                 this.editing = None;
-                this.refresh(false, cx);
+                this.refresh(Landing::Stay, cx);
                 this.open_note(reopen, false, cx);
             },
         );
@@ -841,6 +936,13 @@ impl AppView {
     /// Rebuild the viewer for `self.page` after it changed.
     fn show_page(&mut self) {
         self.page_serial += 1;
+        // Home names the repositories forgotten since it was last shown, on
+        // this visit only.
+        if matches!(self.page, Page::Home) {
+            self.removed_shown.append(&mut self.removed);
+        } else {
+            self.removed_shown.clear();
+        }
         self.figure = match &self.page {
             Page::Note { figure, .. } => figure.clone(),
             _ => None,
@@ -957,7 +1059,7 @@ impl AppView {
         }
         for note in &self.notes {
             let label = match note.title.as_str() {
-                "_HOME" => "Home".to_string(),
+                WIKI_MAP => "Wiki map".to_string(),
                 "_index" => {
                     let folder = note.path.rsplit('/').nth(1).unwrap_or("Vault");
                     format!("{} overview", zone_label(folder))
@@ -1003,13 +1105,10 @@ impl AppView {
             self.toggle_palette(window, cx);
         }
         match command {
+            Command::Home => self.open_home(cx),
             Command::Note(path) => self.open_note(path, true, cx),
             Command::Theme(name) => self.select_theme(&name, cx),
-            Command::Repo(id) => {
-                if let Some(repo) = self.repos.iter().find(|r| r.id == id).cloned() {
-                    self.select_repo(repo, cx);
-                }
-            }
+            Command::Repo(id) => self.open_repo(&id, cx),
             Command::Search(query) => self.run_search(query, cx),
             Command::Sync => self.sync(cx),
             Command::Graph => self.open_graph(cx),
@@ -1210,7 +1309,8 @@ impl AppView {
             | Page::Notice(_)
             | Page::Generated { .. }
             | Page::Proposal { .. }
-            | Page::Graph => String::new(),
+            | Page::Graph
+            | Page::Home => String::new(),
         };
     }
 
@@ -1445,7 +1545,7 @@ impl AppView {
                     },
                     true,
                 );
-                this.refresh(false, cx);
+                this.refresh(Landing::Stay, cx);
             },
         );
     }
@@ -1492,7 +1592,7 @@ impl AppView {
             move |this, done, cx| {
                 let path = done["note_path"].as_str().unwrap_or("").to_string();
                 this.history.clear();
-                this.refresh(false, cx);
+                this.refresh(Landing::Stay, cx);
                 if approve {
                     this.open_note(path, false, cx);
                 } else {
@@ -1538,6 +1638,8 @@ impl AppView {
                 update::set_auto_check(*on);
                 self.open_settings(false, cx);
             }
+            Action::OpenRepo(id) => self.open_repo(id, cx),
+            Action::Sync => self.sync(cx),
         }
     }
 
@@ -1570,12 +1672,12 @@ impl AppView {
             let path = note.path.clone();
             let label = match note.title.as_str() {
                 "_index" => "Overview".to_string(),
-                "_HOME" => "Home".to_string(),
+                WIKI_MAP => "Wiki map".to_string(),
                 title => title.to_string(),
             };
             let icon = match note.title.as_str() {
                 "_index" => icons::OVERVIEW,
-                "_HOME" => icons::HOME,
+                WIKI_MAP => icons::MAP,
                 _ => icons::NOTE,
             };
             ListItemButton::new(SharedString::from(format!("note:{}", note.path)), label)
@@ -1663,6 +1765,14 @@ impl AppView {
             .border_b_1()
             .border_color(glass::tinted_border(cx))
             .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
+            .child(
+                IconButton::new("home", icons::HOME)
+                    .tint(icons::tint(icons::HOME, cx))
+                    .tooltip("Home")
+                    .small()
+                    .disabled(self.backend.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| this.open_home(cx))),
+            )
             .child(
                 IconButton::new("back", icons::BACK)
                     .tooltip("Back (Alt+Left)")
@@ -2159,6 +2269,7 @@ impl AppView {
                 Page::Message(message) => {
                     return self.doc_element(&Rc::new(live::message_page(message)), cx);
                 }
+                Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
                 Page::Graph => div().into_any_element(),
             };
             // A new note rises into place. The id changes with the page, so
@@ -2192,6 +2303,31 @@ impl AppView {
                 )
             })
             .when_some(page, |this, page| this.child(page))
+    }
+
+    /// Home, from the registered repositories and the open one.
+    fn home_doc(&self) -> Doc {
+        let projects: Vec<live::Project> = self
+            .repos
+            .iter()
+            .map(|repo| live::Project {
+                id: &repo.id,
+                name: &repo.name,
+                path: &repo.path,
+            })
+            .collect();
+        let no_wiki = self
+            .repo
+            .as_ref()
+            .filter(|_| self.notes_loaded && self.notes.is_empty())
+            .map(|repo| repo.name.as_str());
+        live::home_page(&live::HomeInput {
+            projects: &projects,
+            recent: &self.recent,
+            current: self.repo.as_ref().map(|repo| repo.id.as_str()),
+            no_wiki,
+            removed: &self.removed_shown,
+        })
     }
 
     /// A generated page. The shell draws it, so that this view and the page
@@ -2615,20 +2751,19 @@ impl AppView {
                         .child("Drag to pan, scroll to zoom, click a node to open it. Size shows how much depends on a symbol; color shows its cluster."),
                 );
             }
-            Page::Message(_) | Page::Notice(_) => {}
+            Page::Message(_) | Page::Notice(_) | Page::Home => {}
         }
-        if self.repos.len() > 1 {
+        // Home lists the repositories itself.
+        if self.repos.len() > 1 && !matches!(self.page, Page::Home) {
             pane = pane.child(heading("REPOSITORIES"));
             for repo in &self.repos {
-                let target = repo.clone();
+                let target = repo.id.clone();
                 pane = pane.child(
                     Button::new(SharedString::from(format!("repo-{}", repo.id)))
                         .label(repo.name.clone())
                         .small()
                         .text()
-                        .on_click(
-                            cx.listener(move |this, _, _, cx| this.select_repo(target.clone(), cx)),
-                        ),
+                        .on_click(cx.listener(move |this, _, _, cx| this.open_repo(&target, cx))),
                 );
             }
         }
@@ -2636,19 +2771,52 @@ impl AppView {
     }
 }
 
-fn parse_repos(value: &Value) -> Vec<Repo> {
-    value
+/// The registered repositories, split into those whose folders are there and
+/// those whose folders are gone. A backend from before the list said so
+/// counts every folder as there.
+fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>) {
+    let (present, missing): (Vec<_>, Vec<_>) = value
         .as_array()
         .into_iter()
         .flatten()
         .filter_map(|r| {
-            Some(Repo {
+            let repo = Repo {
                 id: r["id"].as_str()?.to_string(),
                 name: r["name"].as_str()?.to_string(),
                 path: r["path"].as_str().unwrap_or("").to_string(),
-            })
+            };
+            Some((repo, r["present"].as_bool().unwrap_or(true)))
         })
-        .collect()
+        .partition(|(_, present)| *present);
+    let repos = |list: Vec<(Repo, bool)>| list.into_iter().map(|(repo, _)| repo).collect();
+    (repos(present), repos(missing))
+}
+
+/// The registered repositories whose folders are there, and the names of
+/// those forgotten now because their folders are gone. A repository the
+/// backend fails to forget is left out and tried again next time. Blocks;
+/// run it off the UI thread.
+fn registered_repos(backend: &Backend) -> Result<(Vec<Repo>, Vec<String>), String> {
+    let (present, missing) = parse_repos(&backend.get("/v1/repos")?);
+    let mut removed = Vec::new();
+    for repo in missing {
+        match backend.delete(&format!("/v1/repos/{}", repo.id)) {
+            Ok(_) => {
+                log::info!(
+                    "forgot repository {} ({}): its folder is gone",
+                    repo.name,
+                    repo.path
+                );
+                removed.push(repo.name);
+            }
+            Err(message) => log::warn!(
+                "could not forget repository {} ({}), whose folder is gone: {message}",
+                repo.name,
+                repo.path
+            ),
+        }
+    }
+    Ok((present, removed))
 }
 
 fn parse_notes(value: &Value) -> Vec<NoteInfo> {
@@ -2670,10 +2838,11 @@ fn parse_notes(value: &Value) -> Vec<NoteInfo> {
 fn page_title(page: &Page) -> String {
     match page {
         Page::Message(_) | Page::Notice(_) => "CodeWiki".into(),
+        Page::Home => "Home".into(),
         Page::Note { path, .. } => {
             let name = path.rsplit('/').next().unwrap_or(path);
             match name.trim_end_matches(".md") {
-                "_HOME" => "Home".into(),
+                WIKI_MAP => "Wiki map".into(),
                 "_index" => "Overview".into(),
                 title => title.to_string(),
             }
@@ -2731,8 +2900,12 @@ impl Render for AppView {
             // The page is drawn cached and reads the levels; draw it again.
             doc_view::notify_after_draw(self.doc_page.entity_id(), cx);
         }
-        self.pane_width =
-            (window.viewport_size().width / px(1.) - SIDEBAR_WIDTH - DETAILS_WIDTH).max(0.0);
+        let chrome = if self.fills_window() {
+            0.0
+        } else {
+            SIDEBAR_WIDTH + DETAILS_WIDTH
+        };
+        self.pane_width = (window.viewport_size().width / px(1.) - chrome).max(0.0);
         // The palette stays drawn for a moment after it closes, to fade out.
         let palette = Presence::new("palette-presence", self.palette_open)
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
@@ -2803,8 +2976,38 @@ impl Render for AppView {
 }
 
 impl AppView {
+    /// Whether the page takes the whole window, with no sidebar, toolbar,
+    /// tabs or details: Home, and what shows before a repository has loaded,
+    /// so the app does not flash its chrome on the way to Home.
+    fn fills_window(&self) -> bool {
+        match self.page {
+            Page::Home => true,
+            Page::Message(_) | Page::Notice(_) => !self.notes_loaded,
+            _ => false,
+        }
+    }
+
     /// Everything below the title bar: sidebar, toolbar, tabs, page, details.
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        if self.fills_window() {
+            return v_flex()
+                .flex_1()
+                .min_h_0()
+                .w_full()
+                .bg(self
+                    .glass
+                    .pane(glass::tinted_pane(cx.theme().background, cx)))
+                .when(self.busy.is_some(), |column| {
+                    column.child(feedback::linear_progress("busy", cx))
+                })
+                .child(
+                    h_flex()
+                        .flex_1()
+                        .min_h_0()
+                        .w_full()
+                        .child(self.page_view(window, cx)),
+                );
+        }
         h_flex()
             .flex_1()
             .min_h_0()
@@ -2890,4 +3093,29 @@ fn main() {
             })
             .expect("the main window was just opened");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    // Not `super::*`: that brings in GPUI's `test` attribute in place of the
+    // standard one.
+    use serde_json::json;
+
+    use super::{Repo, parse_repos};
+
+    #[test]
+    fn the_repository_list_splits_present_from_missing() {
+        let listed = json!([
+            {"id": "a1", "name": "alpha", "path": "C:/alpha", "present": true},
+            {"id": "z9", "name": "zzzbot", "path": "C:/zzzbot", "present": false},
+            // A backend from before `present` was listed.
+            {"id": "b2", "name": "beta", "path": "C:/beta"},
+            {"name": "no id"}
+        ]);
+        let (present, missing) = parse_repos(&listed);
+        let names = |repos: &[Repo]| repos.iter().map(|r| r.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&present), ["alpha", "beta"]);
+        assert_eq!(names(&missing), ["zzzbot"]);
+        assert_eq!(missing[0].id, "z9");
+    }
 }

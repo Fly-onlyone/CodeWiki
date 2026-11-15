@@ -5,7 +5,12 @@
 //! the Start menu, the app's working folder is wherever the shortcut says (it
 //! once said the user's profile), and opening that folder would index
 //! whatever is in it. Otherwise the repository opened last, while its folder
-//! is still there. With none of these, the app asks for a folder.
+//! is still there. With none of these, the app opens the newest repository of
+//! the recent list that is still registered, or none: Home then lists the
+//! registered ones and offers to open a folder.
+//!
+//! The recent list holds the folders of the repositories opened in the app,
+//! newest first. Home orders the registered repositories by it.
 
 use std::path::{Path, PathBuf};
 
@@ -13,6 +18,10 @@ use crate::prefs;
 
 /// The setting that remembers the repository opened last.
 const LAST_REPO: &str = "last_repo";
+/// The setting that holds the recent list, one folder per line.
+const RECENT_REPOS: &str = "recent_repos";
+/// How many folders the recent list keeps.
+const RECENT_CAP: usize = 50;
 
 /// Whether `dir` looks like a repository: it holds `.git` (a folder, or a
 /// file in a git worktree or submodule) or a CodeWiki vault.
@@ -45,9 +54,54 @@ pub fn repo() -> Option<String> {
     )
 }
 
-/// Remember `path` as the repository to open next time.
-pub fn remember(path: &str) {
+/// Remember `path` as the repository to open next time, and put it first in
+/// the recent list. Returns the recent list.
+pub fn remember(path: &str) -> Vec<String> {
     prefs::write(LAST_REPO, path);
+    let list = touched(recent(), path);
+    prefs::write(RECENT_REPOS, &list.join("\n"));
+    list
+}
+
+/// The folders of the repositories opened in the app, newest first.
+pub fn recent() -> Vec<String> {
+    parse(&prefs::read(RECENT_REPOS).unwrap_or_default())
+}
+
+/// Drop from the recent list every folder that is not `registered`, and
+/// return what is left. The setting is written only when it changes.
+pub fn keep_recent(registered: &[&str]) -> Vec<String> {
+    let list = recent();
+    let kept = pruned(&list, registered);
+    if kept != list {
+        prefs::write(RECENT_REPOS, &kept.join("\n"));
+    }
+    kept
+}
+
+/// The recent list in the setting's text: one folder per line.
+fn parse(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// `list` with `path` moved, or added, to the front.
+fn touched(mut list: Vec<String>, path: &str) -> Vec<String> {
+    list.retain(|known| known != path);
+    list.insert(0, path.to_string());
+    list.truncate(RECENT_CAP);
+    list
+}
+
+/// The folders of `list` that are `registered`, in the same order.
+fn pruned(list: &[String], registered: &[&str]) -> Vec<String> {
+    list.iter()
+        .filter(|path| registered.contains(&path.as_str()))
+        .cloned()
+        .collect()
 }
 
 #[cfg(test)]
@@ -145,5 +199,45 @@ mod tests {
         drop(gone);
         assert_eq!(choose(None, None, Some(path)), None);
         assert_eq!(choose(None, None, None), None);
+    }
+
+    fn strings(paths: &[&str]) -> Vec<String> {
+        paths.iter().map(|path| path.to_string()).collect()
+    }
+
+    #[test]
+    fn opening_a_repository_puts_it_first_once() {
+        let list = strings(&[r"C:\a", r"C:\b", r"C:\c"]);
+        assert_eq!(
+            touched(list.clone(), r"C:\c"),
+            strings(&[r"C:\c", r"C:\a", r"C:\b"])
+        );
+        assert_eq!(
+            touched(list, r"C:\new"),
+            strings(&[r"C:\new", r"C:\a", r"C:\b", r"C:\c"])
+        );
+        let full: Vec<String> = (0..RECENT_CAP).map(|n| format!(r"C:\{n}")).collect();
+        let list = touched(full, r"C:\newest");
+        assert_eq!(list.len(), RECENT_CAP);
+        assert_eq!(list[0], r"C:\newest");
+    }
+
+    #[test]
+    fn the_recent_list_keeps_only_registered_folders() {
+        let list = strings(&[r"C:\a", r"C:\gone", r"C:\b"]);
+        assert_eq!(
+            pruned(&list, &[r"C:\b", r"C:\a", r"C:\never-opened"]),
+            strings(&[r"C:\a", r"C:\b"])
+        );
+        assert!(pruned(&list, &[]).is_empty());
+    }
+
+    #[test]
+    fn the_recent_list_is_one_folder_per_line() {
+        let list = strings(&[r"C:\a", r"D:\code\b c"]);
+        assert_eq!(parse(&list.join("\n")), list);
+        // Blank lines and Windows line ends are dropped.
+        assert_eq!(parse("C:\\a\r\n\r\n  D:\\code\\b c \r\n"), list);
+        assert!(parse("").is_empty());
     }
 }

@@ -41,6 +41,7 @@ macro_rules! app_icons {
 
 app_icons! {
     HOME = "home",
+    MAP = "map",
     OVERVIEW = "dashboard",
     FOLDER = "folder",
     NOTE = "article",
@@ -114,6 +115,7 @@ pub fn for_theme(name: &str) -> Glyph {
 /// The icon shown beside a palette entry.
 pub fn for_command(command: &Command) -> Glyph {
     match command {
+        Command::Home => HOME,
         Command::Note(_) => NOTE,
         Command::Theme(_) | Command::Themes => THEME,
         Command::Repo(_) => REPOSITORY,
@@ -178,7 +180,7 @@ impl Hue {
 /// that stays neutral, such as back or close.
 pub fn hue(icon: Glyph) -> Option<Hue> {
     match icon {
-        HOME | NEW_TAB => Some(Hue::Link),
+        HOME | MAP | NEW_TAB => Some(Hue::Link),
         OVERVIEW | THEME => Some(Hue::Magenta),
         FOLDER => Some(Hue::Yellow),
         NOTE => Some(Hue::Blue),
@@ -264,7 +266,7 @@ mod tests {
 
     #[test]
     fn each_kind_of_sidebar_row_has_its_own_hue() {
-        let kinds = [HOME, OVERVIEW, FOLDER, NOTE].map(|icon| hue(icon).unwrap());
+        let kinds = [MAP, OVERVIEW, FOLDER, NOTE].map(|icon| hue(icon).unwrap());
         for (index, kind) in kinds.iter().enumerate() {
             assert!(!kinds[index + 1..].contains(kind), "{kinds:?}");
         }

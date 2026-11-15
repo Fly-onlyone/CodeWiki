@@ -202,6 +202,7 @@ pub fn drift_page(report: &Value) -> Doc {
         doc.push(Block::Alert {
             tone: Tone::Success,
             text: "No note disagrees with the code.".into(),
+            button: None,
         });
     } else {
         let mut table = Table::new([

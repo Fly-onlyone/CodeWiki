@@ -1,6 +1,7 @@
 //! Small per-user settings, one value per file under `%APPDATA%\CodeWiki`.
 //!
-//! Each setting is a name and a line of text. A missing or unreadable file is
+//! Each setting is a name and a text, mostly one line; the recent list puts
+//! one folder on each line. A missing or unreadable file is
 //! "not set"; a failed write is ignored, because losing a preference must
 //! never stop the app.
 

@@ -5,6 +5,8 @@ use crate::motion::MotionPref;
 /// What running a palette entry does.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
+    /// Show the Home page: Open folder and the recent projects.
+    Home,
     /// Open the note at this vault path.
     Note(String),
     /// Apply the theme with this name.
@@ -66,6 +68,7 @@ impl Entry {
 /// The fixed commands, in the order shown for an empty query.
 pub fn actions() -> Vec<Entry> {
     [
+        ("Home", Command::Home),
         ("Sync wiki", Command::Sync),
         ("Open graph", Command::Graph),
         ("Show hotspots", Command::Hotspots),

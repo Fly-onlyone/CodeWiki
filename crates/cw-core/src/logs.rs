@@ -15,7 +15,8 @@ use std::ffi::OsString;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use log::{LevelFilter, Log, Metadata, Record};
@@ -108,11 +109,47 @@ impl Sink {
     }
 }
 
+/// The level of a logger, which can change while the program runs.
+#[derive(Clone)]
+struct Level(Arc<AtomicUsize>);
+
+/// The levels from the quietest to the most detailed, with the name
+/// `CODEWIKI_LOG` and the settings use for each.
+const LEVELS: [(LevelFilter, &str); 6] = [
+    (LevelFilter::Off, "off"),
+    (LevelFilter::Error, "error"),
+    (LevelFilter::Warn, "warn"),
+    (LevelFilter::Info, "info"),
+    (LevelFilter::Debug, "debug"),
+    (LevelFilter::Trace, "trace"),
+];
+
+impl Level {
+    fn new(level: LevelFilter) -> Self {
+        let cell = Self(Arc::new(AtomicUsize::new(0)));
+        cell.set(level);
+        cell
+    }
+
+    fn get(&self) -> LevelFilter {
+        LEVELS[self.0.load(Ordering::Relaxed).min(LEVELS.len() - 1)].0
+    }
+
+    fn set(&self, level: LevelFilter) {
+        let index = LEVELS.iter().position(|(l, _)| *l == level).unwrap_or(0);
+        self.0.store(index, Ordering::Relaxed);
+    }
+}
+
+/// The level of the logger [`init`] installed, kept so that [`set_level`]
+/// can change it.
+static INSTALLED: OnceLock<Level> = OnceLock::new();
+
 /// A `log` logger that appends to a file and echoes to standard error.
 struct Logger {
     /// `None` for a logger that only prints.
     path: Option<PathBuf>,
-    level: LevelFilter,
+    level: Level,
     console: bool,
     /// `None` after a failed reopen; file records are then dropped.
     sink: Mutex<Option<Sink>>,
@@ -123,7 +160,7 @@ impl Logger {
         let sink = path.as_deref().and_then(Sink::open);
         Self {
             path,
-            level,
+            level: Level::new(level),
             console,
             sink: Mutex::new(sink),
         }
@@ -164,7 +201,7 @@ fn line(time: SystemTime, record: &Record) -> String {
 
 impl Log for Logger {
     fn enabled(&self, metadata: &Metadata) -> bool {
-        metadata.level() <= self.level
+        metadata.level() <= self.level.get()
     }
 
     fn log(&self, record: &Record) {
@@ -186,28 +223,63 @@ impl Log for Logger {
 /// The level named by `value` (the value of `CODEWIKI_LOG`), or `default`
 /// when it is unset or unknown.
 pub fn level_from(value: Option<&str>, default: LevelFilter) -> LevelFilter {
-    match value.map(|v| v.trim().to_ascii_lowercase()).as_deref() {
-        Some("trace") => LevelFilter::Trace,
-        Some("debug") => LevelFilter::Debug,
-        Some("info") => LevelFilter::Info,
-        Some("warn") => LevelFilter::Warn,
-        Some("error") => LevelFilter::Error,
-        Some("off") => LevelFilter::Off,
-        _ => default,
-    }
+    value.and_then(level_named).unwrap_or(default)
+}
+
+/// The level `name` names, as `CODEWIKI_LOG` and the settings spell it.
+pub fn level_named(name: &str) -> Option<LevelFilter> {
+    let name = name.trim().to_ascii_lowercase();
+    LEVELS
+        .iter()
+        .find(|(_, known)| *known == name)
+        .map(|(level, _)| *level)
+}
+
+/// The name of `level`, as `CODEWIKI_LOG` and the settings spell it.
+pub fn level_name(level: LevelFilter) -> &'static str {
+    LEVELS
+        .iter()
+        .find(|(known, _)| *known == level)
+        .map_or("info", |(_, name)| name)
+}
+
+/// The level `CODEWIKI_LOG` names, when it names one. It wins over a level
+/// the program would choose itself.
+pub fn level_in_env() -> Option<LevelFilter> {
+    std::env::var(LEVEL_ENV)
+        .ok()
+        .and_then(|value| level_named(&value))
 }
 
 fn level(default: LevelFilter) -> LevelFilter {
-    level_from(std::env::var(LEVEL_ENV).ok().as_deref(), default)
+    level_in_env().unwrap_or(default)
+}
+
+/// The level of the installed logger: records at it and above are kept.
+pub fn current_level() -> LevelFilter {
+    INSTALLED
+        .get()
+        .map_or_else(log::max_level, |level| level.get())
+}
+
+/// Change the level of the logger [`init`] installed, from the next record
+/// on. Nothing happens in a program that installed none.
+pub fn set_level(level: LevelFilter) {
+    if let Some(installed) = INSTALLED.get() {
+        installed.set(level);
+        // The `log` macros check this before they reach the logger.
+        log::set_max_level(level);
+    }
 }
 
 /// Install `logger` as the process logger. False when one is set already.
 fn install(logger: Logger) -> bool {
-    let level = logger.level;
+    let level = logger.level.clone();
     if log::set_boxed_logger(Box::new(logger)).is_err() {
         return false;
     }
-    log::set_max_level(level);
+    log::set_max_level(level.get());
+    let _ = INSTALLED.set(level);
     true
 }
 
@@ -432,6 +504,38 @@ mod tests {
         // Each line starts with its time.
         assert_eq!(&lines[0][4..5], "-");
         assert_eq!(&lines[0][23..24], "Z");
+    }
+
+    #[test]
+    fn the_level_changes_while_the_logger_is_in_use() {
+        let scratch = Scratch::new("level");
+        let log = scratch.0.join("logs").join("app.log");
+        let logger = Logger::new(Some(log.clone()), LevelFilter::Info, false);
+        send(&logger, log::Level::Debug, "dropped");
+        logger.level.set(LevelFilter::Debug);
+        send(&logger, log::Level::Debug, "kept");
+        logger.level.set(LevelFilter::Warn);
+        send(&logger, log::Level::Info, "dropped again");
+        send(&logger, log::Level::Error, "kept too");
+        logger.level.set(LevelFilter::Off);
+        send(&logger, log::Level::Error, "nothing is kept");
+        let text = fs::read_to_string(&log).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 2, "{text}");
+        assert!(lines[0].ends_with(" DEBUG test: kept"), "{}", lines[0]);
+        assert!(lines[1].ends_with(" ERROR test: kept too"), "{}", lines[1]);
+    }
+
+    #[test]
+    fn a_level_has_one_name_everywhere() {
+        for (level, name) in LEVELS {
+            assert_eq!(level_named(name), Some(level));
+            assert_eq!(level_name(level), name);
+            assert_eq!(Level::new(level).get(), level);
+        }
+        assert_eq!(level_named(" Debug "), Some(LevelFilter::Debug));
+        assert_eq!(level_named("verbose"), None);
+        assert_eq!(level_named(""), None);
     }
 
     #[test]

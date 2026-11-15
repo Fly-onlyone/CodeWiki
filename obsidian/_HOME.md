@@ -6,13 +6,13 @@ tags: [moc, home]
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 16 crates and 166 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 265 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
-- [[Crate Dependency Flow]] — how the 16 workspace crates depend on each other, from entry points down to shared foundations.
+- [[Crate Dependency Flow]] — how the 17 workspace crates depend on each other, from entry points down to shared foundations.
 - [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 10 parts of the codebase.
-- [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 8 parts of the codebase.
+- [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 14 parts of the codebase.
 
 → [[00-Architecture/_index|All architecture concepts]]
 
@@ -31,13 +31,14 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 - [[01-Core/cw-mermaid/_index|cw-mermaid/]] — Mermaid diagram rendering for CodeWiki.
 - [[01-Core/cw-parse/_index|cw-parse/]] — source parsing and symbol extraction for CodeWiki.
 - [[01-Core/cw-server/_index|cw-server/]] — HTTP API of the CodeWiki backend.
+- [[01-Core/cw-update/_index|cw-update/]] — Self-update of an installed CodeWiki: release check, download, verification and file swap.
 - [[01-Core/cw-vault/_index|cw-vault/]] — Obsidian vault model for CodeWiki: notes, manifest, name registry, linter, lifecycle and proposals.
 - [[01-Core/cw-wiki/_index|cw-wiki/]] — concept selection and wiki generation pipeline for CodeWiki.
 - [[01-Core/openui-lang/_index|openui-lang/]] — parser and static evaluator for OpenUI Lang.
 
 ## 🔌 External Integrations
 
-→ [[03-Integrations/_index|All integrations]] — axum, gpui_kit, rusqlite, serde, serde_json, tree_sitter.
+→ [[03-Integrations/_index|All integrations]] — axum, gpui_kit, rusqlite, semver, serde, serde_json, sha2, tree_sitter.
 
 ## 🧩 Patterns
 

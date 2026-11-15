@@ -16,7 +16,7 @@ Declared as `pub struct ServerConfig`.
 
 ## Used by
 
-- [[cw-server]] — from `router`, `serve`, `with_webhook_secret`
+- [[cw-server]] — from `router`, `serve`, `shutdown_route_ends_serve`, `state`
 - [[Serve Module]] — from `run`
 - [[Inner]] — from `Inner`
 

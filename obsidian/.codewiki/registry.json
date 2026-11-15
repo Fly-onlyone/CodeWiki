@@ -1,5 +1,10 @@
 [
   {
+    "id": "type:codewiki_app::doc::Action",
+    "path": "01-Core/codewiki-app/Action.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_llm::provider::AgentCli",
     "path": "01-Core/cw-llm/AgentCli.md",
     "kind": "concept"
@@ -40,8 +45,23 @@
     "kind": "integration"
   },
   {
+    "id": "mod:codewiki_app::backdrop",
+    "path": "01-Core/codewiki-app/Backdrop Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_client::Backend",
     "path": "01-Core/cw-client/Backend.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::base",
+    "path": "01-Core/codewiki-app/mui/Base Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::doc::Block",
+    "path": "01-Core/codewiki-app/Block.md",
     "kind": "concept"
   },
   {
@@ -55,8 +75,18 @@
     "kind": "operations"
   },
   {
-    "id": "type:codewiki_app::graph::Camera",
-    "path": "01-Core/codewiki-app/Camera.md",
+    "id": "mod:codewiki_app::build",
+    "path": "01-Core/codewiki-app/Build Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::mui::button::Button",
+    "path": "01-Core/codewiki-app/mui/Button.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::button",
+    "path": "01-Core/codewiki-app/mui/Button Module.md",
     "kind": "concept"
   },
   {
@@ -105,6 +135,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::contrast",
+    "path": "01-Core/codewiki-app/Contrast Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::coverage",
     "path": "01-Core/cw-wiki/Coverage Module.md",
     "kind": "concept"
@@ -113,6 +148,11 @@
     "id": "flow:crates",
     "path": "00-Architecture/Crate Dependency Flow.md",
     "kind": "flow"
+  },
+  {
+    "id": "mod:codewiki_app::mui::tokens::curve",
+    "path": "01-Core/codewiki-app/mui/tokens/Curve Module.md",
+    "kind": "concept"
   },
   {
     "id": "crate:cw_client",
@@ -165,6 +205,11 @@
     "kind": "concept"
   },
   {
+    "id": "crate:cw_update",
+    "path": "01-Core/cw-update/cw-update.md",
+    "kind": "concept"
+  },
+  {
     "id": "crate:cw_vault",
     "path": "01-Core/cw-vault/cw-vault.md",
     "kind": "concept"
@@ -180,8 +225,33 @@
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_app::doc::Doc",
+    "path": "01-Core/codewiki-app/Doc.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::doc",
+    "path": "01-Core/codewiki-app/Doc Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::doc_view",
+    "path": "01-Core/codewiki-app/Doc View Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_index::search::Document",
     "path": "01-Core/cw-index/Document.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_update::download",
+    "path": "01-Core/cw-update/Download Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::tokens::duration",
+    "path": "01-Core/codewiki-app/mui/tokens/Duration Module.md",
     "kind": "concept"
   },
   {
@@ -192,6 +262,11 @@
   {
     "id": "type:cw_embed::Embedder",
     "path": "01-Core/cw-embed/Embedder.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::mui::motion::Enter",
+    "path": "01-Core/codewiki-app/mui/Enter.md",
     "kind": "concept"
   },
   {
@@ -210,6 +285,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::mui::feedback",
+    "path": "01-Core/codewiki-app/mui/Feedback Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_illustrate::Figure",
     "path": "01-Core/cw-illustrate/Figure.md",
     "kind": "concept"
@@ -217,6 +297,11 @@
   {
     "id": "type:cw_wiki::gitintel::FileHistory",
     "path": "01-Core/cw-wiki/FileHistory.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::fonts",
+    "path": "01-Core/codewiki-app/Fonts Module.md",
     "kind": "concept"
   },
   {
@@ -232,6 +317,16 @@
   {
     "id": "mod:cw_wiki::gitintel",
     "path": "01-Core/cw-wiki/Gitintel Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::glass",
+    "path": "01-Core/codewiki-app/Glass Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::icons::Glyph",
+    "path": "01-Core/codewiki-app/Glyph.md",
     "kind": "concept"
   },
   {
@@ -255,11 +350,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:codewiki_app::graph::GraphData",
-    "path": "01-Core/codewiki-app/GraphData.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:cw_core::hash",
     "path": "01-Core/cw-core/Hash Module.md",
     "kind": "concept"
@@ -267,6 +357,11 @@
   {
     "id": "mod:cw_wiki::health",
     "path": "01-Core/cw-wiki/Health Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::icons",
+    "path": "01-Core/codewiki-app/Icons Module.md",
     "kind": "concept"
   },
   {
@@ -355,8 +450,23 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::mui::list",
+    "path": "01-Core/codewiki-app/mui/List Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::mui::list::ListItemButton",
+    "path": "01-Core/codewiki-app/mui/ListItemButton.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_wiki::rustscan::Literal",
     "path": "01-Core/cw-wiki/Literal.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::live",
+    "path": "01-Core/codewiki-app/Live Module.md",
     "kind": "concept"
   },
   {
@@ -375,6 +485,16 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::logfile",
+    "path": "01-Core/codewiki-app/Logfile Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::logs",
+    "path": "01-Core/cw-core/Logs Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_vault::manifest",
     "path": "01-Core/cw-vault/Manifest Module.md",
     "kind": "concept"
@@ -385,6 +505,16 @@
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_app::mui::menu::Menu",
+    "path": "01-Core/codewiki-app/mui/Menu.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::menu",
+    "path": "01-Core/codewiki-app/mui/Menu Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_graph::metrics",
     "path": "01-Core/cw-graph/Metrics Module.md",
     "kind": "concept"
@@ -392,6 +522,26 @@
   {
     "id": "mod:cw_core::model",
     "path": "01-Core/cw-core/Model Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::motion",
+    "path": "01-Core/codewiki-app/Motion Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::motion",
+    "path": "01-Core/codewiki-app/mui/Motion Module (mui).md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::motion::MotionPref",
+    "path": "01-Core/codewiki-app/MotionPref.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui",
+    "path": "01-Core/codewiki-app/Mui Module.md",
     "kind": "concept"
   },
   {
@@ -460,6 +610,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::prefs",
+    "path": "01-Core/codewiki-app/Prefs Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_vault::proposal",
     "path": "01-Core/cw-vault/Proposal Module.md",
     "kind": "concept"
@@ -485,6 +640,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::reading",
+    "path": "01-Core/codewiki-app/Reading Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::refactor",
     "path": "01-Core/cw-wiki/Refactor Module.md",
     "kind": "concept"
@@ -502,6 +662,16 @@
   {
     "id": "type:cw_vault::registry::RegistryEntry",
     "path": "01-Core/cw-vault/RegistryEntry.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_update::release::Release",
+    "path": "01-Core/cw-update/Release.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_update::release",
+    "path": "01-Core/cw-update/Release Module.md",
     "kind": "concept"
   },
   {
@@ -532,6 +702,11 @@
   {
     "id": "type:cw_parse::resolve::Resolver",
     "path": "01-Core/cw-parse/Resolver.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::ripple",
+    "path": "01-Core/codewiki-app/mui/Ripple Module.md",
     "kind": "concept"
   },
   {
@@ -580,6 +755,11 @@
     "kind": "concept"
   },
   {
+    "id": "integration:semver",
+    "path": "03-Integrations/semver.md",
+    "kind": "integration"
+  },
+  {
     "id": "integration:serde",
     "path": "03-Integrations/serde.md",
     "kind": "integration"
@@ -605,13 +785,53 @@
     "kind": "concept"
   },
   {
+    "id": "integration:sha2",
+    "path": "03-Integrations/sha2.md",
+    "kind": "integration"
+  },
+  {
     "id": "type:cw_parse::lang::Sink",
     "path": "01-Core/cw-parse/Sink.md",
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_app::doc::Span",
+    "path": "01-Core/codewiki-app/Span.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::mui::motion::Spring",
+    "path": "01-Core/codewiki-app/mui/Spring.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_update::stage",
+    "path": "01-Core/cw-update/Stage Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::standard",
+    "path": "01-Core/codewiki-app/Standard Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::startup",
+    "path": "01-Core/codewiki-app/Startup Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_index::store",
     "path": "01-Core/cw-index/Store Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::surfaces",
+    "path": "01-Core/codewiki-app/mui/Surfaces Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_update::swap",
+    "path": "01-Core/cw-update/Swap Module.md",
     "kind": "concept"
   },
   {
@@ -625,6 +845,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::mui::tabs",
+    "path": "01-Core/codewiki-app/mui/Tabs Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_wiki::rustscan::TestFn",
     "path": "01-Core/cw-wiki/TestFn.md",
     "kind": "concept"
@@ -635,8 +860,23 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::mui::text_field",
+    "path": "01-Core/codewiki-app/mui/Text Field Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::themes",
     "path": "01-Core/codewiki-app/Themes Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::tokens",
+    "path": "01-Core/codewiki-app/mui/Tokens Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::mui::feedback::Tone",
+    "path": "01-Core/codewiki-app/mui/Tone.md",
     "kind": "concept"
   },
   {
@@ -665,6 +905,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::update",
+    "path": "01-Core/codewiki-app/Update Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_parse::rust::UseImport",
     "path": "01-Core/cw-parse/UseImport.md",
     "kind": "concept"
@@ -677,6 +922,11 @@
   {
     "id": "mod:cw_index::vectors",
     "path": "01-Core/cw-index/Vectors Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_update::wire_tests",
+    "path": "01-Core/cw-update/Wire Tests Module.md",
     "kind": "concept"
   },
   {
@@ -712,6 +962,16 @@
   {
     "id": "index:01-Core/codewiki-app",
     "path": "01-Core/codewiki-app/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-app/mui",
+    "path": "01-Core/codewiki-app/mui/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-app/mui/tokens",
+    "path": "01-Core/codewiki-app/mui/tokens/_index.md",
     "kind": "index"
   },
   {
@@ -772,6 +1032,11 @@
   {
     "id": "index:01-Core/cw-server",
     "path": "01-Core/cw-server/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-update",
+    "path": "01-Core/cw-update/_index.md",
     "kind": "index"
   },
   {

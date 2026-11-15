@@ -20,8 +20,8 @@ Main items:
 - `import_text` — parse report `text` and match its files to the index.
 - `CoverageData` — coverage as imported, with paths matched to the index.
 - `report` — summarise imported coverage and rank the gaps.
-- `META_KEY` — meta key under which imported coverage is cached in the index.
 - `Gap` — A poorly covered file and why it matters.
+- `META_KEY` — meta key under which imported coverage is cached in the index.
 
 ## Depends on
 

@@ -25,10 +25,11 @@ Defined at the crate root:
 
 - [[ServerConfig]] — struct
 - `router` — build the router.
-- `serve` — serve until `shutdown` resolves.
+- `serve` — serve until `shutdown` resolves or a client calls `POST /v1/shutdown`.
 - `WEBHOOK_SECRET_ENV` — environment variable that holds the webhook secret.
 - [[Inner]] — struct
 - [[AppState]] — struct
+- `state` — function
 
 ## Depends on
 
@@ -37,9 +38,9 @@ Defined at the crate root:
 - [[Error Module]] — uses `Result`
 - [[Hash Module]] — uses `hmac_sha256`
 - [[Api Module]] — uses `routes`
+- [[Glyph]] — uses `path`
 - [[Error]] — uses `external`
 - [[AppState]] — uses `AppState`
-- [[Inner]] — uses `Inner`
 
 ## Used by
 

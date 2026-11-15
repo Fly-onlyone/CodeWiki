@@ -4,7 +4,7 @@ tags: [core, codewiki-app, module]
 
 # Pages Module
 
-> Markdown for the report pages: decisions, dead code, health, drift, settings.
+> The report pages: decisions, dead code, health, drift, settings and the rest.
 
 ## Source
 
@@ -12,20 +12,26 @@ tags: [core, codewiki-app, module]
 
 ## How it works
 
+Each turns what the backend sent into a `Doc`.
+
 Main items:
 
-- `settings_page` — the settings page: where data comes from, and the keyboard shortcuts.
-- `contracts_page` — render HTTP endpoints across the workspace: who provides what each repository calls, and what nothing provides or calls.
-- `coupling_page` — render files that tend to change in the same commit.
-- `coverage_page` — render imported line coverage, least covered first.
-- `dead_code_page` — render private symbols that nothing refers to.
-- `decisions_page` — render the decision records with their status and staleness.
-- `drift_page` — render documentation drift and coverage.
-- `health_page` — render file health scores, worst first.
+- `settings_page` — the settings page: appearance, where data comes from, updates and the keyboard shortcuts.
+- `contracts_page` — HTTP endpoints across the workspace: who provides what each repository calls, and what nothing provides or calls.
+- `coupling_page` — files that tend to change in the same commit.
+- `coverage_page` — imported line coverage, least covered first.
+- `dead_code_page` — private symbols that nothing refers to.
+- `decisions_page` — the decision records with their status and staleness.
+- `drift_page` — documentation drift and coverage.
+- `health_page` — file health scores, worst first.
 
 ## Depends on
 
-- [[Markdown Module]] — uses `NOTE_SCHEME`, `THEME_SCHEME`, `encode`, `file_link`
+- [[Doc Module]] — uses `Choice`, `Line`, `chip`, `code`
+- [[Doc]] — uses `Doc`, `heading`, `lead`, `new`
+- [[MotionPref]] — uses `ALL`, `MotionPref`
+- [[Update Module]] — uses `State`
+- [[Block]] — uses `Block`
 
 ## Used by
 

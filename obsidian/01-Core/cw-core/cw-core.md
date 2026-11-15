@@ -19,6 +19,7 @@ Modules:
 
 - [[Error Module]] — one error type shared by the engine crates.
 - [[Hash Module]] — content hashing used for change detection.
+- [[Logs Module]] — log files of the programs, under `<data dir>/logs`.
 - [[Model Module]] — data model shared between the parser, index, graph and API layers.
 - [[Paths Module]] — locations of per-user data.
 
@@ -33,11 +34,11 @@ Defined at the crate root:
 - [[Query Module]] — from `answer`, `list_notes`, `notes_citing`, `overview`
 - [[Decisions Module]] — from `create`, `list`, `why`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`
+- [[Update Module]] — from `check`, `describe`
 - [[Api Module]] — from `health`, `vault`
 - [[Briefing Module]] — from `session_start`, `vault_root`
 - [[Ci Module]] — from `check`, `to_sarif`
 - [[codewiki]] — from `run`
-- [[Answer Module]] — from `context`
 
 ## See also
 

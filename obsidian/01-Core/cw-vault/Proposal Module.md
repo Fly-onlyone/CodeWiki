@@ -29,6 +29,7 @@ Main items:
 - [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
 - [[Manifest Module]] — uses `body_hash`
+- [[Glyph]] — uses `path`
 - [[VaultMeta]] — uses `dir`
 
 ## Used by

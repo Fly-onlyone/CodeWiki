@@ -4,7 +4,7 @@ tags: [architecture, flow]
 
 # Crate Dependency Flow
 
-> How the 16 workspace crates depend on each other, from entry points down to shared foundations.
+> How the 17 workspace crates depend on each other, from entry points down to shared foundations.
 
 ## Source
 
@@ -21,6 +21,7 @@ tags: [architecture, flow]
 - `crates/cw-mermaid/Cargo.toml` — declares dependencies
 - `crates/cw-parse/Cargo.toml` — declares dependencies
 - `crates/cw-server/Cargo.toml` — declares dependencies
+- `crates/cw-update/Cargo.toml` — declares dependencies
 - `crates/cw-vault/Cargo.toml` — declares dependencies
 - `crates/cw-wiki/Cargo.toml` — declares dependencies
 - `crates/openui-lang/Cargo.toml` — declares dependencies
@@ -42,49 +43,52 @@ flowchart LR
     n10[cw-mermaid]
     n11[cw-parse]
     n12[cw-server]
-    n13[cw-vault]
-    n14[cw-wiki]
-    n15[openui-lang]
+    n13[cw-update]
+    n14[cw-vault]
+    n15[cw-wiki]
+    n16[openui-lang]
     n0 --> n3
+    n0 --> n4
     n0 --> n7
     n0 --> n10
-    n0 --> n15
+    n0 --> n13
+    n0 --> n16
     n1 --> n3
     n1 --> n4
     n2 --> n4
     n2 --> n8
     n2 --> n9
     n2 --> n12
-    n2 --> n13
     n2 --> n14
+    n2 --> n15
     n3 --> n4
     n5 --> n4
     n6 --> n4
-    n7 --> n15
+    n7 --> n16
     n8 --> n4
     n8 --> n11
     n9 --> n4
     n9 --> n7
     n9 --> n8
-    n9 --> n13
     n9 --> n14
+    n9 --> n15
     n11 --> n4
     n12 --> n4
     n12 --> n8
     n12 --> n9
-    n12 --> n13
     n12 --> n14
-    n13 --> n4
+    n12 --> n15
     n14 --> n4
-    n14 --> n5
-    n14 --> n6
-    n14 --> n7
-    n14 --> n8
-    n14 --> n11
-    n14 --> n13
+    n15 --> n4
+    n15 --> n5
+    n15 --> n6
+    n15 --> n7
+    n15 --> n8
+    n15 --> n11
+    n15 --> n14
 ```
 
-An arrow points from a crate to a crate it depends on. Foundations with no workspace dependencies: `cw-core`, `cw-mermaid`, and `openui-lang`. Nothing in the workspace depends on `codewiki-app`, `codewiki-mcp`, and `codewiki`.
+An arrow points from a crate to a crate it depends on. Foundations with no workspace dependencies: `cw-core`, `cw-mermaid`, `cw-update`, and `openui-lang`. Nothing in the workspace depends on `codewiki-app`, `codewiki-mcp`, and `codewiki`.
 
 ## Depends on
 
@@ -92,7 +96,7 @@ An arrow points from a crate to a crate it depends on. Foundations with no works
 - [[codewiki-mcp]] — used by 0 workspace crates
 - [[codewiki]] — used by 0 workspace crates
 - [[cw-client]] — used by 2 workspace crates
-- [[cw-core]] — used by 11 workspace crates
+- [[cw-core]] — used by 12 workspace crates
 - [[cw-embed]] — used by 1 workspace crates
 - [[cw-graph]] — used by 1 workspace crates
 - [[cw-illustrate]] — used by 3 workspace crates
@@ -101,6 +105,7 @@ An arrow points from a crate to a crate it depends on. Foundations with no works
 - [[cw-mermaid]] — used by 1 workspace crates
 - [[cw-parse]] — used by 2 workspace crates
 - [[cw-server]] — used by 1 workspace crates
+- [[cw-update]] — used by 1 workspace crates
 - [[cw-vault]] — used by 4 workspace crates
 - [[cw-wiki]] — used by 3 workspace crates
 - [[openui-lang]] — used by 2 workspace crates

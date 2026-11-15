@@ -30,6 +30,7 @@ Defined at the crate root:
 
 - [[Error]] — uses `external`, `invalid`
 - [[cw-llm]] — uses `header`
+- [[Logfile Module]] — uses `flush`
 - [[Error Module]] — uses `Result`
 - [[Embedder]] — uses `Embedder`
 - [[LocalEmbedder]] — uses `default`

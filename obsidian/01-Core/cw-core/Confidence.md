@@ -27,7 +27,6 @@ Public API:
 - [[Resolver]] — from `by_bare_name`, `resolve`
 - [[Model Module]] — from `Edge`
 - [[Store Module]] — from `edge_from_row`
-- [[Graph]] — from `from_edges`
 
 ## See also
 

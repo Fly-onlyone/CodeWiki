@@ -36,7 +36,7 @@ Main items:
 
 ## Used by
 
-- [[cw-server]] — from `router`
+- [[cw-server]] — from `router`, `serve`
 
 ## See also
 

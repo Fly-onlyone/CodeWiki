@@ -8,7 +8,7 @@ tags: [moc, core, cw-client]
 
 ## Notes
 
-- [[Backend]] — `Backend` struct defined in `cw_client` with 8 methods.
+- [[Backend]] — `Backend` struct defined in `cw_client` with 12 methods.
 - [[cw-client]] — client for the CodeWiki backend: discovery, autostart and HTTP calls.
 
 ## See also

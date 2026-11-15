@@ -29,6 +29,7 @@ Main items:
 - [[Service Module]] — from `open_index`, `open_index_in`, `update`
 - [[codewiki]] — from `run`
 - [[Serve Module]] — from `run`
+- [[Logs Module]] — from `path`
 - [[Repos Module]] — from `add`
 - [[Backend]] — from `connect`
 

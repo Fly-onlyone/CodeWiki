@@ -16,8 +16,8 @@ No UI types, so it is unit-tested.
 
 Main items:
 
-- [[GraphData]] — struct
-- [[Camera]] — maps world coordinates to the view.
+- `GraphData` — struct
+- `Camera` — maps world coordinates to the view.
 - `GraphNode` — struct
 - `MAX_ZOOM` — const
 - `MIN_ZOOM` — const
@@ -25,16 +25,9 @@ Main items:
 - `cell_size` — side of an overview cell for a view of this size.
 - `Cell` — one overview cell: screen position of its corner, the cluster most of its nodes belong to, and how many nodes it holds.
 
-## Depends on
-
-- [[Camera]] — uses `Camera`, `to_screen`
-- [[GraphData]] — uses `GraphData`
-
 ## Used by
 
-- [[GraphData]] — from `GraphData`, `from_json`, `new`, `stress`
-- [[Camera]] — from `fit`, `zoom_at`
-- [[codewiki-app]] — from `graph_view`
+- [[codewiki-app]] — from `AppView`, `graph_view`, `open_graph`
 
 ## See also
 

@@ -21,11 +21,18 @@ Main items:
 - `label` — function
 - `numbers` — function
 - `series_color` — series colors, cycled.
-- `bar_chart` — horizontal bars: one row per label, one bar per series.
+- `children` — `path` names each node by its place in the tree, so that a component that remembers something, such as the chosen tab, keeps it between frames.
 
 ## Depends on
 
+- [[Surfaces Module]] — uses `card`, `card_content`, `divider`, `text`
+- [[Doc Module]] — uses `hint`, `new`, `text`
+- [[Doc View Module]] — uses `plain_table`, `stat_tile`
+- [[Tabs Module]] — uses `new`, `tabs`
 - [[Node]] — uses `Node`, `as_list`
+- [[Feedback Module]] — uses `chip`
+- [[Motion Module (mui)]] — uses `enter`
+- [[Tone]] — uses `Tone`
 
 ## Used by
 

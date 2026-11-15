@@ -27,7 +27,6 @@ Main items:
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
 - [[Model Module]] — uses `Visibility`
-- [[Graph]] — uses `id`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

@@ -21,7 +21,7 @@ Declared as `pub(crate) struct AppState`.
 ## Used by
 
 - [[Api Module]] — from `add_repo`, `approve_proposal`, `ask`, `blast_radius`
-- [[cw-server]] — from `router`
+- [[cw-server]] — from `state`
 
 ## See also
 

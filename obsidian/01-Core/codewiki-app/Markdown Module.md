@@ -16,14 +16,14 @@ No UI types, so it is unit-tested.
 
 Main items:
 
-- `FILE_SCHEME` — URL scheme for links to live file pages.
-- `NOTE_SCHEME` — URL scheme the viewer uses for links between notes.
 - `prepare_note_with` — `prepare_note` with diagram support.
-- `THEME_SCHEME` — URL scheme for links that apply a theme.
-- `SYMBOL_SCHEME` — URL scheme for links to symbol detail pages.
+- `NOTE_SCHEME` — URL scheme the viewer uses for links between notes.
 - `DIAGRAM_SCHEME` — URL scheme for diagrams rendered from Mermaid blocks, followed by an index.
-- `proposal_page` — render one proposal for review.
-- `hotspots_page` — render the hotspot ranking as a table.
+- `decode` — decode `%XX` escapes produced by `encode`.
+- `outline` — `##` headings of a note, for the outline pane.
+- `prepare_note` — turn a vault note into Markdown the viewer can render: frontmatter becomes a tag line and `(wikilinks)` become ordinary links with the note scheme.
+- `link_line` — replace wikilinks in one line of prose.
+- `encode` — function
 
 ## Depends on
 
@@ -31,8 +31,7 @@ Main items:
 
 ## Used by
 
-- [[codewiki-app]] — from `details`, `edit_view`, `follow_link`, `open_file`
-- [[Pages Module]] — from `coupling_page`, `coverage_page`, `dead_code_page`, `decisions_page`
+- [[codewiki-app]] — from `details`, `edit_view`, `follow_link`, `prepare_page`
 
 ## See also
 

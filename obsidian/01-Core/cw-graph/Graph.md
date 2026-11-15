@@ -20,21 +20,17 @@ Public API:
 - `pub fn from_edges( nodes: impl IntoIterator<Item = String>, edges: &[Edge], kinds: &[EdgeKind], ) -> Self` — build from resolved edges, keeping only `kinds` and weighting each edge by its confidence.
 - `pub fn undirected(&self) -> Vec<Vec<(usize, f64)>>` — symmetric adjacency: weights of both directions summed per neighbor.
 - `pub fn len(&self) -> usize`
-- `pub fn id(&self, name: &str) -> Option<usize>`
 - `pub fn is_empty(&self) -> bool`
+- `pub fn edge_count(&self) -> usize`
 
 ## Depends on
 
 - [[Model Module]] — uses `Edge`, `EdgeKind`
-- [[Confidence]] — uses `weight`
 
 ## Used by
 
-- [[codewiki-app]] — from `edit_view`, `graph_view`, `palette_view`, `render`
 - [[Metrics Module]] — from `betweenness`, `pagerank`, `shortest_path`, `strongly_connected_components`
-- [[Java Module]] — from `enum_constant`, `method`, `type_decl`
 - [[Analyze Module]] — from `analyze`, `dependency_graph`
-- [[Typescript Module]] — from `class`
 - [[Query Module]] — from `dependency_path`
 - [[Refactor Module]] — from `break_cycles`
 

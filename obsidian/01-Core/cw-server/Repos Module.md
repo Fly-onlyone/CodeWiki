@@ -15,8 +15,8 @@ tags: [core, cw-server, module]
 Main items:
 
 - `get` — function
-- `load` — function
 - `RepoEntry` — struct
+- `load` — function
 - `remove` — forget a repository.
 - `add` — add a repository by path.
 - `file` — function
@@ -30,7 +30,7 @@ Main items:
 
 ## Used by
 
-- [[Api Module]] — from `add_repo`, `get_repo`, `git_hook`, `list_repos`
+- [[Api Module]] — from `ListedRepo`, `add_repo`, `get_repo`, `git_hook`
 - [[Workspace Module (cw-server)]] — from `open`, `repo_contracts`, `summarize`, `workspace`
 
 ## See also

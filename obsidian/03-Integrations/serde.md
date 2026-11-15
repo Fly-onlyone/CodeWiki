@@ -4,11 +4,11 @@ tags: [integration]
 
 # serde
 
-> External crate `serde`, imported by 26 source files.
+> External crate `serde`, imported by 28 source files.
 
 ## Used for
 
-Imported by 26 source files. Main users:
+Imported by 28 source files. Main users:
 
 - [[Api Module]]
 - [[Ci Module]]
@@ -26,6 +26,7 @@ Imported by 26 source files. Main users:
 - `crates/cw-index/Cargo.toml` — declares the dependency
 - `crates/cw-parse/Cargo.toml` — declares the dependency
 - `crates/cw-server/Cargo.toml` — declares the dependency
+- `crates/cw-update/Cargo.toml` — declares the dependency
 - `crates/cw-vault/Cargo.toml` — declares the dependency
 - `crates/cw-wiki/Cargo.toml` — declares the dependency
 

@@ -17,8 +17,10 @@ Main items:
 - `BACKEND_FILE` — file in the data directory that tells local clients how to connect.
 - `TOKEN_ENV` — environment variable carrying a fixed access token (used in Docker).
 - `run` — function
+- `names_process` — whether the connection file `text` was written by the process `pid`.
 - `publish` — tell local clients (the app, the MCP bridge) where the backend listens.
 - `random_token` — function
+- `withdraw` — delete the connection file, if it is still this backend's.
 
 ## Depends on
 

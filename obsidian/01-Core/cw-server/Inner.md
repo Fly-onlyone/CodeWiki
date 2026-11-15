@@ -20,7 +20,7 @@ Declared as `pub(crate) struct Inner`.
 
 ## Used by
 
-- [[cw-server]] — from `router`
+- [[cw-server]] — from `state`
 - [[AppState]] — from `AppState`
 
 ## See also

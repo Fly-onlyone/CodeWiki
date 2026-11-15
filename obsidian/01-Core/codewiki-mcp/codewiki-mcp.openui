@@ -3,5 +3,5 @@ summary = TextContent("MCP stdio bridge between coding agents and the CodeWiki b
 figures = Grid([f0, f1, f2, f3], 4)
 f0 = Stat("Modules", "0")
 f1 = Stat("Public types", "0")
-f2 = Stat("Functions", "33")
+f2 = Stat("Functions", "34")
 f3 = Stat("Used by crates", "0")

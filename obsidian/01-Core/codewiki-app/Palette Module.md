@@ -22,9 +22,14 @@ Main items:
 - `filter` — entries matching `query`, best first, at most `limit`.
 - `rank` — how well `label` matches the query words; lower is better, `None` is no match.
 
+## Depends on
+
+- [[MotionPref]] — uses `ALL`, `MotionPref`
+
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `palette_matches`, `run_command`
+- [[Icons Module]] — from `for_command`
 
 ## See also
 

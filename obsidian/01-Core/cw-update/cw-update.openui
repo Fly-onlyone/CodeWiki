@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "cw-update")
+summary = TextContent("Self-update of an installed CodeWiki: release check, download, verification and file swap.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "5")
+f1 = Stat("Public types", "3")
+f2 = Stat("Functions", "38")
+f3 = Stat("Used by crates", "1")
+chart = BarChart(["swap", "wire_tests", "release", "download", "stage"], [Series("Symbols per module", [16, 14, 9, 6, 5])], "Symbols per module")

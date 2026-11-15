@@ -4,7 +4,7 @@ tags: [moc, core, cw-core]
 
 # Core / cw-core — Map of Content
 
-> Notes for `cw-core`: 10 concepts.
+> Notes for `cw-core`: 11 concepts.
 
 ## Notes
 
@@ -14,6 +14,7 @@ tags: [moc, core, cw-core]
 - [[Error Module]] — one error type shared by the engine crates.
 - [[Hash Module]] — content hashing used for change detection.
 - [[Language]] — source language of a file.
+- [[Logs Module]] — log files of the programs, under `<data dir>/logs`.
 - [[Model Module]] — data model shared between the parser, index, graph and API layers.
 - [[Paths Module]] — locations of per-user data.
 - [[Symbol]] — A named code entity.

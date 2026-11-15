@@ -30,19 +30,20 @@ Defined at the crate root:
 
 - [[Provider Module]] — uses `Ollama`, `OpenAiCompatible`, `from_env`
 - [[LlmWriter]] — uses `LlmWriter`, `new`
+- [[Logfile Module]] — uses `flush`
 - [[Error Module]] — uses `Result`
 - [[Anthropic]] — uses `Anthropic`
 
 ## Used by
 
-- [[Backend]] — from `get`, `post`, `put`
+- [[Backend]] — from `delete`, `get`, `post`, `put`
 - [[cw-server]] — from `call`, `hook`
 - [[codewiki]] — from `run`
-- [[codewiki-app]] — from `sidebar`
 - [[cw-embed]] — from `post_json`
 - [[Provider Module]] — from `post_json`
 - [[Api Module]] — from `run_update`
-- [[Proposal Module]] — from `unified_diff`
+- [[Download Module]] — from `get`
+- [[Release Module]] — from `check`
 
 ## See also
 

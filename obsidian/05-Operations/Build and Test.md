@@ -9,6 +9,9 @@ tags: [operations]
 ## Source
 
 - `.github/workflows/ci.yml` — CI workflow
+- `.github/workflows/docker.yml` — CI workflow
+- `.github/workflows/release.yml` — CI workflow
+- `.github/workflows/security.yml` — CI workflow
 - `Cargo.toml` — workspace manifest
 - `Dockerfile` — container image
 - `deny.toml` — license and advisory policy
@@ -16,7 +19,7 @@ tags: [operations]
 
 ## How it works
 
-The repository is a Cargo workspace of 16 packages. Run every command from the repository root.
+The repository is a Cargo workspace of 17 packages. Run every command from the repository root.
 
 ```sh
 cargo build --workspace
@@ -26,7 +29,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo deny check
 ```
 
-Continuous integration runs the same checks from `.github/workflows/ci.yml`.
+Continuous integration runs the same checks from `.github/workflows/ci.yml`, `.github/workflows/docker.yml`, `.github/workflows/release.yml`, and `.github/workflows/security.yml`.
 
 ## Depends on
 

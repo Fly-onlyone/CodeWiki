@@ -4,7 +4,7 @@ Status as of 2026-11-15. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (470 tests) and `cargo deny check` all pass.
+- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (522 tests) and `cargo deny check` all pass.
 - Version 0.1.0 is the first release: a Windows zip on GitHub Releases and a backend image on GHCR, both built by CI from the tag `v0.1.0`.
 - CodeWiki documents its own repository: 215 notes, 100% of wikilinks resolve, a second sync writes nothing.
 - The Docker image builds (271 MB) and was exercised over HTTP and through the MCP bridge.

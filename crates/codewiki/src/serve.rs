@@ -3,6 +3,7 @@
 use std::net::{IpAddr, SocketAddr};
 use std::path::Path;
 
+use cw_core::settings::Resolved;
 use cw_core::{Error, Result};
 use cw_server::ServerConfig;
 use serde_json::json;
@@ -78,6 +79,11 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         settings_writable: host.is_loopback(),
         env: cw_core::settings::process_env,
     };
+    // The settings in effect, so that the first line of the log names the
+    // writer and the embedder the backend really uses.
+    let settings = Resolved::load(&data_dir);
+    cw_wiki::semantic::configure(&settings);
+    let writer = writer_name(&settings);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -92,9 +98,8 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
             |bound| {
                 publish(&data_dir, bound, &token)?;
                 log::info!(
-                    "codewiki backend listening on http://{bound}; data in {}; writer: {}; embedder: {}",
+                    "codewiki backend listening on http://{bound}; data in {}; writer: {writer}; embedder: {}",
                     data_dir.display(),
-                    writer_name(),
                     cw_wiki::semantic::embedder().map_or("none".into(), |e| e.name())
                 );
                 Ok(())
@@ -109,9 +114,9 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
     })
 }
 
-/// The LLM provider the environment chooses, by name; never its key.
-fn writer_name() -> String {
-    match cw_llm::provider::from_env() {
+/// The LLM provider the settings in effect choose, by name; never its key.
+fn writer_name(settings: &Resolved) -> String {
+    match cw_llm::from_settings(settings) {
         Ok(Some(provider)) => provider.name(),
         Ok(None) => "none".into(),
         Err(e) => format!("not set up ({e})"),

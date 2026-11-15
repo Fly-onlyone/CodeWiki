@@ -820,6 +820,80 @@ Test-Case "G4" "Focus by keyboard" "Tab moves a visible focus from control to co
     Stop-GuestApp
 }
 
+# What the app remembers of its two side panes: "hidden", "shown", or nothing
+# when the pane was never toggled.
+function Get-GuestPanes {
+    $run = Invoke-GuestScript -Script @'
+foreach ($pane in "sidebar", "details") {
+    $file = "$env:APPDATA\CodeWiki\$pane.txt"
+    "$pane=$(if (Test-Path $file) { (Get-Content $file -Raw).Trim() } else { '(not set)' })"
+}
+'@
+    @{
+        Sidebar = if ($run.Output -match "sidebar=(\S+)") { $Matches[1] } else { "" }
+        Details = if ($run.Output -match "details=(\S+)") { $Matches[1] } else { "" }
+    }
+}
+
+# The sidebar and the details pane each hide and show. The shortcuts hide
+# them; the buttons at the two ends of the toolbar show them again, after a
+# restart that must have kept both hidden. The buttons are 28 pixels wide and
+# sit 8 pixels inside the toolbar (`toolbar` in main.rs); with the sidebar
+# hidden the toolbar starts at the window's left edge.
+Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the panes, a restart keeps them hidden, and the toolbar's two end buttons show them again" {
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    $a = Shot "panes-both-shown"
+    Send-Keys "ctrl+b"; Wait-For 3
+    $b = Shot "panes-sidebar-hidden"
+    Send-Keys "ctrl+alt+b"; Wait-For 3
+    $c = Shot "panes-both-hidden"
+    $afterKeys = Get-GuestPanes
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    $d = Shot "panes-hidden-after-restart"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $y = $info.Top + [int](61 * $info.Scale)
+    $sidebarX = $info.Left + [int](22 * $info.Scale)
+    $detailsX = $info.Right - [int](22 * $info.Scale)
+    Send-RestedClick -X $sidebarX -Y $y; Wait-For 3
+    $e = Shot "panes-sidebar-clicked"
+    Send-RestedClick -X $detailsX -Y $y; Wait-For 3
+    $f = Shot "panes-details-clicked"
+    $afterClicks = Get-GuestPanes
+    $hidden = $afterKeys.Sidebar -eq "hidden" -and $afterKeys.Details -eq "hidden"
+    $shown = $afterClicks.Sidebar -eq "shown" -and $afterClicks.Details -eq "shown"
+    Add-Result -Id "PN1" -Title "Hide and show the side panes" -Expect "both hidden after the shortcuts and after a restart; both shown after the clicks" `
+        -Status $(if ($hidden -and $shown) { "pass" } else { "fail" }) -Shots @($a, $b, $c, $d, $e, $f) `
+        -Observed "after Ctrl+B and Ctrl+Alt+B the app remembers sidebar '$($afterKeys.Sidebar)', details '$($afterKeys.Details)'; after clicks at ($sidebarX,$y) and ($detailsX,$y): sidebar '$($afterClicks.Sidebar)', details '$($afterClicks.Details)'; read the screenshots: the page must take the room of a hidden pane, and the fourth must show both still hidden"
+    Stop-GuestApp
+}
+
+# "Open logs folder" hands the folder to Explorer. Explorer's windows are
+# asked for from the user's desktop; the one on the logs folder is then closed.
+Test-Case "L3" "Open the logs folder from the palette" "Explorer opens on the logs folder under the data folder" {
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "logs"; Wait-For 2
+    $a = Shot "palette-logs"
+    Send-Keys "enter"; Wait-For 8
+    $b = Shot "logs-folder-open"
+    $run = Invoke-GuestScript -Script @'
+$shell = New-Object -ComObject Shell.Application
+$open = @($shell.Windows() | Where-Object { $_.Document.Folder.Self.Path -like "*\CodeWiki\logs" })
+"explorer windows on the logs folder: $($open.Count)"
+foreach ($window in $open) { "path: $($window.Document.Folder.Self.Path)"; $window.Quit() }
+'@
+    $count = if ($run.Output -match "logs folder: (\d+)") { [int]$Matches[1] } else { -1 }
+    Add-Result -Id "L3" -Title "Open the logs folder from the palette" -Expect "one Explorer window on %LOCALAPPDATA%\CodeWiki\logs" `
+        -Status $(if ($count -ge 1) { "pass" } elseif ($count -eq 0) { "fail" } else { "error" }) -Shots @($a, $b) -Output $run.Output `
+        -Observed $(if ($count -ge 0) { "Explorer windows on the logs folder: $count" } else { "the guest did not answer; read the second screenshot" })
+    Stop-GuestApp
+}
+
 Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the file" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
@@ -997,6 +1071,29 @@ foreach (`$line in `$answers) {
     $tools = if ($run.Output -match "tools: (\d+)") { [int]$Matches[1] } else { 0 }
     Add-Result -Id "D3" -Title "MCP bridge over stdio" -Expect "initialize and tools/list answer; 24 tools" `
         -Status $(if ($tools -eq 24) { "pass" } elseif ($tools -gt 0) { "note" } else { "fail" }) -Output $run.Output -Observed "tools listed: $tools"
+}
+
+# Each program keeps a log of its own. By now the app, a backend and the MCP
+# bridge have all run.
+Test-Case "L2" "Every program writes its own log" "app.log, backend.log and mcp.log are in the logs folder, none empty" {
+    $run = Invoke-GuestScript -Script @'
+foreach ($name in "app", "backend", "mcp") {
+    $file = "$env:LOCALAPPDATA\CodeWiki\logs\$name.log"
+    if (Test-Path $file) {
+        "${name}: $((Get-Item $file).Length) bytes"
+        Get-Content $file -Tail 3 | ForEach-Object { "    $_" }
+    } else { "${name}: missing" }
+}
+"folder: $((Get-ChildItem "$env:LOCALAPPDATA\CodeWiki\logs" -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', ')"
+'@
+    $sizes = @{}
+    foreach ($name in "app", "backend", "mcp") {
+        $sizes[$name] = if ($run.Output -match "(?m)^${name}: (\d+) bytes") { [int]$Matches[1] } else { 0 }
+    }
+    $missing = @($sizes.Keys | Where-Object { $sizes[$_] -eq 0 } | Sort-Object)
+    Add-Result -Id "L2" -Title "Every program writes its own log" -Expect "three logs, none empty" `
+        -Status $(if (-not $run.Output.Trim()) { "error" } elseif ($missing) { "fail" } else { "pass" }) -Output $run.Output `
+        -Observed $(if (-not $run.Output.Trim()) { "the guest did not answer" } elseif ($missing) { "missing or empty: $($missing -join ', ')" } else { "app.log $($sizes.app) bytes, backend.log $($sizes.backend) bytes, mcp.log $($sizes.mcp) bytes" })
 }
 
 # ---------------------------------------------------------------- K, uninstall

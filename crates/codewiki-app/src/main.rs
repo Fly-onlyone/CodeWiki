@@ -860,6 +860,18 @@ impl AppView {
         }
     }
 
+    /// The backend to stop when the app closes: the one it uses, whoever
+    /// started it. Not one named by `CODEWIKI_URL`, which is not this app's
+    /// to stop, and none while an update is installed, which has stopped it
+    /// already and may have started the next version's.
+    fn backend_to_stop(&self) -> Option<Backend> {
+        if stops_backend_on_close(cw_client::uses_remote(), self.update.installing()) {
+            self.backend.clone()
+        } else {
+            None
+        }
+    }
+
     /// Close the editor before leaving the page. Returns false, with a
     /// message, when unsaved edits would be lost.
     fn can_leave(&mut self) -> bool {
@@ -2963,6 +2975,13 @@ impl Render for AppView {
     }
 }
 
+/// Whether closing the app also stops the backend. `remote` says that the
+/// backend is the one `CODEWIKI_URL` names; `installing` that an update is
+/// being installed or waits for a restart.
+fn stops_backend_on_close(remote: bool, installing: bool) -> bool {
+    !remote && !installing
+}
+
 /// The window's title bar. The shell draws it, not the app's view: the
 /// buttons of a title bar that is part of a cached view stop answering (see
 /// `backdrop`).
@@ -3091,6 +3110,39 @@ fn main() {
                 view
             });
             let page = app.read(cx).doc_page.clone();
+            // Closing the window with unsaved edits would lose them without
+            // a word. Keep it open and say so, as leaving the page does.
+            window.on_window_should_close(cx, {
+                let app = app.clone();
+                move |_, cx| {
+                    app.update(cx, |app, cx| {
+                        let leave = app.can_leave();
+                        if !leave {
+                            cx.notify();
+                        }
+                        leave
+                    })
+                }
+            });
+            // The backend ends with the app. It finishes what it is doing
+            // first (an update of the wiki, say) and then exits by itself;
+            // the app does not wait for that.
+            cx.on_app_quit({
+                let app = app.clone();
+                move |cx| {
+                    let backend = app.read(cx).backend_to_stop();
+                    cx.background_executor().spawn(async move {
+                        let Some(backend) = backend else {
+                            return;
+                        };
+                        match backend.shutdown() {
+                            Ok(()) => log::info!("asked the backend to stop"),
+                            Err(e) => log::warn!("could not ask the backend to stop: {e}"),
+                        }
+                    })
+                }
+            })
+            .detach();
             // The shell draws the drifting backdrop, the app over it, and
             // the generated page in the place the app leaves for it.
             let bar = {
@@ -3119,7 +3171,7 @@ mod tests {
     // standard one.
     use serde_json::json;
 
-    use super::{Repo, parse_repos};
+    use super::{Repo, parse_repos, stops_backend_on_close};
 
     #[test]
     fn the_repository_list_splits_present_from_missing() {
@@ -3135,5 +3187,14 @@ mod tests {
         assert_eq!(names(&present), ["alpha", "beta"]);
         assert_eq!(names(&missing), ["zzzbot"]);
         assert_eq!(missing[0].id, "z9");
+    }
+
+    #[test]
+    fn closing_stops_a_local_backend_only_and_not_during_an_update() {
+        assert!(stops_backend_on_close(false, false));
+        // One named by CODEWIKI_URL is not this app's to stop.
+        assert!(!stops_backend_on_close(true, false));
+        // An update has stopped it, and may have started the next one.
+        assert!(!stops_backend_on_close(false, true));
     }
 }

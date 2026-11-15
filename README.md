@@ -65,7 +65,7 @@ codewiki check         # findings for CI; --format sarif or junit
 
 `codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
 
-Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app and the backend it starts write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`). Set `CODEWIKI_LOG=debug` for more.
+Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. Set `CODEWIKI_LOG=debug` for more, or `CODEWIKI_LOG_DIR` to write them elsewhere.
 
 ### With an LLM
 

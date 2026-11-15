@@ -22,6 +22,13 @@ param(
     [switch]$Gpu,
     # Leave the VM running at the end, for a look by hand.
     [switch]$KeepRunning,
+    # A package of an older version. With it, case U2 installs that version
+    # and has it update itself to the package under test, which a stand-in
+    # for GitHub serves inside the guest (guest\update-server.ps1).
+    [string]$OldZip,
+    # With -OldZip: let the older version ask the real GitHub instead of the
+    # stand-in. For the run after a release, with the published package as -Zip.
+    [switch]$RealRelease,
     # Multiplies every wait; raise it on a slow host.
     [double]$Pace = 1.0
 )
@@ -37,6 +44,12 @@ if (-not $Zip) {
     $Zip = $newest.FullName
 }
 $Zip = (Resolve-Path $Zip).Path
+if ($OldZip) { $OldZip = (Resolve-Path $OldZip).Path }
+# The version a package's name carries.
+function Get-ZipVersion {
+    param([string]$Path)
+    if ((Split-Path -Leaf $Path) -match '^CodeWiki-(.+)-windows-x64\.zip$') { $Matches[1] } else { throw "cannot read a version from $Path" }
+}
 if (-not $Report) { $Report = Join-Path $root ("report\vm-test-" + (Get-Date -Format "yyyy-MM-dd")) }
 $shots = Join-Path $Report "screenshots"
 $logs = Join-Path $Report "logs"
@@ -46,10 +59,12 @@ $Report = (Resolve-Path $Report).Path
 Get-ChildItem $shots -Filter "*.png" | Remove-Item -Force
 Get-ChildItem $logs -Filter "probe-*.json" | Remove-Item -Force
 
-$guestHome = "C:\Users\$User"
-$guestUnpacked = "$guestHome\Downloads\CodeWiki"
-$guestTarget = "$guestHome\AppData\Local\Programs\CodeWiki"
-$guestRepo = "$guestHome\repos\cw-core"
+# The guest's folders. They are set once the guest is up, from what the guest
+# says its profile folder is: that is not always C:\Users\<account name>.
+$guestHome = $null
+$guestUnpacked = $null
+$guestTarget = $null
+$guestRepo = $null
 $powershell = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 
 $results = [System.Collections.Generic.List[object]]::new()
@@ -194,6 +209,11 @@ if ($Gpu) {
     # Without a screen nothing is drawn, and every measurement would be of nothing.
     if (-not (Test-GuestDisplay)) { throw "the guest's desktop has no screen with the graphics card attached; see Test-GuestDisplay in Vm.ps1" }
 }
+$guestHome = (Invoke-GuestScript -Script '$env:USERPROFILE').Output.Trim()
+if ($guestHome -notmatch '^[A-Za-z]:\\') { throw "could not read the guest's profile folder: '$guestHome'" }
+$guestUnpacked = "$guestHome\Downloads\CodeWiki"
+$guestTarget = "$guestHome\AppData\Local\Programs\CodeWiki"
+$guestRepo = "$guestHome\repos\cw-core"
 Wait-For 30
 Start-Recording -Path (Join-Path $Report "recording\session.mp4") | Out-Null
 
@@ -366,6 +386,7 @@ $starved = $false
 $firstBackendPid = $null
 $firstProbe = $null
 $closedProbe = $null
+$secondProbe = $null
 # Nothing is registered yet and the shortcut starts in the install folder, so
 # the app must show Home, not take a folder as the repository.
 Test-Case "E1" "Start the app from the Start menu" "a CodeWiki window opens on Home; no folder is registered" {
@@ -432,16 +453,17 @@ Test-Case "E3" "Open a folder from Home" "Open folder… asks for a folder, regi
         -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); the app's log says it opened '$opened'"
 }
 
-Test-Case "H1" "Close the app, start it again" "backend outlives the app and is reused" {
+# Closing the app ends the backend it used; it does not stay behind.
+Test-Case "H1" "Close the app, start it again" "the backend ends with the app; the next start brings a new one" {
     Send-Keys "alt+f4"
-    Wait-For 5
+    Wait-For 8
     $closed = Shot "after-alt-f4"
     $probe = Get-ProbeWhenAble "app-closed" -TimeoutSec 240
     if (-not $probe) { throw "the guest answered no command for four minutes after Alt+F4" }
     $script:closedProbe = $probe
-    if (-not $firstBackendPid) { $script:firstBackendPid = $probe.backend.pid }
     $appLeft = (Get-App $probe).Count
-    $backendAlive = $probe.backend.pidAlive
+    $backendLeft = (Get-Backend $probe).Count
+    $fileLeft = [bool]$probe.backend
     # Without a graphics processor the moving backdrop takes every core (case
     # P1), and the guest then answers too slowly to be driven. In that case
     # the app runs with motion reduced from here on; otherwise as installed.
@@ -449,11 +471,12 @@ Test-Case "H1" "Close the app, start it again" "backend outlives the app and is 
     $search = Start-FromStartMenu
     $again = Shot "second-launch"
     $probe2 = Get-Probe "second-launch" -Quick
-    $same = $probe2.backend.pid -eq $firstBackendPid
-    $ok = $appLeft -eq 0 -and $backendAlive -and $same -and (Get-App $probe2).Count -eq 1
-    Add-Result -Id "H1" -Title "Close the app, start it again" -Expect "backend outlives the app and is reused" `
+    $script:secondProbe = $probe2
+    $new = $probe2.backend -and $probe2.backend.pidAlive -and $probe2.backend.pid -ne $firstBackendPid
+    $ok = $appLeft -eq 0 -and $backendLeft -eq 0 -and -not $fileLeft -and $new -and (Get-App $probe2).Count -eq 1
+    Add-Result -Id "H1" -Title "Close the app, start it again" -Expect "the backend ends with the app; the next start brings a new one" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($closed, $again) `
-        -Observed "after Alt+F4: app processes $appLeft, backend alive $backendAlive; after restart: backend pid $($probe2.backend.pid) (was $firstBackendPid), app processes $((Get-App $probe2).Count)"
+        -Observed "after Alt+F4: app processes $appLeft, backend processes $backendLeft, backend.json left $fileLeft; after restart: backend pid $($probe2.backend.pid) alive $($probe2.backend.pidAlive) (the first one was $firstBackendPid), app processes $((Get-App $probe2).Count)"
     # The Start menu gives no folder: the app reopens the one opened in E3.
     $opened = Get-OpenedRepo
     Add-Result -Id "E4" -Title "The last repository opens again" -Expect "started from the Start menu, the app shows cw-core" `
@@ -462,8 +485,8 @@ Test-Case "H1" "Close the app, start it again" "backend outlives the app and is 
 }
 
 Test-Case "E2" "Backend after first launch" "backend.json written, health answers, token required" {
-    $source = if ($firstProbe) { "while the app was open" } else { "after the app was closed" }
-    $backend = if ($firstProbe) { $firstProbe.backend } else { $closedProbe.backend }
+    $source = if ($firstProbe) { "while the app was open" } else { "after the app was started again" }
+    $backend = if ($firstProbe) { $firstProbe.backend } else { $secondProbe.backend }
     if (-not $backend) { throw "no probe has backend facts" }
     $ok = $backend.health -eq 200 -and $backend.reposWithoutToken -eq 401 -and $backend.pidAlive
     Add-Result -Id "E2" -Title "Backend after first launch" -Expect "health 200, 401 without token" -Status $(if ($ok) { "pass" } else { "fail" }) `
@@ -478,9 +501,144 @@ Test-Case "P2" "Idle processor use after a restart of the app" "recorded, to com
         -Observed "with motion $motion the guest's processors were $load percent busy over 10 s, and the app used $used s of processor time in 10 s"
     Stop-GuestApp
 }
+# ---------------------------------------------------------------- W, the window
+# The title bar is the app's own. Where its three buttons are, measured from
+# the top right corner of the client area at 100% scaling: the bar is 34
+# pixels high and each button 34 wide, close outermost (gpui-component's
+# title_bar.rs).
+function Get-TitleBarPoint {
+    param($Info, [ValidateSet("close", "maximize", "minimize", "caption")][string]$What)
+    $y = $Info.Top + [int](17 * $Info.Scale)
+    if ($What -eq "caption") { return @(($Info.Left + [int]($Info.Width / 2)), $y) }
+    $fromRight = @{ close = 17; maximize = 51; minimize = 85 }[$What]
+    @(($Info.Right - [int]($fromRight * $Info.Scale)), $y)
+}
+
+function Format-Window {
+    param($Info)
+    if (-not $Info) { return "no window" }
+    "client area $($Info.Width)x$($Info.Height) at ($($Info.Left),$($Info.Top)), minimized $($Info.Minimized), maximized $($Info.Maximized)"
+}
+
+# Press a part of the title bar after the pointer has rested on it, and say
+# where. A button that answers only right after the pointer moved fails here.
+function Send-TitleBarClick {
+    param([string]$What, [switch]$Double)
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info -or $info.Minimized) { throw "the app has no window on screen to click in: $(Format-Window $info)" }
+    $x, $y = Get-TitleBarPoint $info $What
+    Send-RestedClick -X $x -Y $y -Double:$Double
+    Wait-For 3
+    "($x,$y)"
+}
+
+$windowAtStart = $null
+Test-Case "W0" "The window opens clear of the taskbar" "the whole window is inside the part of the screen the taskbar leaves free" {
+    if ($starved) { throw "the guest is too busy to be driven (P1)" }
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 12
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $script:windowAtStart = $info
+    # A window's unseen border may reach a few pixels past an edge.
+    $slack = [int](8 * $info.Scale)
+    $inside = $info.Outer.Top -ge $info.Free.Top - $slack -and $info.Outer.Bottom -le $info.Free.Bottom + $slack -and
+        $info.Outer.Left -ge $info.Free.Left - $slack -and $info.Outer.Right -le $info.Free.Right + $slack
+    Add-Result -Id "W0" -Title "The window opens clear of the taskbar" -Expect "the whole window is inside the free part of the screen" `
+        -Status $(if ($inside -and -not $info.Maximized) { "pass" } else { "fail" }) -Shots @(Shot "window-at-start") `
+        -Observed "screen $($info.Screen.Width)x$($info.Screen.Height) at $([int]($info.Scale * 100)) percent; free of the taskbar: ($($info.Free.Left),$($info.Free.Top)) to ($($info.Free.Right),$($info.Free.Bottom)); the window: ($($info.Outer.Left),$($info.Outer.Top)) to ($($info.Outer.Right),$($info.Outer.Bottom)); $(Format-Window $info)"
+}
+
+Test-Case "W1" "Minimize button" "a click on it, after the pointer has rested there, minimizes the window" {
+    $at = Send-TitleBarClick "minimize"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    Add-Result -Id "W1" -Title "Minimize button" -Expect "the window is minimized" `
+        -Status $(if ($info -and $info.Minimized) { "pass" } else { "fail" }) -Shots @(Shot "window-minimized") `
+        -Observed "pointer rested 1.5 s at $at, then one click; after it: $(Format-Window $info)"
+}
+
+Test-Case "W2" "Back from minimized" "Alt+Tab brings the window back at its old size, with its page drawn" {
+    Send-Keys "alt+tab"; Wait-For 4
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if ($info -and $info.Minimized) {
+        Send-Keys "alt+tab"; Wait-For 4
+        $info = Get-GuestWindowInfo "codewiki-app"
+    }
+    $same = $info -and -not $info.Minimized -and $windowAtStart -and $info.Width -eq $windowAtStart.Width -and $info.Height -eq $windowAtStart.Height
+    Add-Result -Id "W2" -Title "Back from minimized" -Expect "the window is back at its old size; read the screenshot for the page" `
+        -Status $(if ($same) { "pass" } else { "fail" }) -Shots @(Shot "window-restored") `
+        -Observed "after Alt+Tab: $(Format-Window $info); at the start: $(Format-Window $windowAtStart)"
+}
+
+Test-Case "W3" "Maximize button" "a click on it fills the free part of the screen and leaves the taskbar in view" {
+    $at = Send-TitleBarClick "maximize"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $fills = $info -and $info.Maximized -and $info.Width -eq ($info.Free.Right - $info.Free.Left) -and $info.Bottom -le $info.Free.Bottom
+    Add-Result -Id "W3" -Title "Maximize button" -Expect "maximized, as wide as the screen, not over the taskbar" `
+        -Status $(if ($fills) { "pass" } else { "fail" }) -Shots @(Shot "window-maximized") `
+        -Observed "pointer rested 1.5 s at $at, then one click; after it: $(Format-Window $info); free of the taskbar: ($($info.Free.Left),$($info.Free.Top)) to ($($info.Free.Right),$($info.Free.Bottom))"
+}
+
+Test-Case "W4" "Restore button" "a click on the same button puts the window back at its old size" {
+    $at = Send-TitleBarClick "maximize"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $back = $info -and -not $info.Maximized -and $windowAtStart -and $info.Width -eq $windowAtStart.Width -and $info.Height -eq $windowAtStart.Height
+    Add-Result -Id "W4" -Title "Restore button" -Expect "not maximized, old size" `
+        -Status $(if ($back) { "pass" } else { "fail" }) -Shots @(Shot "window-unmaximized") `
+        -Observed "pointer rested 1.5 s at $at, then one click; after it: $(Format-Window $info)"
+}
+
+Test-Case "W5" "Double-click on the title bar" "it maximizes the window, and a second one restores it" {
+    $at = Send-TitleBarClick "caption" -Double
+    $first = Get-GuestWindowInfo "codewiki-app"
+    $shot = Shot "window-double-click"
+    $at2 = Send-TitleBarClick "caption" -Double
+    $second = Get-GuestWindowInfo "codewiki-app"
+    $ok = $first -and $first.Maximized -and $second -and -not $second.Maximized
+    Add-Result -Id "W5" -Title "Double-click on the title bar" -Expect "maximized, then restored" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "double-click at $at, after a rest: $(Format-Window $first); again at ${at2}: $(Format-Window $second)"
+}
+
+Test-Case "W6" "Close button" "a click on it ends the app, and the backend with it" {
+    $at = Send-TitleBarClick "close"
+    $shot = Shot "window-closed"
+    $deadline = (Get-Date).AddSeconds(40)
+    do {
+        $probe = Get-Probe "window-closed" -Quick
+        $apps = (Get-App $probe).Count
+        $backends = (Get-Backend $probe).Count
+        if ($apps + $backends -gt 0) { Start-Sleep -Seconds 3 }
+    } while ($apps + $backends -gt 0 -and (Get-Date) -lt $deadline)
+    Add-Result -Id "W6" -Title "Close button" -Expect "no codewiki-app and no codewiki process is left" `
+        -Status $(if ($apps -eq 0 -and $backends -eq 0) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "pointer rested 1.5 s at $at, then one click; left running: $apps app, $backends backend; backend.json left: $([bool]$probe.backend)"
+    if ($apps) { Stop-GuestApp }
+}
+
+Test-Case "W7" "Close with unsaved edits" "the window stays open and says to save or discard" {
+    if (-not $noteName) { throw "D2 produced no note to edit" }
+    # W6 closed the app, and the backend with it: this start brings up a new
+    # backend first, so the editor needs longer to open than in G3.
+    Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
+    Wait-For 25
+    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-For 1
+    Send-Text "unsavedmarker "; Wait-For 3
+    $typed = Shot "unsaved-edits-typed"
+    $at = Send-TitleBarClick "close"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $shot = Shot "close-with-unsaved-edits"
+    $run = Invoke-GuestScript -Script "(Get-ChildItem '$guestRepo\obsidian' -Recurse -Filter *.md | Select-String -Pattern 'unsavedmarker' -List | ForEach-Object { `$_.Path }) -join ', '"
+    Add-Result -Id "W7" -Title "Close with unsaved edits" -Expect "the window is still open; nothing was written" `
+        -Status $(if ($info -and -not $run.Output.Trim()) { "pass" } else { "fail" }) -Shots @($typed, $shot) `
+        -Observed "typed into the editor, then clicked close at ${at}: $(Format-Window $info); the typed text in a file: $(if ($run.Output.Trim()) { $run.Output.Trim() } else { 'no' }); the first screenshot must show the typed text and the Save button, the second the message"
+    Stop-GuestApp
+}
+
 # ---------------------------------------------------------------- F, pages
 $views = @(
     @{ name = "home"; args = @($guestRepo) }
+    @{ name = "wiki-map"; args = @($guestRepo, "_HOME") }
     @{ name = "note"; args = @($guestRepo, $noteName) }
     @{ name = "graph"; args = @($guestRepo, "graph:") }
     @{ name = "health"; args = @($guestRepo, "health:") }
@@ -533,9 +691,24 @@ Test-Case "L1" "The app writes a log" "logs\app.log names the graphics adapter" 
         -Observed $(if ($adapter) { "adapter: $adapter" } else { "no adapter line in app.log" })
 }
 
+# An installed app asks GitHub for the latest release once a day when it
+# starts. It writes update_checked.txt only when GitHub answered.
+Test-Case "U1" "Update check against GitHub" "GitHub answers; with nothing newer published, nothing is offered" {
+    $run = Invoke-GuestScript -Script @'
+"checked: $(Test-Path "$env:APPDATA\CodeWiki\update_checked.txt")"
+"switch: $(if (Test-Path "$env:APPDATA\CodeWiki\update_check.txt") { Get-Content "$env:APPDATA\CodeWiki\update_check.txt" -Raw } else { '(not set)' })"
+Get-Content "$env:LOCALAPPDATA\CodeWiki\logs\app.log" -ErrorAction SilentlyContinue | Select-String 'update|GitHub|release' | Select-Object -Last 6 | ForEach-Object { $_.Line }
+'@
+    $checked = $run.Output -match "checked: True"
+    Add-Result -Id "U1" -Title "Update check against GitHub" -Expect "update_checked.txt is written: GitHub answered" `
+        -Status $(if ($checked) { "pass" } else { "note" }) -Output $run.Output `
+        -Observed $(if ($checked) { "GitHub answered the check; the Settings screenshot (F1-settings) shows what the app made of it" } else { "no answer from GitHub was recorded; the guest may have no network. See the output" })
+}
+
 # ---------------------------------------------------------------- G, keyboard
 Test-Case "G1" "Palette by keyboard" "Ctrl+K opens it, typing filters, Enter runs, Escape closes" {
-    Start-GuestApp -Arguments $guestRepo
+    # On the wiki map, which has the toolbar and tabs that G2 and N1 use; Home has neither.
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
     Wait-For 15
     $a = Shot "keys-before"
     Send-Keys "ctrl+k"; Wait-For 2
@@ -633,6 +806,103 @@ Test-Case "H2" "Theme is remembered" "a theme chosen through the palette is stil
         -Observed "theme.txt before: '$before', after: '$after'"
 }
 
+# ---------------------------------------------------------------- T, theme menu
+$readTheme = "if (Test-Path `$env:APPDATA\CodeWiki\theme.txt) { Get-Content `$env:APPDATA\CodeWiki\theme.txt -Raw } else { '(no file)' }"
+Test-Case "T1" "Theme menu by keyboard" "the menu hangs under the toolbar's theme button; Down and Enter choose the next theme" {
+    $before = (Invoke-GuestScript -Script $readTheme).Output
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 12
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "choose theme"; Wait-For 2
+    Send-Keys "enter"; Wait-For 3
+    $a = Shot "theme-menu-open"
+    Send-Keys "down"; Wait-For 1
+    Send-Keys "enter"; Wait-For 4
+    $b = Shot "theme-menu-chosen"
+    $after = (Invoke-GuestScript -Script $readTheme).Output
+    Stop-GuestApp
+    Add-Result -Id "T1" -Title "Theme menu by keyboard" -Expect "theme.txt names the next theme" `
+        -Status $(if ($after -ne $before -and $after -ne "(no file)") { "pass" } else { "fail" }) -Shots @($a, $b) `
+        -Observed "palette: 'choose theme', Enter; then Down, Enter; theme.txt before: '$before', after: '$after'"
+}
+
+Test-Case "T2" "Theme menu on Home" "Home has no toolbar; the menu hangs from the window's top right corner and still chooses" {
+    $before = (Invoke-GuestScript -Script $readTheme).Output
+    Start-GuestApp -Arguments $guestRepo
+    Wait-For 12
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "choose theme"; Wait-For 2
+    Send-Keys "enter"; Wait-For 3
+    $a = Shot "theme-menu-on-home"
+    Send-Keys "down"; Wait-For 1
+    Send-Keys "enter"; Wait-For 4
+    $b = Shot "theme-menu-on-home-chosen"
+    $after = (Invoke-GuestScript -Script $readTheme).Output
+    Stop-GuestApp
+    Add-Result -Id "T2" -Title "Theme menu on Home" -Expect "theme.txt names the next theme; read the screenshot for where the menu hangs" `
+        -Status $(if ($after -ne $before -and $after -ne "(no file)") { "pass" } else { "fail" }) -Shots @($a, $b) `
+        -Observed "on Home, palette: 'choose theme', Enter; then Down, Enter; theme.txt before: '$before', after: '$after'"
+}
+
+# ---------------------------------------------------------------- HM, Home
+# A folder can be away for a while (a drive, a share). The project must stay
+# registered and be listed apart, not be forgotten.
+Test-Case "HM1" "A project whose folder is gone stays on Home" "it is still registered and Home lists it under 'Folder not found'" {
+    $gone = "$guestHome\repos\gone-demo"
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force '$gone\.git' | Out-Null; Set-Content '$gone\lib.rs' 'pub fn demo() {}'" | Out-Null
+    Start-GuestApp -Arguments $gone
+    Wait-For 12
+    Stop-GuestApp
+    Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$gone'" | Out-Null
+    Start-GuestApp -Arguments $guestRepo
+    Wait-For 12
+    $shot = Shot "home-folder-not-found"
+    $probe = Get-Probe "home-folder-not-found" -Quick
+    $entry = @(Get-Registered $probe | Where-Object { $_.name -eq "gone-demo" })
+    Add-Result -Id "HM1" -Title "A project whose folder is gone stays on Home" -Expect "gone-demo is still registered, marked as not present" `
+        -Status $(if ($entry.Count -eq 1 -and $entry[0].present -eq $false) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "registered a folder, deleted it, started the app on another project; the backend lists: $((Get-Registered $probe | ForEach-Object { "$($_.name) (present $($_.present))" }) -join ', '); read the screenshot for the heading and the Remove button"
+}
+
+Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes it off the list" {
+    # Where Remove is with one recent project and one missing, read off the
+    # screenshot "home-folder-not-found": from the client area's top right corner.
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $x = $info.Right - [int](284 * $info.Scale); $y = $info.Top + [int](566 * $info.Scale)
+    Send-RestedClick -X $x -Y $y
+    Wait-For 5
+    $shot = Shot "home-project-removed"
+    $probe = Get-Probe "home-project-removed" -Quick
+    $left = @(Get-Registered $probe | Where-Object { $_.name -eq "gone-demo" })
+    Stop-GuestApp
+    Add-Result -Id "HM2" -Title "Remove a project whose folder is gone" -Expect "gone-demo is no longer registered; cw-core is" `
+        -Status $(if ($left.Count -eq 0 -and (Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "clicked Remove at ($x,$y); the backend now lists: $((Get-Registered $probe | ForEach-Object { $_.name }) -join ', ')"
+}
+
+# ---------------------------------------------------------------- IC, icon
+Test-Case "IC1" "The program carries the app's icon" "codewiki-app.exe holds icon group 1, which Windows shows for the file, the shortcut and the taskbar" {
+    $run = Invoke-GuestScript -Script @"
+Add-Type -Namespace VmTest -Name Res -MemberDefinition '
+[DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] public static extern IntPtr LoadLibraryEx(string file, IntPtr reserved, uint flags);
+[DllImport("kernel32.dll")] public static extern IntPtr FindResource(IntPtr module, IntPtr name, IntPtr type);
+[DllImport("kernel32.dll")] public static extern uint SizeofResource(IntPtr module, IntPtr resource);
+[DllImport("kernel32.dll")] public static extern bool FreeLibrary(IntPtr module);'
+foreach (`$name in 'codewiki-app.exe', 'codewiki.exe') {
+    # 2: load as a data file. 14: RT_GROUP_ICON.
+    `$module = [VmTest.Res]::LoadLibraryEx((Join-Path '$guestTarget' `$name), [IntPtr]::Zero, 2)
+    `$group = [VmTest.Res]::FindResource(`$module, [IntPtr]1, [IntPtr]14)
+    "`$name icon group 1: `$(`$group -ne [IntPtr]::Zero), `$([VmTest.Res]::SizeofResource(`$module, `$group)) bytes"
+    [void][VmTest.Res]::FreeLibrary(`$module)
+}
+"@
+    $has = $run.Output -match "codewiki-app\.exe icon group 1: True"
+    Add-Result -Id "IC1" -Title "The program carries the app's icon" -Expect "codewiki-app.exe holds icon group 1" `
+        -Status $(if ($has) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join '; '); the icon on screen is in the Start menu and taskbar screenshots"
+}
+
 # ---------------------------------------------------------------- I, reboot
 Test-Case "I1" "Restart Windows" "nothing of CodeWiki starts by itself; PATH kept; the app starts again" {
     # Shut down and start again; the recording repeats its last picture meanwhile.
@@ -705,6 +975,63 @@ Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and setting
     Add-Result -Id "K2" -Title "Reinstall, then uninstall with -PurgeData" -Expect "the data and settings folders are removed" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Output ($install.Stdout + "`n" + $install.Stderr + "`n" + $run.Stdout + "`n" + $run.Stderr).Trim() `
         -Observed "install exit $($install.ExitCode), uninstall exit $($run.ExitCode); files left in %LOCALAPPDATA%\CodeWiki: $dataLeft; left in %APPDATA%\CodeWiki: $(if ($prefsLeft) { $prefsLeft -join ', ' } else { 'nothing' })"
+}
+
+# ---------------------------------------------------------------- U2, self-update
+if ($OldZip) {
+    Test-Case "U2" "The app updates itself" "an older installed version is offered the newer one, installs it and comes back as it" {
+        $oldVersion = Get-ZipVersion $OldZip
+        $newVersion = Get-ZipVersion $Zip
+        $guestOld = "$guestHome\Downloads\old"
+        $cmd = "C:\Windows\System32\cmd.exe"
+        $version = "(& '$guestTarget\codewiki.exe' --version 2>&1 | Out-String).Trim()"
+        New-GuestDirectory $guestOld
+        Copy-ToGuest -Path $OldZip -GuestDirectory $guestOld
+        Invoke-GuestScript -Script "Expand-Archive -Path '$guestOld\$(Split-Path -Leaf $OldZip)' -DestinationPath '$guestOld\CodeWiki' -Force" | Out-Null
+        $install = Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestOld\CodeWiki\install.cmd"
+        $was = (Invoke-GuestScript -Script $version).Output.Trim()
+        $serve = "$($script:Vm.GuestDir)\update"
+        if (-not $RealRelease) {
+            # The stand-in for GitHub: it serves the package under test.
+            New-GuestDirectory $serve
+            Copy-ToGuest -Path $Zip -GuestDirectory $serve
+            Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\update-server.ps1") -GuestDirectory $script:Vm.GuestDir
+            Invoke-GuestScript -Script @"
+`$zip = Get-ChildItem '$serve' -Filter 'CodeWiki-*-windows-x64.zip' | Select-Object -First 1
+`$hash = (Get-FileHash -Algorithm SHA256 `$zip.FullName).Hash.ToLowerInvariant()
+[System.IO.File]::WriteAllText(`$zip.FullName + '.sha256', `$hash + '  ' + `$zip.Name + [char]10)
+[Environment]::SetEnvironmentVariable('CODEWIKI_UPDATE_URL', 'http://localhost:8765', 'User')
+"@ | Out-Null
+            Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\update-server.ps1", "-Folder", $serve
+            Wait-For 6
+        }
+        # The app checks when it starts; Home then offers the update.
+        Start-GuestApp -Arguments $guestRepo
+        Wait-For 25
+        $a = Shot "update-offered"
+        Send-Keys "ctrl+k"; Wait-For 2
+        Send-Text "update codewiki"; Wait-For 3
+        $b = Shot "update-in-palette"
+        Send-Keys "enter"
+        Wait-For 75
+        $c = Shot "update-done"
+        $now = (Invoke-GuestScript -Script $version).Output.Trim()
+        $probe = Get-Probe "updated" -Quick
+        $window = @(Get-App $probe | Where-Object { $_.hasWindow })
+        $left = (Invoke-GuestScript -Script "(Get-ChildItem '$guestTarget' -Recurse -Force | Where-Object { `$_.Name -match '\.old\d*$' -or `$_.Name -eq '.update' } | ForEach-Object { `$_.Name }) -join ', '").Output.Trim()
+        $asked = ""
+        if (-not $RealRelease) {
+            $asked = (Invoke-GuestScript -Script "Get-Content '$serve\requests.log' -ErrorAction SilentlyContinue | Select-Object -Last 12").Output
+            Invoke-GuestScript -Script "[Environment]::SetEnvironmentVariable('CODEWIKI_UPDATE_URL', `$null, 'User'); try { Invoke-WebRequest -UseBasicParsing 'http://localhost:8765/stop' | Out-Null } catch { }" | Out-Null
+        }
+        $log = (Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'update|ERROR|WARN' | Select-Object -Last 12 | ForEach-Object { `$_.Line }").Output
+        $ok = $install.ExitCode -eq 0 -and $was -match [regex]::Escape($oldVersion) -and $now -match [regex]::Escape($newVersion) -and $window.Count -eq 1 -and -not $left
+        Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) -Output ("requests the stand-in saw:`n" + $asked + "`n--- app.log`n" + $log).Trim() `
+            -Observed "installed $oldVersion (exit $($install.ExitCode)), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
+        Stop-GuestApp
+        Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+    }
 }
 
 Test-Case "M1" "Windows event log" "no crash of a CodeWiki program was logged" {

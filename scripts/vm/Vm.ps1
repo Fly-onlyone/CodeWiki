@@ -39,7 +39,11 @@ function Initialize-Vm {
     if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
         throw "the Hyper-V PowerShell module is missing; turn on the Windows feature 'Hyper-V'"
     }
-    $secret = ConvertTo-SecureString $Password -AsPlainText -Force
+    # A guest account may have no password; ConvertTo-SecureString refuses an
+    # empty text. Such a guest must also allow a blank password over
+    # PowerShell Direct: HKLM\SYSTEM\CurrentControlSet\Control\Lsa,
+    # LimitBlankPasswordUse = 0.
+    $secret = if ($Password) { ConvertTo-SecureString $Password -AsPlainText -Force } else { [securestring]::new() }
     $script:Vm = @{
         Name       = $Name
         User       = $User
@@ -173,7 +177,9 @@ function Start-GuestExe {
         $line = (@($arguments) | Where-Object { $null -ne $_ } | ForEach-Object {
                 if ($_ -match '[\s"]') { '"' + ($_ -replace '"', '\"') + '"' } else { $_ }
             }) -join " "
-        $options = @{ Execute = $exe }
+        # Task Scheduler cuts an unquoted path at its first space
+        # (C:\Users\Software Tester\...).
+        $options = @{ Execute = if ($exe -match '\s') { '"' + $exe + '"' } else { $exe } }
         if ($line) { $options.Argument = $line }
         if ($directory) { $options.WorkingDirectory = $directory }
         $action = New-ScheduledTaskAction @options
@@ -218,6 +224,83 @@ if (`$process) {
     Send-Click -X ([int](($window.Left + $window.Right) / 2)) -Y ($window.Top + 10)
     $window
 }
+# Where a program's main window is and what state it is in, without touching
+# it: the client area in screen pixels (what the app draws in; a click point
+# is measured from it), whether the window is minimized or maximized, and the
+# part of the screen the taskbar leaves free. Returns null when the program
+# has no window.
+function Get-GuestWindowInfo {
+    param([Parameter(Mandatory)][string]$ProcessName)
+    $run = Invoke-GuestScript -TimeoutSec 60 -Script @"
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -Namespace VmTest -Name State -MemberDefinition '
+[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+[StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
+[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr window);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);'
+# Without this, a scaled screen gives scaled numbers, and clicks miss.
+[void][VmTest.State]::SetProcessDPIAware()
+`$process = Get-Process '$ProcessName' -ErrorAction SilentlyContinue | Where-Object { `$_.MainWindowHandle -ne 0 } | Select-Object -First 1
+if (`$process) {
+    `$h = `$process.MainWindowHandle
+    `$client = New-Object VmTest.State+Rect
+    `$outer = New-Object VmTest.State+Rect
+    `$origin = New-Object VmTest.State+Point
+    [void][VmTest.State]::GetClientRect(`$h, [ref]`$client)
+    [void][VmTest.State]::GetWindowRect(`$h, [ref]`$outer)
+    [void][VmTest.State]::ClientToScreen(`$h, [ref]`$origin)
+    `$free = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    `$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    "info=`$(`$origin.X),`$(`$origin.Y),`$(`$client.Right),`$(`$client.Bottom);`$(`$outer.Left),`$(`$outer.Top),`$(`$outer.Right),`$(`$outer.Bottom);`$([int][VmTest.State]::IsIconic(`$h)),`$([int][VmTest.State]::IsZoomed(`$h)),`$([int]([VmTest.State]::GetForegroundWindow() -eq `$h));`$([VmTest.State]::GetDpiForWindow(`$h));`$(`$free.Left),`$(`$free.Top),`$(`$free.Right),`$(`$free.Bottom);`$(`$screen.Width),`$(`$screen.Height)"
+} else { "info=none" }
+"@
+    if ($run.Output -notmatch 'info=(-?\d+),(-?\d+),(-?\d+),(-?\d+);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d),(\d),(\d);(\d+);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d+),(\d+)') {
+        if ($run.Output -match 'info=none') { return $null }
+        throw "could not read the window of '$ProcessName': $($run.Output) $($run.Stderr)"
+    }
+    $m = $Matches
+    [pscustomobject]@{
+        # The client area, in screen pixels.
+        Left = [int]$m[1]; Top = [int]$m[2]; Width = [int]$m[3]; Height = [int]$m[4]
+        Right = [int]$m[1] + [int]$m[3]; Bottom = [int]$m[2] + [int]$m[4]
+        # The whole window, borders that are not drawn included.
+        Outer = [pscustomobject]@{ Left = [int]$m[5]; Top = [int]$m[6]; Right = [int]$m[7]; Bottom = [int]$m[8] }
+        Minimized = $m[9] -eq "1"; Maximized = $m[10] -eq "1"; Foreground = $m[11] -eq "1"
+        Scale = [int]$m[12] / 96.0
+        # What the taskbar leaves free, and the whole screen.
+        Free = [pscustomobject]@{ Left = [int]$m[13]; Top = [int]$m[14]; Right = [int]$m[15]; Bottom = [int]$m[16] }
+        Screen = [pscustomobject]@{ Width = [int]$m[17]; Height = [int]$m[18] }
+    }
+}
+
+# Click the way a person does who has stopped the pointer on a control first:
+# move there, rest, then press without moving. A click that follows its own
+# pointer move at once reaches a control that has only just been redrawn for
+# the hover, and so cannot show a control that stops answering while the
+# pointer rests on it (the title bar's buttons once did).
+function Send-RestedClick {
+    param(
+        [Parameter(Mandatory)][int]$X,
+        [Parameter(Mandatory)][int]$Y,
+        [double]$RestSeconds = 1.5,
+        [switch]$Double
+    )
+    Move-Pointer -X $X -Y $Y
+    Start-Sleep -Milliseconds ([int]($RestSeconds * 1000))
+    Invoke-Device Mouse ClickButton @{ ButtonIndex = [uint32]1 }
+    if ($Double) {
+        Start-Sleep -Milliseconds 80
+        Invoke-Device Mouse ClickButton @{ ButtonIndex = [uint32]1 }
+    }
+    Start-Sleep -Milliseconds 300
+}
+
 function New-GuestDirectory {
     param([Parameter(Mandatory)][string]$GuestPath)
     Invoke-InGuest -ArgumentList $GuestPath -ScriptBlock {

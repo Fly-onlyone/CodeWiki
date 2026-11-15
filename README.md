@@ -6,7 +6,7 @@ A native Windows app and a Rust backend that write and maintain a wiki for a cod
 
 The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives in the repository, so it is versioned with the code and readable without CodeWiki.
 
-> Status: pre-release, version 0.1.0. See `ROADMAP.md` for what is verified and what is not.
+> Status: version 0.1.0, the first release. See `ROADMAP.md` for what is verified and what is not.
 
 ## What it does
 
@@ -32,19 +32,21 @@ The app and the MCP program start a local backend when none is running, or conne
 
 ## Install
 
-Requires Windows 11, Rust 1.95 or newer and the MSVC toolchain.
+Requires Windows 11. Download `CodeWiki-<version>-windows-x64.zip` from the [latest release](https://github.com/Fly-onlyone/CodeWiki/releases/latest); the `.sha256` file beside it holds its checksum. Unpack it and double-click `install.cmd`. It copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.cmd` in that folder reverses it; `uninstall.cmd -PurgeData` also deletes the index, the logs and the settings.
+
+To build the same zip from source, with Rust 1.95 or newer and the MSVC toolchain:
 
 ```
 pwsh scripts\package.ps1
 ```
 
-This builds the three programs and writes `dist\CodeWiki-<version>-windows-x64.zip`. Each released version publishes the same zip, with a `.sha256` file beside it, on the repository's Releases page. Unpack it and double-click `install.cmd`; it copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.cmd` in that folder reverses it; `uninstall.cmd -PurgeData` also deletes the index, the logs and the settings.
+It writes `dist\CodeWiki-<version>-windows-x64.zip`.
 
 The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to run directly unless scripts have been allowed. From a terminal, `powershell -ExecutionPolicy Bypass -File install.ps1` does the same.
 
 ### Updates
 
-An installed app updates itself. Once a day, when it starts, it asks GitHub for the latest release; when there is a newer one, the toolbar shows "Update to <version>". One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
+An installed app updates itself. Once a day, when it starts, it asks GitHub for the latest release; when there is a newer one, the toolbar and Home show "Update to <version>". One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
 
 The backend is stopped first and a new one starts with the new app. A coding agent's MCP bridge that is running keeps working and reaches the new backend on its next call; restarting the agent's session gives it the new bridge too. If anything goes wrong, the app says what and leaves the installation as it was. Pre-releases are never offered, and a copy that was only unpacked, or built from source, does not update itself.
 
@@ -59,9 +61,9 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. From the Start menu it reopens the repository used last, or asks for a folder. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
 
-The app and the backend it starts write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`). Set `CODEWIKI_LOG=debug` for more.
+Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app and the backend it starts write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`). Set `CODEWIKI_LOG=debug` for more.
 
 ### With an LLM
 

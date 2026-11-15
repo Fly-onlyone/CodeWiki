@@ -76,6 +76,10 @@ const THEME_MENU_WIDTH: f32 = 340.0;
 const THEME_MARK: f32 = 18.0;
 /// Between the window's top right corner and a menu that hangs from it.
 const MENU_CORNER_GAP: f32 = 12.0;
+/// How often, and how long apart, the app looks again for what an update
+/// left behind and could not delete at once.
+const CLEANUP_RETRIES: usize = 3;
+const CLEANUP_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
 /// The smallest window: the sidebar, the details pane, and a reading pane
 /// about as wide as the two together.
 const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
@@ -457,17 +461,37 @@ impl AppView {
             update::State::Idle
         };
         cx.spawn(async move |this, cx| {
-            let found = cx
-                .background_executor()
-                .spawn(async move {
-                    for line in cw_update::recover_and_clean(&install) {
-                        log::info!("update: {line}");
+            let executor = cx.background_executor().clone();
+            let found = executor
+                .spawn({
+                    let install = install.clone();
+                    async move {
+                        for line in cw_update::recover_and_clean(&install) {
+                            log::info!("update: {line}");
+                        }
+                        check.then(update::check)
                     }
-                    check.then(update::check)
                 })
                 .await;
             if let Some(found) = found {
                 _ = this.update(cx, |this, cx| this.show_check(found, cx));
+            }
+            // Right after an update, the app this one replaced is still
+            // ending, and Windows does not delete a program that runs. Clean
+            // up once more when it has had time to go.
+            for _ in 0..CLEANUP_RETRIES {
+                if cw_update::leftovers(&install).is_empty() {
+                    break;
+                }
+                executor.timer(CLEANUP_PAUSE).await;
+                let install = install.clone();
+                executor
+                    .spawn(async move {
+                        for line in cw_update::recover_and_clean(&install) {
+                            log::info!("update: {line}");
+                        }
+                    })
+                    .await;
             }
         })
         .detach();

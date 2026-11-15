@@ -253,6 +253,22 @@ pub fn recover_and_clean(install: &Path) -> Vec<String> {
     report
 }
 
+/// What [`recover_and_clean`] has still to delete: the `.old` entries and the
+/// `.update` folder, by name. A program that is still running cannot be
+/// deleted, so right after an update the app it replaced is usually left.
+pub fn leftovers(install: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(install) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| replaced_name(name).is_some() || name == UPDATE_DIR)
+        .collect();
+    names.sort();
+    names
+}
+
 /// For `codewiki.exe.old` or `codewiki.exe.old2`, the name it replaced.
 fn replaced_name(file_name: &str) -> Option<&str> {
     let (name, suffix) = file_name.rsplit_once(".old")?;
@@ -334,8 +350,21 @@ mod tests {
         assert!(crate::is_installation(&install));
         assert!(!journal_path(&install).exists());
 
+        assert_eq!(
+            leftovers(&install),
+            [
+                ".update",
+                "codewiki-app.exe.old",
+                "codewiki-mcp.exe.old",
+                "codewiki.exe.old",
+                "plugins.old",
+                "uninstall.ps1.old"
+            ]
+        );
+
         // The next start deletes what was set aside.
         let report = recover_and_clean(&install);
+        assert!(leftovers(&install).is_empty());
         assert!(
             report.iter().any(|line| line == "deleted codewiki.exe.old"),
             "{report:?}"

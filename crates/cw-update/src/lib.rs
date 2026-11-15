@@ -27,7 +27,7 @@ pub use download::download;
 pub use release::{Check, Release, check};
 pub use semver::Version;
 pub use stage::{program_version, stage};
-pub use swap::{recover_and_clean, swap};
+pub use swap::{leftovers, recover_and_clean, swap};
 
 /// GitHub repository whose releases are offered.
 pub const REPOSITORY: &str = "Fly-onlyone/CodeWiki";

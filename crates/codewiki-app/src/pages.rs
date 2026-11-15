@@ -292,6 +292,26 @@ pub fn settings_page(
             ]),
         ],
     });
+    doc.push(Block::Card {
+        title: "Logs".into(),
+        chips: Vec::new(),
+        body: vec![
+            Block::Setting {
+                label: "Folder".into(),
+                value: cw_core::logs::dir().display().to_string(),
+                button: Some(("Open logs folder".into(), Action::OpenLogs)),
+            },
+            Block::Text(vec![
+                text("Attach "),
+                code("app.log"),
+                text(" and "),
+                code("backend.log"),
+                text(" to a bug report; they name the folders you open. Set "),
+                code("CODEWIKI_LOG=debug"),
+                text(" before starting the app to keep more."),
+            ]),
+        ],
+    });
     let mut repositories = Table::new([
         Column::new("Repository").weight(0.6),
         Column::new("Folder").weight(1.6),
@@ -1042,9 +1062,11 @@ mod tests {
         assert!(words.contains("Connected to http://127.0.0.1:7411."));
         assert!(words.contains("demo | C:/demo"));
         assert!(words.contains("Ctrl+K | Command palette"));
+        assert!(words.contains("Attach app.log and backend.log to a bug report"));
         // One choice per setting, each carrying the value it sets.
         let actions = settings.actions();
         assert_eq!(actions[0], Action::Themes);
+        assert!(actions.contains(&Action::OpenLogs));
         for pref in MotionPref::ALL {
             assert!(actions.contains(&Action::Motion(pref)));
         }

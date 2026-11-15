@@ -228,11 +228,12 @@ pub fn init(name: &str, default: LevelFilter) -> Option<PathBuf> {
         log::error!(target: "panic", "{info}");
         previous(info);
     }));
+    // `scripts/vm/test-release.ps1` finds the start by "started with".
     log::info!(
-        "{name} {} started (pid {}) with {:?}; logs in {}",
+        "{name} {} started with {:?} (pid {}); logs in {}",
         crate::VERSION,
-        std::process::id(),
         std::env::args().skip(1).collect::<Vec<_>>(),
+        std::process::id(),
         dir().display()
     );
     writing.then_some(path)

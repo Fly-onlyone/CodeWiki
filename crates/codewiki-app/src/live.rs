@@ -487,12 +487,17 @@ fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a
 
 /// The page shown when no backend could be reached: where its log is, and a
 /// button that tries again.
-pub fn offline_page(log: &str) -> Doc {
+pub fn offline_page(log: &str, logs: &str) -> Doc {
     let mut doc = message_page("The backend is not reachable.");
     doc.push(Block::Setting {
         label: "Backend log".into(),
         value: log.into(),
         button: Some(("Try again".into(), Action::Reconnect)),
+    });
+    doc.push(Block::Setting {
+        label: "Logs folder".into(),
+        value: logs.into(),
+        button: Some(("Open logs folder".into(), Action::OpenLogs)),
     });
     doc
 }
@@ -504,10 +509,11 @@ mod tests {
 
     #[test]
     fn the_offline_page_names_the_log_and_offers_to_try_again() {
-        let page = offline_page(r"C:\data\logs\backend.log");
+        let page = offline_page(r"C:\data\logs\backend.log", r"C:\data\logs");
         assert!(page.words().contains("not reachable"));
         assert!(page.words().contains(r"C:\data\logs\backend.log"));
-        assert_eq!(page.actions(), [Action::Reconnect]);
+        assert!(page.words().contains(r"Logs folder: C:\data\logs"));
+        assert_eq!(page.actions(), [Action::Reconnect, Action::OpenLogs]);
     }
 
     fn home<'a>(projects: &'a [Project<'a>], recent: &'a [String]) -> HomeInput<'a> {

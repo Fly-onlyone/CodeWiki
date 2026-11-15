@@ -71,7 +71,13 @@ impl Base {
             hovered: false,
             pressed: false,
             waves: Vec::new(),
-            focus: cx.focus_handle(),
+            // A tab stop is made on the handle. GPUI takes `tab_stop` and
+            // `tab_index` from an element only for a handle it creates
+            // itself; for one that is tracked, as here, it reads the
+            // handle's own, which are off unless set. Without this no
+            // control was a tab stop, and Tab went to the search box, the
+            // one stop in the window, and stayed.
+            focus: cx.focus_handle().tab_index(0).tab_stop(true),
         });
         let now = Instant::now();
         let moving = state.update(cx, |touch, _| {
@@ -120,8 +126,6 @@ impl Base {
         );
         element
             .track_focus(&focus)
-            .tab_index(0)
-            .tab_stop(true)
             .cursor_pointer()
             .on_hover(move |hovered, _, cx| {
                 hover.update(cx, |touch, cx| {

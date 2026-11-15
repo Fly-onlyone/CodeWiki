@@ -22,7 +22,7 @@ fn write(root: &Path, rel: &str, text: &str) {
 
 struct Harness {
     app: Router,
-    _data: tempfile::TempDir,
+    data: tempfile::TempDir,
     repo: tempfile::TempDir,
 }
 
@@ -55,11 +55,7 @@ impl Harness {
             token: TOKEN.into(),
             webhook_secret: secret.map(str::to_string),
         });
-        Self {
-            app,
-            _data: data,
-            repo,
-        }
+        Self { app, data, repo }
     }
 
     async fn call(
@@ -214,6 +210,39 @@ async fn shutdown_route_ends_serve() {
         matches!(ended, Ok(Ok(Ok(())))),
         "serve did not end: {ended:?}"
     );
+}
+
+#[tokio::test]
+async fn the_repository_list_says_whether_each_folder_is_there() {
+    let h = Harness::new();
+    let gone = tempfile::tempdir().unwrap();
+    let (here_id, _) = h.register(h.repo.path()).await;
+    let (gone_id, _) = h.register(gone.path()).await;
+    drop(gone);
+
+    let listed = h.get("/v1/repos").await;
+    let present = |id: &str| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .unwrap_or_else(|| panic!("{id} is not listed: {listed}"))["present"]
+            .clone()
+    };
+    assert_eq!(present(&here_id), json!(true));
+    assert_eq!(present(&gone_id), json!(false));
+    // The flag is worked out per request, never stored.
+    let stored = fs::read_to_string(h.data.path().join("repos.json")).unwrap();
+    assert!(!stored.contains("present"), "{stored}");
+
+    let (status, _) = h
+        .call("DELETE", &format!("/v1/repos/{gone_id}"), Some(TOKEN), None)
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let listed = h.get("/v1/repos").await;
+    assert_eq!(listed.as_array().unwrap().len(), 1, "{listed}");
+    assert_eq!(listed[0]["id"], json!(here_id));
 }
 
 #[tokio::test]

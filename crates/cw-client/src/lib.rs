@@ -297,6 +297,15 @@ impl Backend {
         )
     }
 
+    pub fn delete(&self, path: &str) -> Result<Value, String> {
+        Self::finish(
+            self.agent
+                .delete(&format!("{}{path}", self.url))
+                .header("Authorization", &format!("Bearer {}", self.token))
+                .call(),
+        )
+    }
+
     /// Id of the repository at `path`, registering it on first use.
     pub fn repo_id(&self, path: &str) -> Result<String, String> {
         let added = self.post("/v1/repos", &serde_json::json!({ "path": path }));

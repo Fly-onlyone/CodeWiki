@@ -161,8 +161,28 @@ impl Repo {
     }
 }
 
-async fn list_repos(State(state): State<AppState>) -> Api<Vec<repos::RepoEntry>> {
-    blocking(move || repos::load(&state.0.config.data_dir)).await
+/// A registered repository as `GET /v1/repos` lists it. `present` is worked
+/// out on each request, on this machine, where the paths are; it is never
+/// written to `repos.json`.
+#[derive(Serialize)]
+struct ListedRepo {
+    #[serde(flatten)]
+    entry: repos::RepoEntry,
+    /// Whether the repository's folder still exists.
+    present: bool,
+}
+
+async fn list_repos(State(state): State<AppState>) -> Api<Vec<ListedRepo>> {
+    blocking(move || {
+        Ok(repos::load(&state.0.config.data_dir)?
+            .into_iter()
+            .map(|entry| ListedRepo {
+                present: std::path::Path::new(&entry.path).is_dir(),
+                entry,
+            })
+            .collect())
+    })
+    .await
 }
 
 #[derive(Deserialize)]

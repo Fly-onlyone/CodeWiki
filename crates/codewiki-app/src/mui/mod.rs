@@ -16,6 +16,9 @@ pub mod menu;
 pub mod motion;
 pub mod ripple;
 pub mod surfaces;
+// Its first user is the Settings page, which is not built yet.
+#[allow(dead_code)]
+pub mod switch;
 pub mod tabs;
 pub mod text_field;
 // A table copied whole from MUI; not every entry has a user.

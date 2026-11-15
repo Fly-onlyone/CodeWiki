@@ -1433,6 +1433,7 @@ name = "cw-core"
 version = "0.1.0"
 dependencies = [
  "hex",
+ "log",
  "serde",
  "serde_json",
  "sha2 0.11.1",

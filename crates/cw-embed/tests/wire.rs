@@ -138,3 +138,53 @@ fn embedders_report_http_errors_and_short_responses() {
     assert!(embedder.embed(&texts()).is_err());
     server.join().unwrap();
 }
+
+#[test]
+fn a_probe_embeds_one_word_and_reports_the_vector_length() {
+    let (url, server) = serve_once(200, json!({ "embeddings": [[3.0, 4.0, 0.0]] }));
+    let embedder = OllamaEmbedder {
+        model: "embeddinggemma".into(),
+        base_url: url,
+    };
+    assert_eq!(embedder.probe().unwrap(), 3);
+    let got = server.join().unwrap();
+    assert_eq!(got.path, "/api/embed");
+    assert_eq!(got.body["input"], json!(["ping"]));
+
+    let (url, server) = serve_once(
+        200,
+        json!({ "data": [{ "index": 0, "embedding": [1.0, 0.0] }] }),
+    );
+    let embedder = OpenAiEmbedder {
+        api_key: "sk-test".into(),
+        model: "text-embedding-3-small".into(),
+        base_url: url,
+    };
+    assert_eq!(embedder.probe().unwrap(), 2);
+    let got = server.join().unwrap();
+    assert_eq!(got.authorization.as_deref(), Some("Bearer sk-test"));
+    assert_eq!(got.body["input"], json!(["ping"]));
+
+    // The local embedder needs no server.
+    let local = cw_embed::LocalEmbedder::default();
+    assert_eq!(local.probe().unwrap(), local.embed_one("ping").len());
+}
+
+#[test]
+fn a_failed_probe_carries_the_providers_explanation() {
+    let (url, server) = serve_once(
+        401,
+        json!({ "error": { "message": "Incorrect API key provided" } }),
+    );
+    let embedder = OpenAiEmbedder {
+        api_key: "sk-wrong".into(),
+        model: "text-embedding-3-small".into(),
+        base_url: url,
+    };
+    let error = embedder.probe().unwrap_err().to_string();
+    assert!(
+        error.contains("401") && error.contains("Incorrect API key"),
+        "{error}"
+    );
+    server.join().unwrap();
+}

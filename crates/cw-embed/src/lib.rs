@@ -27,6 +27,12 @@ pub const EMBED_MODEL_ENV: &str = "CODEWIKI_EMBED_MODEL";
 const BATCH: usize = 64;
 /// Characters of one text sent to an HTTP embedder; models truncate anyway.
 const MAX_CHARS: usize = 8_000;
+/// How long an HTTP embedder may take over one batch.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long a probe waits. Long enough for a local server to load its model,
+/// short enough for someone watching a "Test" button.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+const PROBE_TEXT: &str = "ping";
 
 pub trait Embedder: Send + Sync {
     /// Identifier stored with each vector. Vectors from different embedders
@@ -34,6 +40,12 @@ pub trait Embedder: Send + Sync {
     fn name(&self) -> String;
     /// One vector per text, in order. Every vector has the same length.
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+    /// Check that the embedder answers: embed one word and return the length
+    /// of its vector. An error carries the provider's own explanation.
+    fn probe(&self) -> Result<usize> {
+        let vectors = self.embed(&[PROBE_TEXT.to_string()])?;
+        Ok(vectors.first().map_or(0, Vec::len))
+    }
 }
 
 /// Scale `vector` to unit length. A zero vector stays zero.
@@ -197,9 +209,15 @@ fn clip(text: &str) -> &str {
     &text[..end]
 }
 
-fn post_json(provider: &str, url: &str, bearer: Option<&str>, body: &Value) -> Result<Value> {
+fn post_json(
+    provider: &str,
+    url: &str,
+    bearer: Option<&str>,
+    body: &Value,
+    timeout: Duration,
+) -> Result<Value> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(120)))
+        .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .build()
         .into();
@@ -289,12 +307,8 @@ pub struct OllamaEmbedder {
     pub base_url: String,
 }
 
-impl Embedder for OllamaEmbedder {
-    fn name(&self) -> String {
-        format!("ollama:{}", self.model)
-    }
-
-    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+impl OllamaEmbedder {
+    fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/api/embed", self.base_url.trim_end_matches('/'));
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
@@ -304,10 +318,26 @@ impl Embedder for OllamaEmbedder {
                 &url,
                 None,
                 &json!({ "model": self.model, "input": input }),
+                timeout,
             )?;
             out.extend(checked("Ollama", parse_ollama(&value), batch.len())?);
         }
         Ok(out)
+    }
+}
+
+impl Embedder for OllamaEmbedder {
+    fn name(&self) -> String {
+        format!("ollama:{}", self.model)
+    }
+
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_within(texts, REQUEST_TIMEOUT)
+    }
+
+    fn probe(&self) -> Result<usize> {
+        let vectors = self.embed_within(&[PROBE_TEXT.to_string()], PROBE_TIMEOUT)?;
+        Ok(vectors.first().map_or(0, Vec::len))
     }
 }
 
@@ -318,12 +348,8 @@ pub struct OpenAiEmbedder {
     pub base_url: String,
 }
 
-impl Embedder for OpenAiEmbedder {
-    fn name(&self) -> String {
-        format!("openai:{}", self.model)
-    }
-
-    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+impl OpenAiEmbedder {
+    fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
@@ -333,6 +359,7 @@ impl Embedder for OpenAiEmbedder {
                 &url,
                 Some(&self.api_key),
                 &json!({ "model": self.model, "input": input }),
+                timeout,
             )?;
             out.extend(checked(
                 "the embeddings API",
@@ -341,6 +368,21 @@ impl Embedder for OpenAiEmbedder {
             )?);
         }
         Ok(out)
+    }
+}
+
+impl Embedder for OpenAiEmbedder {
+    fn name(&self) -> String {
+        format!("openai:{}", self.model)
+    }
+
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        self.embed_within(texts, REQUEST_TIMEOUT)
+    }
+
+    fn probe(&self) -> Result<usize> {
+        let vectors = self.embed_within(&[PROBE_TEXT.to_string()], PROBE_TIMEOUT)?;
+        Ok(vectors.first().map_or(0, Vec::len))
     }
 }
 

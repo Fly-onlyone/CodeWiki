@@ -16,6 +16,13 @@ const ANTHROPIC_FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 /// Non-streaming requests stay under HTTP timeouts at this size; notes are short.
 const MAX_TOKENS: u32 = 16000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long a probe waits. Long enough for a local server to load its model,
+/// short enough for someone watching a "Test" button.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Output a probe allows where the service makes the caller name a limit.
+const PROBE_MAX_TOKENS: u32 = 16;
+const PROBE_SYSTEM: &str = "Reply with the single word OK.";
+const PROBE_USER: &str = "ping";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Completion {
@@ -29,6 +36,12 @@ pub trait LlmProvider: Send + Sync {
     /// `anthropic:claude-opus-5-5`.
     fn name(&self) -> String;
     fn complete(&self, system: &str, user: &str) -> Result<Completion>;
+    /// Check that the provider answers: one very small request. An error
+    /// carries the provider's own explanation, such as a refused key or an
+    /// unknown model.
+    fn probe(&self) -> Result<()> {
+        self.complete(PROBE_SYSTEM, PROBE_USER).map(|_| ())
+    }
 }
 
 /// A provider whose calls are logged: how long each took and the tokens it
@@ -55,11 +68,23 @@ impl LlmProvider for Logged {
         }
         result
     }
+
+    /// The provider's own probe, not a full completion.
+    fn probe(&self) -> Result<()> {
+        let started = Instant::now();
+        let result = self.0.probe();
+        let ms = started.elapsed().as_millis();
+        match &result {
+            Ok(()) => log::debug!("{} answered a test in {ms} ms", self.0.name()),
+            Err(e) => log::warn!("{} failed a test after {ms} ms: {e}", self.0.name()),
+        }
+        result
+    }
 }
 
-fn agent() -> ureq::Agent {
+fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(REQUEST_TIMEOUT))
+        .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .build()
         .into()
@@ -67,8 +92,14 @@ fn agent() -> ureq::Agent {
 
 /// Send a JSON request and return the parsed body, turning HTTP errors into
 /// messages that include the provider's own explanation.
-fn post_json(provider: &str, url: &str, headers: &[(&str, &str)], body: &Value) -> Result<Value> {
-    let mut request = agent().post(url);
+fn post_json(
+    provider: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &Value,
+    timeout: Duration,
+) -> Result<Value> {
+    let mut request = agent(timeout).post(url);
     for (key, value) in headers {
         request = request.header(*key, *value);
     }
@@ -110,20 +141,16 @@ impl Anthropic {
     }
 }
 
-impl LlmProvider for Anthropic {
-    fn name(&self) -> String {
-        format!("anthropic:{}", self.model)
-    }
-
-    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+impl Anthropic {
+    fn send(&self, system: &str, user: &str, max_tokens: u32, timeout: Duration) -> Result<Value> {
         let body = json!({
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens,
             "system": system,
             "messages": [{ "role": "user", "content": user }],
             "fallbacks": "default",
         });
-        let value = post_json(
+        post_json(
             "Anthropic",
             &format!("{}/v1/messages", self.base_url),
             &[
@@ -132,7 +159,25 @@ impl LlmProvider for Anthropic {
                 ("anthropic-beta", ANTHROPIC_FALLBACK_BETA),
             ],
             &body,
-        )?;
+            timeout,
+        )
+    }
+}
+
+impl LlmProvider for Anthropic {
+    fn name(&self) -> String {
+        format!("anthropic:{}", self.model)
+    }
+
+    /// Any answer proves the key and the model, one cut off at the small
+    /// limit included.
+    fn probe(&self) -> Result<()> {
+        self.send(PROBE_SYSTEM, PROBE_USER, PROBE_MAX_TOKENS, PROBE_TIMEOUT)
+            .map(|_| ())
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let value = self.send(system, user, MAX_TOKENS, REQUEST_TIMEOUT)?;
         // A refusal is a successful HTTP response; check before reading content.
         let stop = value["stop_reason"].as_str().unwrap_or("");
         if stop == "refusal" {
@@ -171,12 +216,8 @@ pub struct OpenAiCompatible {
     pub base_url: String,
 }
 
-impl LlmProvider for OpenAiCompatible {
-    fn name(&self) -> String {
-        format!("openai:{}", self.model)
-    }
-
-    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+impl OpenAiCompatible {
+    fn send(&self, system: &str, user: &str, timeout: Duration) -> Result<Value> {
         let body = json!({
             "model": self.model,
             "messages": [
@@ -185,12 +226,30 @@ impl LlmProvider for OpenAiCompatible {
             ],
         });
         let auth = format!("Bearer {}", self.api_key);
-        let value = post_json(
+        post_json(
             "the OpenAI-compatible server",
             &format!("{}/chat/completions", self.base_url.trim_end_matches('/')),
             &[("Authorization", &auth)],
             &body,
-        )?;
+            timeout,
+        )
+    }
+}
+
+impl LlmProvider for OpenAiCompatible {
+    fn name(&self) -> String {
+        format!("openai:{}", self.model)
+    }
+
+    /// No output limit is sent: servers of this protocol do not agree on the
+    /// name of that field. The question keeps the answer short.
+    fn probe(&self) -> Result<()> {
+        self.send(PROBE_SYSTEM, PROBE_USER, PROBE_TIMEOUT)
+            .map(|_| ())
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let value = self.send(system, user, REQUEST_TIMEOUT)?;
         Ok(Completion {
             text: value["choices"][0]["message"]["content"]
                 .as_str()
@@ -207,12 +266,8 @@ pub struct Ollama {
     pub base_url: String,
 }
 
-impl LlmProvider for Ollama {
-    fn name(&self) -> String {
-        format!("ollama:{}", self.model)
-    }
-
-    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+impl Ollama {
+    fn send(&self, system: &str, user: &str, timeout: Duration) -> Result<Value> {
         let body = json!({
             "model": self.model,
             "stream": false,
@@ -221,12 +276,28 @@ impl LlmProvider for Ollama {
                 { "role": "user", "content": user },
             ],
         });
-        let value = post_json(
+        post_json(
             "Ollama",
             &format!("{}/api/chat", self.base_url.trim_end_matches('/')),
             &[],
             &body,
-        )?;
+            timeout,
+        )
+    }
+}
+
+impl LlmProvider for Ollama {
+    fn name(&self) -> String {
+        format!("ollama:{}", self.model)
+    }
+
+    fn probe(&self) -> Result<()> {
+        self.send(PROBE_SYSTEM, PROBE_USER, PROBE_TIMEOUT)
+            .map(|_| ())
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let value = self.send(system, user, REQUEST_TIMEOUT)?;
         Ok(Completion {
             text: value["message"]["content"]
                 .as_str()

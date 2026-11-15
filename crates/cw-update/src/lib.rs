@@ -35,7 +35,7 @@ pub const REPOSITORY: &str = "Fly-onlyone/CodeWiki";
 /// Overrides the GitHub API address, for tests against a stand-in server.
 pub const URL_ENV: &str = "CODEWIKI_UPDATE_URL";
 
-const GITHUB_API: &str = "https://api.github.com";
+pub(crate) const GITHUB_API: &str = "https://api.github.com";
 
 /// Folder inside the installation that holds downloads, the unpacked package
 /// and the swap journal. Inside the installation, so every move is a rename on

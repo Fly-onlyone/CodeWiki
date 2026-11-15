@@ -47,8 +47,12 @@ struct ApiAsset {
     browser_download_url: String,
 }
 
-pub(crate) fn agent() -> ureq::Agent {
+/// `https_only` refuses any request that is not https, a redirect included.
+/// It is on for every https address, so that an answer from GitHub cannot
+/// send a download on to plain http; a stand-in on http has it off.
+pub(crate) fn agent(https_only: bool) -> ureq::Agent {
     ureq::Agent::config_builder()
+        .https_only(https_only)
         // No limit on the whole call: a download may take minutes on a slow
         // line. A connection that stops sending is given up instead.
         .timeout_connect(Some(Duration::from_secs(15)))
@@ -71,7 +75,7 @@ pub fn check(api_base: &str, current: &str) -> Check {
         }
     };
     let url = format!("{api_base}/repos/{REPOSITORY}/releases/latest");
-    let response = agent()
+    let response = agent(url.starts_with("https://"))
         .get(&url)
         .header("User-Agent", &user_agent())
         .header("Accept", "application/vnd.github+json")
@@ -88,8 +92,32 @@ pub fn check(api_base: &str, current: &str) -> Check {
         Err(e) => return Check::Unavailable(format!("could not reach GitHub: {e}")),
     };
     match response.body_mut().read_to_string() {
-        Ok(text) => parse(&text, &current),
+        Ok(text) => from_repository(api_base, parse(&text, &current)),
         Err(e) => Check::Unavailable(format!("could not read GitHub's answer: {e}")),
+    }
+}
+
+/// A release that GitHub described must have its files among this
+/// repository's release downloads at GitHub. The package is run before it is
+/// installed (`codewiki.exe --version`), and its checksum comes from the same
+/// answer, so the address is what says whose package it is. A stand-in
+/// (another `api_base`) may serve its files from anywhere.
+fn from_repository(api_base: &str, check: Check) -> Check {
+    let Check::Newer(release) = &check else {
+        return check;
+    };
+    if api_base != crate::GITHUB_API {
+        return check;
+    }
+    let downloads = format!("https://github.com/{REPOSITORY}/releases/download/").to_lowercase();
+    let ours = |url: &str| url.to_lowercase().starts_with(&downloads);
+    if ours(&release.zip_url) && ours(&release.sha256_url) {
+        check
+    } else {
+        Check::Unavailable(format!(
+            "release {} names files that are not this repository's downloads at GitHub",
+            release.version
+        ))
     }
 }
 
@@ -141,6 +169,45 @@ pub(crate) fn parse(text: &str, current: &Version) -> Check {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_github_release_must_name_files_at_this_repository() {
+        let release = |zip_url: &str| {
+            Check::Newer(Release {
+                version: Version::new(0, 2, 0),
+                zip_name: "CodeWiki-0.2.0-windows-x64.zip".into(),
+                zip_url: zip_url.into(),
+                sha256_url: "https://github.com/Fly-onlyone/CodeWiki/releases/download/v0.2.0/CodeWiki-0.2.0-windows-x64.zip.sha256".into(),
+            })
+        };
+        let ours = "https://github.com/Fly-onlyone/CodeWiki/releases/download/v0.2.0/CodeWiki-0.2.0-windows-x64.zip";
+        let elsewhere = "https://example.com/CodeWiki-0.2.0-windows-x64.zip";
+        let plain = "http://github.com/Fly-onlyone/CodeWiki/releases/download/v0.2.0/CodeWiki-0.2.0-windows-x64.zip";
+        let other_repository = "https://github.com/someone/CodeWiki/releases/download/v0.2.0/CodeWiki-0.2.0-windows-x64.zip";
+
+        assert_eq!(
+            from_repository(crate::GITHUB_API, release(ours)),
+            release(ours)
+        );
+        for url in [elsewhere, plain, other_repository] {
+            assert!(
+                matches!(
+                    from_repository(crate::GITHUB_API, release(url)),
+                    Check::Unavailable(_)
+                ),
+                "{url}"
+            );
+        }
+        // A stand-in, which tests use, serves from its own address.
+        assert_eq!(
+            from_repository("http://127.0.0.1:8765", release(elsewhere)),
+            release(elsewhere)
+        );
+        assert_eq!(
+            from_repository(crate::GITHUB_API, Check::UpToDate),
+            Check::UpToDate
+        );
+    }
 
     /// The shape of GitHub's `releases/latest` answer, cut down to the fields
     /// a check reads plus a few it ignores.

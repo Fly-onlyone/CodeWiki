@@ -55,7 +55,8 @@ pub(crate) fn download_limited(
 }
 
 fn get(url: &str) -> Result<ureq::http::Response<ureq::Body>, String> {
-    agent()
+    // An https address may not be redirected to plain http.
+    agent(url.starts_with("https://"))
         .get(url)
         .header("User-Agent", &user_agent())
         .call()

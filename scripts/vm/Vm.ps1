@@ -529,6 +529,19 @@ function Wait-VmState {
     $false
 }
 
+# Ask Windows not to put the host to sleep for as long as this PowerShell
+# process lives. No power setting is changed: the request ends with the
+# process, as a video player's does. A pass takes forty minutes with nobody at
+# the keyboard; a host that slept half a minute after the guest had booted
+# once cost a run.
+function Start-KeepAwake {
+    if (-not ("VmTest.Power" -as [type])) {
+        Add-Type -Namespace VmTest -Name Power -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint flags);'
+    }
+    # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    [void][VmTest.Power]::SetThreadExecutionState([uint32]"0x80000001")
+}
+
 # Megabytes of memory the host has free right now.
 function Get-HostFreeMemoryMb {
     [int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024)

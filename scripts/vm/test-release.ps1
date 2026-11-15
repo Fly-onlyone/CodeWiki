@@ -47,6 +47,8 @@ param(
 $ErrorActionPreference = "Stop"
 . (Join-Path $PSScriptRoot "Vm.ps1")
 Initialize-Vm -Name $VmName -User $User -Password $Password
+# The host must not fall asleep under a run nobody is watching.
+Start-KeepAwake
 
 $root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
 if (-not $Zip) {

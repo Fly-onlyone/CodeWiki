@@ -2916,10 +2916,16 @@ impl Render for AppView {
         let title_bar = TitleBar::new()
             .bg(self.glass.chrome(glass::tinted(cx.theme().title_bar, cx)))
             .child(
-                div()
-                    .text_sm()
-                    .text_color(cx.theme().muted_foreground)
-                    .child(title),
+                h_flex()
+                    .gap_2()
+                    .items_center()
+                    .child(img(icons::LOGO).size(px(16.)).flex_none())
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(title),
+                    ),
             );
         let root = v_flex()
             .id("root")

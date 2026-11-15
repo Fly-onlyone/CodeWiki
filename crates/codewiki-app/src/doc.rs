@@ -361,6 +361,8 @@ pub enum Block {
         label: String,
         choices: Vec<Choice>,
     },
+    /// The app's logo.
+    Logo,
 }
 
 /// A generated page.
@@ -467,6 +469,7 @@ impl Doc {
                     let names: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
                     out.push(format!("{label}: {}", names.join(" / ")));
                 }
+                Block::Logo => {}
             }
         }
         out.join("\n")

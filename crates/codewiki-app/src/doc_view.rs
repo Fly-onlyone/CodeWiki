@@ -26,7 +26,7 @@ use gpui_kit::{
     AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, EntityId, FontWeight,
     HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement, ListAlignment,
     ListState, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledText, Window, div, list, px, relative,
+    Styled as _, StyledText, Window, div, img, list, px, relative,
 };
 
 use crate::doc::{Action, Block, Cell, Choice, Doc, Row, Span, Stat, Table};
@@ -56,6 +56,8 @@ const ROW_HOVER: f32 = 0.05;
 /// the sidebar color at 40% behind the head.
 const ROW_LINE: f32 = 0.3;
 const HEAD_FILL: f32 = 0.4;
+/// The logo on Home.
+const LOGO_SIZE: f32 = 96.0;
 
 /// What every block needs to draw itself.
 struct Page {
@@ -408,6 +410,10 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
             })
             .into_any_element(),
         Block::Choices { label, choices } => choices_row(label, choices, path, page, cx),
+        Block::Logo => img(icons::LOGO)
+            .size(px(LOGO_SIZE))
+            .flex_none()
+            .into_any_element(),
     }
 }
 

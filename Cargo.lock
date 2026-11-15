@@ -1047,6 +1047,7 @@ dependencies = [
  "cw-illustrate",
  "cw-mermaid",
  "cw-update",
+ "embed-resource",
  "gpui-kit",
  "log",
  "openui-lang",

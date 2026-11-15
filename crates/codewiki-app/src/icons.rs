@@ -112,6 +112,11 @@ pub fn for_theme(name: &str) -> Glyph {
     }
 }
 
+/// The app's own logo, the same art as its Windows icon, served under this
+/// path. Draw it with `img(icons::LOGO)`.
+pub const LOGO: &str = "logo/codewiki.png";
+const LOGO_BYTES: &[u8] = include_bytes!("../resources/codewiki.png");
+
 /// The icon shown beside a palette entry.
 pub fn for_command(command: &Command) -> Glyph {
     match command {
@@ -201,6 +206,9 @@ pub struct AppAssets;
 
 impl AssetSource for AppAssets {
     fn load(&self, path: &str) -> Result<Option<Cow<'static, [u8]>>> {
+        if path == LOGO {
+            return Ok(Some(Cow::Borrowed(LOGO_BYTES)));
+        }
         match EMBEDDED.iter().find(|(glyph, _)| glyph.0 == path) {
             Some((_, bytes)) => Ok(Some(Cow::Borrowed(bytes))),
             None => Assets.load(path),
@@ -241,6 +249,15 @@ mod tests {
             assert!(svg.contains(r#"viewBox="0 0 24 24""#), "{path}");
             assert!(svg.contains("<path d=\""), "{path} has no path");
         }
+    }
+
+    #[test]
+    fn the_logo_loads_as_png() {
+        let bytes = AppAssets.load(LOGO).unwrap().expect("the logo is embedded");
+        assert!(
+            bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+            "the logo is not a PNG"
+        );
     }
 
     #[test]

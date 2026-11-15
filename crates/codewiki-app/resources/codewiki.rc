@@ -1,0 +1,4 @@
+// The app's icon. GPUI gives each window the icon with ID 1 of the program
+// (`load_icon` in gpui-pre-windows), so this one ID sets the icon of the
+// program file, the window, the taskbar and the Start Menu shortcut.
+1 ICON "codewiki.ico"

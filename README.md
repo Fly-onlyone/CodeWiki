@@ -1,3 +1,5 @@
+<p align="center"><img src="crates/codewiki-app/resources/codewiki.png" width="128" alt="CodeWiki logo"></p>
+
 # CodeWiki
 
 A native Windows app and a Rust backend that write and maintain a wiki for a codebase, for both people and coding agents.

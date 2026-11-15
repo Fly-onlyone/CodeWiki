@@ -392,6 +392,7 @@ pub fn home_page(home: &HomeInput) -> Doc {
     // Home fills the window, so it carries the app's name, as a welcome
     // screen does.
     let mut doc = Doc::new("CodeWiki").lead("Open a project, or pick up one you opened before.");
+    doc.push(Block::Logo);
     if let Some(name) = home.no_wiki {
         doc.push(Block::Alert {
             tone: Tone::Info,
@@ -526,6 +527,7 @@ mod tests {
     fn home_without_projects_asks_for_a_folder() {
         let page = home_page(&home(&[], &[]));
         assert_eq!(page.title, "CodeWiki");
+        assert_eq!(page.blocks.first(), Some(&Block::Logo));
         assert!(page.words().contains("Open folder…"));
         assert!(page.words().contains("No projects yet"));
         assert!(page.headings().is_empty());

@@ -29,7 +29,7 @@ pub fn embedder() -> Option<&'static dyn Embedder> {
         .get_or_init(|| match cw_embed::from_env() {
             Ok(embedder) => embedder,
             Err(error) => {
-                eprintln!("codewiki: semantic search is off: {error}");
+                log::warn!("semantic search is off: {error}");
                 None
             }
         })
@@ -92,7 +92,7 @@ pub fn refresh(index: &mut Index, kinds: &[&str], documents: &[Document]) {
         return;
     };
     if let Err(error) = embed_documents(index, embedder, kinds, documents) {
-        eprintln!("codewiki: could not update search vectors: {error}");
+        log::warn!("could not update search vectors: {error}");
     }
 }
 
@@ -116,7 +116,7 @@ pub fn search_with(
             None => Vec::new(),
         },
         Err(error) => {
-            eprintln!("codewiki: semantic search skipped: {error}");
+            log::warn!("semantic search skipped: {error}");
             Vec::new()
         }
     };

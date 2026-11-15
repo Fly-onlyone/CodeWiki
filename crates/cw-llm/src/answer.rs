@@ -86,7 +86,7 @@ pub fn answer(
         }),
         Ok(_) => Ok(base),
         Err(error) => {
-            eprintln!("codewiki: answer fell back to note summaries: {error}");
+            log::warn!("answer fell back to note summaries: {error}");
             Ok(base)
         }
     }

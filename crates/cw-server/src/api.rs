@@ -1,6 +1,7 @@
 //! Routes and handlers.
 
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
@@ -28,6 +29,9 @@ impl IntoResponse for ApiError {
             Error::Invalid(_) => StatusCode::BAD_REQUEST,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
+        if status.is_server_error() {
+            log::warn!("request failed: {}", self.0);
+        }
         (status, Json(json!({ "error": self.0.to_string() }))).into_response()
     }
 }
@@ -63,6 +67,42 @@ async fn require_token(State(state): State<AppState>, request: Request, next: Ne
         )
             .into_response(),
     }
+}
+
+/// A request that takes longer than this is logged at Info.
+const SLOW_REQUEST: Duration = Duration::from_secs(1);
+
+/// The level a finished request is logged at. Failures of the backend stand
+/// out; refused and slow requests are kept; the rest, and the health checks
+/// clients poll with, show only at Debug.
+fn request_level(path: &str, status: StatusCode, elapsed: Duration) -> log::Level {
+    if status.is_server_error() {
+        log::Level::Warn
+    } else if path == "/v1/health" {
+        log::Level::Debug
+    } else if status.is_client_error() || elapsed >= SLOW_REQUEST {
+        log::Level::Info
+    } else {
+        log::Level::Debug
+    }
+}
+
+/// Log each request: method, path, status and time. Never the query, the
+/// headers or the body, which carry search text, notes and the token.
+async fn log_request(request: Request, next: Next) -> Response {
+    let method = request.method().clone();
+    let path = request.uri().path().to_string();
+    let started = Instant::now();
+    let response = next.run(request).await;
+    let elapsed = started.elapsed();
+    let status = response.status();
+    log::log!(
+        request_level(&path, status, elapsed),
+        "{method} {path} {} in {} ms",
+        status.as_u16(),
+        elapsed.as_millis()
+    );
+    response
 }
 
 pub fn routes(state: AppState) -> Router {
@@ -121,6 +161,7 @@ pub fn routes(state: AppState) -> Router {
             post(git_hook).layer(DefaultBodyLimit::max(WEBHOOK_BODY_LIMIT)),
         )
         .nest("/v1", protected)
+        .layer(middleware::from_fn(log_request))
         .with_state(state)
 }
 
@@ -132,6 +173,7 @@ async fn health() -> Json<Value> {
 /// this before an update replaces the programs; a client that needs a backend
 /// afterwards starts a new one.
 async fn shutdown(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
+    log::info!("asked to stop; finishing the running requests");
     state.0.stop.notify_one();
     (StatusCode::ACCEPTED, Json(json!({ "status": "stopping" })))
 }
@@ -315,9 +357,10 @@ async fn git_hook(State(state): State<AppState>, headers: HeaderMap, body: Bytes
     };
     let id = entry.id.clone();
     // Detached on purpose: the outcome is visible in the repository's status.
+    log::info!("a push to {id} starts an update");
     tokio::task::spawn_blocking(move || {
         if let Err(e) = run_update(&state, &id) {
-            eprintln!("codewiki: webhook update of {id} failed: {e}");
+            log::warn!("webhook update of {id} failed: {e}");
         }
     });
     (
@@ -966,4 +1009,44 @@ async fn refactor(
         Ok(plan)
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FAST: Duration = Duration::from_millis(5);
+
+    #[test]
+    fn failures_stand_out_and_routine_requests_stay_quiet() {
+        assert_eq!(
+            request_level(
+                "/v1/repos/a1/update",
+                StatusCode::INTERNAL_SERVER_ERROR,
+                FAST
+            ),
+            log::Level::Warn
+        );
+        assert_eq!(
+            request_level("/v1/repos", StatusCode::UNAUTHORIZED, FAST),
+            log::Level::Info
+        );
+        assert_eq!(
+            request_level("/v1/repos/a1/update", StatusCode::OK, SLOW_REQUEST),
+            log::Level::Info
+        );
+        assert_eq!(
+            request_level("/v1/repos/a1/notes", StatusCode::OK, FAST),
+            log::Level::Debug
+        );
+        // Clients poll the health check; even a slow one is routine.
+        assert_eq!(
+            request_level("/v1/health", StatusCode::OK, SLOW_REQUEST),
+            log::Level::Debug
+        );
+        assert_eq!(
+            request_level("/v1/health", StatusCode::SERVICE_UNAVAILABLE, FAST),
+            log::Level::Warn
+        );
+    }
 }

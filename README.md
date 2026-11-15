@@ -67,9 +67,59 @@ The app and the backend it starts write their logs to `%LOCALAPPDATA%\CodeWiki\l
 
 Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default, built in, no model needed), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for the last two.
 
-### Coding agents
+### Claude Code plugin
 
-`plugins/claude-code/` is a Claude Code plugin: it registers the MCP server and a session-start briefing. `plugins/codex/README.md` has the equivalent configuration for Codex.
+The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the index, so that Claude reads what CodeWiki knows about the code before it explores the code by hand. It adds two things.
+
+**An MCP server.** The plugin runs `codewiki-mcp`, which starts a local backend on first use, or uses the one at `CODEWIKI_URL`. It gives Claude 24 tools:
+
+| Purpose | Tools |
+|---|---|
+| Orientation | `get_overview`, `get_architecture`, `get_workspace`, `list_repos` |
+| Reading the code | `get_context`, `get_symbol`, `search_codebase`, `get_answer`, `read_note`, `get_dependency_path`, `get_why`, `list_decisions` |
+| Before and after a change | `get_risk`, `get_change_risk`, `get_blast_radius`, `get_impacted_tests` |
+| Code health | `get_hotspots`, `get_dead_code`, `get_health`, `get_coverage`, `get_security_findings`, `get_refactoring_plan`, `get_contracts` |
+| Upkeep | `sync_wiki` |
+
+`sync_wiki` follows the same rule as `codewiki update`: a note a person edited is never overwritten, and the change waits in the review queue.
+
+**A session-start briefing.** When a session starts or resumes, and after `/clear` or compaction, a hook runs `codewiki hook session-start` and adds up to five lines to Claude's context: whether the repository has a wiki, whether the wiki is stale against `HEAD`, how many proposals wait for review, and which tools to call first. The hook only reads files and asks git for `HEAD`. It does not start the backend, and it cannot fail a session.
+
+`plugins/claude-code/README.md` describes each tool and shows a sample briefing.
+
+To install the plugin:
+
+1. Install CodeWiki as described in [Install](#install). Then open a new terminal, so that `codewiki` and `codewiki-mcp` are on `PATH`.
+2. Add this repository as a plugin marketplace:
+
+   ```
+   claude plugin marketplace add Fly-onlyone/CodeWiki
+   ```
+
+   To use a clone instead of GitHub, pass its folder: `claude plugin marketplace add C:\path\to\CodeWiki`.
+3. Install the plugin:
+
+   ```
+   claude plugin install codewiki@codewiki
+   ```
+
+   It is installed for your user. With `--scope project` it is recorded in the repository's `.claude/settings.json` instead, which you can commit to share it.
+4. In a repository that has no wiki yet, run `codewiki init`.
+5. Start Claude Code in the repository, or run `/reload-plugins` in a session that is already open. `/mcp` lists the server as `plugin:codewiki:codewiki`.
+
+To use a backend in Docker or on another machine, set `CODEWIKI_URL` and `CODEWIKI_TOKEN` in the environment Claude Code runs in (see [Docker](#docker)).
+
+To update or remove the plugin:
+
+```
+claude plugin update codewiki@codewiki        # then restart Claude Code
+claude plugin uninstall codewiki@codewiki
+claude plugin marketplace remove codewiki
+```
+
+### Codex
+
+Codex has no plugin. `plugins/codex/README.md` gives the MCP server and session-start hook configuration that does the same.
 
 ### Docker
 

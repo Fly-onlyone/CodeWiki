@@ -18,7 +18,7 @@ use cw_wiki::{query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, repos, workspace};
+use crate::{AppState, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -151,6 +151,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/repos/{id}/contracts", get(repo_contracts))
         .route("/workspace", get(workspace_view))
         .route("/workspace/contracts", get(workspace_contracts))
+        .route("/settings", get(read_settings).put(write_settings))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -176,6 +177,29 @@ async fn shutdown(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
     log::info!("asked to stop; finishing the running requests");
     state.0.stop.notify_one();
     (StatusCode::ACCEPTED, Json(json!({ "status": "stopping" })))
+}
+
+/// The settings in effect: each with its value and where that comes from. No
+/// secret is in it.
+async fn read_settings(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::describe(&state))).await
+}
+
+/// Change saved settings and answer with the new description. Refused by a
+/// server that listens beyond this machine (`ServerConfig::settings_writable`).
+async fn write_settings(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if !state.0.config.settings_writable {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this backend takes its settings from its own environment variables; they cannot be changed from another machine"
+            })),
+        )
+            .into_response();
+    }
+    blocking(move || settings::change(&state, &body))
+        .await
+        .into_response()
 }
 
 /// Resolved repository: its root folder and its index.

@@ -339,7 +339,9 @@ pub struct Resolved {
     entries: HashMap<&'static str, Entry>,
 }
 
-fn process_env(name: &str) -> Option<String> {
+/// An environment variable of this process. What [`Resolved::load`] reads
+/// the environment with; a test passes its own function in its place.
+pub fn process_env(name: &str) -> Option<String> {
     std::env::var(name).ok()
 }
 

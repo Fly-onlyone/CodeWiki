@@ -22,6 +22,8 @@ use serde_json::{Value, json};
 pub const EMBED_ENV: &str = "CODEWIKI_EMBED";
 /// Model name for the HTTP embedders.
 pub const EMBED_MODEL_ENV: &str = "CODEWIKI_EMBED_MODEL";
+/// The embedders a user can choose, in the order a page lists them.
+pub const PROVIDERS: [&str; 4] = ["local", "ollama", "openai", "none"];
 
 /// Texts sent to an HTTP embedder in one request.
 const BATCH: usize = 64;
@@ -411,7 +413,8 @@ pub fn from_config(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Box
         })),
         Some(other) => {
             return Err(Error::invalid(format!(
-                "unknown {EMBED_ENV} value '{other}'; use local, ollama, openai or none"
+                "unknown embedder '{other}'; use {}",
+                PROVIDERS.join(", ")
             )));
         }
     })

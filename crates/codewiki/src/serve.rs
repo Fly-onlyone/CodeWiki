@@ -74,6 +74,9 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         webhook_secret: std::env::var(cw_server::WEBHOOK_SECRET_ENV)
             .ok()
             .filter(|s| !s.is_empty()),
+        // Only a client on this machine may change the settings.
+        settings_writable: host.is_loopback(),
+        env: cw_core::settings::process_env,
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()

@@ -1523,6 +1523,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "cw-core",
+ "cw-embed",
  "cw-index",
  "cw-llm",
  "cw-vault",

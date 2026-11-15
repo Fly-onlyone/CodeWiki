@@ -432,6 +432,50 @@ async fn a_server_that_listens_beyond_this_machine_takes_no_changes() {
     assert!(!h.data.path().join("settings.json").exists());
 }
 
+#[tokio::test]
+async fn an_update_and_a_question_use_the_saved_provider() {
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    // A provider that lacks its key: both requests must find that out from
+    // the settings file, since the environment of the test holds nothing.
+    h.put(
+        "/v1/settings",
+        json!({ "llm": { "provider": "openai", "model": "some-model" } }),
+    )
+    .await;
+    let (status, body) = h
+        .call("POST", &format!("/v1/repos/{id}/update"), Some(TOKEN), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
+        "{body}"
+    );
+    let (status, body) = h
+        .call(
+            "POST",
+            &format!("/v1/repos/{id}/ask"),
+            Some(TOKEN),
+            Some(json!({ "question": "What does run do?" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
+        "{body}"
+    );
+
+    // With no provider chosen both work again, with no restart between.
+    h.put("/v1/settings", json!({ "llm": { "provider": null } }))
+        .await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    h.post(
+        &format!("/v1/repos/{id}/ask"),
+        Some(json!({ "question": "What does run do?" })),
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_route_ends_serve() {
     let data = tempfile::tempdir().unwrap();

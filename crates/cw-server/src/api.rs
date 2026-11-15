@@ -286,7 +286,7 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     let repo = Repo::open(state, id)?;
     let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
     // The provider is read per request so a settings change needs no restart.
-    let writer = cw_llm::writer_from_env()?;
+    let writer = cw_llm::writer_from(&settings::resolved(state))?;
     service::update_in(
         &repo.data_dir,
         &repo.root,
@@ -672,7 +672,7 @@ async fn ask(
         let index = repo.index()?;
         // With a provider configured the answer is written from the matching
         // notes; without one it is their summaries.
-        match cw_llm::from_env()? {
+        match cw_llm::from_settings(&settings::resolved(&state))? {
             Some(provider) => {
                 cw_llm::answer::answer(provider.as_ref(), &repo.root, &index, &body.question)
             }

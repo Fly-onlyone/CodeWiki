@@ -10,6 +10,7 @@
 
 mod backdrop;
 mod contrast;
+mod diagrams;
 mod doc;
 mod doc_view;
 mod editor;
@@ -226,6 +227,8 @@ struct AppView {
     rendered: String,
     /// Diagrams of the current page, addressed by index from `rendered`.
     diagrams: Vec<std::sync::Arc<Image>>,
+    /// Every diagram drawn so far, and those still to draw.
+    diagram_store: diagrams::Diagrams,
     graph: Option<std::rc::Rc<graph::GraphData>>,
     /// Graph camera; `None` until the view has been fitted once.
     camera: Option<graph::Camera>,
@@ -334,6 +337,7 @@ impl AppView {
             page_placed: std::cell::Cell::new(false),
             rendered: String::new(),
             diagrams: Vec::new(),
+            diagram_store: diagrams::Diagrams::default(),
             graph: None,
             camera: None,
             graph_bounds: Default::default(),
@@ -1341,25 +1345,27 @@ impl AppView {
         }
     }
 
-    /// Build the viewer's Markdown for the current page. Diagrams are drawn
-    /// once here, not on every frame.
+    /// Build the viewer's Markdown for the current page. Nothing is drawn
+    /// here: a diagram comes from the store, and one the store does not have
+    /// yet leaves a line in its place until `draw_queued_diagrams` has it.
     fn prepare_page(&mut self) {
         self.diagrams.clear();
         let palette = self.palette;
         self.rendered = match &self.page {
             Page::Note { text, .. } => {
                 let diagrams = &mut self.diagrams;
-                markdown::prepare_note_with(text, |source| {
-                    let png = cw_mermaid::render_png(source, palette).ok()?;
-                    diagrams.push(std::sync::Arc::new(Image::from_bytes(
-                        ImageFormat::Png,
-                        png,
-                    )));
-                    Some(format!(
-                        "{}{}",
-                        markdown::DIAGRAM_SCHEME,
-                        diagrams.len() - 1
-                    ))
+                let store = &mut self.diagram_store;
+                markdown::prepare_note_with(text, |source| match store.lookup(source, palette) {
+                    diagrams::Lookup::Ready(Some(image)) => {
+                        diagrams.push(image);
+                        markdown::Diagram::Image(format!(
+                            "{}{}",
+                            markdown::DIAGRAM_SCHEME,
+                            diagrams.len() - 1
+                        ))
+                    }
+                    diagrams::Lookup::Ready(None) => markdown::Diagram::Source,
+                    diagrams::Lookup::Pending => markdown::Diagram::Drawing,
                 })
             }
             // Drawn from their own model, not from Markdown.
@@ -1370,6 +1376,44 @@ impl AppView {
             | Page::Graph
             | Page::Home => String::new(),
         };
+    }
+
+    /// Draw the diagrams `prepare_page` found missing, off the UI thread, then
+    /// show them. Drawing one takes seconds in a debug build, and the first of
+    /// a session also reads every installed font.
+    fn draw_queued_diagrams(&mut self, cx: &mut Context<Self>) {
+        let jobs = self.diagram_store.take_queued();
+        if jobs.is_empty() {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let drawn = cx
+                .background_executor()
+                .spawn(async move {
+                    jobs.into_iter()
+                        .map(|(palette, source)| {
+                            let started = std::time::Instant::now();
+                            let image = cw_mermaid::render_png(&source, palette).ok().map(|png| {
+                                std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png))
+                            });
+                            log::debug!("diagram drawn in {} ms", started.elapsed().as_millis());
+                            ((palette, source), image)
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                for (key, image) in drawn {
+                    this.diagram_store.store(key, image);
+                }
+                // The page may have changed meanwhile; the store answers for
+                // whichever page is shown now. The page's serial stays, so
+                // its scroll position and selection do too.
+                this.prepare_page();
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     fn go_back(&mut self, cx: &mut Context<Self>) {
@@ -2201,7 +2245,7 @@ impl AppView {
         let closed = value
             .get(cursor..)
             .is_some_and(|rest| rest.starts_with("]]"));
-        let preview = markdown::prepare_note_with(&value, |_| None);
+        let preview = markdown::prepare_note_with(&value, |_| markdown::Diagram::Source);
         let (border, muted, mono, mono_size) = {
             let theme = cx.theme();
             (
@@ -2930,6 +2974,7 @@ impl Render for AppView {
             self.palette = palette;
             self.prepare_page();
         }
+        self.draw_queued_diagrams(cx);
         if let Some(query) = self.pending_palette.take() {
             self.toggle_palette(window, cx);
             self.palette_input

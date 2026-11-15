@@ -7,7 +7,7 @@
 use merman::{OperationControl, PngRequest, RenderOutput, RenderRequest, Renderer, SvgRequest};
 
 /// Diagram palette. Chosen to match the surface the diagram is drawn on.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Palette {
     Light,
     Dark,

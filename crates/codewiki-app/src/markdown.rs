@@ -34,13 +34,25 @@ pub fn decode(value: &str) -> String {
 /// Code spans and fenced blocks are left untouched.
 #[cfg(test)]
 pub fn prepare_note(text: &str) -> String {
-    prepare_note_with(text, |_| None)
+    prepare_note_with(text, |_| Diagram::Source)
 }
 
+/// What the viewer shows in place of one Mermaid block.
+pub enum Diagram {
+    /// The drawn diagram, at this image URL.
+    Image(String),
+    /// A line saying the diagram is being drawn.
+    Drawing,
+    /// The block as code (for example when it does not render).
+    Source,
+}
+
+/// Line shown where a diagram is still being drawn.
+pub const DRAWING: &str = "*Drawing diagram…*";
+
 /// [`prepare_note`] with diagram support. `diagram` receives the source of
-/// each Mermaid block and returns the image URL to show in its place, or
-/// `None` to keep the block as code (for example when it does not render).
-pub fn prepare_note_with(text: &str, mut diagram: impl FnMut(&str) -> Option<String>) -> String {
+/// each Mermaid block and says what to show in its place.
+pub fn prepare_note_with(text: &str, mut diagram: impl FnMut(&str) -> Diagram) -> String {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
     let mut lines: Vec<&str> = text.lines().collect();
     let mut tags = String::new();
@@ -64,8 +76,9 @@ pub fn prepare_note_with(text: &str, mut diagram: impl FnMut(&str) -> Option<Str
         if let Some((fence, source)) = &mut mermaid {
             if line.trim_start().starts_with("```") {
                 match diagram(source) {
-                    Some(url) => out.push_str(&format!("![diagram]({url})\n")),
-                    None => out.push_str(&format!("{fence}\n{source}{line}\n")),
+                    Diagram::Image(url) => out.push_str(&format!("![diagram]({url})\n")),
+                    Diagram::Drawing => out.push_str(&format!("{DRAWING}\n")),
+                    Diagram::Source => out.push_str(&format!("{fence}\n{source}{line}\n")),
                 }
                 mermaid = None;
             } else {
@@ -168,15 +181,28 @@ mod tests {
         let mut seen = Vec::new();
         let out = prepare_note_with(note, |source| {
             seen.push(source.to_string());
-            source
-                .starts_with("flowchart")
-                .then(|| "codewiki-mermaid://0".to_string())
+            if source.starts_with("flowchart") {
+                Diagram::Image("codewiki-mermaid://0".to_string())
+            } else {
+                Diagram::Source
+            }
         });
         assert_eq!(seen, ["flowchart LR\n    A --> B\n", "broken\n"]);
         assert!(out.contains("![diagram](codewiki-mermaid://0)"));
         assert!(!out.contains("flowchart LR"));
         assert!(out.contains("```mermaid\nbroken\n```"));
         assert!(out.contains("```rust\nlet x = 1;\n```"));
+    }
+
+    #[test]
+    fn a_diagram_being_drawn_leaves_a_line_in_its_place() {
+        let note =
+            "# T\n\nbefore\n\n```mermaid\nflowchart LR\n    A --> B\n```\n\nafter [[Other]]\n";
+        let out = prepare_note_with(note, |_| Diagram::Drawing);
+        assert!(out.contains(&format!("before\n\n{DRAWING}\n\nafter ")));
+        assert!(!out.contains("flowchart LR"));
+        assert!(!out.contains("```"));
+        assert!(out.contains("[Other](codewiki://note/Other)"));
     }
 
     #[test]

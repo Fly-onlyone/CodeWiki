@@ -61,6 +61,25 @@ fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
+/// Mark the swap as finished: delete its journal. While the journal exists,
+/// the next start undoes the moves it lists, so one that cannot be deleted (a
+/// scanner may hold a new file for a moment) is emptied instead, and tried
+/// again for a while before giving up.
+fn close_journal(install: &Path) {
+    let path = journal_path(install);
+    for attempt in 1..=ATTEMPTS {
+        if std::fs::remove_file(&path).is_ok() || !path.exists() {
+            return;
+        }
+        if write_journal(install, &Journal::default()).is_ok() {
+            return;
+        }
+        if attempt < ATTEMPTS {
+            std::thread::sleep(PAUSE);
+        }
+    }
+}
+
 fn remove(path: &Path) -> std::io::Result<()> {
     if path.is_dir() {
         std::fs::remove_dir_all(path)
@@ -173,7 +192,7 @@ pub fn swap(install: &Path, stage: &Path) -> Result<(), String> {
             failed.join("; ")
         ));
     }
-    let _ = std::fs::remove_file(journal_path(install));
+    close_journal(install);
     Ok(())
 }
 
@@ -186,6 +205,11 @@ pub fn recover_and_clean(install: &Path) -> Vec<String> {
     let journal = journal_path(install);
     if let Ok(text) = std::fs::read_to_string(&journal) {
         match serde_json::from_str::<Journal>(&text) {
+            // An emptied journal is a finished swap whose journal could
+            // not be deleted at the time.
+            Ok(finished) if finished.moves.is_empty() => {
+                let _ = std::fs::remove_file(&journal);
+            }
             Ok(unfinished) => {
                 let failed = undo(&unfinished.moves);
                 if failed.is_empty() {
@@ -320,6 +344,21 @@ mod tests {
         assert!(files.keys().all(|name| !name.contains(".old")), "{files:?}");
         assert!(!install.join(UPDATE_DIR).exists());
         assert_eq!(files["codewiki-app.exe"], "2");
+    }
+
+    #[test]
+    fn an_emptied_journal_does_not_undo_a_finished_swap() {
+        let (_dir, install, stage) = fixture();
+        swap(&install, &stage).unwrap();
+        // What `close_journal` leaves when the journal cannot be deleted.
+        write_journal(&install, &Journal::default()).unwrap();
+        let report = recover_and_clean(&install);
+        assert!(
+            report.iter().all(|line| !line.contains("undid")),
+            "{report:?}"
+        );
+        assert_eq!(snapshot(&install)["codewiki.exe"], "2");
+        assert!(!journal_path(&install).exists());
     }
 
     #[test]

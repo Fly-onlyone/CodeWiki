@@ -432,6 +432,105 @@ async fn a_server_that_listens_beyond_this_machine_takes_no_changes() {
     assert!(!h.data.path().join("settings.json").exists());
 }
 
+/// Answer one HTTP request with `status` and `reply`, in place of a
+/// provider. Returns the address to point a setting at.
+fn stand_in(status: u16, reply: Value) -> String {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let line = line.trim_end();
+            if line.is_empty() {
+                break;
+            }
+            if let Some((key, value)) = line.split_once(':')
+                && key.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        let text = reply.to_string();
+        let mut stream = reader.into_inner();
+        write!(
+            stream,
+            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        )
+        .unwrap();
+        stream.flush().unwrap();
+    });
+    url
+}
+
+#[tokio::test]
+async fn a_test_reports_whether_the_provider_answers() {
+    let h = Harness::new();
+    let (status, _) = h.call("POST", "/v1/settings/test/llm", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Nothing is chosen: that is an answer, not an error of the server.
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["name"], Value::Null);
+    assert_eq!(result["error"], "no provider is chosen");
+
+    let provider = stand_in(
+        200,
+        json!({ "message": { "role": "assistant", "content": "OK" }, "done": true }),
+    );
+    h.put(
+        "/v1/settings",
+        json!({
+            "llm": { "provider": "ollama", "model": "llama" },
+            "ollama": { "host": provider },
+        }),
+    )
+    .await;
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["name"], "ollama:llama");
+    assert!(result["ms"].is_u64(), "{result}");
+
+    // The provider says no: its own explanation comes back.
+    let provider = stand_in(404, json!({ "error": "model \"llama\" not found" }));
+    h.put("/v1/settings", json!({ "ollama": { "host": provider } }))
+        .await;
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(result["name"], "ollama:llama");
+    let error = result["error"].as_str().unwrap();
+    assert!(
+        error.contains("404") && error.contains("not found"),
+        "{error}"
+    );
+
+    // Settings that select nothing usable say what is missing.
+    h.put("/v1/settings", json!({ "llm": { "provider": "openai" } }))
+        .await;
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["name"], Value::Null);
+    assert!(
+        result["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
+        "{result}"
+    );
+
+    // The embedder that needs no server.
+    let result = h.post("/v1/settings/test/embed", None).await;
+    assert_eq!(result["ok"], true, "{result}");
+    assert!(result["name"].as_str().unwrap().starts_with("local"));
+    assert!(result["dimensions"].as_u64().unwrap() > 0);
+}
+
 #[tokio::test]
 async fn an_update_and_a_question_use_the_saved_provider() {
     let h = Harness::new();

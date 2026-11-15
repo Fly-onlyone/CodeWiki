@@ -6,6 +6,8 @@
 //! saved one. A setting whose environment variable is set cannot be changed
 //! here; the variable wins, so a change would have no effect.
 
+use std::time::Instant;
+
 use cw_core::settings::{self, Key, Resolved, Settings, Source};
 use cw_core::{Error, Result, secret};
 use serde_json::{Value, json};
@@ -76,6 +78,62 @@ pub(crate) fn describe(state: &AppState) -> Value {
     out["embed"]["name"] = json!(name);
     out["embed"]["problem"] = json!(problem);
     out
+}
+
+/// What a test of a provider found: `ok`, the provider's name, and either
+/// how long it took (with `extra`, what the answer showed) or its error.
+fn test_result(name: Option<String>, outcome: Result<Value>, started: Instant) -> Value {
+    match outcome {
+        Ok(extra) => {
+            let mut result = json!({
+                "ok": true,
+                "name": name,
+                "ms": u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+            });
+            if let (Some(result), Some(extra)) = (result.as_object_mut(), extra.as_object()) {
+                result.extend(extra.clone());
+            }
+            result
+        }
+        Err(error) => json!({ "ok": false, "name": name, "error": message(&error) }),
+    }
+}
+
+/// Send the chosen LLM one very small request. A provider that says no is an
+/// answer, not a failure of this server: `ok` is false and `error` holds the
+/// provider's explanation.
+pub(crate) fn test_llm(state: &AppState) -> Value {
+    let started = Instant::now();
+    match cw_llm::from_settings(&resolved(state)) {
+        Ok(Some(provider)) => test_result(
+            Some(provider.name()),
+            provider.probe().map(|()| json!({})),
+            started,
+        ),
+        Ok(None) => test_result(None, Err(Error::invalid("no provider is chosen")), started),
+        Err(error) => test_result(None, Err(error), started),
+    }
+}
+
+/// Have the chosen embedder embed one word. On success `dimensions` is the
+/// length of its vectors.
+pub(crate) fn test_embedder(state: &AppState) -> Value {
+    let started = Instant::now();
+    match cw_embed::from_settings(&resolved(state)) {
+        Ok(Some(embedder)) => test_result(
+            Some(embedder.name()),
+            embedder
+                .probe()
+                .map(|dimensions| json!({ "dimensions": dimensions })),
+            started,
+        ),
+        Ok(None) => test_result(
+            None,
+            Err(Error::invalid("semantic search is turned off")),
+            started,
+        ),
+        Err(error) => test_result(None, Err(error), started),
+    }
 }
 
 /// A value that passed the checks of its setting, as it is saved.

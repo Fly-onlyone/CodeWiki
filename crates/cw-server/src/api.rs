@@ -152,6 +152,8 @@ pub fn routes(state: AppState) -> Router {
         .route("/workspace", get(workspace_view))
         .route("/workspace/contracts", get(workspace_contracts))
         .route("/settings", get(read_settings).put(write_settings))
+        .route("/settings/test/llm", post(test_llm))
+        .route("/settings/test/embed", post(test_embedder))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -200,6 +202,17 @@ async fn write_settings(State(state): State<AppState>, Json(body): Json<Value>) 
     blocking(move || settings::change(&state, &body))
         .await
         .into_response()
+}
+
+/// Send the chosen LLM one very small request and report whether it
+/// answered. Always 200: a provider that refuses is reported in the body.
+async fn test_llm(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::test_llm(&state))).await
+}
+
+/// The same for the embedder of semantic search.
+async fn test_embedder(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::test_embedder(&state))).await
 }
 
 /// Resolved repository: its root folder and its index.

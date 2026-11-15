@@ -5,6 +5,7 @@ pub mod hash;
 pub mod logs;
 pub mod model;
 pub mod paths;
+pub mod secret;
 
 pub use error::{Error, Result};
 pub use hash::{normalize_text, sha256_hex};

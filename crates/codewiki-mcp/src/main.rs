@@ -33,6 +33,10 @@ fn connected(slot: &Mutex<Option<Backend>>) -> Result<Backend, String> {
         if backend.answers() {
             return Ok(backend.clone());
         }
+        log::info!(
+            "the backend at {} stopped answering; connecting again",
+            backend.url()
+        );
         *slot = None;
     }
     let backend = Backend::connect()?;
@@ -198,7 +202,7 @@ impl Bridge {
         })
         .await
         .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?;
-        outcome.map_err(|message| McpError::internal_error(message, None))
+        outcome.map_err(failed)
     }
 
     /// [`Bridge::call`] for a request that concerns no single repository.
@@ -210,8 +214,14 @@ impl Bridge {
         tokio::task::spawn_blocking(move || work(&connected(&slot)?))
             .await
             .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
-            .map_err(|message| McpError::internal_error(message, None))
+            .map_err(failed)
     }
+}
+
+/// A tool call that failed: logged, and returned to the agent as an error.
+fn failed(message: String) -> McpError {
+    log::warn!("tool call failed: {message}");
+    McpError::internal_error(message, None)
 }
 
 /// The string under `key`, or an empty string.
@@ -1160,17 +1170,21 @@ impl ServerHandler for Bridge {}
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
+    // Standard output carries the protocol; the log goes to `mcp.log` and to
+    // standard error, which the agent's host keeps.
+    cw_core::logs::init("mcp", log::LevelFilter::Info);
     let service = match Bridge::default().serve(stdio()).await {
         Ok(service) => service,
         Err(e) => {
-            eprintln!("codewiki-mcp: failed to start: {e}");
+            log::error!("codewiki-mcp: failed to start: {e}");
             return std::process::ExitCode::FAILURE;
         }
     };
     if let Err(e) = service.waiting().await {
-        eprintln!("codewiki-mcp: stopped with an error: {e}");
+        log::error!("codewiki-mcp: stopped with an error: {e}");
         return std::process::ExitCode::FAILURE;
     }
+    log::info!("codewiki-mcp: the agent closed the connection");
     std::process::ExitCode::SUCCESS
 }
 

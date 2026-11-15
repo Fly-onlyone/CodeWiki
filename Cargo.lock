@@ -1061,6 +1061,7 @@ version = "0.1.0"
 dependencies = [
  "cw-client",
  "cw-core",
+ "log",
  "rmcp",
  "serde",
  "serde_json",

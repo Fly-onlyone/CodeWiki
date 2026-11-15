@@ -29,6 +29,10 @@ param(
     # With -OldZip: let the older version ask the real GitHub instead of the
     # stand-in. For the run after a release, with the published package as -Zip.
     [switch]$RealRelease,
+    # A published release's tag (v0.1.0). With it, case R1 downloads that
+    # release's package inside the guest and checks it against its .sha256
+    # file and against -Zip, which must be the same package.
+    [string]$ReleaseTag,
     # Multiplies every wait; raise it on a slow host.
     [double]$Pace = 1.0
 )
@@ -230,6 +234,31 @@ Test-Case "B1" "Guest before install" "recorded only" {
     $policy = ($probe.powershell.policy | ForEach-Object { "$($_.scope)=$($_.policy)" }) -join ", "
     Add-Result -Id "B1" -Title "Guest before install" -Expect "recorded only" -Status note -Shots @(Shot "desktop") `
         -Observed "$($probe.os.caption) $($probe.os.display) build $($probe.os.build); PowerShell $($probe.powershell.version), pwsh $(if ($probe.powershell.pwsh) { 'present' } else { 'absent' }); policy $policy; git $(if ($probe.git) { 'present' } else { 'absent' }); adapters: $(($probe.adapters | ForEach-Object { $_.name }) -join ', '); graphics card attached by the host: $([bool]$Gpu); runtime DLLs missing: $(if ($missing) { $missing -join ', ' } else { 'none' }); commands run in session $($probe.session.id), elevated $($probe.session.elevated)"
+}
+
+# ---------------------------------------------------------------- R1, published
+if ($ReleaseTag) {
+    Test-Case "R1" "Download the published package in the guest" "the zip and its .sha256 file come from GitHub and agree, and the zip is the one under test" {
+        $name = Split-Path -Leaf $Zip
+        $base = "https://github.com/Fly-onlyone/CodeWiki/releases/download/$ReleaseTag"
+        $run = Invoke-GuestScript -TimeoutSec 900 -Script @"
+`$ProgressPreference = 'SilentlyContinue'
+`$dir = '$guestHome\Downloads\published'
+New-Item -ItemType Directory -Force `$dir | Out-Null
+Invoke-WebRequest -UseBasicParsing '$base/$name' -OutFile (Join-Path `$dir '$name')
+Invoke-WebRequest -UseBasicParsing '$base/$name.sha256' -OutFile (Join-Path `$dir '$name.sha256')
+"published: `$(((Get-Content (Join-Path `$dir '$name.sha256') -Raw) -split '\s+')[0])"
+"downloaded: `$((Get-FileHash -Algorithm SHA256 (Join-Path `$dir '$name')).Hash.ToLowerInvariant())"
+"bytes: `$((Get-Item (Join-Path `$dir '$name')).Length)"
+"@
+        $published = if ($run.Output -match "published: ([0-9a-f]{64})") { $Matches[1] } else { "" }
+        $downloaded = if ($run.Output -match "downloaded: ([0-9a-f]{64})") { $Matches[1] } else { "" }
+        $tested = (Get-FileHash -Algorithm SHA256 $Zip).Hash.ToLowerInvariant()
+        $ok = $published -and $published -eq $downloaded -and $downloaded -eq $tested
+        Add-Result -Id "R1" -Title "Download the published package in the guest" -Expect "three equal SHA-256 values" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed "from $base; the .sha256 file says $published; the zip downloaded in the guest has $downloaded; the zip this run installs has $tested"
+    }
 }
 
 # ---------------------------------------------------------------- C, install

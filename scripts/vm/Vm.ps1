@@ -193,6 +193,37 @@ function Start-GuestExe {
     if ($run.Output -notcontains "started") { throw "could not start $Exe on the guest's desktop: $($run.Errors -join '; ')" }
 }
 
+# Finds a program's main window inside the guest. Not the process's
+# MainWindowHandle: that is whichever of its top-level windows Windows lists
+# first, and when the pointer rests where the app's close button appears, it
+# is the tooltip Windows shows for that button, 35 pixels wide. The main
+# window is the largest one on screen.
+$script:GuestWindowType = @'
+Add-Type -Namespace VmTest -Name Windows -MemberDefinition '
+[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+public delegate bool EachWindow(IntPtr window, IntPtr data);
+[DllImport("user32.dll")] public static extern bool EnumWindows(EachWindow each, IntPtr data);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+public static IntPtr Largest(int process) {
+    IntPtr best = IntPtr.Zero;
+    long most = 0;
+    EnumWindows(delegate(IntPtr window, IntPtr data) {
+        uint owner;
+        GetWindowThreadProcessId(window, out owner);
+        if (owner == (uint)process && IsWindowVisible(window)) {
+            Rect rect;
+            GetWindowRect(window, out rect);
+            long area = (long)(rect.Right - rect.Left) * (rect.Bottom - rect.Top);
+            if (area > most) { most = area; best = window; }
+        }
+        return true;
+    }, IntPtr.Zero);
+    return best;
+}'
+'@
+
 # Wait for a program's window, click its top edge so that it has the keyboard
 # focus, and return where it is on the guest's screen (Left, Top, Right,
 # Bottom, in pixels). A window that Start-GuestExe opened does not get the
@@ -205,15 +236,19 @@ function Show-GuestWindow {
         [int]$TimeoutSec = 60
     )
     $run = Invoke-GuestScript -TimeoutSec ($TimeoutSec + 60) -Script @"
-Add-Type -Namespace VmTest -Name Window -MemberDefinition '[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect); [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }'
+$script:GuestWindowType
 `$deadline = (Get-Date).AddSeconds($TimeoutSec)
 do {
-    `$process = Get-Process '$ProcessName' -ErrorAction SilentlyContinue | Where-Object { `$_.MainWindowHandle -ne 0 } | Select-Object -First 1
-    if (-not `$process) { Start-Sleep -Milliseconds 500 }
-} while (-not `$process -and (Get-Date) -lt `$deadline)
-if (`$process) {
-    `$rect = New-Object VmTest.Window+Rect
-    [void][VmTest.Window]::GetWindowRect(`$process.MainWindowHandle, [ref]`$rect)
+    `$window = [IntPtr]::Zero
+    foreach (`$process in @(Get-Process '$ProcessName' -ErrorAction SilentlyContinue)) {
+        `$window = [VmTest.Windows]::Largest(`$process.Id)
+        if (`$window -ne [IntPtr]::Zero) { break }
+    }
+    if (`$window -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 500 }
+} while (`$window -eq [IntPtr]::Zero -and (Get-Date) -lt `$deadline)
+if (`$window -ne [IntPtr]::Zero) {
+    `$rect = New-Object VmTest.Windows+Rect
+    [void][VmTest.Windows]::GetWindowRect(`$window, [ref]`$rect)
     "rect=`$(`$rect.Left),`$(`$rect.Top),`$(`$rect.Right),`$(`$rect.Bottom)"
 }
 "@
@@ -246,9 +281,13 @@ Add-Type -Namespace VmTest -Name State -MemberDefinition '
 [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);'
 # Without this, a scaled screen gives scaled numbers, and clicks miss.
 [void][VmTest.State]::SetProcessDPIAware()
-`$process = Get-Process '$ProcessName' -ErrorAction SilentlyContinue | Where-Object { `$_.MainWindowHandle -ne 0 } | Select-Object -First 1
-if (`$process) {
-    `$h = `$process.MainWindowHandle
+$script:GuestWindowType
+`$h = [IntPtr]::Zero
+foreach (`$process in @(Get-Process '$ProcessName' -ErrorAction SilentlyContinue)) {
+    `$h = [VmTest.Windows]::Largest(`$process.Id)
+    if (`$h -ne [IntPtr]::Zero) { break }
+}
+if (`$h -ne [IntPtr]::Zero) {
     `$client = New-Object VmTest.State+Rect
     `$outer = New-Object VmTest.State+Rect
     `$origin = New-Object VmTest.State+Point
@@ -490,9 +529,40 @@ function Wait-VmState {
     $false
 }
 
+# Megabytes of memory the host has free right now.
+function Get-HostFreeMemoryMb {
+    [int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024)
+}
+
+# Ask Windows to page out what the host's programs are not using right now.
+# Nothing is closed, and a program takes its memory back as it needs it.
+function Clear-HostMemory {
+    if (-not ("VmTest.HostMemory" -as [type])) {
+        Add-Type -Namespace VmTest -Name HostMemory -MemberDefinition '[DllImport("psapi.dll")] public static extern bool EmptyWorkingSet(IntPtr process);'
+    }
+    foreach ($process in Get-Process) {
+        try { [void][VmTest.HostMemory]::EmptyWorkingSet($process.Handle) } catch { }
+    }
+    Start-Sleep -Seconds 3
+}
+
+# Hyper-V starts a guest only when all its memory is free on the host at that
+# moment. On a host that is in use that is often not so, least of all when
+# the guest is started again in the middle of a run: the memory it gave back
+# a minute ago has been taken. So free memory first when there is too little,
+# and try once more when the start still fails.
 function Start-Guest {
     $script:Vm.Devices = $null
-    if ((Get-VmState) -ne "Running") { Start-VM -Name $script:Vm.Name }
+    if ((Get-VmState) -eq "Running") { return }
+    $needed = [int]((Get-VM -Name $script:Vm.Name).MemoryStartup / 1MB) + 512
+    if ((Get-HostFreeMemoryMb) -lt $needed) { Clear-HostMemory }
+    try {
+        Start-VM -Name $script:Vm.Name -ErrorAction Stop
+    } catch {
+        Clear-HostMemory
+        Start-Sleep -Seconds 5
+        if ((Get-VmState) -ne "Running") { Start-VM -Name $script:Vm.Name -ErrorAction Stop }
+    }
 }
 
 # Ask Windows to shut down; pull the plug if it does not within the timeout.

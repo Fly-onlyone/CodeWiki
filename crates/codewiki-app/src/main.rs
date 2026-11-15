@@ -74,6 +74,11 @@ const PALETTE_ROWS: usize = 14;
 const THEME_MENU_WIDTH: f32 = 340.0;
 /// The mark of the theme in use, and the place kept for it in every row.
 const THEME_MARK: f32 = 18.0;
+/// Between the window's top right corner and a menu that hangs from it.
+const MENU_CORNER_GAP: f32 = 12.0;
+/// The smallest window: the sidebar, the details pane, and a reading pane
+/// about as wide as the two together.
+const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
 
 /// The vault's map note, which the app calls "Wiki map".
 const WIKI_MAP: &str = "_HOME";
@@ -2067,8 +2072,20 @@ impl AppView {
     /// The theme menu, hung under the toolbar's theme button. `shown` runs
     /// from 0 to 1 as for the palette. `None` until the button has been
     /// drawn once, which tells where it is.
-    fn theme_menu_view(&self, shown: f32, cx: &mut Context<Self>) -> Option<Menu> {
-        let anchor = self.theme_anchor.get()?;
+    ///
+    /// A page that fills the window has no toolbar; the palette can still
+    /// ask for the menu there, and it then hangs from the window's top right
+    /// corner, under the title bar.
+    fn theme_menu_view(&self, shown: f32, window: &Window, cx: &mut Context<Self>) -> Option<Menu> {
+        let anchor = if self.fills_window() {
+            let right = window.viewport_size().width - px(MENU_CORNER_GAP);
+            Bounds::new(
+                point(right, TITLE_BAR_HEIGHT + px(MENU_CORNER_GAP)),
+                size(px(0.), px(0.)),
+            )
+        } else {
+            self.theme_anchor.get()?
+        };
         let active = cx.theme().theme_name().clone();
         let mark = cx.theme().primary;
         let entries = themes::entries(cx);
@@ -2961,7 +2978,7 @@ impl Render for AppView {
                 root.child(self.palette_view(palette.progress, cx))
             })
             .when(theme_menu.should_render(), |root| {
-                root.children(self.theme_menu_view(theme_menu.progress, cx))
+                root.children(self.theme_menu_view(theme_menu.progress, window, cx))
             })
             // The place of the title bar, which the shell draws.
             .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())
@@ -2973,6 +2990,34 @@ impl Render for AppView {
         }
         root
     }
+}
+
+/// How the app's window opens: at GPUI's default size, cut to what the screen
+/// has free of the taskbar, in the middle of that. GPUI itself measures
+/// against the whole screen, so on a screen less tall than its default the
+/// bottom of the window lay under the taskbar.
+fn window_options(cx: &App) -> WindowOptions {
+    let mut options = TitleBar::window_options();
+    options.window_min_size = Some(size(px(MIN_WINDOW.0), px(MIN_WINDOW.1)));
+    if let Some(display) = cx.primary_display() {
+        options.window_bounds = Some(WindowBounds::Windowed(first_bounds(
+            display.visible_bounds(),
+        )));
+    }
+    options
+}
+
+/// The first window's place on a screen whose free area is `free`.
+fn first_bounds(free: Bounds<Pixels>) -> Bounds<Pixels> {
+    let fitted = DEFAULT_WINDOW_SIZE.min(&free.size);
+    let centre = free.center();
+    Bounds::new(
+        point(
+            centre.x - fitted.width / 2.0,
+            centre.y - fitted.height / 2.0,
+        ),
+        fitted,
+    )
 }
 
 /// Whether closing the app also stops the backend. `remote` says that the
@@ -3098,7 +3143,7 @@ fn main() {
             KeyBinding::new("alt-left", GoBack, None),
             KeyBinding::new("ctrl-s", SaveNote, None),
         ]);
-        let (window, _) = gpui_kit::open_window(TitleBar::window_options(), cx, |window, cx| {
+        let (window, _) = gpui_kit::open_window(window_options(cx), cx, |window, cx| {
             window.set_window_title("CodeWiki");
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
@@ -3171,7 +3216,29 @@ mod tests {
     // standard one.
     use serde_json::json;
 
-    use super::{Repo, parse_repos, stops_backend_on_close};
+    use gpui_kit::{Bounds, DEFAULT_WINDOW_SIZE, point, px, size};
+
+    use super::{Repo, first_bounds, parse_repos, stops_backend_on_close};
+
+    #[test]
+    fn the_first_window_stays_inside_the_free_part_of_the_screen() {
+        // A 1600x900 screen with a 48 px taskbar at the bottom: the window
+        // is as wide as GPUI's default and no taller than what is free.
+        let free = Bounds::new(point(px(0.), px(0.)), size(px(1600.), px(852.)));
+        let window = first_bounds(free);
+        assert_eq!(window.size, size(DEFAULT_WINDOW_SIZE.width, px(852.)));
+        assert_eq!(window.origin, point(px(32.), px(0.)));
+
+        // A taskbar on the left moves the free area, and the window with it.
+        let free = Bounds::new(point(px(60.), px(0.)), size(px(3780.), px(2160.)));
+        let window = first_bounds(free);
+        assert_eq!(window.size, DEFAULT_WINDOW_SIZE);
+        assert!(window.origin.x >= px(60.));
+        assert_eq!(
+            window.origin.x + window.size.width / 2.0,
+            px(60.) + px(3780.) / 2.0
+        );
+    }
 
     #[test]
     fn the_repository_list_splits_present_from_missing() {

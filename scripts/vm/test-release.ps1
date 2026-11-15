@@ -45,6 +45,8 @@ param(
     [double]$Pace = 1.0
 )
 $ErrorActionPreference = "Stop"
+# "pwsh -File ... -Only A1,C1" hands the list over as one text.
+if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 . (Join-Path $PSScriptRoot "Vm.ps1")
 Initialize-Vm -Name $VmName -User $User -Password $Password
 # The host must not fall asleep under a run nobody is watching.

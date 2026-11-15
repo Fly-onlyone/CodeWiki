@@ -169,10 +169,30 @@ impl MenuSection {
         }
     }
 
+    /// A group with no heading.
+    pub fn plain() -> Self {
+        Self {
+            label: None,
+            items: Vec::new(),
+        }
+    }
+
     pub fn items(mut self, items: impl IntoIterator<Item = MenuItem>) -> Self {
         self.items.extend(items);
         self
     }
+}
+
+/// Which edge of its anchor a menu lines up with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Align {
+    /// The left edges meet: the menu of a select, which is as wide as the
+    /// select (`Select/SelectInput.js`: centred under it, and at least as
+    /// wide).
+    Start,
+    /// The right edges meet: a menu opened by a button at the end of a bar.
+    #[default]
+    End,
 }
 
 /// A menu that hangs under `anchor`.
@@ -183,6 +203,7 @@ pub struct Menu {
     focus: FocusHandle,
     sections: Vec<MenuSection>,
     width: f32,
+    align: Align,
     highlighted: usize,
     open: bool,
     shown: f32,
@@ -201,6 +222,7 @@ impl Menu {
             focus: focus.clone(),
             sections: Vec::new(),
             width: WIDTH,
+            align: Align::default(),
             highlighted: 0,
             open: true,
             shown: 1.0,
@@ -218,6 +240,12 @@ impl Menu {
     /// The width of the menu, in pixels.
     pub fn width(mut self, width: f32) -> Self {
         self.width = width;
+        self
+    }
+
+    /// Which edge of the anchor the menu lines up with.
+    pub fn align(mut self, align: Align) -> Self {
+        self.align = align;
         self
     }
 
@@ -376,6 +404,12 @@ impl RenderOnce for Menu {
             );
 
         let on_close = self.on_close;
+        // The corner of the anchor the menu hangs from, and its own corner
+        // that meets it.
+        let (attach, corner) = match self.align {
+            Align::Start => (Anchor::BottomLeft, Anchor::TopLeft),
+            Align::End => (Anchor::BottomRight, Anchor::TopRight),
+        };
         // MUI's `Modal` under a menu: a backdrop nobody sees, which takes the
         // click that closes it.
         let scrim = div()
@@ -395,8 +429,8 @@ impl RenderOnce for Menu {
             })
             .child(
                 anchored()
-                    .attach(self.anchor, Anchor::BottomRight)
-                    .anchor(Anchor::TopRight)
+                    .attach(self.anchor, attach)
+                    .anchor(corner)
                     .offset(point(px(0.), px(GAP)))
                     .snap_to_window_with_margin(px(WINDOW_MARGIN))
                     .child(paper),

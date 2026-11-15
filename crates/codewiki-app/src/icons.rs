@@ -80,6 +80,8 @@ app_icons! {
     WARNING = "report-problem-outlined",
     ERROR = "error-outline",
     EXPAND = "expand-more",
+    // The arrow of a select.
+    DROP_DOWN = "arrow-drop-down",
     // The side panes. Material has `ViewSidebar` only with the pane on the
     // right; the left one is the same path mirrored.
     SIDEBAR = "view-sidebar-left",

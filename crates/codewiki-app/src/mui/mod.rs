@@ -15,6 +15,9 @@ pub mod list;
 pub mod menu;
 pub mod motion;
 pub mod ripple;
+// Its first user is the Settings page, which is not built yet.
+#[allow(dead_code)]
+pub mod select;
 pub mod surfaces;
 // Its first user is the Settings page, which is not built yet.
 #[allow(dead_code)]

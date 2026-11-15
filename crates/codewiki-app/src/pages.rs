@@ -344,7 +344,8 @@ fn updates_card(update: &update::State, auto_update: bool) -> Block {
     }];
     if *update != State::NotInstalled {
         body.push(Block::Setting {
-            label: "Check automatically".into(),
+            // Short: the label column is narrow, and a longer one wraps.
+            label: "Daily check".into(),
             value: if auto_update {
                 "On, once a day when CodeWiki starts".into()
             } else {
@@ -1089,7 +1090,7 @@ mod tests {
         assert!(
             checked
                 .words()
-                .contains("Check automatically: On, once a day when CodeWiki starts")
+                .contains("Daily check: On, once a day when CodeWiki starts")
         );
         assert!(checked.actions().contains(&Action::CheckUpdates));
         assert!(checked.actions().contains(&Action::AutoUpdate(false)));

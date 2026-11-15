@@ -1033,6 +1033,7 @@ dependencies = [
  "cw-vault",
  "cw-wiki",
  "getrandom 0.4.3",
+ "log",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1423,6 +1424,7 @@ name = "cw-client"
 version = "0.1.0"
 dependencies = [
  "cw-core",
+ "log",
  "semver",
  "serde_json",
  "ureq",

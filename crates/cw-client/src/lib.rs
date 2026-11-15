@@ -3,10 +3,9 @@
 //! Clients hold no index of their own. They find a running backend, starting
 //! a local one when none is running, and send every request to it.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -106,29 +105,6 @@ fn codewiki_binary() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(name))
 }
 
-/// Where a backend started here writes what it prints: the end of
-/// `logs\backend.log` in the data folder, after a line that marks the start.
-/// It has no console to print to, so without this its errors and panics
-/// would be lost.
-fn backend_log() -> Stdio {
-    let path = cw_core::logs::path("backend");
-    match cw_core::logs::open(&path) {
-        Ok(mut file) => {
-            let caller = std::env::current_exe()
-                .ok()
-                .and_then(|exe| Some(exe.file_name()?.to_string_lossy().to_string()))
-                .unwrap_or_default();
-            let _ = writeln!(
-                file,
-                "{} backend started by {caller}",
-                cw_core::logs::timestamp(SystemTime::now())
-            );
-            Stdio::from(file)
-        }
-        Err(_) => Stdio::null(),
-    }
-}
-
 impl Backend {
     /// Find a backend, starting a local one if needed.
     pub fn connect() -> Result<Self, String> {
@@ -137,6 +113,7 @@ impl Backend {
         {
             let token = std::env::var(TOKEN_ENV)
                 .map_err(|_| format!("{URL_ENV} is set but {TOKEN_ENV} is not"))?;
+            log::info!("using the backend at {url}, named by {URL_ENV}");
             return Ok(Self::new(url.trim_end_matches('/').to_string(), token));
         }
         let data_dir = cw_core::paths::data_dir();
@@ -151,18 +128,29 @@ impl Backend {
             // Replace it, but never one that is newer: an older client must
             // not stop the backend a newer one started.
             if !is_older(&version, cw_core::VERSION) || !backend.stop() {
+                // Its log stays where it was started, which may not be the
+                // folder this program logs to.
+                log::info!("using the running backend {version} at {}", backend.url);
                 return Ok(backend);
             }
+            log::info!("stopped the older backend {version} at {}", backend.url);
         }
         // No live backend: a stale file would only mislead the wait below.
         let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
         let binary = codewiki_binary();
+        log::info!("starting a backend: {}", binary.display());
         let mut serve = Command::new(&binary);
         serve
             .arg("serve")
+            // The backend writes `backend.log` itself, in the folder this
+            // program logs to, a relative `CODEWIKI_LOG_DIR` included.
+            .env(cw_core::logs::LOG_DIR_ENV, cw_core::logs::dir())
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(backend_log());
+            // Not inherited: a pipe from here that nobody reads any more (an
+            // IDE that stopped this program, an agent host) fills up and
+            // stalls the backend. Its own log has what it reports.
+            .stderr(Stdio::null());
         // `codewiki` is a console program. Started by the desktop app, which
         // has no console, it would get a console window of its own: a black
         // terminal on top of the app, and on Windows 11 the backend then waits
@@ -182,6 +170,11 @@ impl Backend {
         let started = Instant::now();
         while started.elapsed() < STARTUP_TIMEOUT {
             if let Some(backend) = live() {
+                log::info!(
+                    "the backend at {} answered after {} ms",
+                    backend.url,
+                    started.elapsed().as_millis()
+                );
                 return Ok(backend);
             }
             // A backend that has ended will never answer; say so now rather

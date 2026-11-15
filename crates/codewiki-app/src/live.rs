@@ -381,9 +381,11 @@ pub struct HomeInput<'a> {
     pub current: Option<&'a str>,
     /// Name of the open repository, when it has no wiki yet.
     pub no_wiki: Option<&'a str>,
-    /// Names of the repositories just forgotten because their folders are
-    /// gone.
-    pub removed: &'a [String],
+    /// The registered repositories whose folders are not found.
+    pub missing: &'a [Project<'a>],
+    /// The newer version that waits to be installed. Home has no toolbar,
+    /// where the offer otherwise is.
+    pub update: Option<&'a str>,
 }
 
 /// The page the app starts on: a way to open a folder, and every registered
@@ -393,18 +395,18 @@ pub fn home_page(home: &HomeInput) -> Doc {
     // screen does.
     let mut doc = Doc::new("CodeWiki").lead("Open a project, or pick up one you opened before.");
     doc.push(Block::Logo);
+    if let Some(version) = home.update {
+        doc.push(Block::Alert {
+            tone: Tone::Info,
+            text: format!("CodeWiki {version} is available."),
+            button: Some((format!("Update to {version}"), Action::InstallUpdate)),
+        });
+    }
     if let Some(name) = home.no_wiki {
         doc.push(Block::Alert {
             tone: Tone::Info,
             text: format!("{name} has no wiki yet. Sync indexes its code and writes one."),
             button: Some(("Sync".into(), Action::Sync)),
-        });
-    }
-    if !home.removed.is_empty() {
-        doc.push(Block::Alert {
-            tone: Tone::Info,
-            text: removed_notice(home.removed),
-            button: None,
         });
     }
     doc.push(Block::Rows(vec![
@@ -413,34 +415,55 @@ pub fn home_page(home: &HomeInput) -> Doc {
              obsidian folder inside it.",
         ),
     ]));
-    if home.projects.is_empty() {
+    if home.projects.is_empty() && home.missing.is_empty() {
         doc.push(Block::Empty(
             "No projects yet. Open a folder to add one.".into(),
         ));
         return doc;
     }
-    doc.heading("Recent projects");
-    doc.push(Block::Rows(
-        by_recency(home.projects, home.recent)
-            .into_iter()
-            .map(|project| {
-                let open = home.current == Some(project.id);
-                // The mark goes first: a long path is cut short at its end.
-                let detail = if open {
-                    format!("Open now · {}", project.path)
-                } else {
-                    project.path.to_string()
-                };
-                Row::new(
-                    icons::REPOSITORY,
-                    project.name,
-                    Action::OpenRepo(project.id.to_string()),
-                )
-                .detail(detail)
-                .selected(open)
-            })
-            .collect(),
-    ));
+    if !home.projects.is_empty() {
+        doc.heading("Recent projects");
+        doc.push(Block::Rows(
+            by_recency(home.projects, home.recent)
+                .into_iter()
+                .map(|project| {
+                    let open = home.current == Some(project.id);
+                    // The mark goes first: a long path is cut short at its end.
+                    let detail = if open {
+                        format!("Open now · {}", project.path)
+                    } else {
+                        project.path.to_string()
+                    };
+                    Row::new(
+                        icons::REPOSITORY,
+                        project.name,
+                        Action::OpenRepo(project.id.to_string()),
+                    )
+                    .detail(detail)
+                    .selected(open)
+                })
+                .collect(),
+        ));
+    }
+    if !home.missing.is_empty() {
+        // A folder can be away for a while: a drive that is not plugged in,
+        // a share that is offline. So the project stays until the user
+        // removes it.
+        doc.heading("Folder not found");
+        doc.push(Block::Text(vec![text(
+            "These projects stay on the list and open again once their folders are back. \
+             Remove takes a project off the list; nothing on disk is deleted.",
+        )]));
+        let mut missing = home.missing.to_vec();
+        missing.sort_by_key(|project| project.name.to_lowercase());
+        for project in missing {
+            doc.push(Block::Setting {
+                label: project.name.into(),
+                value: project.path.into(),
+                button: Some(("Remove".into(), Action::ForgetRepo(project.id.to_string()))),
+            });
+        }
+    }
     doc
 }
 
@@ -460,16 +483,6 @@ fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a
     rest.sort_by_key(|project| project.name.to_lowercase());
     ordered.extend(rest);
     ordered
-}
-
-/// What Home says about repositories forgotten because their folders are
-/// gone.
-fn removed_notice(names: &[String]) -> String {
-    let list = names.join(", ");
-    match names.len() {
-        1 => format!("Removed 1 project whose folder is gone: {list}."),
-        count => format!("Removed {count} projects whose folders are gone: {list}."),
-    }
 }
 
 /// The page shown when no backend could be reached: where its log is, and a
@@ -503,7 +516,8 @@ mod tests {
             recent,
             current: None,
             no_wiki: None,
-            removed: &[],
+            missing: &[],
+            update: None,
         }
     }
 
@@ -592,29 +606,48 @@ mod tests {
     }
 
     #[test]
-    fn home_names_projects_removed_because_their_folders_are_gone() {
-        let one = ["zzzbot".to_string()];
+    fn home_keeps_a_project_whose_folder_is_not_found_and_offers_to_remove_it() {
         let page = home_page(&HomeInput {
-            removed: &one,
+            missing: &[GAMMA, BETA],
             ..home(&[ALPHA], &[])
         });
-        assert!(
-            page.words()
-                .contains("Removed 1 project whose folder is gone: zzzbot.")
+        assert_eq!(page.headings(), ["Recent projects", "Folder not found"]);
+        assert!(page.words().contains(r"Beta: C:\code\beta"));
+        assert!(page.words().contains(r"gamma: D:\gamma"));
+        // It cannot be opened, only removed, and the list is by name.
+        assert_eq!(
+            page.actions(),
+            [
+                Action::OpenFolder,
+                Action::OpenRepo("a1".into()),
+                Action::ForgetRepo("b2".into()),
+                Action::ForgetRepo("g3".into()),
+            ]
         );
 
-        let two = ["zzzbot".to_string(), "old-demo".to_string()];
+        // With no folder there at all, the missing ones still show.
         let page = home_page(&HomeInput {
-            removed: &two,
+            missing: &[GAMMA],
             ..home(&[], &[])
         });
-        assert!(
-            page.words()
-                .contains("Removed 2 projects whose folders are gone: zzzbot, old-demo.")
-        );
+        assert_eq!(page.headings(), ["Folder not found"]);
+        assert!(!page.words().contains("No projects yet"));
 
         let page = home_page(&home(&[ALPHA], &[]));
-        assert!(!page.words().contains("Removed"));
+        assert!(!page.words().contains("not found"));
+    }
+
+    #[test]
+    fn home_offers_a_waiting_update() {
+        let page = home_page(&HomeInput {
+            update: Some("0.2.0"),
+            ..home(&[ALPHA], &[])
+        });
+        assert!(page.words().contains("CodeWiki 0.2.0 is available."));
+        assert_eq!(page.actions()[0], Action::InstallUpdate);
+
+        let page = home_page(&home(&[ALPHA], &[]));
+        assert!(!page.actions().contains(&Action::InstallUpdate));
     }
 
     #[test]

@@ -168,12 +168,9 @@ struct AppView {
     pending_proposals: Vec<(String, String)>,
     /// Folders of the repositories opened in the app, newest first.
     recent: Vec<String>,
-    /// Repositories forgotten because their folders are gone, by name, that
-    /// Home has not shown yet.
-    removed: Vec<String>,
-    /// The names Home shows now. They go when Home is left, so each is
-    /// shown once.
-    removed_shown: Vec<String>,
+    /// The registered repositories whose folders are not found. Home lists
+    /// them apart, each with a way to remove it.
+    missing: Vec<Repo>,
     page: Page,
     /// Pages visited before the current one.
     history: Vec<Page>,
@@ -293,8 +290,7 @@ impl AppView {
             notes_loaded: false,
             pending_proposals: Vec::new(),
             recent: startup::recent(),
-            removed: Vec::new(),
-            removed_shown: Vec::new(),
+            missing: Vec::new(),
             page: Page::Message(String::new()),
             history: Vec::new(),
             tabs: vec![Tab {
@@ -398,16 +394,16 @@ impl AppView {
                     // Register the startup folder; failure here is not fatal,
                     // the user may have other repositories.
                     let opened = startup::repo().and_then(|path| backend.repo_id(&path).ok());
-                    let (repos, removed) = registered_repos(&backend)?;
-                    Ok::<_, String>((backend, repos, removed, opened))
+                    let (repos, missing) = registered_repos(&backend)?;
+                    Ok::<_, String>((backend, repos, missing, opened))
                 })
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.busy = None;
                 match result {
-                    Ok((backend, repos, removed, opened)) => {
+                    Ok((backend, repos, missing, opened)) => {
                         this.backend = Some(backend);
-                        this.take_repos(repos, removed);
+                        this.take_repos(repos, missing);
                         let first = opened
                             .and_then(|id| this.repos.iter().find(|r| r.id == id).cloned())
                             .or_else(|| this.newest_recent());
@@ -610,7 +606,7 @@ impl AppView {
                 this.refresh_settings(cx);
             });
         })
-        .detach();
+            .detach();
     }
 
     /// Find or start a backend again without leaving the page or clearing
@@ -663,24 +659,48 @@ impl AppView {
             cx,
             move |b| {
                 let id = b.repo_id(&path)?;
-                let (repos, removed) = registered_repos(b)?;
-                Ok((id, repos, removed))
+                let (repos, missing) = registered_repos(b)?;
+                Ok((id, repos, missing))
             },
-            |this, (id, repos, removed), cx| {
-                this.take_repos(repos, removed);
+            |this, (id, repos, missing), cx| {
+                this.take_repos(repos, missing);
                 this.open_repo(&id, cx);
             },
         );
     }
 
-    /// Keep the repositories the backend listed, and the names of those it
-    /// forgot, for Home to report. The recent list loses every folder that
-    /// is no longer registered.
-    fn take_repos(&mut self, repos: Vec<Repo>, removed: Vec<String>) {
-        let paths: Vec<&str> = repos.iter().map(|repo| repo.path.as_str()).collect();
+    /// Take the repository `id` off the backend's list, as the user asked on
+    /// Home for one whose folder is not found. Nothing on disk is deleted,
+    /// and opening the folder again registers it under the same id.
+    fn forget_repo(&mut self, id: String, cx: &mut Context<Self>) {
+        self.run(
+            "Removing",
+            cx,
+            move |b| {
+                b.delete(&format!("/v1/repos/{id}"))?;
+                log::info!("forgot repository {id}, as asked");
+                registered_repos(b)
+            },
+            |this, (repos, missing), cx| {
+                this.take_repos(repos, missing);
+                cx.notify();
+            },
+        );
+    }
+
+    /// Keep the repositories the backend listed: those whose folders are
+    /// there, and those whose folders are not found. The recent list loses
+    /// every folder that is no longer registered, and keeps a missing one,
+    /// so that it is in its old place when its folder is back.
+    fn take_repos(&mut self, repos: Vec<Repo>, missing: Vec<Repo>) {
+        let paths: Vec<&str> = repos
+            .iter()
+            .chain(&missing)
+            .map(|repo| repo.path.as_str())
+            .collect();
         self.recent = startup::keep_recent(&paths);
         self.repos = repos;
-        self.removed.extend(removed);
+        self.missing = missing;
     }
 
     /// The registered repository opened most recently, if any.
@@ -936,13 +956,6 @@ impl AppView {
     /// Rebuild the viewer for `self.page` after it changed.
     fn show_page(&mut self) {
         self.page_serial += 1;
-        // Home names the repositories forgotten since it was last shown, on
-        // this visit only.
-        if matches!(self.page, Page::Home) {
-            self.removed_shown.append(&mut self.removed);
-        } else {
-            self.removed_shown.clear();
-        }
         self.figure = match &self.page {
             Page::Note { figure, .. } => figure.clone(),
             _ => None,
@@ -1639,6 +1652,7 @@ impl AppView {
                 self.open_settings(false, cx);
             }
             Action::OpenRepo(id) => self.open_repo(id, cx),
+            Action::ForgetRepo(id) => self.forget_repo(id.clone(), cx),
             Action::Sync => self.sync(cx),
         }
     }
@@ -2307,15 +2321,19 @@ impl AppView {
 
     /// Home, from the registered repositories and the open one.
     fn home_doc(&self) -> Doc {
-        let projects: Vec<live::Project> = self
-            .repos
-            .iter()
-            .map(|repo| live::Project {
-                id: &repo.id,
-                name: &repo.name,
-                path: &repo.path,
-            })
-            .collect();
+        fn listed(repos: &[Repo]) -> Vec<live::Project<'_>> {
+            repos
+                .iter()
+                .map(|repo| live::Project {
+                    id: &repo.id,
+                    name: &repo.name,
+                    path: &repo.path,
+                })
+                .collect()
+        }
+        let projects = listed(&self.repos);
+        let missing = listed(&self.missing);
+        let update = self.update.available().map(|r| r.version.to_string());
         let no_wiki = self
             .repo
             .as_ref()
@@ -2326,7 +2344,8 @@ impl AppView {
             recent: &self.recent,
             current: self.repo.as_ref().map(|repo| repo.id.as_str()),
             no_wiki,
-            removed: &self.removed_shown,
+            missing: &missing,
+            update: update.as_deref(),
         })
     }
 
@@ -2792,31 +2811,11 @@ fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>) {
     (repos(present), repos(missing))
 }
 
-/// The registered repositories whose folders are there, and the names of
-/// those forgotten now because their folders are gone. A repository the
-/// backend fails to forget is left out and tried again next time. Blocks;
-/// run it off the UI thread.
-fn registered_repos(backend: &Backend) -> Result<(Vec<Repo>, Vec<String>), String> {
-    let (present, missing) = parse_repos(&backend.get("/v1/repos")?);
-    let mut removed = Vec::new();
-    for repo in missing {
-        match backend.delete(&format!("/v1/repos/{}", repo.id)) {
-            Ok(_) => {
-                log::info!(
-                    "forgot repository {} ({}): its folder is gone",
-                    repo.name,
-                    repo.path
-                );
-                removed.push(repo.name);
-            }
-            Err(message) => log::warn!(
-                "could not forget repository {} ({}), whose folder is gone: {message}",
-                repo.name,
-                repo.path
-            ),
-        }
-    }
-    Ok((present, removed))
+/// The registered repositories whose folders are there, and those whose
+/// folders are not found. Nothing is forgotten here: a folder can be away
+/// for a while. Blocks; run it off the UI thread.
+fn registered_repos(backend: &Backend) -> Result<(Vec<Repo>, Vec<Repo>), String> {
+    Ok(parse_repos(&backend.get("/v1/repos")?))
 }
 
 fn parse_notes(value: &Value) -> Vec<NoteInfo> {

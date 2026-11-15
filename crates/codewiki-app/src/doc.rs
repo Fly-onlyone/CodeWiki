@@ -34,6 +34,9 @@ pub enum Action {
     AutoUpdate(bool),
     /// Open the registered repository with this id.
     OpenRepo(String),
+    /// Take the repository with this id off the list. Its folder and the
+    /// wiki in it are left alone.
+    ForgetRepo(String),
     /// Bring the open repository's wiki up to date.
     Sync,
 }

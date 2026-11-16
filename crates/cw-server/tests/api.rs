@@ -14,6 +14,11 @@ use tower::ServiceExt;
 const TOKEN: &str = "test-token";
 const SECRET: &str = "hook-secret";
 
+/// An environment with nothing set.
+fn no_env(_: &str) -> Option<String> {
+    None
+}
+
 fn write(root: &Path, rel: &str, text: &str) {
     let path = root.join(rel);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -32,6 +37,17 @@ impl Harness {
     }
 
     fn with_webhook_secret(secret: Option<&str>) -> Self {
+        Self::with_config(secret, true, no_env)
+    }
+
+    /// A server whose settings may or may not be changed, under the
+    /// environment `env` reads. The machine's own environment is never read,
+    /// so a provider configured on it cannot be called by a test.
+    fn with_config(
+        secret: Option<&str>,
+        settings_writable: bool,
+        env: fn(&str) -> Option<String>,
+    ) -> Self {
         let data = tempfile::tempdir().unwrap();
         let repo = tempfile::tempdir().unwrap();
         let r = repo.path();
@@ -54,8 +70,27 @@ impl Harness {
             data_dir: data.path().to_path_buf(),
             token: TOKEN.into(),
             webhook_secret: secret.map(str::to_string),
+            settings_writable,
+            env,
         });
         Self { app, data, repo }
+    }
+
+    async fn put(&self, uri: &str, body: Value) -> Value {
+        let (status, body) = self.call("PUT", uri, Some(TOKEN), Some(body)).await;
+        assert_eq!(status, StatusCode::OK, "PUT {uri}: {body}");
+        body
+    }
+
+    /// The error a change of the settings is refused with.
+    async fn refused(&self, body: Value) -> (StatusCode, String) {
+        let (status, body) = self
+            .call("PUT", "/v1/settings", Some(TOKEN), Some(body))
+            .await;
+        (
+            status,
+            body["error"].as_str().unwrap_or_default().to_string(),
+        )
     }
 
     async fn call(
@@ -166,6 +201,380 @@ async fn shutdown_needs_the_token() {
     assert_eq!(body["status"], "stopping");
 }
 
+#[tokio::test]
+async fn settings_need_the_token_and_start_at_the_defaults() {
+    let h = Harness::new();
+    let (status, _) = h.call("GET", "/v1/settings", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let (status, _) = h
+        .call("PUT", "/v1/settings", Some("wrong"), Some(json!({})))
+        .await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    let settings = h.get("/v1/settings").await;
+    assert_eq!(settings["writable"], true);
+    assert_eq!(
+        settings["secrets"],
+        if cfg!(windows) { "dpapi" } else { "env_only" }
+    );
+    assert_eq!(
+        settings["llm"]["provider"],
+        json!({
+            "value": "none",
+            "source": "default",
+            "env": "CODEWIKI_LLM",
+            "default": "none",
+            "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli"],
+        })
+    );
+    assert_eq!(
+        settings["llm"]["model"],
+        json!({ "value": null, "source": "default", "env": "CODEWIKI_MODEL", "default": null })
+    );
+    // No provider is chosen, which is not a problem.
+    assert_eq!(settings["llm"]["name"], Value::Null);
+    assert_eq!(settings["llm"]["problem"], Value::Null);
+    assert_eq!(settings["embed"]["provider"]["value"], "local");
+    assert_eq!(
+        settings["embed"]["provider"]["options"],
+        json!(["local", "ollama", "openai", "none"])
+    );
+    assert!(
+        settings["embed"]["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("local")
+    );
+    assert_eq!(
+        settings["anthropic"]["api_key"],
+        json!({ "state": "unset", "hint": "", "env": "ANTHROPIC_API_KEY" })
+    );
+    assert_eq!(settings["openai"]["api_key"]["state"], "unset");
+    assert_eq!(
+        settings["openai"]["base_url"]["value"],
+        "https://api.openai.com/v1"
+    );
+    assert_eq!(settings["ollama"]["host"]["source"], "default");
+    // Reading saves nothing.
+    assert!(!h.data.path().join("settings.json").exists());
+}
+
+#[tokio::test]
+async fn a_saved_setting_is_reported_and_takes_effect() {
+    let h = Harness::new();
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({
+                "llm": { "provider": "Ollama", "model": " llama " },
+                "ollama": { "host": "http://box:11434/" },
+            }),
+        )
+        .await;
+    assert_eq!(settings["llm"]["provider"]["value"], "ollama");
+    assert_eq!(settings["llm"]["provider"]["source"], "saved");
+    assert_eq!(settings["llm"]["model"]["value"], "llama");
+    assert_eq!(settings["ollama"]["host"]["value"], "http://box:11434");
+    assert_eq!(settings["llm"]["name"], "ollama:llama");
+    assert_eq!(settings["llm"]["problem"], Value::Null);
+    assert_eq!(h.get("/v1/settings").await, settings);
+
+    // A field that is not named stays; `null` clears one.
+    let settings = h
+        .put("/v1/settings", json!({ "llm": { "model": null } }))
+        .await;
+    assert_eq!(settings["llm"]["provider"]["value"], "ollama");
+    assert_eq!(settings["llm"]["model"]["value"], Value::Null);
+    assert_eq!(settings["llm"]["model"]["source"], "default");
+    // The provider now lacks its model, and the description says so.
+    assert_eq!(settings["llm"]["name"], Value::Null);
+    let problem = settings["llm"]["problem"].as_str().unwrap();
+    assert!(
+        problem.contains("a model") && problem.contains("CODEWIKI_MODEL"),
+        "{problem}"
+    );
+
+    // Blank text clears as well.
+    let settings = h
+        .put("/v1/settings", json!({ "llm": { "provider": "  " } }))
+        .await;
+    assert_eq!(settings["llm"]["provider"]["value"], "none");
+    assert_eq!(settings["llm"]["provider"]["source"], "default");
+    assert_eq!(settings["llm"]["problem"], Value::Null);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn a_saved_key_is_never_shown() {
+    // Made up: not a real key.
+    const KEY: &str = "sample-key-for-tests-0042";
+    let h = Harness::new();
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({
+                "llm": { "provider": "anthropic" },
+                "anthropic": { "api_key": { "set": KEY } },
+            }),
+        )
+        .await;
+    assert_eq!(
+        settings["anthropic"]["api_key"],
+        json!({ "state": "saved", "hint": "0042", "env": "ANTHROPIC_API_KEY" })
+    );
+    assert!(
+        settings["llm"]["name"]
+            .as_str()
+            .unwrap()
+            .starts_with("anthropic:")
+    );
+    assert!(!settings.to_string().contains(KEY));
+    assert!(!h.get("/v1/settings").await.to_string().contains(KEY));
+    let file = fs::read_to_string(h.data.path().join("settings.json")).unwrap();
+    assert!(!file.contains(KEY));
+
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "anthropic": { "api_key": { "remove": true } } }),
+        )
+        .await;
+    assert_eq!(settings["anthropic"]["api_key"]["state"], "unset");
+    let problem = settings["llm"]["problem"].as_str().unwrap();
+    assert!(problem.contains("ANTHROPIC_API_KEY"), "{problem}");
+}
+
+#[tokio::test]
+async fn a_change_that_cannot_be_applied_changes_nothing() {
+    let h = Harness::new();
+    h.put("/v1/settings", json!({ "llm": { "provider": "ollama" } }))
+        .await;
+    for (body, expected) in [
+        (
+            json!({ "llm": { "provider": "gpt" } }),
+            "unknown provider 'gpt'",
+        ),
+        (
+            json!({ "embed": { "provider": "bert" } }),
+            "unknown embedder 'bert'",
+        ),
+        (
+            json!({ "llm": { "colour": "red" } }),
+            "unknown setting 'llm.colour'",
+        ),
+        (
+            json!({ "paint": { "colour": "red" } }),
+            "unknown setting 'paint.colour'",
+        ),
+        (
+            json!({ "llm": { "model": 7 } }),
+            "llm.model must be text or null",
+        ),
+        (json!({ "llm": "ollama" }), "'llm' must be an object"),
+        (json!(["llm"]), "must be a JSON object"),
+        (
+            json!({ "openai": { "base_url": "api.openai.com" } }),
+            "starts with http://",
+        ),
+        (
+            json!({ "openai": { "api_key": "in the clear" } }),
+            "openai.api_key takes",
+        ),
+        // One field that can be applied beside one that cannot.
+        (
+            json!({ "llm": { "model": "llama", "provider": "gpt" } }),
+            "unknown provider 'gpt'",
+        ),
+    ] {
+        let (status, error) = h.refused(body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+    let settings = h.get("/v1/settings").await;
+    assert_eq!(settings["llm"]["provider"]["value"], "ollama");
+    assert_eq!(settings["llm"]["model"]["value"], Value::Null);
+    assert_eq!(settings["embed"]["provider"]["value"], "local");
+}
+
+/// An environment in which only the model is set.
+fn model_from_env(name: &str) -> Option<String> {
+    (name == "CODEWIKI_MODEL").then(|| "env-model".to_string())
+}
+
+#[tokio::test]
+async fn a_setting_given_by_the_environment_cannot_be_changed() {
+    let h = Harness::with_config(Some(SECRET), true, model_from_env);
+    let settings = h.get("/v1/settings").await;
+    assert_eq!(
+        settings["llm"]["model"],
+        json!({ "value": "env-model", "source": "env", "env": "CODEWIKI_MODEL", "default": null })
+    );
+    let (status, error) = h.refused(json!({ "llm": { "model": "other" } })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(
+        error.contains("llm.model is set by the environment variable CODEWIKI_MODEL"),
+        "{error}"
+    );
+    // The settings beside it can still be changed, and work with it.
+    let settings = h
+        .put("/v1/settings", json!({ "llm": { "provider": "ollama" } }))
+        .await;
+    assert_eq!(settings["llm"]["name"], "ollama:env-model");
+}
+
+#[tokio::test]
+async fn a_server_that_listens_beyond_this_machine_takes_no_changes() {
+    let h = Harness::with_config(Some(SECRET), false, no_env);
+    assert_eq!(h.get("/v1/settings").await["writable"], false);
+    let (status, error) = h.refused(json!({ "llm": { "provider": "ollama" } })).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(error.contains("environment variables"), "{error}");
+    assert!(!h.data.path().join("settings.json").exists());
+}
+
+/// Answer one HTTP request with `status` and `reply`, in place of a
+/// provider. Returns the address to point a setting at.
+fn stand_in(status: u16, reply: Value) -> String {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        let mut reader = BufReader::new(stream);
+        let mut length = 0usize;
+        loop {
+            let mut line = String::new();
+            reader.read_line(&mut line).unwrap();
+            let line = line.trim_end();
+            if line.is_empty() {
+                break;
+            }
+            if let Some((key, value)) = line.split_once(':')
+                && key.eq_ignore_ascii_case("content-length")
+            {
+                length = value.trim().parse().unwrap_or(0);
+            }
+        }
+        let mut body = vec![0; length];
+        reader.read_exact(&mut body).unwrap();
+        let text = reply.to_string();
+        let mut stream = reader.into_inner();
+        write!(
+            stream,
+            "HTTP/1.1 {status} X\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+            text.len()
+        )
+        .unwrap();
+        stream.flush().unwrap();
+    });
+    url
+}
+
+#[tokio::test]
+async fn a_test_reports_whether_the_provider_answers() {
+    let h = Harness::new();
+    let (status, _) = h.call("POST", "/v1/settings/test/llm", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+
+    // Nothing is chosen: that is an answer, not an error of the server.
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["name"], Value::Null);
+    assert_eq!(result["error"], "no provider is chosen");
+
+    let provider = stand_in(
+        200,
+        json!({ "message": { "role": "assistant", "content": "OK" }, "done": true }),
+    );
+    h.put(
+        "/v1/settings",
+        json!({
+            "llm": { "provider": "ollama", "model": "llama" },
+            "ollama": { "host": provider },
+        }),
+    )
+    .await;
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], true, "{result}");
+    assert_eq!(result["name"], "ollama:llama");
+    assert!(result["ms"].is_u64(), "{result}");
+
+    // The provider says no: its own explanation comes back.
+    let provider = stand_in(404, json!({ "error": "model \"llama\" not found" }));
+    h.put("/v1/settings", json!({ "ollama": { "host": provider } }))
+        .await;
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], false, "{result}");
+    assert_eq!(result["name"], "ollama:llama");
+    let error = result["error"].as_str().unwrap();
+    assert!(
+        error.contains("404") && error.contains("not found"),
+        "{error}"
+    );
+
+    // Settings that select nothing usable say what is missing.
+    h.put("/v1/settings", json!({ "llm": { "provider": "openai" } }))
+        .await;
+    let result = h.post("/v1/settings/test/llm", None).await;
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["name"], Value::Null);
+    assert!(
+        result["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
+        "{result}"
+    );
+
+    // The embedder that needs no server.
+    let result = h.post("/v1/settings/test/embed", None).await;
+    assert_eq!(result["ok"], true, "{result}");
+    assert!(result["name"].as_str().unwrap().starts_with("local"));
+    assert!(result["dimensions"].as_u64().unwrap() > 0);
+}
+
+#[tokio::test]
+async fn an_update_and_a_question_use_the_saved_provider() {
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    // A provider that lacks its key: both requests must find that out from
+    // the settings file, since the environment of the test holds nothing.
+    h.put(
+        "/v1/settings",
+        json!({ "llm": { "provider": "openai", "model": "some-model" } }),
+    )
+    .await;
+    let (status, body) = h
+        .call("POST", &format!("/v1/repos/{id}/update"), Some(TOKEN), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
+        "{body}"
+    );
+    let (status, body) = h
+        .call(
+            "POST",
+            &format!("/v1/repos/{id}/ask"),
+            Some(TOKEN),
+            Some(json!({ "question": "What does run do?" })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert!(
+        body["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
+        "{body}"
+    );
+
+    // With no provider chosen both work again, with no restart between.
+    h.put("/v1/settings", json!({ "llm": { "provider": null } }))
+        .await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    h.post(
+        &format!("/v1/repos/{id}/ask"),
+        Some(json!({ "question": "What does run do?" })),
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_route_ends_serve() {
     let data = tempfile::tempdir().unwrap();
@@ -173,6 +582,8 @@ async fn shutdown_route_ends_serve() {
         data_dir: data.path().to_path_buf(),
         token: TOKEN.into(),
         webhook_secret: None,
+        settings_writable: true,
+        env: no_env,
     };
     let (bound_tx, bound_rx) = std::sync::mpsc::channel();
     let server = tokio::spawn(cw_server::serve(

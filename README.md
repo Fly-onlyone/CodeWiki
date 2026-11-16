@@ -63,9 +63,9 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. The Settings page changes the theme and turns animations down; by default the app follows the Windows animation setting.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), the AI model, semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
 
-Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. Set `CODEWIKI_LOG=debug` for more, or `CODEWIKI_LOG_DIR` to write them elsewhere.
+Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. For more in `app.log`, choose a level in Settings → Diagnostics; `CODEWIKI_LOG=debug` does the same for any of the programs and wins over that choice. Set `CODEWIKI_LOG_DIR` to write the logs elsewhere.
 
 ### With an LLM
 
@@ -74,10 +74,19 @@ Closing the app also stops the local backend it used; one named by `CODEWIKI_URL
 | `CODEWIKI_LLM` | `anthropic`, `openai`, `ollama`, `claude-cli`, `codex-cli`, `none` |
 | `CODEWIKI_MODEL` | Model name for the chosen provider |
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Credentials and endpoint for the API providers |
+| `OLLAMA_HOST` | Address of Ollama; `http://127.0.0.1:11434` when not set |
 
 ### Search
 
-Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default, built in, no model needed), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for the last two.
+Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default, built in, no model needed), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for the last two. After a change of embedder, search is full-text alone until the next `codewiki update` embeds the documents again.
+
+### Saved settings
+
+The variables above need not be set before every start: the same settings can be chosen in the app, under Settings → AI model and Settings → Semantic search, and take effect at once. Each has a Test button, which sends the chosen provider one small request and shows its answer or its error. A variable that is set wins over the saved value, and the page then shows the setting locked, with the variable's name.
+
+The backend keeps them in `settings.json` in its data folder, so the command line and an agent's MCP bridge use them too. An API key is stored encrypted for your Windows user; the page shows only its last four characters, and nothing sends it back. Over HTTP, `GET /v1/settings` shows each setting and where its value comes from, `PUT /v1/settings` changes the saved ones, and `POST /v1/settings/test/llm` and `/test/embed` run the tests. A backend that listens beyond its own machine, as the one in Docker does, takes its settings from its variables only; the app shows them and cannot change them.
+
+Settings → Backend saves the address and token of a backend in Docker or on another machine, in place of `CODEWIKI_URL` and `CODEWIKI_TOKEN`. "Connect" checks that it answers and takes the token before anything is saved. The app and the MCP bridge on this machine then both use it. If it stops answering, the app says so and offers "Use local backend"; it never goes back to a local backend by itself.
 
 ### Claude Code plugin
 

@@ -201,3 +201,99 @@ fn ollama_sends_a_non_streaming_chat_request() {
     assert_eq!(got.body["stream"], false);
     assert_eq!(got.body["messages"][1]["content"], "hi");
 }
+
+#[test]
+fn a_probe_is_one_small_request_to_each_provider() {
+    // Anthropic must be told an output limit: the probe names a small one,
+    // and an answer cut off there still proves the key and the model.
+    let (url, server) = serve_once(
+        200,
+        json!({ "stop_reason": "max_tokens", "content": [], "usage": {} }),
+    );
+    let provider = Anthropic {
+        api_key: "key-123".into(),
+        model: "claude-opus-5-5".into(),
+        base_url: url,
+    };
+    provider.probe().unwrap();
+    let got = server.join().unwrap();
+    assert_eq!(got.path, "/v1/messages");
+    assert_eq!(got.header("x-api-key"), Some("key-123"));
+    assert_eq!(got.body["model"], "claude-opus-5-5");
+    assert!(got.body["max_tokens"].as_u64().unwrap() <= 64);
+    assert_eq!(got.body["messages"][0]["content"], "ping");
+
+    let (url, server) = serve_once(
+        200,
+        json!({ "choices": [{ "message": { "role": "assistant", "content": "OK" } }] }),
+    );
+    let provider = OpenAiCompatible {
+        api_key: "sk-test".into(),
+        model: "some-model".into(),
+        base_url: format!("{url}/v1"),
+    };
+    provider.probe().unwrap();
+    let got = server.join().unwrap();
+    assert_eq!(got.path, "/v1/chat/completions");
+    assert_eq!(got.header("authorization"), Some("Bearer sk-test"));
+    assert_eq!(got.body["model"], "some-model");
+    assert_eq!(got.body["messages"][1]["content"], "ping");
+
+    let (url, server) = serve_once(
+        200,
+        json!({ "message": { "role": "assistant", "content": "OK" }, "done": true }),
+    );
+    let provider = Ollama {
+        model: "llama".into(),
+        base_url: url,
+    };
+    provider.probe().unwrap();
+    let got = server.join().unwrap();
+    assert_eq!(got.path, "/api/chat");
+    assert_eq!(got.body["model"], "llama");
+    assert_eq!(got.body["stream"], false);
+}
+
+#[test]
+fn a_failed_probe_carries_the_providers_explanation() {
+    let (url, server) = serve_once(
+        401,
+        json!({ "type": "error", "error": { "type": "authentication_error", "message": "invalid x-api-key" } }),
+    );
+    let provider = Anthropic {
+        api_key: "bad".into(),
+        model: "m".into(),
+        base_url: url,
+    };
+    let error = provider.probe().unwrap_err().to_string();
+    assert!(
+        error.contains("401") && error.contains("invalid x-api-key"),
+        "{error}"
+    );
+    server.join().unwrap();
+
+    let (url, server) = serve_once(
+        404,
+        json!({ "error": { "message": "The model `nope` does not exist" } }),
+    );
+    let provider = OpenAiCompatible {
+        api_key: "sk-test".into(),
+        model: "nope".into(),
+        base_url: url,
+    };
+    let error = provider.probe().unwrap_err().to_string();
+    assert!(
+        error.contains("404") && error.contains("does not exist"),
+        "{error}"
+    );
+    server.join().unwrap();
+
+    let (url, server) = serve_once(404, json!({ "error": "model \"nope\" not found" }));
+    let provider = Ollama {
+        model: "nope".into(),
+        base_url: url,
+    };
+    let error = provider.probe().unwrap_err().to_string();
+    assert!(error.contains("not found"), "{error}");
+    server.join().unwrap();
+}

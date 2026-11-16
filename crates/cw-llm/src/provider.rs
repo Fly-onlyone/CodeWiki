@@ -4,6 +4,7 @@ use std::io::Write;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
+use cw_core::settings::{self, Key, Resolved};
 use cw_core::{Error, Result};
 use serde_json::{Value, json};
 
@@ -15,6 +16,13 @@ const ANTHROPIC_FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 /// Non-streaming requests stay under HTTP timeouts at this size; notes are short.
 const MAX_TOKENS: u32 = 16000;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+/// How long a probe waits. Long enough for a local server to load its model,
+/// short enough for someone watching a "Test" button.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+/// Output a probe allows where the service makes the caller name a limit.
+const PROBE_MAX_TOKENS: u32 = 16;
+const PROBE_SYSTEM: &str = "Reply with the single word OK.";
+const PROBE_USER: &str = "ping";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Completion {
@@ -28,6 +36,12 @@ pub trait LlmProvider: Send + Sync {
     /// `anthropic:claude-opus-5-5`.
     fn name(&self) -> String;
     fn complete(&self, system: &str, user: &str) -> Result<Completion>;
+    /// Check that the provider answers: one very small request. An error
+    /// carries the provider's own explanation, such as a refused key or an
+    /// unknown model.
+    fn probe(&self) -> Result<()> {
+        self.complete(PROBE_SYSTEM, PROBE_USER).map(|_| ())
+    }
 }
 
 /// A provider whose calls are logged: how long each took and the tokens it
@@ -54,11 +68,23 @@ impl LlmProvider for Logged {
         }
         result
     }
+
+    /// The provider's own probe, not a full completion.
+    fn probe(&self) -> Result<()> {
+        let started = Instant::now();
+        let result = self.0.probe();
+        let ms = started.elapsed().as_millis();
+        match &result {
+            Ok(()) => log::debug!("{} answered a test in {ms} ms", self.0.name()),
+            Err(e) => log::warn!("{} failed a test after {ms} ms: {e}", self.0.name()),
+        }
+        result
+    }
 }
 
-fn agent() -> ureq::Agent {
+fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
-        .timeout_global(Some(REQUEST_TIMEOUT))
+        .timeout_global(Some(timeout))
         .http_status_as_error(false)
         .build()
         .into()
@@ -66,8 +92,14 @@ fn agent() -> ureq::Agent {
 
 /// Send a JSON request and return the parsed body, turning HTTP errors into
 /// messages that include the provider's own explanation.
-fn post_json(provider: &str, url: &str, headers: &[(&str, &str)], body: &Value) -> Result<Value> {
-    let mut request = agent().post(url);
+fn post_json(
+    provider: &str,
+    url: &str,
+    headers: &[(&str, &str)],
+    body: &Value,
+    timeout: Duration,
+) -> Result<Value> {
+    let mut request = agent(timeout).post(url);
     for (key, value) in headers {
         request = request.header(*key, *value);
     }
@@ -109,20 +141,16 @@ impl Anthropic {
     }
 }
 
-impl LlmProvider for Anthropic {
-    fn name(&self) -> String {
-        format!("anthropic:{}", self.model)
-    }
-
-    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+impl Anthropic {
+    fn send(&self, system: &str, user: &str, max_tokens: u32, timeout: Duration) -> Result<Value> {
         let body = json!({
             "model": self.model,
-            "max_tokens": MAX_TOKENS,
+            "max_tokens": max_tokens,
             "system": system,
             "messages": [{ "role": "user", "content": user }],
             "fallbacks": "default",
         });
-        let value = post_json(
+        post_json(
             "Anthropic",
             &format!("{}/v1/messages", self.base_url),
             &[
@@ -131,7 +159,25 @@ impl LlmProvider for Anthropic {
                 ("anthropic-beta", ANTHROPIC_FALLBACK_BETA),
             ],
             &body,
-        )?;
+            timeout,
+        )
+    }
+}
+
+impl LlmProvider for Anthropic {
+    fn name(&self) -> String {
+        format!("anthropic:{}", self.model)
+    }
+
+    /// Any answer proves the key and the model, one cut off at the small
+    /// limit included.
+    fn probe(&self) -> Result<()> {
+        self.send(PROBE_SYSTEM, PROBE_USER, PROBE_MAX_TOKENS, PROBE_TIMEOUT)
+            .map(|_| ())
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let value = self.send(system, user, MAX_TOKENS, REQUEST_TIMEOUT)?;
         // A refusal is a successful HTTP response; check before reading content.
         let stop = value["stop_reason"].as_str().unwrap_or("");
         if stop == "refusal" {
@@ -170,12 +216,8 @@ pub struct OpenAiCompatible {
     pub base_url: String,
 }
 
-impl LlmProvider for OpenAiCompatible {
-    fn name(&self) -> String {
-        format!("openai:{}", self.model)
-    }
-
-    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+impl OpenAiCompatible {
+    fn send(&self, system: &str, user: &str, timeout: Duration) -> Result<Value> {
         let body = json!({
             "model": self.model,
             "messages": [
@@ -184,12 +226,30 @@ impl LlmProvider for OpenAiCompatible {
             ],
         });
         let auth = format!("Bearer {}", self.api_key);
-        let value = post_json(
+        post_json(
             "the OpenAI-compatible server",
             &format!("{}/chat/completions", self.base_url.trim_end_matches('/')),
             &[("Authorization", &auth)],
             &body,
-        )?;
+            timeout,
+        )
+    }
+}
+
+impl LlmProvider for OpenAiCompatible {
+    fn name(&self) -> String {
+        format!("openai:{}", self.model)
+    }
+
+    /// No output limit is sent: servers of this protocol do not agree on the
+    /// name of that field. The question keeps the answer short.
+    fn probe(&self) -> Result<()> {
+        self.send(PROBE_SYSTEM, PROBE_USER, PROBE_TIMEOUT)
+            .map(|_| ())
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let value = self.send(system, user, REQUEST_TIMEOUT)?;
         Ok(Completion {
             text: value["choices"][0]["message"]["content"]
                 .as_str()
@@ -206,12 +266,8 @@ pub struct Ollama {
     pub base_url: String,
 }
 
-impl LlmProvider for Ollama {
-    fn name(&self) -> String {
-        format!("ollama:{}", self.model)
-    }
-
-    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+impl Ollama {
+    fn send(&self, system: &str, user: &str, timeout: Duration) -> Result<Value> {
         let body = json!({
             "model": self.model,
             "stream": false,
@@ -220,12 +276,28 @@ impl LlmProvider for Ollama {
                 { "role": "user", "content": user },
             ],
         });
-        let value = post_json(
+        post_json(
             "Ollama",
             &format!("{}/api/chat", self.base_url.trim_end_matches('/')),
             &[],
             &body,
-        )?;
+            timeout,
+        )
+    }
+}
+
+impl LlmProvider for Ollama {
+    fn name(&self) -> String {
+        format!("ollama:{}", self.model)
+    }
+
+    fn probe(&self) -> Result<()> {
+        self.send(PROBE_SYSTEM, PROBE_USER, PROBE_TIMEOUT)
+            .map(|_| ())
+    }
+
+    fn complete(&self, system: &str, user: &str) -> Result<Completion> {
+        let value = self.send(system, user, REQUEST_TIMEOUT)?;
         Ok(Completion {
             text: value["message"]["content"]
                 .as_str()
@@ -314,51 +386,237 @@ impl LlmProvider for AgentCli {
     }
 }
 
-/// Environment variable selecting the provider: `anthropic`, `openai`,
-/// `ollama`, `claude-cli`, `codex-cli` or `none`.
-pub const PROVIDER_ENV: &str = "CODEWIKI_LLM";
+/// Environment variable selecting the provider: one of [`PROVIDERS`].
+pub const PROVIDER_ENV: &str = settings::LLM_PROVIDER.env;
 /// Model name for the selected provider.
-pub const MODEL_ENV: &str = "CODEWIKI_MODEL";
+pub const MODEL_ENV: &str = settings::LLM_MODEL.env;
+/// The providers a user can choose, in the order a page lists them.
+pub const PROVIDERS: [&str; 6] = [
+    "none",
+    "anthropic",
+    "openai",
+    "ollama",
+    "claude-cli",
+    "codex-cli",
+];
 
 fn env(name: &str) -> Option<String> {
-    std::env::var(name).ok().filter(|v| !v.trim().is_empty())
+    std::env::var(name).ok()
 }
 
-/// Build the provider chosen by the environment. `Ok(None)` means keyless
-/// mode: no provider is configured, which is a supported way to run.
-pub fn from_env() -> Result<Option<Box<dyn LlmProvider>>> {
-    let model = env(MODEL_ENV);
+/// The value of `key`: what `lookup` gives for its variable, otherwise its
+/// default. A blank value counts as none.
+fn setting(lookup: &impl Fn(&str) -> Option<String>, key: Key) -> Option<String> {
+    lookup(key.env)
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .or_else(|| key.default.map(str::to_string))
+}
+
+/// What to tell a user whose chosen provider lacks the value of `key`.
+fn missing(provider: &str, what: &str, key: Key) -> Error {
+    Error::invalid(format!(
+        "the {provider} provider needs {what}: save one in Settings or set {}",
+        key.env
+    ))
+}
+
+/// Build the provider that `lookup` describes. `lookup` reads a setting by
+/// the name of its environment variable. `Ok(None)` means keyless mode: no
+/// provider is configured, which is a supported way to run.
+pub fn from_config(
+    lookup: impl Fn(&str) -> Option<String>,
+) -> Result<Option<Box<dyn LlmProvider>>> {
+    let value = |key: Key| setting(&lookup, key);
+    let model = value(settings::LLM_MODEL);
     let need_model = |provider: &str| {
-        model.clone().ok_or_else(|| {
-            Error::invalid(format!("set {MODEL_ENV} to use the {provider} provider"))
-        })
+        model
+            .clone()
+            .ok_or_else(|| missing(provider, "a model", settings::LLM_MODEL))
     };
-    let chosen = env(PROVIDER_ENV).map(|v| v.to_lowercase());
+    let chosen = value(settings::LLM_PROVIDER).map(|v| v.to_lowercase());
     let provider: Box<dyn LlmProvider> = match chosen.as_deref() {
         None | Some("none") => return Ok(None),
         Some("anthropic") => {
-            let key = env("ANTHROPIC_API_KEY").ok_or_else(|| {
-                Error::invalid("set ANTHROPIC_API_KEY to use the anthropic provider")
-            })?;
+            let key = value(settings::ANTHROPIC_API_KEY)
+                .ok_or_else(|| missing("anthropic", "an API key", settings::ANTHROPIC_API_KEY))?;
             Box::new(Anthropic::new(key, model))
         }
         Some("openai") => Box::new(OpenAiCompatible {
-            api_key: env("OPENAI_API_KEY")
-                .ok_or_else(|| Error::invalid("set OPENAI_API_KEY to use the openai provider"))?,
+            api_key: value(settings::OPENAI_API_KEY)
+                .ok_or_else(|| missing("openai", "an API key", settings::OPENAI_API_KEY))?,
             model: need_model("openai")?,
-            base_url: env("OPENAI_BASE_URL").unwrap_or_else(|| "https://api.openai.com/v1".into()),
+            base_url: value(settings::OPENAI_BASE_URL).unwrap_or_default(),
         }),
         Some("ollama") => Box::new(Ollama {
             model: need_model("ollama")?,
-            base_url: env("OLLAMA_HOST").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
+            base_url: value(settings::OLLAMA_HOST).unwrap_or_default(),
         }),
         Some("claude-cli") => Box::new(AgentCli::claude()),
         Some("codex-cli") => Box::new(AgentCli::codex()),
         Some(other) => {
             return Err(Error::invalid(format!(
-                "unknown {PROVIDER_ENV} value '{other}'; use anthropic, openai, ollama, claude-cli, codex-cli or none"
+                "unknown provider '{other}'; use {}",
+                PROVIDERS.join(", ")
             )));
         }
     };
     Ok(Some(Box::new(Logged(provider))))
+}
+
+/// The provider chosen by the environment alone.
+pub fn from_env() -> Result<Option<Box<dyn LlmProvider>>> {
+    from_config(env)
+}
+
+/// The provider chosen by the settings in effect: the environment over the
+/// settings file.
+pub fn from_settings(resolved: &Resolved) -> Result<Option<Box<dyn LlmProvider>>> {
+    from_config(|name| resolved.get(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The provider that the given `(variable, value)` pairs describe.
+    fn configured(pairs: &[(&str, &str)]) -> Result<Option<String>> {
+        let lookup = |name: &str| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| value.to_string())
+        };
+        Ok(from_config(lookup)?.map(|provider| provider.name()))
+    }
+
+    fn problem(pairs: &[(&str, &str)]) -> String {
+        configured(pairs).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn configuration_selects_the_provider() {
+        // Made-up keys: nothing here is a real one.
+        assert_eq!(configured(&[]).unwrap(), None);
+        assert_eq!(configured(&[("CODEWIKI_LLM", "none")]).unwrap(), None);
+        // Blank counts as not set.
+        assert_eq!(configured(&[("CODEWIKI_LLM", "  ")]).unwrap(), None);
+        assert_eq!(
+            configured(&[("CODEWIKI_LLM", "Anthropic"), ("ANTHROPIC_API_KEY", "k")]).unwrap(),
+            Some(format!("anthropic:{DEFAULT_ANTHROPIC_MODEL}"))
+        );
+        assert_eq!(
+            configured(&[
+                ("CODEWIKI_LLM", "anthropic"),
+                ("ANTHROPIC_API_KEY", "k"),
+                ("CODEWIKI_MODEL", " some-model "),
+            ])
+            .unwrap()
+            .as_deref(),
+            Some("anthropic:some-model")
+        );
+        assert_eq!(
+            configured(&[
+                ("CODEWIKI_LLM", "openai"),
+                ("OPENAI_API_KEY", "k"),
+                ("CODEWIKI_MODEL", "m"),
+            ])
+            .unwrap()
+            .as_deref(),
+            Some("openai:m")
+        );
+        assert_eq!(
+            configured(&[("CODEWIKI_LLM", "ollama"), ("CODEWIKI_MODEL", "llama")])
+                .unwrap()
+                .as_deref(),
+            Some("ollama:llama")
+        );
+        assert_eq!(
+            configured(&[("CODEWIKI_LLM", "claude-cli")])
+                .unwrap()
+                .as_deref(),
+            Some("claude-cli")
+        );
+        assert_eq!(
+            configured(&[("CODEWIKI_LLM", "codex-cli")])
+                .unwrap()
+                .as_deref(),
+            Some("codex-cli")
+        );
+    }
+
+    #[test]
+    fn a_missing_value_names_the_setting_and_its_variable() {
+        let error = problem(&[("CODEWIKI_LLM", "anthropic")]);
+        assert!(
+            error.contains("an API key") && error.contains("ANTHROPIC_API_KEY"),
+            "{error}"
+        );
+        let error = problem(&[("CODEWIKI_LLM", "openai"), ("CODEWIKI_MODEL", "m")]);
+        assert!(error.contains("OPENAI_API_KEY"), "{error}");
+        let error = problem(&[("CODEWIKI_LLM", "openai"), ("OPENAI_API_KEY", "k")]);
+        assert!(
+            error.contains("a model") && error.contains("CODEWIKI_MODEL"),
+            "{error}"
+        );
+        let error = problem(&[("CODEWIKI_LLM", "ollama")]);
+        assert!(error.contains("CODEWIKI_MODEL"), "{error}");
+        let error = problem(&[("CODEWIKI_LLM", "gpt")]);
+        assert!(
+            error.contains("unknown provider 'gpt'") && error.contains("codex-cli"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn addresses_fall_back_to_the_defaults_of_the_settings() {
+        let lookup = |name: &str| match name {
+            "CODEWIKI_LLM" => Some("ollama".to_string()),
+            "CODEWIKI_MODEL" => Some("llama".to_string()),
+            _ => None,
+        };
+        // No address is given, and the provider is still built.
+        assert!(from_config(lookup).unwrap().is_some());
+        assert_eq!(
+            setting(&lookup, settings::OLLAMA_HOST).as_deref(),
+            settings::OLLAMA_HOST.default
+        );
+        assert_eq!(
+            setting(&lookup, settings::OPENAI_BASE_URL).as_deref(),
+            Some("https://api.openai.com/v1")
+        );
+        let custom = |name: &str| (name == "OLLAMA_HOST").then(|| " http://box:1 ".to_string());
+        assert_eq!(
+            setting(&custom, settings::OLLAMA_HOST).as_deref(),
+            Some("http://box:1")
+        );
+    }
+
+    #[test]
+    fn the_settings_in_effect_select_the_provider() {
+        let mut saved = settings::Settings::default();
+        saved.set(settings::LLM_PROVIDER, "ollama").unwrap();
+        saved.set(settings::LLM_MODEL, "saved-model").unwrap();
+        let resolved = Resolved::from_parts(&saved, |_| None);
+        assert_eq!(
+            from_settings(&resolved)
+                .unwrap()
+                .map(|p| p.name())
+                .as_deref(),
+            Some("ollama:saved-model")
+        );
+        // The variable wins over the file.
+        let env = |name: &str| (name == "CODEWIKI_MODEL").then(|| "env-model".to_string());
+        let resolved = Resolved::from_parts(&saved, env);
+        assert_eq!(
+            from_settings(&resolved)
+                .unwrap()
+                .map(|p| p.name())
+                .as_deref(),
+            Some("ollama:env-model")
+        );
+        // Nothing saved and nothing set: keyless mode.
+        let resolved = Resolved::from_parts(&settings::Settings::default(), |_| None);
+        assert!(from_settings(&resolved).unwrap().is_none());
+    }
 }

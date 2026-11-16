@@ -18,7 +18,7 @@ use cw_wiki::{query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, repos, workspace};
+use crate::{AppState, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -151,6 +151,9 @@ pub fn routes(state: AppState) -> Router {
         .route("/repos/{id}/contracts", get(repo_contracts))
         .route("/workspace", get(workspace_view))
         .route("/workspace/contracts", get(workspace_contracts))
+        .route("/settings", get(read_settings).put(write_settings))
+        .route("/settings/test/llm", post(test_llm))
+        .route("/settings/test/embed", post(test_embedder))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -176,6 +179,40 @@ async fn shutdown(State(state): State<AppState>) -> (StatusCode, Json<Value>) {
     log::info!("asked to stop; finishing the running requests");
     state.0.stop.notify_one();
     (StatusCode::ACCEPTED, Json(json!({ "status": "stopping" })))
+}
+
+/// The settings in effect: each with its value and where that comes from. No
+/// secret is in it.
+async fn read_settings(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::describe(&state))).await
+}
+
+/// Change saved settings and answer with the new description. Refused by a
+/// server that listens beyond this machine (`ServerConfig::settings_writable`).
+async fn write_settings(State(state): State<AppState>, Json(body): Json<Value>) -> Response {
+    if !state.0.config.settings_writable {
+        return (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this backend takes its settings from its own environment variables; they cannot be changed from another machine"
+            })),
+        )
+            .into_response();
+    }
+    blocking(move || settings::change(&state, &body))
+        .await
+        .into_response()
+}
+
+/// Send the chosen LLM one very small request and report whether it
+/// answered. Always 200: a provider that refuses is reported in the body.
+async fn test_llm(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::test_llm(&state))).await
+}
+
+/// The same for the embedder of semantic search.
+async fn test_embedder(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::test_embedder(&state))).await
 }
 
 /// Resolved repository: its root folder and its index.
@@ -262,7 +299,7 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     let repo = Repo::open(state, id)?;
     let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
     // The provider is read per request so a settings change needs no restart.
-    let writer = cw_llm::writer_from_env()?;
+    let writer = cw_llm::writer_from(&settings::resolved(state))?;
     service::update_in(
         &repo.data_dir,
         &repo.root,
@@ -648,7 +685,7 @@ async fn ask(
         let index = repo.index()?;
         // With a provider configured the answer is written from the matching
         // notes; without one it is their summaries.
-        match cw_llm::from_env()? {
+        match cw_llm::from_settings(&settings::resolved(&state))? {
             Some(provider) => {
                 cw_llm::answer::answer(provider.as_ref(), &repo.root, &index, &body.question)
             }

@@ -80,6 +80,13 @@ app_icons! {
     WARNING = "report-problem-outlined",
     ERROR = "error-outline",
     EXPAND = "expand-more",
+    // The arrow of a select.
+    DROP_DOWN = "arrow-drop-down",
+    // Categories of the settings that have no page of their own to borrow
+    // an icon from.
+    AI_MODEL = "auto-awesome",
+    BACKEND = "dns",
+    DIAGNOSTICS = "bug-report",
     // The side panes. Material has `ViewSidebar` only with the pane on the
     // right; the left one is the same path mirrored.
     SIDEBAR = "view-sidebar-left",
@@ -144,7 +151,8 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::Refactor => REFACTOR,
         Command::Workspace => WORKSPACE,
         Command::Contracts => CONTRACTS,
-        Command::Settings => SETTINGS,
+        Command::Settings(None) => SETTINGS,
+        Command::Settings(Some(category)) => category.icon(),
         Command::Motion(_) => MOTION,
         Command::NewTab => NEW_TAB,
         Command::CloseTab => CLOSE,

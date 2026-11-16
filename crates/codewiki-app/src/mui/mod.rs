@@ -15,7 +15,9 @@ pub mod list;
 pub mod menu;
 pub mod motion;
 pub mod ripple;
+pub mod select;
 pub mod surfaces;
+pub mod switch;
 pub mod tabs;
 pub mod text_field;
 // A table copied whole from MUI; not every entry has a user.

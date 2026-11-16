@@ -15,33 +15,44 @@
 //! a link, a row or a button does is not decided here: every one reports its
 //! [`Action`] to the caller.
 
+use std::collections::HashMap;
 use std::ops::Range;
 use std::rc::Rc;
 
 use gpui_kit::base::motion as kit;
+use gpui_kit::component::input::InputState;
 use gpui_kit::component::scroll::Scrollbar;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, EntityId, FontWeight,
-    HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement, ListAlignment,
-    ListState, ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _,
-    Styled as _, StyledText, Window, div, img, list, px, relative,
+    AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, Entity, EntityId,
+    FontWeight, HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement,
+    ListAlignment, ListState, ParentElement as _, Pixels, Render, SharedString,
+    StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, img, list, px, relative,
 };
 
-use crate::doc::{Action, Block, Cell, Choice, Doc, Row, Span, Stat, Table};
+use crate::doc::{Action, Block, Cell, Choice, Doc, Row, SecretState, Span, Stat, Table};
 use crate::icons;
 use crate::mui::base::Hover;
 use crate::mui::button::{Button, ToggleButtonGroup};
 use crate::mui::feedback::{self, Tone};
 use crate::mui::list::ListItemButton;
+use crate::mui::menu::AnchorBounds;
 use crate::mui::motion::{self, Enter, EnterExt as _, GENTLE, STAGGER_CAP, scaled};
+use crate::mui::select::Select;
 use crate::mui::surfaces::{self, Piece, card, card_content, card_piece};
+use crate::mui::switch::{self, Switch};
+use crate::mui::text_field::{self, TextField};
 use crate::mui::tokens::{Variant, curve, duration, easing};
 use crate::reading;
+use crate::settings::{FieldId, Note};
+use crate::settings_layout as layout;
+use crate::themes;
 
 /// What a link, row or button of a page does when used.
 pub type OnAction = Rc<dyn Fn(&Action, &mut Window, &mut App)>;
+/// What a click on a select does: its owner opens the list.
+pub type OnSelect = Rc<dyn Fn(SelectRequest, &mut Window, &mut App)>;
 
 /// Space between two blocks, and between a heading and what it heads.
 const BLOCK_GAP: f32 = 16.0;
@@ -59,12 +70,36 @@ const HEAD_FILL: f32 = 0.4;
 /// The logo on Home.
 const LOGO_SIZE: f32 = 96.0;
 
+/// What the blocks that hold live controls need from the view that owns
+/// them: the text inputs, and the list of a select.
+///
+/// Only a page drawn with [`column`] has these. The page view, [`DocPage`],
+/// is drawn by the shell from its cache, which suits a report that is read;
+/// a text input and a menu belong to the view that handles their events.
+pub struct Controls {
+    /// The text input of each field.
+    pub fields: HashMap<FieldId, Entity<InputState>>,
+    /// The select whose list is open, by the path of its block.
+    pub open_select: Option<String>,
+    /// Called when a select is asked for its list.
+    pub on_select: OnSelect,
+}
+
+/// A select that was clicked: where it is, and what it offers.
+pub struct SelectRequest {
+    /// The path of the block, to tell this select from the others.
+    pub path: String,
+    pub anchor: Bounds<Pixels>,
+    pub options: Vec<Choice>,
+}
+
 /// What every block needs to draw itself.
 struct Page {
     /// Names the page among the others drawn since the app started, so that
     /// remembered state of one page does not leak into the next.
     serial: usize,
     on_action: OnAction,
+    controls: Option<Rc<Controls>>,
 }
 
 impl Page {
@@ -209,6 +244,7 @@ impl Render for DocPage {
         let page = Rc::new(Page {
             serial: self.serial,
             on_action: self.on_action.clone(),
+            controls: None,
         });
         let entrance = page.id("in");
         let (doc, strips) = (self.doc.clone(), self.strips.clone());
@@ -384,37 +420,366 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
             label,
             value,
             button,
-        } => h_flex()
-            .gap(px(12.))
-            .items_center()
-            .child(
-                surfaces::text(Variant::Body2, label.clone())
-                    .w(px(120.))
-                    .flex_shrink_0()
-                    .text_color(cx.theme().muted_foreground),
-            )
-            .child(
-                surfaces::text(Variant::Body2, value.clone())
-                    .flex_1()
-                    .min_w_0()
-                    .font_weight(FontWeight::SEMIBOLD),
-            )
-            .when_some(button.clone(), |row, (label, action)| {
-                let on_action = page.on_action.clone();
-                row.child(
-                    Button::new(page.id(path))
-                        .label(label)
-                        .small()
-                        .on_click(move |_, window, cx| on_action(&action, window, cx)),
+        } => {
+            // A value that is shown, not set here, with one thing to do
+            // about it: as tall as a control, so that the rows line up.
+            let control = h_flex()
+                .min_h(px(text_field::HEIGHT))
+                .gap(px(12.))
+                .items_center()
+                .child(
+                    surfaces::text(Variant::Body2, value.clone())
+                        .flex_1()
+                        .min_w_0(),
                 )
-            })
-            .into_any_element(),
+                .when_some(button.clone(), |row, (label, action)| {
+                    let on_action = page.on_action.clone();
+                    row.child(
+                        Button::new(page.id(path))
+                            .label(label)
+                            .small()
+                            .on_click(move |_, window, cx| on_action(&action, window, cx)),
+                    )
+                });
+            row(label, &None, control, None, true, cx)
+        }
         Block::Choices { label, choices } => choices_row(label, choices, path, page, cx),
+        Block::Switch {
+            label,
+            help,
+            on,
+            action,
+            locked,
+        } => {
+            let (on_action, action) = (page.on_action.clone(), action.clone());
+            let switch = Switch::new(SharedString::from(format!("doc{}:{path}", page.serial)))
+                .on(*on)
+                .disabled(locked.is_some())
+                .on_change(move |_, window, cx| on_action(&action, window, cx));
+            // The track lines up with the controls above and below it.
+            let control = div().ml(px(-switch::INSET)).child(switch);
+            setting_row(label, help, control, under(locked, &None), cx)
+        }
+        Block::Select {
+            label,
+            help,
+            options,
+            locked,
+            note,
+        } => {
+            let control = select_control(options, locked.is_some(), path, page, window, cx);
+            setting_row(label, help, control, under(locked, note), cx)
+        }
+        Block::Field {
+            id,
+            label,
+            help,
+            locked,
+            note,
+        } => {
+            let control = match page.controls.as_ref().and_then(|c| c.fields.get(id)) {
+                Some(state) => TextField::new(page.id(path), state)
+                    .disabled(locked.is_some())
+                    .when_some(under(locked, note), |field, (text, tone)| {
+                        field.helper(text, tone)
+                    })
+                    .into_any_element(),
+                None => div().into_any_element(),
+            };
+            setting_row(label, help, control, None, cx)
+        }
+        Block::Secret {
+            id,
+            label,
+            help,
+            state,
+            locked,
+            note,
+        } => {
+            let control = secret_control(*id, state, locked, note, path, page, cx);
+            setting_row(label, help, control, None, cx)
+        }
+        Block::Buttons(buttons) => h_flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .children(buttons.iter().enumerate().map(|(index, press)| {
+                let (on_action, action) = (page.on_action.clone(), press.action.clone());
+                Button::new(page.id(&format!("{path}.{index}")))
+                    .label(press.label.clone())
+                    .when(press.primary, Button::contained)
+                    .disabled(press.disabled)
+                    .on_click(move |_, window, cx| on_action(&action, window, cx))
+            }))
+            .into_any_element(),
         Block::Logo => img(icons::LOGO)
             .size(px(LOGO_SIZE))
             .flex_none()
             .into_any_element(),
     }
+}
+
+/// A short page drawn whole, with live controls: a category of the
+/// settings. The caller scrolls it.
+pub fn column(
+    doc: &Doc,
+    serial: usize,
+    on_action: OnAction,
+    controls: Rc<Controls>,
+    window: &mut Window,
+    cx: &mut App,
+) -> Div {
+    let page = Page {
+        serial,
+        on_action,
+        controls: Some(controls),
+    };
+    let muted = cx.theme().muted_foreground;
+    let head = v_flex()
+        .gap(px(4.))
+        .child(surfaces::text(Variant::H3, doc.title.clone()))
+        .when_some(doc.lead.clone(), |head, lead| {
+            head.child(surfaces::text(Variant::Body1, lead).text_color(muted))
+        });
+    let mut column = v_flex()
+        .gap(px(BLOCK_GAP))
+        .child(head.enter(page.id("title:in"), Enter::card(0)));
+    for (index, block) in doc.blocks.iter().enumerate() {
+        let drawn = draw(block, &index.to_string(), &page, window, cx);
+        // The first blocks arrive one after another, as on every page.
+        column = column.child(if index + 1 < STAGGER_CAP {
+            div()
+                .child(drawn)
+                .enter(page.id(&format!("strip{index}:in")), Enter::card(index + 1))
+                .into_any_element()
+        } else {
+            drawn
+        });
+    }
+    column
+}
+
+/// What stands under a control: why it cannot be changed, or else the news
+/// about its last change.
+fn under(locked: &Option<String>, note: &Option<Note>) -> Option<(String, Tone)> {
+    if let Some(locked) = locked {
+        return Some((locked.clone(), Tone::Neutral));
+    }
+    note.as_ref().map(|note| match note {
+        Note::Working => ("Saving…".to_string(), Tone::Neutral),
+        Note::Saved => ("Saved".to_string(), Tone::Success),
+        Note::Error(error) => (error.clone(), Tone::Error),
+    })
+}
+
+/// One line of small text under a control, in a tone's color.
+fn caption(text: String, tone: Tone, cx: &App) -> Div {
+    surfaces::text(Variant::Caption, text)
+        .mt(px(4.))
+        .text_color(tone.color(cx))
+}
+
+/// The row of one setting: its name, with a line of help under it, and its
+/// control beside them.
+fn setting_row(
+    label: &str,
+    help: &Option<String>,
+    control: impl IntoElement,
+    under: Option<(String, Tone)>,
+    cx: &App,
+) -> AnyElement {
+    row(label, help, control, under, false, cx)
+}
+
+/// [`setting_row`], with the choice of how wide the control's side is:
+/// `fill` gives it all the room that is left, for a value that is shown and
+/// may be long, such as a folder.
+fn row(
+    label: &str,
+    help: &Option<String>,
+    control: impl IntoElement,
+    under: Option<(String, Tone)>,
+    fill: bool,
+    cx: &App,
+) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    // A control is 40 px high and the name one line of 22: this puts the
+    // name on the middle line of the control.
+    let name_top = (text_field::HEIGHT - 14.0 * 1.57) / 2.0;
+    h_flex()
+        .items_start()
+        .gap(px(layout::ROW_GAP))
+        .py(px(layout::ROW_SPACING / 2.0))
+        .child(
+            v_flex()
+                .w(px(layout::LABEL_WIDTH))
+                .flex_shrink_0()
+                .pt(px(name_top))
+                .gap(px(2.))
+                .child(
+                    surfaces::text(Variant::Body2, label.to_string())
+                        .font_weight(FontWeight::MEDIUM),
+                )
+                .when_some(help.clone(), |name, help| {
+                    name.child(surfaces::text(Variant::Caption, help).text_color(muted))
+                }),
+        )
+        .child(
+            v_flex()
+                .map(|side| {
+                    if fill {
+                        side.flex_1()
+                    } else {
+                        side.w(px(layout::CONTROL_WIDTH))
+                    }
+                })
+                .min_w_0()
+                .child(control)
+                .when_some(under, |column, (text, tone)| {
+                    column.child(caption(text, tone, cx))
+                }),
+        )
+        .into_any_element()
+}
+
+/// The closed control of a select. A click asks the owner for its list.
+fn select_control(
+    options: &[Choice],
+    disabled: bool,
+    path: &str,
+    page: &Page,
+    window: &mut Window,
+    cx: &mut App,
+) -> AnyElement {
+    let chosen = options
+        .iter()
+        .find(|option| option.selected)
+        .map(|option| option.label.clone())
+        .unwrap_or_default();
+    let Some(controls) = page.controls.clone() else {
+        return surfaces::text(Variant::Body2, chosen).into_any_element();
+    };
+    // Where the control is, for its list to hang under.
+    let anchor = window
+        .use_keyed_state(page.id(&format!("{path}:anchor")), cx, |_, _| {
+            AnchorBounds::default()
+        })
+        .read(cx)
+        .clone();
+    let open = controls.open_select.as_deref() == Some(path);
+    let request = {
+        let (anchor, path, options) = (anchor.clone(), path.to_string(), options.to_vec());
+        move |_: &gpui_kit::ClickEvent, window: &mut Window, cx: &mut App| {
+            if let Some(bounds) = anchor.get() {
+                (controls.on_select)(
+                    SelectRequest {
+                        path: path.clone(),
+                        anchor: bounds,
+                        options: options.clone(),
+                    },
+                    window,
+                    cx,
+                );
+            }
+        }
+    };
+    // The icon of the choice in effect, as its row in the list shows it.
+    let icon = options
+        .iter()
+        .find(|option| option.selected)
+        .and_then(|option| Some((option.icon?, choice_tint(option, cx))));
+    let select = Select::new(page.id(path), chosen)
+        .open(open)
+        .disabled(disabled)
+        .when_some(icon, |select, (icon, tint)| select.icon(icon, tint))
+        .on_click(request);
+    anchor.track(select, |_, _| {}).w_full().into_any_element()
+}
+
+/// The color of a choice's icon. A theme's icon is in a color of that theme,
+/// as in the theme menu; any other takes the hue its kind has everywhere.
+pub fn choice_tint(choice: &Choice, cx: &App) -> Option<Hsla> {
+    if let Action::Theme(name) = &choice.action {
+        return themes::entries(cx)
+            .iter()
+            .find(|entry| entry.name == *name)
+            .map(|entry| themes::glyph_tint(entry.swatches[1], cx));
+    }
+    choice.icon.and_then(|icon| icons::tint(icon, cx))
+}
+
+/// A setting that is typed once and hidden: its input, or what is known of
+/// the saved one with the means to replace or forget it.
+fn secret_control(
+    id: FieldId,
+    state: &SecretState,
+    locked: &Option<String>,
+    note: &Option<Note>,
+    path: &str,
+    page: &Page,
+    cx: &App,
+) -> AnyElement {
+    let muted = cx.theme().muted_foreground;
+    // The control's height, so that the row does not jump between states.
+    let line = || {
+        h_flex()
+            .min_h(px(text_field::HEIGHT))
+            .gap(px(8.))
+            .items_center()
+    };
+    if let Some(locked) = locked {
+        return line()
+            .child(surfaces::text(Variant::Body2, locked.clone()).text_color(muted))
+            .into_any_element();
+    }
+    let press = |suffix: &str, label: &str, action: Action| {
+        let on_action = page.on_action.clone();
+        Button::new(page.id(&format!("{path}:{suffix}")))
+            .label(label.to_string())
+            .small()
+            .on_click(move |_, window, cx| on_action(&action, window, cx))
+    };
+    if let Some(text) = state.text() {
+        return v_flex()
+            .child(
+                line()
+                    .child(
+                        surfaces::text(Variant::Body2, text)
+                            .flex_1()
+                            .min_w_0()
+                            .font_weight(FontWeight::MEDIUM),
+                    )
+                    .child(press("replace", "Replace", Action::ReplaceSecret(id)))
+                    .child(
+                        press("remove", "Remove", Action::RemoveSecret(id))
+                            .text()
+                            .error(),
+                    ),
+            )
+            .when_some(under(&None, note), |column, (text, tone)| {
+                column.child(caption(text, tone, cx))
+            })
+            .into_any_element();
+    }
+    let Some(input) = page.controls.as_ref().and_then(|c| c.fields.get(&id)) else {
+        return div().into_any_element();
+    };
+    let field = TextField::new(page.id(path), input)
+        .when_some(under(&None, note), |field, (text, tone)| {
+            field.helper(text, tone)
+        });
+    h_flex()
+        .items_start()
+        .gap(px(8.))
+        .child(div().flex_1().min_w_0().child(field))
+        .when(*state == SecretState::Typing, |row| {
+            row.child(
+                h_flex()
+                    .h(px(text_field::HEIGHT))
+                    .items_center()
+                    .child(press("keep", "Cancel", Action::KeepSecret(id)).text()),
+            )
+        })
+        .into_any_element()
 }
 
 /// A line of spans as one run of text that wraps, with its links live.
@@ -538,6 +903,7 @@ pub fn plain_table(table: &Table, key: &str, window: &mut Window, cx: &mut App) 
     let page = Page {
         serial: usize::MAX,
         on_action: Rc::new(|_, _, _| {}),
+        controls: None,
     };
     draw_table(table, key, &page, window, cx)
 }
@@ -747,25 +1113,17 @@ fn choices_row(label: &str, choices: &[Choice], path: &str, page: &Page, cx: &Ap
         .collect();
     let actions: Vec<Action> = choices.iter().map(|choice| choice.action.clone()).collect();
     let on_action = page.on_action.clone();
-    h_flex()
-        .gap(px(12.))
-        .items_center()
-        .child(
-            surfaces::text(Variant::Body2, label.to_string())
-                .w(px(120.))
-                .flex_shrink_0()
-                .text_color(cx.theme().muted_foreground),
-        )
-        .child(
-            ToggleButtonGroup::new(format!("doc{}:{path}", page.serial), labels)
-                .selected(selected)
-                .on_select(move |index, window, cx| {
-                    if let Some(action) = actions.get(index) {
-                        on_action(action, window, cx);
-                    }
-                }),
-        )
-        .into_any_element()
+    // As tall as the other controls, so that the rows of a card line up.
+    let control = h_flex().min_h(px(text_field::HEIGHT)).items_center().child(
+        ToggleButtonGroup::new(format!("doc{}:{path}", page.serial), labels)
+            .selected(selected)
+            .on_select(move |index, window, cx| {
+                if let Some(action) = actions.get(index) {
+                    on_action(action, window, cx);
+                }
+            }),
+    );
+    setting_row(label, &None, control, None, cx)
 }
 
 #[cfg(test)]

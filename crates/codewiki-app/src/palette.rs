@@ -53,6 +53,9 @@ pub enum Command {
     OpenLogs,
     /// End the app and its backend. Closing the window only hides it.
     Quit,
+    /// Start the app when the user signs in to Windows, or stop doing so;
+    /// listed only for an installed copy.
+    Autostart(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

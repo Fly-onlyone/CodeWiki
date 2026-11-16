@@ -1568,6 +1568,19 @@ impl AppView {
                 palette::Entry::new("Reconnect to the backend", "Command", Command::Reconnect),
             );
         }
+        // Only an installed copy can start with Windows; the entry says
+        // what choosing it does.
+        if let Some(on) = autostart::enabled() {
+            entries.push(palette::Entry::new(
+                if on {
+                    "Start with Windows: turn off"
+                } else {
+                    "Start with Windows: turn on"
+                },
+                "Setting",
+                Command::Autostart(!on),
+            ));
+        }
         if let Some(release) = self.update.available() {
             entries.insert(
                 0,
@@ -1694,6 +1707,8 @@ impl AppView {
                 // The window is open, so a refusal shows where it stands.
                 self.quit(cx);
             }
+            // The settings page then shows what Windows has.
+            Command::Autostart(on) => self.run_action(&Action::Autostart(on), cx),
         }
     }
 

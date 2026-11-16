@@ -146,6 +146,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::Contracts => CONTRACTS,
         Command::Settings => SETTINGS,
         Command::Motion(_) => MOTION,
+        Command::Autostart(_) => SETTINGS,
         Command::NewTab => NEW_TAB,
         Command::CloseTab | Command::Quit => CLOSE,
         Command::ToggleSidebar => SIDEBAR,

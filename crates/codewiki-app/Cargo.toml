@@ -32,6 +32,9 @@ raw-window-handle = "0.6"
 # The tray icon and its menu (it brings `muda` for the menu). GPUI has
 # neither. Without its default features, which are for Linux.
 tray-icon = { version = "0.26.1", default-features = false }
+# Already in the tree through GPUI. Reads and writes the one registry value
+# that starts the app with Windows.
+windows-registry = "0.6"
 # Already in the tree through GPUI. The Win32 calls GPUI has no way to make;
 # all of them are in `win32.rs`.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

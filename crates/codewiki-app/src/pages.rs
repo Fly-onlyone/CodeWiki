@@ -232,7 +232,9 @@ pub fn drift_page(report: &Value) -> Doc {
 /// The settings page: appearance, where data comes from, updates and the
 /// keyboard shortcuts. `animations_on` is what the choice in `motion` comes
 /// to; `repos` holds `(name, path)` pairs; `auto_update` is whether the app
-/// looks for updates by itself.
+/// looks for updates by itself; `autostart` is whether Windows starts the app
+/// at sign-in, `None` for a copy that is not installed.
+#[allow(clippy::too_many_arguments)]
 pub fn settings_page(
     backend: &str,
     theme: &str,
@@ -241,6 +243,7 @@ pub fn settings_page(
     repos: &[(String, String)],
     update: &update::State,
     auto_update: bool,
+    autostart: Option<bool>,
 ) -> Doc {
     let mut doc = Doc::new("Settings");
     doc.push(Block::Card {
@@ -324,6 +327,7 @@ pub fn settings_page(
         chips: Vec::new(),
         body: vec![Block::Table(repositories)],
     });
+    doc.push(startup_card(autostart));
     doc.push(updates_card(update, auto_update));
     let mut keys = Table::new([
         Column::new("Keys").weight(0.6),
@@ -344,6 +348,42 @@ pub fn settings_page(
         body: vec![Block::Table(keys)],
     });
     doc
+}
+
+/// Whether Windows starts the app at sign-in, and what closing the window
+/// does: the two belong together, since an app started that way is seen only
+/// as its tray icon.
+fn startup_card(autostart: Option<bool>) -> Block {
+    let setting = match autostart {
+        Some(on) => Block::Setting {
+            // Short: the label column is narrow, and a longer one wraps.
+            label: "Start with Windows".into(),
+            value: if on {
+                "On, in the tray, with no window".into()
+            } else {
+                "Off".into()
+            },
+            button: Some((
+                if on { "Turn off" } else { "Turn on" }.into(),
+                Action::Autostart(!on),
+            )),
+        },
+        None => Block::Setting {
+            label: "Start with Windows".into(),
+            value: "Only an installed copy can start with Windows".into(),
+            button: None,
+        },
+    };
+    Block::Card {
+        title: "Startup".into(),
+        chips: Vec::new(),
+        body: vec![
+            setting,
+            Block::Text(vec![text(
+                "Closing the window keeps CodeWiki running in the tray, so that agents find its backend at once. Click the tray icon to open the window again; right-click it to quit.",
+            )]),
+        ],
+    }
 }
 
 /// The version, what the last check found, and whether the app checks by
@@ -367,7 +407,7 @@ fn updates_card(update: &update::State, auto_update: bool) -> Block {
             // Short: the label column is narrow, and a longer one wraps.
             label: "Daily check".into(),
             value: if auto_update {
-                "On, once a day when CodeWiki starts".into()
+                "On, once a day while CodeWiki runs".into()
             } else {
                 "Off".into()
             },
@@ -1053,6 +1093,7 @@ mod tests {
             &[("demo".into(), "C:/demo".into())],
             &update::State::UpToDate,
             true,
+            Some(false),
         );
         let words = settings.words();
         assert!(words.contains("Theme: Nord"));
@@ -1096,7 +1137,52 @@ mod tests {
     }
 
     fn settings_with(state: update::State, auto: bool) -> Doc {
-        settings_page("", "", MotionPref::Full, true, &[], &state, auto)
+        settings_page("", "", MotionPref::Full, true, &[], &state, auto, None)
+    }
+
+    #[test]
+    fn settings_offer_the_start_with_windows_only_to_an_installed_copy() {
+        let with = |autostart| {
+            settings_page(
+                "",
+                "",
+                MotionPref::Full,
+                true,
+                &[],
+                &update::State::Idle,
+                true,
+                autostart,
+            )
+        };
+        let off = with(Some(false));
+        assert!(off.words().contains("Start with Windows: Off"));
+        assert!(off.actions().contains(&Action::Autostart(true)));
+
+        let on = with(Some(true));
+        assert!(
+            on.words()
+                .contains("Start with Windows: On, in the tray, with no window")
+        );
+        assert!(on.actions().contains(&Action::Autostart(false)));
+
+        // A build from the sources says why it has no switch.
+        let dev = with(None);
+        assert!(
+            dev.words()
+                .contains("Start with Windows: Only an installed copy can start with Windows")
+        );
+        assert!(
+            dev.actions()
+                .iter()
+                .all(|a| !matches!(a, Action::Autostart(_)))
+        );
+        // Whoever closes the window is told where the app went.
+        for page in [off, on, dev] {
+            assert!(
+                page.words()
+                    .contains("Closing the window keeps CodeWiki running in the tray")
+            );
+        }
     }
 
     #[test]
@@ -1112,7 +1198,7 @@ mod tests {
         assert!(
             checked
                 .words()
-                .contains("Daily check: On, once a day when CodeWiki starts")
+                .contains("Daily check: On, once a day while CodeWiki runs")
         );
         assert!(checked.actions().contains(&Action::CheckUpdates));
         assert!(checked.actions().contains(&Action::AutoUpdate(false)));

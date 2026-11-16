@@ -1,8 +1,8 @@
 # Remove a CodeWiki installation made by install.ps1. uninstall.cmd beside it
 # runs this past Windows's default script policy.
 #
-# Removes the programs, the PATH entry, the Start Menu shortcut and the name
-# Windows shows the app's notification under. Wikis live
+# Removes the programs, the PATH entry, the Start Menu shortcut, the start
+# with Windows and the name Windows shows the app's notification under. Wikis live
 # inside each repository and are not touched. The index cache and logs in
 # %LOCALAPPDATA%\CodeWiki (or CODEWIKI_DATA_DIR) and the settings in
 # %APPDATA%\CodeWiki are kept unless -PurgeData is given.
@@ -66,6 +66,15 @@ if (Test-Path $shortcut) {
     if ($shell.CreateShortcut($shortcut).TargetPath -eq (Join-Path $Target "codewiki-app.exe")) {
         Remove-Item -Force $shortcut
     }
+}
+
+# "Start with Windows" in the app's settings is one value under the user's Run
+# key (crates/codewiki-app/src/autostart.rs). Only the one that starts this
+# installation is removed.
+$run = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run"
+$started = (Get-ItemProperty -Path $run -Name "CodeWiki" -ErrorAction SilentlyContinue).CodeWiki
+if ($started -and $started.Trim() -ieq ('"{0}" --tray' -f (Join-Path $Target "codewiki-app.exe"))) {
+    Remove-ItemProperty -Path $run -Name "CodeWiki"
 }
 
 # The app shows one notification, the first time its window is hidden to the

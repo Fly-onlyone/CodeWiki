@@ -8,6 +8,7 @@
 // Release builds are a GUI app: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod backdrop;
 mod contrast;
 mod diagrams;
@@ -457,16 +458,23 @@ impl AppView {
             log::warn!("no tray icon: the window cannot be hidden");
             return;
         }
-        let show = to_app.clone();
+        let (show, menu) = (to_app.clone(), to_app.clone());
         let made = tray::Tray::new(
             &self.tray_snapshot(),
             win32::small_icon_size(),
             move || _ = show.try_send(Event::Show),
-            move |command| _ = to_app.try_send(Event::Menu(command)),
+            move |command| _ = menu.try_send(Event::Menu(command)),
         );
         match made {
             Ok(tray) => self.tray = Some(tray),
-            Err(e) => log::warn!("no tray icon ({e}): closing the window ends the app"),
+            Err(e) => {
+                log::warn!("no tray icon ({e}): closing the window ends the app");
+                // Started for the tray, the app would be running with nothing
+                // of it on screen and no way to reach it.
+                if startup::launch().tray {
+                    _ = to_app.try_send(Event::Show);
+                }
+            }
         }
     }
 
@@ -581,6 +589,10 @@ impl AppView {
         cx: &mut Context<Self>,
     ) {
         let hwnd = win32::hwnd(window);
+        // Started for the tray, the window has never been on screen. GPUI
+        // puts it in its place when it is first activated; showing it before
+        // that would show it where Windows happens to put a new window.
+        let mut placed = !startup::launch().tray;
         cx.spawn_in(window, async move |this, cx| {
             while let Ok(event) = events.recv().await {
                 // Hiding and showing make Windows call into GPUI before they
@@ -599,10 +611,12 @@ impl AppView {
                     continue;
                 }
                 if let Some(hwnd) = hwnd
+                    && placed
                     && !win32::is_visible(hwnd)
                 {
                     win32::show(hwnd);
                 }
+                placed = true;
                 // Restores a minimized window and brings it to the front.
                 if this
                     .update_in(cx, |_, window, _| window.activate_window())
@@ -1760,6 +1774,7 @@ impl AppView {
             &repos,
             &self.update,
             update::auto_check(),
+            autostart::enabled(),
         );
         self.set_page(
             Page::Generated {
@@ -2190,6 +2205,17 @@ impl AppView {
             Action::InstallUpdate => self.install_update(cx),
             Action::AutoUpdate(on) => {
                 update::set_auto_check(*on);
+                self.open_settings(false, cx);
+            }
+            Action::Autostart(on) => {
+                match autostart::set(*on) {
+                    Ok(()) => log::info!("start with Windows: {}", if *on { "on" } else { "off" }),
+                    Err(e) => {
+                        log::warn!("start with Windows: {e}");
+                        self.error = Some(e);
+                    }
+                }
+                // The page reads the setting back from where Windows keeps it.
                 self.open_settings(false, cx);
             }
             Action::OpenRepo(id) => self.open_repo(id, cx),
@@ -3567,6 +3593,12 @@ impl Render for AppView {
 fn window_options(cx: &App) -> WindowOptions {
     let mut options = TitleBar::window_options();
     options.window_min_size = Some(size(px(MIN_WINDOW.0), px(MIN_WINDOW.1)));
+    // Started for the tray (`--tray`, as Windows starts the app at sign-in):
+    // the window is made, so that the app is whole, but not shown. A click
+    // on the tray icon shows it.
+    let in_tray = startup::launch().tray;
+    options.show = !in_tray;
+    options.focus = !in_tray;
     if let Some(display) = cx.primary_display() {
         options.window_bounds = Some(WindowBounds::Windowed(first_bounds(
             display.visible_bounds(),

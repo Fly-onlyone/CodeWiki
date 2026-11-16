@@ -32,6 +32,8 @@ pub enum Action {
     InstallUpdate,
     /// Turn the daily check for updates on or off.
     AutoUpdate(bool),
+    /// Start the app when the user signs in to Windows, or stop doing so.
+    Autostart(bool),
     /// Open the registered repository with this id.
     OpenRepo(String),
     /// Take the repository with this id off the list. Its folder and the

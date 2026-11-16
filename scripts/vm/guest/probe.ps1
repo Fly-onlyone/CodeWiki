@@ -102,6 +102,15 @@ if (Test-Path $backendFile) {
     }
 }
 
+# What the app keeps outside its folders: the value that starts it with
+# Windows, the name Windows shows its one notification under, and whether it
+# has told the user that it stays in the tray.
+$registry = [ordered]@{
+    autostart   = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CodeWiki").CodeWiki
+    appIdentity = Test-Path "HKCU:\Software\Classes\AppUserModelId\CodeWiki.App"
+    trayHint    = Test-Path (Join-Path $prefsDir "tray_hint.txt")
+}
+
 $events = @()
 if (-not $Quick) {
     $crashLogs = @{
@@ -134,6 +143,7 @@ if ($Quick) {
         processes = $processes
         consoles  = $consoles
         backend   = $backend
+        registry  = $registry
         dataDir   = [ordered]@{ path = $dataDir; files = Get-Tree $dataDir 2 }
         prefsDir  = [ordered]@{ path = $prefsDir; files = Get-Tree $prefsDir 2 }
         events    = $events
@@ -180,6 +190,7 @@ if ($Quick) {
     processes   = $processes
     consoles    = $consoles
     backend     = $backend
+    registry    = $registry
     dataDir     = [ordered]@{ path = $dataDir; files = Get-Tree $dataDir 2 }
     prefsDir    = [ordered]@{ path = $prefsDir; files = Get-Tree $prefsDir 2 }
     events      = $events

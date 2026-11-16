@@ -10,6 +10,9 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+# Already in the tree through GPUI. Carries what reaches the app from outside
+# GPUI (a second launch, the tray icon) to the app's view.
+async-channel = "2"
 cw-client = { path = "../cw-client" }
 # Paths and log files only; the engine crates stay out of the app.
 cw-core = { path = "../cw-core" }
@@ -21,6 +24,20 @@ gpui-kit = "=0.9.1"
 log = "0.4"
 openui-lang = { version = "0.1.0", path = "../openui-lang" }
 serde_json = "1"
+
+[target.'cfg(windows)'.dependencies]
+# Already in the tree through GPUI. Names the system's window behind a GPUI
+# one, which GPUI's own handle does not.
+raw-window-handle = "0.6"
+# The tray icon and its menu (it brings `muda` for the menu). GPUI has
+# neither. Without its default features, which are for Linux.
+tray-icon = { version = "0.26.1", default-features = false }
+# Already in the tree through GPUI. Reads and writes the one registry value
+# that starts the app with Windows.
+windows-registry = "0.6"
+# Already in the tree through GPUI. The Win32 calls GPUI has no way to make;
+# all of them are in `win32.rs`.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [build-dependencies]
 # Already in the tree through GPUI, which embeds its manifest with it.

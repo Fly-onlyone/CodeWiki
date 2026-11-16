@@ -53,6 +53,11 @@ pub enum Command {
     InstallUpdate,
     /// Show the folder of the log files in Explorer.
     OpenLogs,
+    /// End the app and its backend. Closing the window only hides it.
+    Quit,
+    /// Start the app when the user signs in to Windows, or stop doing so;
+    /// listed only for an installed copy.
+    Autostart(bool),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,6 +107,7 @@ pub fn actions() -> Vec<Entry> {
         ("Open folder…", Command::OpenFolder),
         ("Check for updates", Command::CheckUpdates),
         ("Open logs folder", Command::OpenLogs),
+        ("Quit CodeWiki", Command::Quit),
     ]
     .into_iter()
     .map(|(label, command)| Entry::new(label, "Command", command))

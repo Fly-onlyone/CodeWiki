@@ -48,9 +48,22 @@ The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to
 
 ### Updates
 
-An installed app updates itself. Once a day, when it starts, it asks GitHub for the latest release; when there is a newer one, the toolbar and Home show "Update to <version>". One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
+An installed app updates itself. Once a day, while it runs, it asks GitHub for the latest release; when there is a newer one, the toolbar, Home and the tray menu show it. One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
 
 The backend is stopped first and a new one starts with the new app. A coding agent's MCP bridge that is running keeps working and reaches the new backend on its next call; restarting the agent's session gives it the new bridge too. If anything goes wrong, the app says what and leaves the installation as it was. Pre-releases are never offered, and a copy that was only unpacked, or built from source, does not update itself.
+
+### The tray
+
+Closing the app's window does not end the app. CodeWiki stays in the notification area (the tray) with its backend, so a coding agent's first call finds a backend that is already running.
+
+- **Click the icon** to open the window again, as you left it.
+- **Right-click the icon** for the menu: what CodeWiki is doing, Open CodeWiki, Update wiki now, Recent repositories, Settings, Check for updates and Quit.
+- **The tooltip** names the open repository, says whether a wiki is being updated (by you, an agent or a git webhook) and whether an agent's MCP bridge called in the last five minutes.
+- **Quit** ends the app and its backend. It is in the tray menu and in the palette (Ctrl+K → "Quit CodeWiki").
+
+Windows 11 puts a new icon behind the `^` arrow of the taskbar; drag it onto the taskbar to keep it in view. Starting CodeWiki while it runs opens the window of the running app, on the folder you named if you named one.
+
+Settings → Startup → "Start with Windows" starts CodeWiki in the tray when you sign in, with no window. It is off until you turn it on, and `uninstall.cmd` removes it.
 
 ## Use
 

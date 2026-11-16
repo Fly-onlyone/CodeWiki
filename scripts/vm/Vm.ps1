@@ -795,6 +795,115 @@ function Send-Scroll {
     Start-Sleep -Milliseconds 300
 }
 
+# ------------------------------------------------------- notification area
+# Windows names each button of the notification area (the tray) by its
+# tooltip, and each row of a menu by its text, and says where each is on the
+# screen. That is read in the guest through UI Automation; the pointer and
+# the keys still come from the VM's devices, as a user's would.
+
+# Runs in the guest: every element under the windows of the given classes
+# whose name is like $like, one line each.
+$script:GuestElementsScript = @'
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+Add-Type -Namespace VmTest -Name Dpi -MemberDefinition '[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();'
+# Without this, a scaled screen gives scaled numbers, and clicks miss.
+[void][VmTest.Dpi]::SetProcessDPIAware()
+$automation = [System.Windows.Automation.AutomationElement]
+$scope = [System.Windows.Automation.TreeScope]
+foreach ($class in $classes) {
+    $ofClass = New-Object System.Windows.Automation.PropertyCondition($automation::ClassNameProperty, $class)
+    foreach ($window in $automation::RootElement.FindAll($scope::Children, $ofClass)) {
+        foreach ($element in $window.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+            $current = $element.Current
+            if ($current.Name -notlike $like) { continue }
+            $box = $current.BoundingRectangle
+            $place = if ($box.IsEmpty) { "0,0,0,0" } else { "$([int]$box.X),$([int]$box.Y),$([int]$box.Width),$([int]$box.Height)" }
+            $kind = $current.ControlType.ProgrammaticName -replace "^ControlType\.", ""
+            "element=$class;$kind;$place;$([int]$current.IsOffscreen);$([int]$current.IsEnabled);$($current.Name -replace '\s+', ' ')"
+        }
+    }
+}
+'@
+
+# The elements of the guest's screen, under top-level windows of the given
+# window classes, whose name is like -Like. Each has Class, Kind, Name, its
+# place (Left, Top, Width, Height), the point in its middle (X, Y), and
+# whether it is on screen (OnScreen) and can be chosen (Enabled).
+function Get-GuestElements {
+    param(
+        [Parameter(Mandatory)][string[]]$Class,
+        [string]$Like = "*"
+    )
+    $classes = ($Class | ForEach-Object { "'$_'" }) -join ", "
+    $run = Invoke-GuestScript -TimeoutSec 90 -Script "`$classes = @($classes)`n`$like = '$($Like -replace "'", "''")'`n$script:GuestElementsScript"
+    @($run.Output -split "`r?`n" | ForEach-Object {
+            if ($_ -match '^element=([^;]*);([^;]*);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d);(\d);(.*)$') {
+                [pscustomobject]@{
+                    Class = $Matches[1]; Kind = $Matches[2]; Name = $Matches[9].Trim()
+                    Left = [int]$Matches[3]; Top = [int]$Matches[4]; Width = [int]$Matches[5]; Height = [int]$Matches[6]
+                    X = [int]$Matches[3] + [int]([int]$Matches[5] / 2); Y = [int]$Matches[4] + [int]([int]$Matches[6] / 2)
+                    OnScreen = $Matches[7] -eq "0" -and [int]$Matches[5] -gt 0
+                    Enabled = $Matches[8] -eq "1"
+                }
+            }
+        })
+}
+
+# The taskbar's notification area, and the flyout that holds the icons Windows
+# does not show on the taskbar. A new icon starts in the flyout.
+$script:TrayClasses = "Shell_TrayWnd", "TopLevelWindowForOverflowXamlIsland"
+
+# The tray icons whose tooltip is like -Like. Windows lists an icon of the
+# flyout also while the flyout is closed; it is then not on screen.
+function Get-GuestTrayIcons {
+    param([string]$Like = "*CodeWiki*")
+    @(Get-GuestElements -Class $script:TrayClasses -Like $Like | Where-Object { $_.Kind -eq "Button" })
+}
+
+# One tray icon that can be clicked: on the taskbar, or in the flyout, which
+# is opened for it by a click on the taskbar's arrow. Null when there is none.
+function Get-GuestTrayIcon {
+    param([string]$Like = "*CodeWiki*")
+    $icon = Get-GuestTrayIcons $Like | Where-Object { $_.OnScreen } | Select-Object -First 1
+    if ($icon) { return $icon }
+    if (-not (Get-GuestTrayIcons $Like)) { return $null }
+    $arrow = Get-GuestElements -Class "Shell_TrayWnd" -Like "*Hidden Icons*" | Where-Object { $_.OnScreen } | Select-Object -First 1
+    if (-not $arrow) { return $null }
+    Send-Click -X $arrow.X -Y $arrow.Y
+    Start-Sleep -Milliseconds 1500
+    Get-GuestTrayIcons $Like | Where-Object { $_.OnScreen } | Select-Object -First 1
+}
+
+# Click a tray icon, as a user does: the left button for what the icon does,
+# the right one for its menu. Returns the icon, with where it was clicked.
+function Send-GuestTrayClick {
+    param(
+        [string]$Like = "*CodeWiki*",
+        [ValidateSet("left", "right")][string]$Button = "left"
+    )
+    $icon = Get-GuestTrayIcon $Like
+    if (-not $icon) { throw "no tray icon named like '$Like' can be reached" }
+    Send-Click -X $icon.X -Y $icon.Y -Button $Button
+    Start-Sleep -Milliseconds 1500
+    $icon
+}
+
+# The rows of the menu that is open on the guest's screen, top to bottom: a
+# program's own pop-up menu, such as the one a tray icon opens.
+function Get-GuestMenu {
+    @(Get-GuestElements -Class "#32768" | Where-Object { $_.Kind -in "MenuItem", "Separator" })
+}
+
+# Click the row of the open menu whose text is like -Like.
+function Send-GuestMenuClick {
+    param([Parameter(Mandatory)][string]$Like)
+    $row = Get-GuestMenu | Where-Object { $_.Kind -eq "MenuItem" -and $_.Name -like $Like } | Select-Object -First 1
+    if (-not $row) { throw "the open menu has no row like '$Like'" }
+    Send-Click -X $row.X -Y $row.Y
+    Start-Sleep -Milliseconds 800
+    $row
+}
+
 # ------------------------------------------------------------ Windows Update
 # Windows version of the running guest as "build.revision", for example 26200.6584.
 function Get-GuestBuild {

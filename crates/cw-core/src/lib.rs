@@ -20,3 +20,10 @@ pub const VAULT_DIR: &str = "obsidian";
 
 /// Folder inside the vault that holds machine metadata. Never rendered as notes.
 pub const MANIFEST_DIR: &str = ".codewiki";
+
+/// Request header in which a client of the backend says what it is. Only the
+/// MCP bridge sends it; the backend reports when a bridge last called.
+pub const CLIENT_HEADER: &str = "x-codewiki-client";
+
+/// What the MCP bridge sends in [`CLIENT_HEADER`].
+pub const MCP_CLIENT: &str = "mcp";

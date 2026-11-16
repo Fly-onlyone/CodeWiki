@@ -59,6 +59,14 @@ async fn require_token(State(state): State<AppState>, request: Request, next: Ne
         .and_then(|v| v.strip_prefix("Bearer "));
     match presented {
         Some(token) if constant_time_eq(token.as_bytes(), state.0.config.token.as_bytes()) => {
+            // Counted only with the token: anyone can send the header.
+            let from_bridge = request
+                .headers()
+                .get(cw_core::CLIENT_HEADER)
+                .is_some_and(|client| client.as_bytes() == cw_core::MCP_CLIENT.as_bytes());
+            if from_bridge {
+                state.0.activity.bridge_called();
+            }
             next.run(request).await
         }
         _ => (
@@ -151,6 +159,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/repos/{id}/contracts", get(repo_contracts))
         .route("/workspace", get(workspace_view))
         .route("/workspace/contracts", get(workspace_contracts))
+        .route("/status", get(backend_status))
         .route("/settings", get(read_settings).put(write_settings))
         .route("/settings/test/llm", post(test_llm))
         .route("/settings/test/embed", post(test_embedder))
@@ -170,6 +179,13 @@ pub fn routes(state: AppState) -> Router {
 
 async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "name": "codewiki", "version": cw_core::VERSION }))
+}
+
+/// What the backend is doing: the wiki updates that are running, whoever
+/// started them, and when an agent's MCP bridge last called. The app shows it
+/// in its tray icon. Unlike `/v1/health` it needs the token.
+async fn backend_status(State(state): State<AppState>) -> Json<Value> {
+    Json(state.0.activity.report())
 }
 
 /// Stop the backend once the requests already running are done. The app calls
@@ -297,6 +313,9 @@ async fn remove_repo(State(state): State<AppState>, Path(id): Path<String>) -> A
 /// lock. Shared by the update route and the git webhook.
 fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     let repo = Repo::open(state, id)?;
+    // Before the lock: an update that waits for another one is running too,
+    // as far as whoever asked for it can tell.
+    let _running = state.0.activity.begin_update(id);
     let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
     // The provider is read per request so a settings change needs no restart.
     let writer = cw_llm::writer_from(&settings::resolved(state))?;

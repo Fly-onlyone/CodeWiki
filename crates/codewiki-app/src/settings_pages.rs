@@ -67,6 +67,9 @@ pub struct Model<'a> {
     pub update: &'a update::State,
     /// Whether the app looks for updates by itself.
     pub auto_update: bool,
+    /// Whether Windows starts the app at sign-in; `None` for a copy that is
+    /// not installed, which cannot be started that way.
+    pub autostart: Option<bool>,
     /// The level of the app's log, by its name, and whether `CODEWIKI_LOG`
     /// fixes it.
     pub log_level: &'a str,
@@ -160,7 +163,34 @@ fn appearance(model: &Model) -> Vec<Block> {
                 ))]),
             ],
         ),
+        startup(model),
     ]
+}
+
+/// Whether Windows starts the app at sign-in, and what closing the window
+/// does: the two belong together, since an app started that way is seen only
+/// as its tray icon.
+fn startup(model: &Model) -> Block {
+    card(
+        "Startup",
+        vec![
+            Block::Switch {
+                label: "Start with Windows".into(),
+                help: Some("In the tray, with no window".into()),
+                on: model.autostart == Some(true),
+                action: Action::Autostart(model.autostart != Some(true)),
+                // A build from the sources would leave Windows a program in
+                // `target\`, which the next build replaces.
+                locked: model
+                    .autostart
+                    .is_none()
+                    .then(|| "Only an installed copy can start with Windows".into()),
+            },
+            Block::Text(vec![text(
+                "Closing the window keeps CodeWiki running in the tray, so that agents find its backend at once. Click the tray icon to open the window again; right-click it to quit.",
+            )]),
+        ],
+    )
 }
 
 /// What a page that needs the backend's settings shows without them.
@@ -713,6 +743,7 @@ mod tests {
         repos: Vec<(String, String)>,
         update: update::State,
         auto_update: bool,
+        autostart: Option<bool>,
         log_level_locked: bool,
     }
 
@@ -734,6 +765,7 @@ mod tests {
                 repos: vec![("demo".into(), "C:/demo".into())],
                 update: update::State::UpToDate,
                 auto_update: true,
+                autostart: Some(false),
                 log_level_locked: false,
             }
         }
@@ -760,6 +792,7 @@ mod tests {
                     repos: &self.repos,
                     update: &self.update,
                     auto_update: self.auto_update,
+                    autostart: self.autostart,
                     log_level: "info",
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
@@ -784,6 +817,41 @@ mod tests {
             let doc = fixture.page(category);
             assert_eq!(doc.title, category.label());
             assert!(!doc.blocks.is_empty(), "{category:?}");
+        }
+    }
+
+    #[test]
+    fn the_start_with_windows_is_offered_only_to_an_installed_copy() {
+        let mut fixture = Fixture::new();
+        let off = fixture.page(Category::Appearance);
+        assert!(
+            off.words().contains("Start with Windows: off"),
+            "{}",
+            off.words()
+        );
+        assert!(off.words().contains("In the tray, with no window"));
+        assert!(off.actions().contains(&Action::Autostart(true)));
+
+        fixture.autostart = Some(true);
+        let on = fixture.page(Category::Appearance);
+        assert!(on.words().contains("Start with Windows: on"));
+        assert!(on.actions().contains(&Action::Autostart(false)));
+
+        // A build from the sources says why its switch is locked.
+        fixture.autostart = None;
+        let dev = fixture.page(Category::Appearance);
+        assert!(
+            dev.words()
+                .contains("Only an installed copy can start with Windows"),
+            "{}",
+            dev.words()
+        );
+        // Whoever closes the window is told where the app went.
+        for page in [off, on, dev] {
+            assert!(
+                page.words()
+                    .contains("Closing the window keeps CodeWiki running in the tray")
+            );
         }
     }
 

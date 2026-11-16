@@ -8,6 +8,7 @@
 // Release builds are a GUI app: no console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod autostart;
 mod backdrop;
 mod contrast;
 mod diagrams;
@@ -19,6 +20,7 @@ mod glass;
 mod graph;
 mod icons;
 mod illustration;
+mod instance;
 mod live;
 mod markdown;
 mod motion;
@@ -34,8 +36,11 @@ mod settings_pages;
 mod settings_view;
 mod standard;
 mod startup;
+mod status;
 mod themes;
+mod tray;
 mod update;
+mod win32;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -96,6 +101,19 @@ const MENU_CORNER_GAP: f32 = 12.0;
 /// left behind and could not delete at once.
 const CLEANUP_RETRIES: usize = 3;
 const CLEANUP_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+/// How often the app asks the backend what it is doing, for the tray icon.
+const STATUS_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+/// The same, of a backend too old to say: it will not learn to.
+const OLD_BACKEND_PAUSE: std::time::Duration = std::time::Duration::from_secs(60);
+/// How often a running app looks whether the daily check for a newer release
+/// is due. An app in the tray runs for weeks; one long timer would not
+/// survive the computer's sleep.
+const RECHECK_PAUSE: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+/// The setting that remembers that the user was told, once, that closing the
+/// window leaves the app running in the tray.
+const TRAY_HINT: &str = "tray_hint";
+/// What Windows knows the app as when it shows a notification.
+const APP_IDENTITY: &str = "CodeWiki.App";
 /// The smallest window: the sidebar, the details pane, and a reading pane
 /// about as wide as the two together.
 const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
@@ -117,6 +135,21 @@ enum Landing {
     Startup,
     /// The user picked the repository: its wiki map.
     WikiMap,
+}
+
+/// What reaches the app from outside GPUI: from another thread, or from
+/// code that runs with no way to the app's state. Each is sent through a
+/// channel and carried out by one task of the app's view (`AppView::listen`),
+/// so that none of it ever runs while GPUI is in the middle of something.
+enum Event {
+    /// A second launch of the app handed over what it was asked to open.
+    Handover(instance::Request),
+    /// The window was asked to close: hide it, the app stays in the tray.
+    Hide,
+    /// The tray icon was clicked: show the window.
+    Show,
+    /// A row of the tray menu was chosen.
+    Menu(tray::Command),
 }
 
 #[derive(Clone)]
@@ -218,6 +251,19 @@ struct AppView {
     pending_command: Option<Command>,
     /// Open the editor once the first note has loaded; set by a startup argument.
     pending_edit: bool,
+    /// The note or view to open on once a repository has loaded: what the
+    /// launch named, or the last launch that handed over to this app.
+    requested_view: Option<String>,
+    /// What a second launch asked for before the backend was reached; carried
+    /// out as soon as it is.
+    pending_request: Option<instance::Request>,
+    /// The icon in the notification area. `None` when it could not be made;
+    /// closing the window then ends the app, as it did before there was one.
+    tray: Option<tray::Tray>,
+    /// What the backend last said it is doing; asked every few seconds.
+    backend_status: status::Backend,
+    /// The backend did not answer the last time it was asked.
+    backend_silent: bool,
     focus: FocusHandle,
     theme_menu_open: bool,
     /// The row of the theme menu that the keys act on.
@@ -288,7 +334,12 @@ const DETAILS_WIDTH: f32 = 260.0;
 const OUTLINE_DOT: f32 = 6.0;
 
 impl AppView {
-    fn new(page_slot: Rc<doc_view::PageSlot>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        page_slot: Rc<doc_view::PageSlot>,
+        events: (async_channel::Sender<Event>, async_channel::Receiver<Event>),
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // What a link, row or button of a generated page asks for comes back
         // here.
         let view = cx.entity().downgrade();
@@ -327,6 +378,8 @@ impl AppView {
         let theme_menu_blur = cx.on_blur(&theme_menu_focus, window, |this, window, cx| {
             this.close_theme_menu(false, window, cx);
         });
+        // Whatever changes in the app may change what the tray says of it.
+        let tray_follows = cx.observe_self(|this, _| this.refresh_tray());
         let sidebar_open = panes::load(Pane::Sidebar);
         let details_open = panes::load(Pane::Details);
         let (settings, settings_subscriptions) = settings_view::State::new(window, cx);
@@ -353,6 +406,11 @@ impl AppView {
             pending_palette: None,
             pending_command: None,
             pending_edit: false,
+            requested_view: startup::launch().view.clone(),
+            pending_request: None,
+            tray: None,
+            backend_status: status::Backend::default(),
+            backend_silent: false,
             focus: cx.focus_handle(),
             theme_menu_open: false,
             theme_menu_highlight: 0,
@@ -393,12 +451,316 @@ impl AppView {
                 palette_subscription,
                 appearance,
                 theme_menu_blur,
+                tray_follows,
             ],
         };
+        let (to_app, events) = events;
         this._subscriptions.extend(settings_subscriptions);
         this.connect(cx);
         this.start_updates(cx);
+        this.start_tray(to_app, window);
+        this.start_status_poll(cx);
+        this.listen(events, window, cx);
         this
+    }
+
+    /// Put the app's icon in the notification area. Without one (Windows
+    /// refused, or the window has no name to hide it by) the app is as it
+    /// was before: closing the window ends it.
+    fn start_tray(&mut self, to_app: async_channel::Sender<Event>, window: &Window) {
+        if win32::hwnd(window).is_none() {
+            log::warn!("no tray icon: the window cannot be hidden");
+            return;
+        }
+        let (show, menu) = (to_app.clone(), to_app.clone());
+        let made = tray::Tray::new(
+            &self.tray_snapshot(),
+            win32::small_icon_size(),
+            move || _ = show.try_send(Event::Show),
+            move |command| _ = menu.try_send(Event::Menu(command)),
+        );
+        match made {
+            Ok(tray) => self.tray = Some(tray),
+            Err(e) => {
+                log::warn!("no tray icon ({e}): closing the window ends the app");
+                // Started for the tray, the app would be running with nothing
+                // of it on screen and no way to reach it.
+                if startup::launch().tray {
+                    _ = to_app.try_send(Event::Show);
+                }
+            }
+        }
+    }
+
+    /// What the tray shows of the app right now.
+    fn tray_snapshot(&self) -> tray::Snapshot {
+        let current = self.repo.as_ref().map(|repo| repo.id.as_str());
+        // Another repository is named, as the user knows it; the open one is
+        // matched by its id.
+        let updating: Vec<String> = self
+            .backend_status
+            .updating
+            .iter()
+            .map(|id| {
+                self.repos
+                    .iter()
+                    .find(|repo| &repo.id == id && Some(id.as_str()) != current)
+                    .map_or_else(|| id.clone(), |repo| repo.name.clone())
+            })
+            .collect();
+        let connected = self.backend.is_some() && !self.backend_silent;
+        tray::Snapshot {
+            repo: self.repo.as_ref().map(|repo| repo.name.clone()),
+            state: status::state_text(connected, self.busy.as_deref(), &updating, current),
+            mcp: status::mcp_text(self.backend_status.bridge),
+            can_sync: connected
+                && self.repo.is_some()
+                && self.busy.is_none()
+                && updating.is_empty()
+                && !self.update.installing(),
+            recent: self.recent.clone(),
+            update: self
+                .update
+                .available()
+                .map(|release| release.version.to_string()),
+        }
+    }
+
+    fn refresh_tray(&mut self) {
+        if self.tray.is_some() {
+            let snapshot = self.tray_snapshot();
+            if let Some(tray) = &mut self.tray {
+                tray.refresh(&snapshot);
+            }
+        }
+    }
+
+    /// Ask the backend every few seconds what it is doing, for as long as
+    /// the app runs: the tray icon says it, also while the window is hidden.
+    fn start_status_poll(&mut self, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            loop {
+                // Not while an update is installed: it stops the backend.
+                let Ok(backend) = this.update(cx, |this, _| {
+                    this.backend.clone().filter(|_| !this.update.installing())
+                }) else {
+                    return;
+                };
+                let answer = match backend {
+                    Some(backend) => Some(executor.spawn(async move { backend.status() }).await),
+                    None => None,
+                };
+                let pause = match &answer {
+                    Some(Ok(None)) => OLD_BACKEND_PAUSE,
+                    _ => STATUS_PAUSE,
+                };
+                if this.update(cx, |this, _| this.take_status(answer)).is_err() {
+                    return;
+                }
+                executor.timer(pause).await;
+            }
+        })
+        .detach();
+    }
+
+    /// Keep what the backend answered to `GET /v1/status`; `None` when it
+    /// was not asked. The window shows none of it, so nothing is redrawn.
+    fn take_status(&mut self, answer: Option<Result<Option<Value>, String>>) {
+        match answer {
+            Some(Ok(Some(body))) => {
+                self.backend_status = status::parse(&body);
+                self.backend_silent = false;
+            }
+            Some(Ok(None)) => {
+                self.backend_status = status::Backend {
+                    updating: Vec::new(),
+                    bridge: status::Bridge::OldBackend,
+                };
+                self.backend_silent = false;
+            }
+            Some(Err(e)) => {
+                if !self.backend_silent {
+                    log::info!("the backend did not say what it is doing: {e}");
+                }
+                self.backend_status = status::Backend::default();
+                self.backend_silent = true;
+            }
+            None => {
+                self.backend_status = status::Backend::default();
+                self.backend_silent = false;
+            }
+        }
+        self.refresh_tray();
+    }
+
+    /// Carry out what reaches the app from outside GPUI, one event at a
+    /// time, for as long as the window lives.
+    fn listen(
+        &mut self,
+        events: async_channel::Receiver<Event>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let hwnd = win32::hwnd(window);
+        // Started for the tray, the window has never been on screen. GPUI
+        // puts it in its place when it is first activated; showing it before
+        // that would show it where Windows happens to put a new window.
+        let mut placed = !startup::launch().tray;
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                // Hiding and showing make Windows call into GPUI before they
+                // return, so both are done here, between two updates of the
+                // app, where GPUI is in the middle of nothing.
+                if matches!(event, Event::Hide)
+                    && let Some(hwnd) = hwnd
+                {
+                    win32::hide(hwnd);
+                }
+                let Ok(show) = this.update_in(cx, |this, _, cx| this.handle_event(event, cx))
+                else {
+                    return;
+                };
+                if !show {
+                    continue;
+                }
+                if let Some(hwnd) = hwnd
+                    && placed
+                    && !win32::is_visible(hwnd)
+                {
+                    win32::show(hwnd);
+                }
+                placed = true;
+                // Restores a minimized window and brings it to the front.
+                if this
+                    .update_in(cx, |_, window, _| window.activate_window())
+                    .is_err()
+                {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    /// Carry out one event. Returns whether the window is to be shown and
+    /// brought to the front afterwards.
+    fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) -> bool {
+        match event {
+            Event::Handover(request) => {
+                log::info!(
+                    "a second launch handed over: folder {:?}, view {:?}",
+                    request.repo,
+                    request.view
+                );
+                // Started for the tray, it wants no window; the app runs.
+                let show = !request.tray;
+                self.open_request(request, cx);
+                show
+            }
+            Event::Hide => {
+                self.after_hide(cx);
+                false
+            }
+            Event::Show => true,
+            Event::Menu(command) => self.run_tray_command(command, cx),
+        }
+    }
+
+    /// The window has just been hidden. The first time ever, say that the
+    /// app is still there: a window that closes and a program that goes on
+    /// is not what closing means elsewhere.
+    fn after_hide(&mut self, cx: &mut Context<Self>) {
+        log::info!("the window is hidden; the app stays in the tray");
+        if prefs::read(TRAY_HINT).is_some() {
+            return;
+        }
+        prefs::write(TRAY_HINT, "shown");
+        // Windows shows a notification only of an app it knows by name. The
+        // name is given here, not at start: it also decides which taskbar
+        // button the window belongs to, and this way that is touched once in
+        // the life of an installation instead of on every start.
+        cx.set_app_identity(APP_IDENTITY, "CodeWiki");
+        cx.show_system_notification(SystemNotification {
+            tag: TRAY_HINT.into(),
+            title: "CodeWiki is still running".into(),
+            body: "Click its icon in the notification area to open it again, right-click the icon to quit."
+                .into(),
+            actions: Vec::new(),
+        });
+    }
+
+    /// Carry out a row of the tray menu. Returns whether the window is to be
+    /// shown.
+    fn run_tray_command(&mut self, command: tray::Command, cx: &mut Context<Self>) -> bool {
+        log::info!("tray menu: {command:?}");
+        match command {
+            tray::Command::Open => true,
+            // Without the window: the tray says when it is done.
+            tray::Command::Sync => {
+                self.sync(cx);
+                false
+            }
+            tray::Command::Recent(path) => {
+                self.open_repo_folder(path, Landing::WikiMap, cx);
+                true
+            }
+            tray::Command::Settings => {
+                self.open_settings(None, cx);
+                true
+            }
+            tray::Command::CheckUpdates => {
+                // The result shows on the settings' Updates page.
+                self.open_settings(Some(settings::Category::Updates), cx);
+                self.check_for_update(cx);
+                true
+            }
+            // Home offers the newer release.
+            tray::Command::ShowUpdate => {
+                self.open_home(cx);
+                true
+            }
+            tray::Command::Quit => self.quit(cx),
+        }
+    }
+
+    /// End the app, and with it its backend (`on_app_quit` in `main`). Not
+    /// with unsaved edits, which would be lost without a word: the app then
+    /// stays, says so, and returns true, for its window to be shown.
+    fn quit(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.can_leave() {
+            cx.notify();
+            return true;
+        }
+        log::info!("quitting, as asked");
+        // Takes the icon away at once; Windows would otherwise keep it until
+        // the pointer passes over it.
+        self.tray = None;
+        cx.quit();
+        false
+    }
+
+    /// Open what a second launch asked for: its folder, on its view, or the
+    /// view alone in the repository that is open. A launch that named
+    /// neither only brought the window up.
+    fn open_request(&mut self, request: instance::Request, cx: &mut Context<Self>) {
+        if self.backend.is_none() {
+            // Still connecting. `connect` comes back to it.
+            self.pending_request = Some(request);
+            return;
+        }
+        match request.repo {
+            Some(path) => {
+                self.requested_view = request.view;
+                self.open_repo_folder(path, Landing::Startup, cx);
+            }
+            None if request.view.is_some() && self.repo.is_some() => {
+                self.requested_view = request.view;
+                self.open_startup_view(cx);
+                cx.notify();
+            }
+            None => {}
+        }
     }
 
     /// Run blocking backend work off the UI thread, then apply the result.
@@ -465,6 +827,9 @@ impl AppView {
                         match first {
                             Some(repo) => this.select_repo(repo, Landing::Startup, cx),
                             None => this.set_page(Page::Home, false),
+                        }
+                        if let Some(request) = this.pending_request.take() {
+                            this.open_request(request, cx);
                         }
                     }
                     Err(message) => {
@@ -551,6 +916,26 @@ impl AppView {
                         }
                     })
                     .await;
+            }
+            // The app stays in the tray, for weeks perhaps: look again
+            // whenever the daily check is due. It only ever offers.
+            loop {
+                executor.timer(RECHECK_PAUSE).await;
+                let Ok(due) = this.update(cx, |this, _| {
+                    this.update.can_check() && update::auto_check() && update::due()
+                }) else {
+                    return;
+                };
+                if !due {
+                    continue;
+                }
+                let found = executor.spawn(async { update::check() }).await;
+                if this
+                    .update(cx, |this, cx| this.show_check(found, cx))
+                    .is_err()
+                {
+                    return;
+                }
             }
         })
         .detach();
@@ -646,6 +1031,9 @@ impl AppView {
                     let outcome = match installed {
                         Ok(how) => {
                             log::info!("update: {how:?}; restarting");
+                            // The new app must become the running one, not
+                            // hand over to this one, which is about to end.
+                            instance::release();
                             match cw_update::relaunch(&install, &args) {
                                 Ok(()) => Ok(true),
                                 Err(e) => {
@@ -734,13 +1122,17 @@ impl AppView {
                 return;
             };
             let path = path.to_string_lossy().into_owned();
-            _ = this.update(cx, |this, cx| this.open_repo_folder(path, cx));
+            _ = this.update(cx, |this, cx| {
+                this.open_repo_folder(path, Landing::WikiMap, cx);
+            });
         })
         .detach();
     }
 
-    /// Register `path` with the backend, if it is new, and open it.
-    fn open_repo_folder(&mut self, path: String, cx: &mut Context<Self>) {
+    /// Register `path` with the backend, if it is new, and open it: on its
+    /// wiki map when the user picked the folder, on the view a launch named
+    /// when `landing` is [`Landing::Startup`].
+    fn open_repo_folder(&mut self, path: String, landing: Landing, cx: &mut Context<Self>) {
         self.run(
             "Opening",
             cx,
@@ -749,9 +1141,13 @@ impl AppView {
                 let (repos, missing) = registered_repos(b)?;
                 Ok((id, repos, missing))
             },
-            |this, (id, repos, missing), cx| {
+            move |this, (id, repos, missing), cx| {
                 this.take_repos(repos, missing);
-                this.open_repo(&id, cx);
+                if landing == Landing::Startup {
+                    this.open_launched_repo(&id, cx);
+                } else {
+                    this.open_repo(&id, cx);
+                }
             },
         );
     }
@@ -823,6 +1219,23 @@ impl AppView {
         }
     }
 
+    /// Open the registered repository `id` as a launch that handed over
+    /// asked: on the view it named, as a start of the app would. A launch
+    /// that named only the repository that is open already changes nothing;
+    /// its window came up, and the page stays where the user left it.
+    fn open_launched_repo(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.repo.as_ref().is_some_and(|repo| repo.id == id) {
+            if self.requested_view.is_some() {
+                self.open_startup_view(cx);
+                cx.notify();
+            }
+            return;
+        }
+        if let Some(repo) = self.repos.iter().find(|repo| repo.id == id).cloned() {
+            self.select_repo(repo, Landing::Startup, cx);
+        }
+    }
+
     fn select_repo(&mut self, repo: Repo, landing: Landing, cx: &mut Context<Self>) {
         if !self.can_leave() {
             cx.notify();
@@ -889,10 +1302,11 @@ impl AppView {
         );
     }
 
-    /// Show the view the second argument names, so that other tools can open
-    /// the app on a note or a view; Home when there is none.
+    /// Show the view the launch named (its second argument, or that of the
+    /// last launch that handed over), so that other tools can open the app
+    /// on a note or a view; Home when there is none.
     fn open_startup_view(&mut self, cx: &mut Context<Self>) {
-        let first = std::env::args().nth(2).unwrap_or_default();
+        let first = self.requested_view.clone().unwrap_or_default();
         if first.is_empty() || first == "home:" {
             self.set_page(Page::Home, false);
             return;
@@ -954,12 +1368,12 @@ impl AppView {
         }
     }
 
-    /// The backend to stop when the app closes: the one it uses, whoever
+    /// The backend to stop when the app ends: the one it uses, whoever
     /// started it. Not one named by `CODEWIKI_URL`, which is not this app's
     /// to stop, and none while an update is installed, which has stopped it
     /// already and may have started the next version's.
     fn backend_to_stop(&self) -> Option<Backend> {
-        if stops_backend_on_close(cw_client::uses_remote(), self.update.installing()) {
+        if stops_backend_on_quit(cw_client::uses_remote(), self.update.installing()) {
             self.backend.clone()
         } else {
             None
@@ -1183,6 +1597,19 @@ impl AppView {
                 palette::Entry::new("Reconnect to the backend", "Command", Command::Reconnect),
             );
         }
+        // Only an installed copy can start with Windows; the entry says
+        // what choosing it does.
+        if let Some(on) = autostart::enabled() {
+            entries.push(palette::Entry::new(
+                if on {
+                    "Start with Windows: turn off"
+                } else {
+                    "Start with Windows: turn on"
+                },
+                "Setting",
+                Command::Autostart(!on),
+            ));
+        }
         if let Some(release) = self.update.available() {
             entries.insert(
                 0,
@@ -1301,6 +1728,15 @@ impl AppView {
                 self.check_for_update(cx);
             }
             Command::InstallUpdate => self.install_update(cx),
+            Command::Quit => {
+                // The window is open, so a refusal shows where it stands.
+                self.quit(cx);
+            }
+            // The page with the switch then shows what Windows has.
+            Command::Autostart(on) => {
+                self.run_action(&Action::Autostart(on), cx);
+                self.open_settings(Some(settings::Category::Appearance), cx);
+            }
         }
     }
 
@@ -1508,11 +1944,10 @@ impl AppView {
                     },
                     remember,
                 );
-                // `--illustration` as the third argument opens the first note on
-                // its illustration.
+                // `--illustration` opens the first note on its illustration.
                 this.show_figure = this.figure.is_some()
                     && this.history.is_empty()
-                    && std::env::args().nth(3).as_deref() == Some("--illustration");
+                    && startup::launch().illustration;
             },
         );
     }
@@ -1773,6 +2208,18 @@ impl AppView {
             Action::InstallUpdate => self.install_update(cx),
             Action::AutoUpdate(on) => {
                 update::set_auto_check(*on);
+                cx.notify();
+            }
+            Action::Autostart(on) => {
+                match autostart::set(*on) {
+                    Ok(()) => log::info!("start with Windows: {}", if *on { "on" } else { "off" }),
+                    Err(e) => {
+                        log::warn!("start with Windows: {e}");
+                        self.error = Some(e);
+                    }
+                }
+                // The page reads the setting back from where Windows keeps
+                // it, each time it is drawn.
                 cx.notify();
             }
             Action::OpenRepo(id) => self.open_repo(id, cx),
@@ -3171,6 +3618,12 @@ impl Render for AppView {
 fn window_options(cx: &App) -> WindowOptions {
     let mut options = TitleBar::window_options();
     options.window_min_size = Some(size(px(MIN_WINDOW.0), px(MIN_WINDOW.1)));
+    // Started for the tray (`--tray`, as Windows starts the app at sign-in):
+    // the window is made, so that the app is whole, but not shown. A click
+    // on the tray icon shows it.
+    let in_tray = startup::launch().tray;
+    options.show = !in_tray;
+    options.focus = !in_tray;
     if let Some(display) = cx.primary_display() {
         options.window_bounds = Some(WindowBounds::Windowed(first_bounds(
             display.visible_bounds(),
@@ -3197,10 +3650,10 @@ fn first_bounds(free: Bounds<Pixels>) -> Bounds<Pixels> {
     )
 }
 
-/// Whether closing the app also stops the backend. `remote` says that the
+/// Whether ending the app also stops the backend. `remote` says that the
 /// backend is the one `CODEWIKI_URL` names; `installing` that an update is
 /// being installed or waits for a restart.
-fn stops_backend_on_close(remote: bool, installing: bool) -> bool {
+fn stops_backend_on_quit(remote: bool, installing: bool) -> bool {
     !remote && !installing
 }
 
@@ -3354,8 +3807,20 @@ fn main() {
         .and_then(|name| cw_core::logs::level_named(&name))
         .unwrap_or(log::LevelFilter::Info);
     cw_core::logs::init("app", level);
+    // Before anything of GPUI: a launch that hands over to the running app
+    // ends here, with no window of its own.
+    let (to_app, inbox) = async_channel::unbounded();
+    let deliver = {
+        let to_app = to_app.clone();
+        move |request| to_app.try_send(Event::Handover(request)).is_ok()
+    };
+    match instance::acquire(startup::launch(), deliver) {
+        instance::Acquired::HandedOver => return,
+        instance::Acquired::Primary(held) => instance::hold(held),
+        instance::Acquired::Separate => {}
+    }
     let app = gpui_kit::application().with_assets(icons::AppAssets);
-    app.run(|cx| {
+    app.run(move |cx| {
         gpui_kit::init(cx);
         motion::init(cx);
         fonts::register(cx);
@@ -3377,17 +3842,25 @@ fn main() {
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
             let slot = Rc::new(doc_view::PageSlot::default());
             let app = cx.new(|cx| {
-                let view = AppView::new(slot.clone(), window, cx);
+                let view = AppView::new(slot.clone(), (to_app.clone(), inbox), window, cx);
                 // Shortcuts need a focused element to dispatch from.
                 window.focus(&view.focus, cx);
                 view
             });
             let page = app.read(cx).doc_page.clone();
-            // Closing the window with unsaved edits would lose them without
-            // a word. Keep it open and say so, as leaving the page does.
+            // Closing the window hides it; the app stays in the tray, where
+            // Quit ends it. The window is never really closed, so nothing in
+            // it is lost: not the page, not unsaved edits. Without a tray
+            // icon closing ends the app as it used to, and then unsaved edits
+            // keep the window open, with a word, as leaving the page does.
             window.on_window_should_close(cx, {
                 let app = app.clone();
+                let to_app = to_app.clone();
                 move |_, cx| {
+                    if app.read(cx).tray.is_some() {
+                        // Not here: GPUI is in the middle of this message.
+                        return to_app.try_send(Event::Hide).is_err();
+                    }
                     app.update(cx, |app, cx| {
                         let leave = app.can_leave();
                         if !leave {
@@ -3397,12 +3870,20 @@ fn main() {
                     })
                 }
             });
+            // A click on the one notification the app shows, that it is
+            // still running, opens the window.
+            cx.on_system_notification_response({
+                let to_app = to_app.clone();
+                move |_, _| _ = to_app.try_send(Event::Show)
+            });
             // The backend ends with the app. It finishes what it is doing
             // first (an update of the wiki, say) and then exits by itself;
             // the app does not wait for that.
             cx.on_app_quit({
                 let app = app.clone();
                 move |cx| {
+                    // A launch from now on is the app itself.
+                    instance::release();
                     let backend = app.read(cx).backend_to_stop();
                     cx.background_executor().spawn(async move {
                         let Some(backend) = backend else {
@@ -3446,7 +3927,7 @@ mod tests {
 
     use gpui_kit::{Bounds, DEFAULT_WINDOW_SIZE, point, px, size};
 
-    use super::{Repo, first_bounds, parse_repos, stops_backend_on_close};
+    use super::{Repo, first_bounds, parse_repos, stops_backend_on_quit};
 
     #[test]
     fn the_first_window_stays_inside_the_free_part_of_the_screen() {
@@ -3487,10 +3968,10 @@ mod tests {
 
     #[test]
     fn closing_stops_a_local_backend_only_and_not_during_an_update() {
-        assert!(stops_backend_on_close(false, false));
+        assert!(stops_backend_on_quit(false, false));
         // One named by CODEWIKI_URL is not this app's to stop.
-        assert!(!stops_backend_on_close(true, false));
+        assert!(!stops_backend_on_quit(true, false));
         // An update has stopped it, and may have started the next one.
-        assert!(!stops_backend_on_close(false, true));
+        assert!(!stops_backend_on_quit(false, true));
     }
 }

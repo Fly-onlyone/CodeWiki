@@ -595,17 +595,154 @@ Test-Case "E3" "Open a folder from Home" "Open folder… asks for a folder, regi
         -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); the app's log says it opened '$opened'"
 }
 
-# Closing the app ends the backend it used; it does not stay behind.
-Test-Case "H1" "Close the app, start it again" "the backend ends with the app; the next start brings a new one" {
+# ---------------------------------------------------------------- TR, the tray
+# Closing the window hides it: the app stays in the tray, with its backend,
+# until Quit. The first time, Windows shows the app's one notification. No
+# app has been ended by force yet, so there is one tray icon and no leftover
+# of a dead one, which Windows keeps until the pointer passes over it.
+$windowBeforeHide = $null
+$hiddenApp = $null
+Test-Case "H1" "Close the window" "Alt+F4 hides it; the app and its backend stay; a notification says so, once" {
+    $script:windowBeforeHide = Get-GuestWindowInfo "codewiki-app"
     Send-Keys "alt+f4"
-    Wait-For 8
+    # The notification is on screen for a few seconds only.
+    Wait-For 3
     $closed = Shot "after-alt-f4"
-    $probe = Get-ProbeWhenAble "app-closed" -TimeoutSec 240
+    $probe = Get-ProbeWhenAble "window-hidden" -TimeoutSec 240
     if (-not $probe) { throw "the guest answered no command for four minutes after Alt+F4" }
     $script:closedProbe = $probe
-    $appLeft = (Get-App $probe).Count
-    $backendLeft = (Get-Backend $probe).Count
-    $fileLeft = [bool]$probe.backend
+    $app = @(Get-App $probe)
+    $script:hiddenApp = $app | Select-Object -First 1
+    $windows = @($app | Where-Object { $_.hasWindow }).Count
+    $sameBackend = [bool]($probe.backend -and $probe.backend.pidAlive -and $probe.backend.pid -eq $firstBackendPid)
+    $ok = $app.Count -eq 1 -and $windows -eq 0 -and $sameBackend -and $probe.registry.trayHint
+    Add-Result -Id "H1" -Title "Close the window" -Expect "one app process with no window; the same backend; tray_hint.txt written" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($closed) `
+        -Observed "after Alt+F4: app processes $($app.Count), with a window $windows; backend pid $($probe.backend.pid) alive $($probe.backend.pidAlive) (it was $firstBackendPid before); tray_hint.txt written: $($probe.registry.trayHint); Windows has the app's name for notifications: $($probe.registry.appIdentity); the screenshot must show the notification 'CodeWiki is still running'"
+}
+
+Test-Case "TR1" "The tray icon says what the app is doing" "its tooltip names the repository, the state and the MCP status" {
+    $icons = @(Get-GuestTrayIcons)
+    $name = "$(($icons | Select-Object -First 1).Name)"
+    $ok = $icons.Count -eq 1 -and $name -like "*CodeWiki - cw-core - Idle - MCP: no calls yet*"
+    Add-Result -Id "TR1" -Title "The tray icon says what the app is doing" -Expect "one icon; tooltip 'CodeWiki - cw-core - Idle - MCP: no calls yet'" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) `
+        -Observed "tray icons named CodeWiki: $($icons.Count); tooltip: '$name'; held by: $(($icons | ForEach-Object { $_.Class }) -join ', ') (Shell_TrayWnd is the taskbar, the other the flyout of hidden icons)"
+}
+
+# A tool call through the bridge, as an agent makes it. The bridge names
+# itself to the backend; the app asks the backend every five seconds.
+Test-Case "TR2" "The tray icon shows an agent's call" "after a tool call through the MCP bridge the tooltip says 'MCP: active'" {
+    $run = Invoke-GuestScript -TimeoutSec 180 -Script @"
+`$start = New-Object System.Diagnostics.ProcessStartInfo '$guestTarget\codewiki-mcp.exe'
+`$start.RedirectStandardInput = `$true; `$start.RedirectStandardOutput = `$true; `$start.RedirectStandardError = `$true
+`$start.UseShellExecute = `$false; `$start.CreateNoWindow = `$true; `$start.WorkingDirectory = '$guestRepo'
+`$bridge = [System.Diagnostics.Process]::Start(`$start)
+foreach (`$request in @(
+    '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"vm-test","version":"0"}}}'
+    '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+    '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_overview","arguments":{}}}'
+)) { `$bridge.StandardInput.WriteLine(`$request) }
+`$bridge.StandardInput.Flush()
+# The bridge ends when its input does, so the input stays open until it answers.
+`$answered = 'no answer'
+`$deadline = (Get-Date).AddSeconds(90)
+while ((Get-Date) -lt `$deadline) {
+    `$reading = `$bridge.StandardOutput.ReadLineAsync()
+    if (-not `$reading.Wait(90000) -or `$null -eq `$reading.Result) { break }
+    try { `$message = `$reading.Result | ConvertFrom-Json } catch { continue }
+    if (`$message.id -eq 2) { `$answered = "answered; an error: `$([bool]`$message.error -or [bool]`$message.result.isError)"; break }
+}
+`$bridge.StandardInput.Close()
+if (-not `$bridge.WaitForExit(10000)) { `$bridge.Kill() }
+"bridge: `$answered"
+`$global:LASTEXITCODE = 0
+"@
+    Wait-For 8
+    $name = "$((Get-GuestTrayIcons | Select-Object -First 1).Name)"
+    $answered = $run.Output -match "bridge: answered; an error: False"
+    Add-Result -Id "TR2" -Title "The tray icon shows an agent's call" -Expect "the bridge's get_overview is answered; the tooltip then ends in 'MCP: active'" `
+        -Status $(if ($answered -and $name -like "*MCP: active*") { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match 'bridge:' }) -join '; '); tooltip 8 s later: '$name'"
+}
+
+Test-Case "TR3" "A click on the tray icon shows the window" "the hidden window is back, in front, where and as large as it was" {
+    $icon = Send-GuestTrayClick -Button left
+    Wait-For 4
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $shot = Shot "tray-click-window-back"
+    $probe = Get-Probe "tray-click" -Quick
+    $app = @(Get-App $probe)
+    $sameApp = $hiddenApp -and $app.Count -eq 1 -and $app[0].id -eq $hiddenApp.id
+    $sameWindow = $info -and $windowBeforeHide -and $info.Left -eq $windowBeforeHide.Left -and $info.Top -eq $windowBeforeHide.Top -and
+        $info.Width -eq $windowBeforeHide.Width -and $info.Height -eq $windowBeforeHide.Height
+    $ok = $sameApp -and $sameWindow -and -not $info.Minimized -and $info.Foreground
+    Add-Result -Id "TR3" -Title "A click on the tray icon shows the window" -Expect "the same app; its window as before, in front" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "clicked '$($icon.Name)' at ($($icon.X),$($icon.Y)) in $($icon.Class); app processes $($app.Count), the one that was hidden: $([bool]$sameApp); window: $(if ($info) { "client area $($info.Width)x$($info.Height) at ($($info.Left),$($info.Top)), in front $($info.Foreground)" } else { 'none' }); before it was hidden: $(if ($windowBeforeHide) { "$($windowBeforeHide.Width)x$($windowBeforeHide.Height) at ($($windowBeforeHide.Left),$($windowBeforeHide.Top))" } else { 'not read' })"
+}
+
+Test-Case "TR4" "The tray menu" "a right click opens it: what the app is doing, then the commands, Quit last" {
+    $icon = Send-GuestTrayClick -Button right
+    Wait-For 2
+    $shot = Shot "tray-menu"
+    $rows = @(Get-GuestMenu | Where-Object { $_.Kind -eq "MenuItem" })
+    Send-Keys "esc"; Wait-For 1
+    # The fourth row names the version, or the newer release when there is one.
+    $wanted = "cw-core", "Idle", "MCP: *", "*", "Open CodeWiki", "Update wiki now", "Recent repositories", "Settings", "Check for updates", "Quit"
+    $wrong = @()
+    if ($rows.Count -ne $wanted.Count) { $wrong += "$($rows.Count) rows, not $($wanted.Count)" }
+    for ($i = 0; $i -lt [math]::Min($rows.Count, $wanted.Count); $i++) {
+        if ($rows[$i].Name -notlike $wanted[$i]) { $wrong += "row $($i + 1) is '$($rows[$i].Name)', not '$($wanted[$i])'" }
+    }
+    # What the app is doing can be read, not chosen.
+    $chosen = @($rows | Select-Object -First 3 | Where-Object { $_.Enabled })
+    if ($chosen) { $wrong += "a status row can be chosen: $(($chosen | ForEach-Object { $_.Name }) -join ', ')" }
+    Add-Result -Id "TR4" -Title "The tray menu" -Expect "ten rows in order; the first three greyed" `
+        -Status $(if ($wrong) { "fail" } else { "pass" }) -Shots @($shot) `
+        -Observed "right-clicked the icon at ($($icon.X),$($icon.Y)); rows: $(($rows | ForEach-Object { "$($_.Name)$(if (-not $_.Enabled) { ' (greyed)' })" }) -join ' | ')$(if ($wrong) { '; wrong: ' + ($wrong -join '; ') })"
+}
+
+Test-Case "SI1" "Starting the app again shows the running one" "with the window hidden, the Start menu brings the same app back; no second app, no second backend" {
+    Send-Keys "alt+f4"
+    Wait-For 4
+    $hidden = Get-GuestWindowInfo "codewiki-app"
+    $search = Start-FromStartMenu
+    $shot = Shot "second-start-same-app"
+    $probe = Get-Probe "second-start" -Quick
+    $app = @(Get-App $probe)
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $sameApp = $hiddenApp -and $app.Count -eq 1 -and $app[0].id -eq $hiddenApp.id
+    $sameBackend = [bool]($probe.backend -and $probe.backend.pid -eq $firstBackendPid) -and (Get-Backend $probe).Count -eq 1
+    $ok = -not $hidden -and $sameApp -and $sameBackend -and $info -and -not $info.Minimized
+    Add-Result -Id "SI1" -Title "Starting the app again shows the running one" -Expect "one app, the same process; one backend, the same; its window on screen" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($search, $shot) `
+        -Observed "Alt+F4 left a window: $([bool]$hidden); after the Start menu: app processes $($app.Count), the same process: $([bool]$sameApp); backend processes $((Get-Backend $probe).Count), pid $($probe.backend.pid) (it was $firstBackendPid); window on screen: $([bool]$info), in front: $($info.Foreground)"
+}
+
+Test-Case "TR5" "Quit from the tray menu" "the app and its backend end, and the icon goes" {
+    $icon = Send-GuestTrayClick -Button right
+    Wait-For 2
+    $row = Send-GuestMenuClick "Quit"
+    $deadline = (Get-Date).AddSeconds(40)
+    do {
+        $probe = Get-Probe "tray-quit" -Quick
+        $apps = (Get-App $probe).Count
+        $backends = (Get-Backend $probe).Count
+        if ($apps + $backends -gt 0) { Start-Sleep -Seconds 3 }
+    } while ($apps + $backends -gt 0 -and (Get-Date) -lt $deadline)
+    $shot = Shot "after-tray-quit"
+    $icons = @(Get-GuestTrayIcons).Count
+    $ok = $apps -eq 0 -and $backends -eq 0 -and -not $probe.backend -and $icons -eq 0
+    Add-Result -Id "TR5" -Title "Quit from the tray menu" -Expect "no codewiki-app, no codewiki process, no backend.json, no tray icon" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "right-clicked the icon, clicked '$($row.Name)' at ($($row.X),$($row.Y)); left running: $apps app, $backends backend; backend.json left: $([bool]$probe.backend); tray icons named CodeWiki left: $icons"
+    if ($apps) { Stop-GuestApp }
+}
+
+# After a real Quit the next start brings up a new backend, and, the Start
+# menu giving no folder, the app reopens the one opened in E3.
+Test-Case "E4" "The last repository opens again" "started from the Start menu after Quit: a new backend, and the app shows cw-core" {
     # Without a graphics processor the moving backdrop takes every core (case
     # P1), and the guest then answers too slowly to be driven. In that case
     # the app runs with motion reduced from here on; otherwise as installed.
@@ -614,16 +751,12 @@ Test-Case "H1" "Close the app, start it again" "the backend ends with the app; t
     $again = Shot "second-launch"
     $probe2 = Get-Probe "second-launch" -Quick
     $script:secondProbe = $probe2
-    $new = $probe2.backend -and $probe2.backend.pidAlive -and $probe2.backend.pid -ne $firstBackendPid
-    $ok = $appLeft -eq 0 -and $backendLeft -eq 0 -and -not $fileLeft -and $new -and (Get-App $probe2).Count -eq 1
-    Add-Result -Id "H1" -Title "Close the app, start it again" -Expect "the backend ends with the app; the next start brings a new one" `
-        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($closed, $again) `
-        -Observed "after Alt+F4: app processes $appLeft, backend processes $backendLeft, backend.json left $fileLeft; after restart: backend pid $($probe2.backend.pid) alive $($probe2.backend.pidAlive) (the first one was $firstBackendPid), app processes $((Get-App $probe2).Count)"
-    # The Start menu gives no folder: the app reopens the one opened in E3.
+    $new = [bool]($probe2.backend -and $probe2.backend.pidAlive -and $probe2.backend.pid -ne $firstBackendPid)
     $opened = Get-OpenedRepo
-    Add-Result -Id "E4" -Title "The last repository opens again" -Expect "started from the Start menu, the app shows cw-core" `
-        -Status $(if ($opened -eq "cw-core") { "pass" } else { "fail" }) -Shots @($again) `
-        -Observed "the app's log says it opened '$(if ($opened) { $opened } else { 'nothing' })' since it started"
+    $ok = $new -and (Get-App $probe2).Count -eq 1 -and $opened -eq "cw-core"
+    Add-Result -Id "E4" -Title "The last repository opens again" -Expect "a new backend; one app; it shows cw-core" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($search, $again) `
+        -Observed "backend pid $($probe2.backend.pid) alive $($probe2.backend.pidAlive) (the one that ended was $firstBackendPid); app processes $((Get-App $probe2).Count); the app's log says it opened '$(if ($opened) { $opened } else { 'nothing' })' since it started"
 }
 
 Test-Case "E2" "Backend after first launch" "backend.json written, health answers, token required" {
@@ -742,38 +875,47 @@ Test-Case "W5" "Double-click on the title bar" "it maximizes the window, and a s
         -Observed "double-click at $at, after a rest: $(Format-Window $first); again at ${at2}: $(Format-Window $second)"
 }
 
-Test-Case "W6" "Close button" "a click on it ends the app, and the backend with it" {
+Test-Case "W6" "Close button" "a click on it hides the window; the app and its backend stay" {
     $at = Send-TitleBarClick "close"
     $shot = Shot "window-closed"
-    $deadline = (Get-Date).AddSeconds(40)
-    do {
-        $probe = Get-Probe "window-closed" -Quick
-        $apps = (Get-App $probe).Count
-        $backends = (Get-Backend $probe).Count
-        if ($apps + $backends -gt 0) { Start-Sleep -Seconds 3 }
-    } while ($apps + $backends -gt 0 -and (Get-Date) -lt $deadline)
-    Add-Result -Id "W6" -Title "Close button" -Expect "no codewiki-app and no codewiki process is left" `
-        -Status $(if ($apps -eq 0 -and $backends -eq 0) { "pass" } else { "fail" }) -Shots @($shot) `
-        -Observed "pointer rested 1.5 s at $at, then one click; left running: $apps app, $backends backend; backend.json left: $([bool]$probe.backend)"
-    if ($apps) { Stop-GuestApp }
+    $probe = Get-Probe "window-closed" -Quick
+    $app = @(Get-App $probe)
+    $windows = @($app | Where-Object { $_.hasWindow }).Count
+    $backendAlive = [bool]($probe.backend -and $probe.backend.pidAlive)
+    Add-Result -Id "W6" -Title "Close button" -Expect "one codewiki-app process with no window; its backend alive" `
+        -Status $(if ($app.Count -eq 1 -and $windows -eq 0 -and $backendAlive) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "pointer rested 1.5 s at $at, then one click; app processes $($app.Count), with a window $windows; backend pid $($probe.backend.pid) alive $backendAlive"
+    Stop-GuestApp
 }
 
-Test-Case "W7" "Close with unsaved edits" "the window stays open and says to save or discard" {
+# Hiding loses nothing, so the X no longer asks about unsaved edits. Quit
+# would lose them, and is refused.
+Test-Case "W7" "Unsaved edits, the close button and Quit" "the X hides the window with the edits in it; a second start shows them again; Quit says to save or discard" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
-    # W6 closed the app, and the backend with it: this start brings up a new
-    # backend first, so the editor needs longer to open than in G3.
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
-    Wait-For 25
+    Wait-For 15
     Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-For 1
     Send-Text "unsavedmarker "; Wait-For 3
     $typed = Shot "unsaved-edits-typed"
     $at = Send-TitleBarClick "close"
+    $hidden = Get-GuestWindowInfo "codewiki-app"
+    # A second start, with nothing to open, hands over to the hidden app,
+    # which shows its window as it was.
+    Start-GuestApp
+    Wait-For 4
+    $back = Shot "unsaved-edits-back"
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "quit codewiki"; Wait-For 2
+    Send-Keys "enter"; Wait-For 4
+    $refused = Shot "quit-with-unsaved-edits"
     $info = Get-GuestWindowInfo "codewiki-app"
-    $shot = Shot "close-with-unsaved-edits"
+    $probe = Get-Probe "quit-refused" -Quick
+    $apps = (Get-App $probe).Count
     $run = Invoke-GuestScript -Script "(Get-ChildItem '$guestRepo\obsidian' -Recurse -Filter *.md | Select-String -Pattern 'unsavedmarker' -List | ForEach-Object { `$_.Path }) -join ', '"
-    Add-Result -Id "W7" -Title "Close with unsaved edits" -Expect "the window is still open; nothing was written" `
-        -Status $(if ($info -and -not $run.Output.Trim()) { "pass" } else { "fail" }) -Shots @($typed, $shot) `
-        -Observed "typed into the editor, then clicked close at ${at}: $(Format-Window $info); the typed text in a file: $(if ($run.Output.Trim()) { $run.Output.Trim() } else { 'no' }); the first screenshot must show the typed text and the Save button, the second the message"
+    $ok = -not $hidden -and $info -and $apps -eq 1 -and -not $run.Output.Trim()
+    Add-Result -Id "W7" -Title "Unsaved edits, the close button and Quit" -Expect "hidden by the X; shown again by a second start; still running after Quit; nothing written" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($typed, $back, $refused) `
+        -Observed "typed into the editor, then clicked close at ${at}: a window was left $([bool]$hidden); after a second start and palette 'quit codewiki', Enter: $(Format-Window $info), app processes $apps; the typed text in a file: $(if ($run.Output.Trim()) { $run.Output.Trim() } else { 'no' }); the second screenshot must show the typed text and the Save button, the third the message to save or discard"
     Stop-GuestApp
 }
 
@@ -1148,6 +1290,77 @@ Test-Case "I1" "Restart Windows" "nothing of CodeWiki starts by itself; PATH kep
         -Observed "CodeWiki processes right after boot: $running; a new process sees the folder on PATH: $($probe.userPath.processSees -ge 1); app window after Start menu launch: $($window.Count)"
 }
 
+# ---------------------------------------------------------------- AS, start with Windows
+# I1 has just shown that nothing starts by itself. The setting is reached
+# through the palette, which lists it for an installed copy.
+function Set-GuestAutostart {
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "start with windows"; Wait-For 2
+    $listed = Shot "autostart-in-palette"
+    Send-Keys "enter"; Wait-For 4
+    $listed
+}
+$autostartCommand = "`"$guestTarget\codewiki-app.exe`" --tray"
+
+Test-Case "AS1" "Turn on the start with Windows" "the palette's setting writes the value that starts the installed app for the tray" {
+    $a = Set-GuestAutostart
+    $b = Shot "autostart-on"
+    $probe = Get-Probe "autostart-on" -Quick
+    Add-Result -Id "AS1" -Title "Turn on the start with Windows" -Expect "the Run value CodeWiki is $autostartCommand" `
+        -Status $(if ($probe.registry.autostart -eq $autostartCommand) { "pass" } else { "fail" }) -Shots @($a, $b) `
+        -Observed "palette: 'start with windows', Enter; the Run value is now: '$($probe.registry.autostart)'; the second screenshot must show the settings page with the setting on"
+}
+
+Test-Case "AS2" "Windows starts the app in the tray" "after a restart of Windows the app runs with no window and its backend is up; a click on the tray icon shows the window" {
+    Restart-Guest
+    Wait-Guest -TimeoutSec 900
+    Wait-For 60
+    $a = Shot "after-reboot-autostart"
+    $probe = Get-Probe "autostart-boot" -Quick
+    $app = @(Get-App $probe)
+    $windows = @($app | Where-Object { $_.hasWindow }).Count
+    $backendAlive = [bool]($probe.backend -and $probe.backend.pidAlive -and $probe.backend.health -eq 200)
+    $name = "$((Get-GuestTrayIcons | Select-Object -First 1).Name)"
+    $icon = Send-GuestTrayClick -Button left
+    Wait-For 5
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $b = Shot "autostart-window-shown"
+    # A window never shown before must still land inside the screen (W0).
+    $slack = if ($info) { [int](8 * $info.Scale) } else { 0 }
+    $inside = $info -and $info.Outer.Top -ge $info.Free.Top - $slack -and $info.Outer.Bottom -le $info.Free.Bottom + $slack -and
+        $info.Outer.Left -ge $info.Free.Left - $slack -and $info.Outer.Right -le $info.Free.Right + $slack
+    $opened = Get-OpenedRepo
+    $ok = $app.Count -eq 1 -and $windows -eq 0 -and $backendAlive -and $name -like "*cw-core*" -and $inside -and $opened -eq "cw-core"
+    Add-Result -Id "AS2" -Title "Windows starts the app in the tray" -Expect "one app with no window; backend healthy; the tray click shows the window inside the screen, on cw-core" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b) `
+        -Observed "a minute after sign-in: app processes $($app.Count), with a window $windows; backend pid $($probe.backend.pid), health $($probe.backend.health); tooltip '$name'; the app's log says it opened '$opened'; after a click on the icon: $(Format-Window $info), inside the free part of the screen: $([bool]$inside); read the second screenshot for the title bar and the page"
+}
+
+Test-Case "AS3" "Turn the start with Windows off, and on again" "off removes the value; on writes it again" {
+    $a = Set-GuestAutostart
+    $off = (Get-Probe "autostart-off" -Quick).registry.autostart
+    $b = Shot "autostart-off"
+    Set-GuestAutostart | Out-Null
+    # Left on: the uninstall (K1) must remove it.
+    $on = (Get-Probe "autostart-on-again" -Quick).registry.autostart
+    Add-Result -Id "AS3" -Title "Turn the start with Windows off, and on again" -Expect "no value, then the value again" `
+        -Status $(if (-not $off -and $on -eq $autostartCommand) { "pass" } else { "fail" }) -Shots @($a, $b) `
+        -Observed "after turning it off the Run value was '$off'; after turning it on again '$on'"
+}
+
+# The taskbar is Explorer's. When Explorer starts again, every program must
+# put its icon back, or the app is running with no way to reach it.
+Test-Case "TR6" "The tray icon comes back when Explorer restarts" "Explorer is ended and starts again; the app's icon is there again" {
+    $before = @(Get-GuestTrayIcons).Count
+    Invoke-GuestScript -Script 'Stop-Process -Name explorer -Force; Start-Sleep 12; if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }' | Out-Null
+    Wait-For 10
+    $after = @(Get-GuestTrayIcons)
+    $shot = Shot "explorer-restarted"
+    Add-Result -Id "TR6" -Title "The tray icon comes back when Explorer restarts" -Expect "one icon before, one after" `
+        -Status $(if ($before -eq 1 -and $after.Count -eq 1) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "tray icons named CodeWiki before Explorer was ended: $before; after it started again: $($after.Count), tooltip '$(($after | Select-Object -First 1).Name)'"
+}
+
 Test-Case "D3" "MCP bridge over stdio" "initialize and tools/list answer; 24 tools" {
     $run = Invoke-GuestScript -TimeoutSec 120 -Script @"
 Set-Location '$guestRepo'
@@ -1458,7 +1671,8 @@ $global:LASTEXITCODE = 0
 }
 
 # ---------------------------------------------------------------- K, uninstall
-# uninstall.cmd, as a double-click runs it, while the app and backend run.
+# uninstall.cmd, as a double-click runs it, while the app and backend run and
+# the start with Windows is on (AS3).
 Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH entry and shortcut removed" {
     $before = Get-Probe "before-uninstall" -Quick
     $exe = Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd"
@@ -1472,9 +1686,11 @@ Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH
     if ($left | Where-Object { $_ -like "*.exe" }) { $problems += "programs left behind" }
     if ($probe.userPath.targetCount) { $problems += "PATH entry left" }
     if ($probe.shortcut) { $problems += "shortcut left" }
-    Add-Result -Id "K1" -Title "Uninstall while the app runs" -Expect "processes stopped; programs, PATH entry and shortcut removed" `
+    if ($probe.registry.autostart) { $problems += "the start with Windows is left: $($probe.registry.autostart)" }
+    if ($probe.registry.appIdentity) { $problems += "the app's name for notifications is left in the registry" }
+    Add-Result -Id "K1" -Title "Uninstall while the app runs" -Expect "processes stopped; programs, PATH entry, shortcut, start with Windows and notification name removed" `
         -Status $(if ($problems -or $run.ExitCode -ne 0) { "fail" } else { "pass" }) -Shots @($shot) -Output $run.Output `
-        -Observed "exit $($run.ExitCode); running before: $($before.processes.Count) processes; $(if ($problems) { $problems -join '; ' } else { 'removed' }); left in the install folder: $(if ($left) { $left -join ', ' } else { 'nothing' }); data folder files: $(Get-FileCount $probe.dataDir.files); settings folder files: $(Get-FileCount $probe.prefsDir.files)"
+        -Observed "exit $($run.ExitCode); running before: $($before.processes.Count) processes; start with Windows before: '$($before.registry.autostart)', notification name before: $($before.registry.appIdentity); $(if ($problems) { $problems -join '; ' } else { 'removed' }); left in the install folder: $(if ($left) { $left -join ', ' } else { 'nothing' }); data folder files: $(Get-FileCount $probe.dataDir.files); settings folder files: $(Get-FileCount $probe.prefsDir.files)"
 }
 
 Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and settings folders are removed" {
@@ -1538,10 +1754,12 @@ if ($OldZip) {
             Invoke-GuestScript -Script "[Environment]::SetEnvironmentVariable('CODEWIKI_UPDATE_URL', `$null, 'User'); try { Invoke-WebRequest -UseBasicParsing 'http://localhost:8765/stop' | Out-Null } catch { }" | Out-Null
         }
         $log = (Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'update|ERROR|WARN' | Select-Object -Last 12 | ForEach-Object { `$_.Line }").Output
-        $ok = $install.ExitCode -eq 0 -and $was -match [regex]::Escape($oldVersion) -and $now -match [regex]::Escape($newVersion) -and $window.Count -eq 1 -and -not $left
+        # One app: the new one must take the place of the one it replaced,
+        # not hand over to it while it ends.
+        $ok = $install.ExitCode -eq 0 -and $was -match [regex]::Escape($oldVersion) -and $now -match [regex]::Escape($newVersion) -and $window.Count -eq 1 -and (Get-App $probe).Count -eq 1 -and -not $left
         Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) -Output ("requests the stand-in saw:`n" + $asked + "`n--- app.log`n" + $log).Trim() `
-            -Observed "installed $oldVersion (exit $($install.ExitCode)), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
+            -Observed "installed $oldVersion (exit $($install.ExitCode)), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
         Stop-GuestApp
         Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
     }

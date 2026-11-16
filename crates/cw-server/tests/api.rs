@@ -100,9 +100,25 @@ impl Harness {
         token: Option<&str>,
         body: Option<Value>,
     ) -> (StatusCode, Value) {
+        self.call_as(method, uri, token, None, body).await
+    }
+
+    /// As [`Self::call`], from a client that names itself in the client
+    /// header, as the MCP bridge does.
+    async fn call_as(
+        &self,
+        method: &str,
+        uri: &str,
+        token: Option<&str>,
+        client: Option<&str>,
+        body: Option<Value>,
+    ) -> (StatusCode, Value) {
         let mut request = Request::builder().method(method).uri(uri);
         if let Some(token) = token {
             request = request.header("authorization", format!("Bearer {token}"));
+        }
+        if let Some(client) = client {
+            request = request.header(cw_core::CLIENT_HEADER, client);
         }
         let request = match body {
             Some(json) => request
@@ -199,6 +215,83 @@ async fn shutdown_needs_the_token() {
     let (status, body) = h.call("POST", "/v1/shutdown", Some(TOKEN), None).await;
     assert_eq!(status, StatusCode::ACCEPTED);
     assert_eq!(body["status"], "stopping");
+}
+
+#[tokio::test]
+async fn backend_status_needs_the_token_and_counts_only_bridge_calls() {
+    let h = Harness::new();
+    for token in [None, Some("wrong")] {
+        let (status, _) = h.call("GET", "/v1/status", token, None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{token:?}");
+    }
+    let status = h.get("/v1/status").await;
+    assert_eq!(status["version"], cw_core::VERSION);
+    assert_eq!(status["updates"], json!([]));
+    assert_eq!(status["bridge"]["last_call"], Value::Null);
+    assert!(status["now"].as_u64().unwrap() > 0);
+
+    // The app's own calls, a client with another name, and a bridge without
+    // the token are not bridge calls.
+    h.get("/v1/repos").await;
+    let (code, _) = h
+        .call_as("GET", "/v1/repos", Some(TOKEN), Some("app"), None)
+        .await;
+    assert_eq!(code, StatusCode::OK);
+    let (code, _) = h
+        .call_as(
+            "GET",
+            "/v1/repos",
+            Some("wrong"),
+            Some(cw_core::MCP_CLIENT),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::UNAUTHORIZED);
+    // Nor is the health check a bridge makes before each call: it is open.
+    let (code, _) = h
+        .call_as("GET", "/v1/health", None, Some(cw_core::MCP_CLIENT), None)
+        .await;
+    assert_eq!(code, StatusCode::OK);
+    assert_eq!(
+        h.get("/v1/status").await["bridge"]["last_call"],
+        Value::Null
+    );
+
+    let (code, _) = h
+        .call_as(
+            "GET",
+            "/v1/repos",
+            Some(TOKEN),
+            Some(cw_core::MCP_CLIENT),
+            None,
+        )
+        .await;
+    assert_eq!(code, StatusCode::OK);
+    let status = h.get("/v1/status").await;
+    let last_call = status["bridge"]["last_call"].as_u64().unwrap();
+    assert!(last_call > 0);
+    assert!(last_call <= status["now"].as_u64().unwrap());
+
+    // The health check stays as it was: open, and with nothing added.
+    let (_, health) = h.call("GET", "/v1/health", None, None).await;
+    assert_eq!(
+        health,
+        json!({ "status": "ok", "name": "codewiki", "version": cw_core::VERSION })
+    );
+}
+
+#[tokio::test]
+async fn an_update_shows_in_the_status_only_while_it_runs() {
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    assert_eq!(h.get("/v1/status").await["updates"], json!([]));
+    // One that fails is over too.
+    let (code, _) = h
+        .call("POST", "/v1/repos/unknown/update", Some(TOKEN), None)
+        .await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+    assert_eq!(h.get("/v1/status").await["updates"], json!([]));
 }
 
 #[tokio::test]
@@ -1047,6 +1140,18 @@ async fn git_webhook_updates_the_matching_repository() {
     // The update runs after the response; it is the one `/update` runs.
     assert!(h.wait_for_notes(&id).await >= 4);
     assert!(h.repo.path().join("obsidian/_HOME.md").exists());
+    // The status names the update while it runs and drops it when it ends.
+    // The notes are written a moment before that, so wait for it.
+    let mut running = h.get("/v1/status").await["updates"].clone();
+    for _ in 0..600 {
+        if running == json!([]) {
+            break;
+        }
+        assert_eq!(running[0]["repo"], id);
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        running = h.get("/v1/status").await["updates"].clone();
+    }
+    assert_eq!(running, json!([]), "the update never left the status");
 
     // GitLab sends the secret itself and names the project differently.
     let gitlab = json!({

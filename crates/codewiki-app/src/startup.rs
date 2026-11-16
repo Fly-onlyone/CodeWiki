@@ -11,10 +11,70 @@
 //!
 //! The recent list holds the folders of the repositories opened in the app,
 //! newest first. Home orders the registered repositories by it.
+//!
+//! The command line is `codewiki-app [--tray] [<folder> [<view>]]
+//! [--illustration]`. Flags may stand anywhere; the folder and the view are
+//! the first and second argument that is not a flag.
 
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use crate::prefs;
+
+/// What the command line asks for.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Launch {
+    /// `--tray`: start in the tray, with no window on screen.
+    pub tray: bool,
+    /// The folder to open, as it was given.
+    pub repo: Option<String>,
+    /// The note or view to open on.
+    pub view: Option<String>,
+    /// `--illustration`: open the first note on its illustration.
+    pub illustration: bool,
+}
+
+/// Read the arguments after the program's name. An argument that starts
+/// with `--` is a flag, and one this version does not know is left out: a
+/// flag is never taken for a folder, which the backend would index.
+fn parse_args(args: impl IntoIterator<Item = String>) -> Launch {
+    let mut launch = Launch::default();
+    let mut positional = Vec::new();
+    for arg in args {
+        match arg.as_str() {
+            "--tray" => launch.tray = true,
+            "--illustration" => launch.illustration = true,
+            flag if flag.starts_with("--") => log::warn!("unknown option {flag}; ignored"),
+            _ => positional.push(arg),
+        }
+    }
+    let mut positional = positional.into_iter();
+    launch.repo = positional.next().filter(|repo| !repo.is_empty());
+    launch.view = positional.next().filter(|view| !view.is_empty());
+    launch
+}
+
+/// What this process was started with.
+pub fn launch() -> &'static Launch {
+    static LAUNCH: OnceLock<Launch> = OnceLock::new();
+    LAUNCH.get_or_init(|| parse_args(std::env::args().skip(1)))
+}
+
+/// The folder a launch with the argument `arg` from the working folder `cwd`
+/// names, as a full path: the argument, or the working folder when it looks
+/// like a repository. This is what a second launch hands to the running app,
+/// which has another working folder and so cannot read a relative path.
+pub fn named_repo(arg: Option<&str>, cwd: Option<&Path>) -> Option<String> {
+    let folder = match arg {
+        Some(arg) => match cwd {
+            // Joining keeps a full path as it is.
+            Some(cwd) => cwd.join(arg),
+            None => PathBuf::from(arg),
+        },
+        None => cwd.filter(|cwd| looks_like_repo(cwd))?.to_path_buf(),
+    };
+    Some(folder.to_string_lossy().into_owned())
+}
 
 /// The setting that remembers the repository opened last.
 const LAST_REPO: &str = "last_repo";
@@ -48,7 +108,7 @@ fn choose(arg: Option<String>, cwd: Option<PathBuf>, last: Option<String>) -> Op
 /// The folder to open at startup, if any.
 pub fn repo() -> Option<String> {
     choose(
-        std::env::args().nth(1),
+        launch().repo.clone(),
         std::env::current_dir().ok(),
         prefs::read(LAST_REPO),
     )
@@ -203,6 +263,75 @@ mod tests {
 
     fn strings(paths: &[&str]) -> Vec<String> {
         paths.iter().map(|path| path.to_string()).collect()
+    }
+
+    #[test]
+    fn flags_are_not_the_folder_or_the_view() {
+        assert_eq!(parse_args(strings(&[])), Launch::default());
+        assert_eq!(
+            parse_args(strings(&[r"D:\code\app", "graph:"])),
+            Launch {
+                repo: Some(r"D:\code\app".into()),
+                view: Some("graph:".into()),
+                ..Launch::default()
+            }
+        );
+        // Windows starts the app with only the flag.
+        assert_eq!(
+            parse_args(strings(&["--tray"])),
+            Launch {
+                tray: true,
+                ..Launch::default()
+            }
+        );
+        // A flag may stand anywhere, and an unknown one is never a folder.
+        assert_eq!(
+            parse_args(strings(&[r"D:\code\app", "--tray", "--later", "_HOME"])),
+            Launch {
+                tray: true,
+                repo: Some(r"D:\code\app".into()),
+                view: Some("_HOME".into()),
+                illustration: false,
+            }
+        );
+        assert_eq!(
+            parse_args(strings(&[r"D:\code\app", "Overview", "--illustration"])),
+            Launch {
+                repo: Some(r"D:\code\app".into()),
+                view: Some("Overview".into()),
+                illustration: true,
+                ..Launch::default()
+            }
+        );
+        // An empty folder is no folder; the view after it still counts.
+        assert_eq!(
+            parse_args(strings(&["", "settings:"])),
+            Launch {
+                view: Some("settings:".into()),
+                ..Launch::default()
+            }
+        );
+    }
+
+    #[test]
+    fn a_second_launch_names_its_folder_in_full() {
+        let repo = Scratch::new("named-repo");
+        fs::create_dir(repo.0.join(".git")).unwrap();
+        let profile = Scratch::new("named-profile");
+
+        // A full path stays; a relative one is read from the working folder.
+        assert_eq!(
+            named_repo(Some(r"D:\code\app"), Some(&profile.0)),
+            Some(r"D:\code\app".into())
+        );
+        assert_eq!(
+            named_repo(Some("sub"), Some(&profile.0)),
+            Some(profile.0.join("sub").to_string_lossy().into_owned())
+        );
+        // With no argument, only a working folder that is a repository.
+        assert_eq!(named_repo(None, Some(&repo.0)), Some(repo.text()));
+        assert_eq!(named_repo(None, Some(&profile.0)), None);
+        assert_eq!(named_repo(None, None), None);
     }
 
     #[test]

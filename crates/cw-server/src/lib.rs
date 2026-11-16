@@ -5,9 +5,14 @@
 //! the other exception: a git host cannot send the token, so it signs its
 //! request with the webhook secret instead.
 //!
-//! `POST /v1/shutdown` stops the server. The desktop app calls it before an
-//! update replaces the programs, so the old backend does not keep serving.
+//! `POST /v1/shutdown` stops the server. The desktop app calls it when the
+//! user quits it, and before an update replaces the programs, so the old
+//! backend does not keep serving.
+//!
+//! `GET /v1/status` says what the backend is doing: the wiki updates that are
+//! running and when an agent's MCP bridge last called (`activity`).
 
+mod activity;
 mod api;
 mod repos;
 mod settings;
@@ -54,6 +59,8 @@ pub(crate) struct Inner {
     pub settings_lock: Mutex<()>,
     /// Woken by `POST /v1/shutdown`; [`serve`] stops when it fires.
     pub stop: Notify,
+    /// Running updates and the last bridge call, for `GET /v1/status`.
+    pub activity: activity::Activity,
 }
 
 #[derive(Clone)]
@@ -65,6 +72,7 @@ fn state(config: ServerConfig) -> AppState {
         write_lock: Mutex::new(()),
         settings_lock: Mutex::new(()),
         stop: Notify::new(),
+        activity: activity::Activity::default(),
     }))
 }
 

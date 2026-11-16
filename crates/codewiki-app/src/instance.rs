@@ -284,7 +284,6 @@ fn hand_over(info: &Path, request: &Request) -> bool {
     };
     // This process is the one the user has just started, so it may hand its
     // right to the foreground to the app that will show the window.
-    #[cfg(windows)]
     crate::win32::allow_foreground(target.pid);
     let line = encode(request, &target.token);
     if stream.set_read_timeout(Some(REPLY_TIMEOUT)).is_err()

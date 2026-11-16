@@ -147,7 +147,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::Settings => SETTINGS,
         Command::Motion(_) => MOTION,
         Command::NewTab => NEW_TAB,
-        Command::CloseTab => CLOSE,
+        Command::CloseTab | Command::Quit => CLOSE,
         Command::ToggleSidebar => SIDEBAR,
         Command::ToggleDetails => DETAILS,
         Command::OpenInObsidian => EXTERNAL,

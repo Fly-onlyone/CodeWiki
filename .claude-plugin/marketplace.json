@@ -1,5 +1,6 @@
 {
   "name": "codewiki",
+  "description": "CodeWiki's plugin for Claude Code.",
   "owner": {
     "name": "CodeWiki contributors"
   },

@@ -102,13 +102,15 @@ The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the in
 To install the plugin:
 
 1. Install CodeWiki as described in [Install](#install). Then open a new terminal, so that `codewiki` and `codewiki-mcp` are on `PATH`.
-2. Add this repository as a plugin marketplace:
+2. Add the `plugins` folder of the installation as a plugin marketplace:
 
    ```
-   claude plugin marketplace add Fly-onlyone/CodeWiki
+   claude plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
    ```
 
-   To use a clone instead of GitHub, pass its folder: `claude plugin marketplace add C:\path\to\CodeWiki`.
+   In PowerShell the folder is `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`. It holds the plugin and nothing else, and Claude Code reads it where it is: nothing is downloaded, and git is not needed.
+
+   Without the Windows package (programs built from source, or a backend on another machine), add this repository instead: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, and that needs git.
 3. Install the plugin:
 
    ```

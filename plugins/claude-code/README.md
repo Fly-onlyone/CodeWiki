@@ -16,11 +16,15 @@ The bridge starts a local backend on first use. To use a backend running in Dock
 ## Install
 
 ```
-claude plugin marketplace add Fly-onlyone/CodeWiki
+claude plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
 claude plugin install codewiki@codewiki
 ```
 
-To add the marketplace from a clone, pass the clone's folder in place of `Fly-onlyone/CodeWiki`. The plugin is installed for your user; `--scope project` on the install records it in the repository's `.claude/settings.json` instead.
+The first line adds the `plugins` folder of an installation made from the release zip (in PowerShell: `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`). The folder holds the plugin and nothing else. Claude Code reads it where it is, so nothing is downloaded and git is not needed.
+
+Without that installation, add the repository in its place: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, which needs git.
+
+The plugin is installed for your user; `--scope project` on the install records it in the repository's `.claude/settings.json` instead.
 
 Then start Claude Code, or run `/reload-plugins` in a session that is already open. `/mcp` lists the server as `plugin:codewiki:codewiki`.
 

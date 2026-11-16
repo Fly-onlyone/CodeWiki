@@ -37,6 +37,17 @@ param(
     # checkpoint holds. Lower it on a host that has little free; a restored
     # checkpoint brings its own figure back, so it is set after each restore.
     [int]$MemoryMb,
+    # Turn Windows' own protection in the guest up as far as its settings go
+    # (guest\harden.ps1) before anything is installed, and make the whole run
+    # under it. Case S1 records what is in force, case S2 what it stopped.
+    [switch]$Hardened,
+    # Also test the Claude Code plugin (cases CC1 to CC7): install Claude Code
+    # in the guest as its docs say, sign it in with the access token of the
+    # host's own Claude login, install the plugin as README says and have
+    # Claude call one of its tools. It makes two short requests on the
+    # account's cheapest model. The token is taken from the guest again before
+    # the run ends; see Copy-ClaudeLogin for what is and is not handed over.
+    [switch]$Plugin,
     # Run only these cases (their IDs), after the usual setup of the guest.
     # For one case that can stand alone, such as U2; most cases build on the
     # ones before them.
@@ -194,6 +205,8 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
     $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1", "install.cmd", "uninstall.cmd"
     $missing = @($needed | Where-Object { $entries -notcontains $_ })
     $plugins = @($entries | Where-Object { $_ -like "plugins/*" }).Count
+    # Without it the plugins folder cannot be added to Claude Code as a marketplace.
+    if ($entries -notcontains "plugins/.claude-plugin/marketplace.json") { $missing += "plugins/.claude-plugin/marketplace.json" }
     $unpacked = Join-Path ([System.IO.Path]::GetTempPath()) "cwvm-zip-$PID"
     Expand-Archive -Path $Zip -DestinationPath $unpacked -Force
     # Names of the DLLs each program asks Windows for, read from the file itself.
@@ -246,6 +259,24 @@ Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\probe.ps1") -GuestDirectory $
 Copy-ToGuest -Path $Zip -GuestDirectory "$guestHome\Downloads"
 Copy-ToGuest -Path (Join-Path $root "crates\cw-core") -GuestDirectory "$guestHome\repos"
 $guestZip = "$guestHome\Downloads\$(Split-Path -Leaf $Zip)"
+
+# ---------------------------------------------------------------- S1, protection
+# Before anything of CodeWiki is in the guest, so that the unpacking, the
+# install and every start happen under it. Nothing is excluded or allowed.
+if ($Hardened) {
+    Test-Case "S1" "Windows protection turned up" "every step of guest\harden.ps1 succeeds" {
+        Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\harden.ps1") -GuestDirectory $script:Vm.GuestDir
+        $run = Invoke-GuestExe -Background -TimeoutSec 300 -Exe $powershell -Arguments "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            "-File", "$($script:Vm.GuestDir)\harden.ps1"
+        Set-Content (Join-Path $logs "hardening.json") $run.Stdout
+        if (-not $run.Stdout.Trim()) { throw "harden.ps1 printed nothing: $($run.Stderr.Trim())" }
+        $state = $run.Stdout | ConvertFrom-Json
+        $failed = @($state.failed)
+        Add-Result -Id "S1" -Title "Windows protection turned up" -Expect "every step succeeds" `
+            -Status $(if ($failed) { "fail" } else { "pass" }) -Output $run.Stdout `
+            -Observed "Defender $($state.defenderMode), real-time $($state.realTimeProtection), tamper protection $($state.tamperProtection); cloud block level $($state.cloudBlockLevel) (6 is zero tolerance), all samples sent; unwanted applications $($state.unwantedApplications), network protection $($state.networkProtection), controlled folder access $($state.controlledFolderAccess) (1 is on); attack surface reduction rules blocking: $($state.reductionRulesBlocking) of $($state.reductionRules); exclusions: $(@($state.exclusions).Count); UAC prompt $($state.uacPrompt) (2 is always notify); SmartScreen '$($state.smartScreen)'; firewall $($state.firewall -join ', '); LSA protection $($state.lsaProtection); steps that failed: $(if ($failed) { $failed -join '; ' } else { 'none' })"
+    }
+}
 
 Test-Case "B1" "Guest before install" "recorded only" {
     $probe = Get-Probe "before"
@@ -1096,6 +1127,218 @@ foreach ($name in "app", "backend", "mcp") {
         -Observed $(if (-not $run.Output.Trim()) { "the guest did not answer" } elseif ($missing) { "missing or empty: $($missing -join ', ')" } else { "app.log $($sizes.app) bytes, backend.log $($sizes.backend) bytes, mcp.log $($sizes.mcp) bytes" })
 }
 
+# ---------------------------------------------------------------- CC, Claude Code plugin
+# The plugin is tested with the real Claude Code: installed as its docs say,
+# then the plugin as README says, from the installation's own plugins folder.
+# CodeWiki is installed and $guestRepo holds a wiki by now (C5, D2).
+if ($Plugin) {
+    $market = "$guestTarget\plugins"
+
+    # Hand the guest the access token of the host's own Claude login, and
+    # nothing else of it. Not the refresh token: with it Claude Code in the
+    # guest could renew the login, and a renewal there can end the login on
+    # the host. Not the tokens of other services, which the same file holds.
+    # The token goes over PowerShell Direct into the guest user's .claude
+    # folder and is never printed; Remove-ClaudeLogin deletes it. Take no
+    # checkpoint of the guest in between. Returns why it could not be done,
+    # or nothing.
+    function Copy-ClaudeLogin {
+        $folder = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE ".claude" }
+        $file = Join-Path $folder ".credentials.json"
+        if (-not (Test-Path $file)) { return "the host has no saved Claude login ($file)" }
+        $login = (Get-Content $file -Raw | ConvertFrom-Json).claudeAiOauth
+        if (-not $login.accessToken) { return "the host's saved login holds no access token" }
+        $minutes = [int](([DateTimeOffset]::FromUnixTimeMilliseconds([long]$login.expiresAt) - [DateTimeOffset]::UtcNow).TotalMinutes)
+        if ($minutes -lt 20) { return "the host's access token ends in $minutes minutes; use Claude Code on the host once, so that it renews the token, and run again" }
+        $reduced = @{ claudeAiOauth = [ordered]@{
+                accessToken      = $login.accessToken
+                expiresAt        = $login.expiresAt
+                scopes           = $login.scopes
+                subscriptionType = $login.subscriptionType
+                rateLimitTier    = $login.rateLimitTier
+            }
+        } | ConvertTo-Json -Depth 4 -Compress
+        $run = Invoke-InGuest -ArgumentList $reduced -ScriptBlock {
+            param($json)
+            $folder = Join-Path $env:USERPROFILE ".claude"
+            New-Item -ItemType Directory -Force $folder | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $folder ".credentials.json"), $json, (New-Object System.Text.UTF8Encoding $false))
+            "written"
+        }
+        if ($run.Output -notcontains "written") { return "it could not be written in the guest: $($run.Errors -join '; ')" }
+    }
+
+    function Remove-ClaudeLogin {
+        $run = Invoke-InGuest -ScriptBlock {
+            $file = Join-Path $env:USERPROFILE ".claude\.credentials.json"
+            Remove-Item $file -Force -ErrorAction SilentlyContinue
+            if (Test-Path $file) { "still there" } else { "gone" }
+        }
+        "the Claude login in the guest: $(if ($run.Output) { $run.Output -join ' ' } else { "no answer ($($run.Errors -join '; '))" })"
+    }
+
+    Test-Case "CC1" "Install Claude Code as its docs say" "claude.exe is installed for the user, carries Anthropic's signature and prints its version" {
+        $run = Invoke-GuestScript -TimeoutSec 900 -Script @'
+irm https://claude.ai/install.ps1 | iex
+$claude = "$env:USERPROFILE\.local\bin\claude.exe"
+"installed: $(Test-Path $claude)"
+if (Test-Path $claude) {
+    $signature = Get-AuthenticodeSignature $claude
+    "signature: $($signature.Status), Anthropic: $($signature.SignerCertificate.Subject -match 'Anthropic')"
+    "version: $(& $claude --version 2>&1)"
+}
+"git in the guest: $([bool](Get-Command git -ErrorAction SilentlyContinue))"
+$global:LASTEXITCODE = 0
+'@
+        $ok = $run.Output -match "installed: True" -and $run.Output -match "signature: Valid, Anthropic: True" -and $run.Output -match "version: \d"
+        $version = if ($run.Output -match "version: (.+)") { $Matches[1].Trim() } else { "none" }
+        Add-Result -Id "CC1" -Title "Install Claude Code as its docs say" -Expect "installed, signed by Anthropic, prints its version" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed "'irm https://claude.ai/install.ps1 | iex' as the user: version $version; Git for Windows in the guest: $(if ($run.Output -match 'git in the guest: True') { 'yes' } else { 'no, so Claude Code runs commands in PowerShell' })"
+    }
+
+    $signedIn = $false
+    Test-Case "CC2" "Claude Code signs in with the host's login" "a request is answered" {
+        $problem = Copy-ClaudeLogin
+        if ($problem) {
+            Add-Result -Id "CC2" -Title "Claude Code signs in with the host's login" -Expect "a request is answered" -Status fail `
+                -Observed "the host's login could not be handed over: $problem. The owner has to log in by hand in the guest ('claude', then '/login') before CC5 and CC6 can run"
+            return
+        }
+        $run = Invoke-GuestScript -TimeoutSec 300 -Script @'
+$env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+$answer = "$(& "$env:USERPROFILE\.local\bin\claude.exe" -p "Reply with the single word: ready" --output-format json --model haiku --max-turns 1 2>&1)"
+"claude exit: $LASTEXITCODE"
+try {
+    $result = $answer | ConvertFrom-Json
+    "error: $($result.is_error)"
+    "answer: $($result.result)"
+    "model: $(($result.modelUsage.PSObject.Properties | ForEach-Object { $_.Name }) -join ', ')"
+} catch { "not json: $($answer.Substring(0, [Math]::Min(300, $answer.Length)))" }
+$global:LASTEXITCODE = 0
+'@
+        $script:signedIn = $run.Output -match "claude exit: 0" -and $run.Output -match "(?i)answer: \W*ready"
+        Add-Result -Id "CC2" -Title "Claude Code signs in with the host's login" -Expect "a request is answered" `
+            -Status $(if ($signedIn) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed $(if ($signedIn) { "the guest got the host's access token only (no refresh token, no other service's token) and Claude answered 'ready'" } else { "the token was handed over but Claude did not answer; see the output. The owner has to log in by hand in the guest ('claude', then '/login')" })
+    }
+
+    # The marketplace is the plugins folder of the installation: nothing is
+    # cloned, so the guest needs no git, and the folder holds the plugin only.
+    Test-Case "CC3" "Install the plugin as README says" "the installation's plugins folder is added as a marketplace and codewiki@codewiki is installed and enabled" {
+        $run = Invoke-GuestScript -TimeoutSec 600 -Script (@'
+$claude = "$env:USERPROFILE\.local\bin\claude.exe"
+"--- claude plugin validate"; & $claude plugin validate '{{MARKET}}' 2>&1; "validate exit: $LASTEXITCODE"
+"--- claude plugin marketplace add"; & $claude plugin marketplace add '{{MARKET}}' 2>&1; "add exit: $LASTEXITCODE"
+"--- claude plugin install codewiki@codewiki"; & $claude plugin install codewiki@codewiki 2>&1; "install exit: $LASTEXITCODE"
+"--- claude plugin list"; & $claude plugin list 2>&1; "list exit: $LASTEXITCODE"
+$global:LASTEXITCODE = 0
+'@).Replace("{{MARKET}}", $market)
+        $ok = $run.Output -match "add exit: 0" -and $run.Output -match "install exit: 0" -and
+            $run.Output -match "codewiki@codewiki" -and $run.Output -match "(?s)--- claude plugin list.*enabled"
+        $warnings = if ($run.Output -match "Found (\d+) warnings?") { $Matches[1] } else { "0" }
+        Add-Result -Id "CC3" -Title "Install the plugin as README says" -Expect "marketplace added, plugin installed and enabled" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed "'claude plugin marketplace add $market' and 'claude plugin install codewiki@codewiki': $(if ($ok) { 'installed and enabled' } else { 'not installed; see the output' }); 'claude plugin validate' gave $warnings warnings"
+    }
+
+    # The account's own connectors (mail, drive and the like) come with the
+    # login. They are not this test's business: they are asked to stay out, and
+    # only lines that name codewiki are kept.
+    Test-Case "CC4" "The plugin's MCP server connects" "claude mcp list shows plugin:codewiki:codewiki as connected" {
+        $run = Invoke-GuestScript -TimeoutSec 300 -Script (@'
+Set-Location '{{REPO}}'
+$env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+$lines = @(& "$env:USERPROFILE\.local\bin\claude.exe" mcp list 2>&1 | ForEach-Object { "$_" })
+"mcp exit: $LASTEXITCODE"
+"servers listed: $(@($lines | Where-Object { $_ -match ' - ' }).Count)"
+$lines | Where-Object { $_ -match "codewiki" }
+$global:LASTEXITCODE = 0
+'@).Replace("{{REPO}}", $guestRepo)
+        $ok = $run.Output -match "plugin:codewiki:codewiki.*Connected"
+        Add-Result -Id "CC4" -Title "The plugin's MCP server connects" -Expect "plugin:codewiki:codewiki is connected" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed $(if ($ok) { "'claude mcp list' in the repository: plugin:codewiki:codewiki is connected (README names it so)" } else { "not connected; see the output" })
+    }
+
+    # One real session: Claude is asked to call get_overview. The session's
+    # events say which servers connected, which tools were offered, what was
+    # called, and what the session-start hook added.
+    $session = ""
+    Test-Case "CC5" "Claude calls a CodeWiki tool" "the 24 tools are offered, get_overview is called without a permission prompt and answers from the wiki" {
+        if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
+        $run = Invoke-GuestScript -TimeoutSec 600 -Script (@'
+Set-Location '{{REPO}}'
+$env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+$out = "$env:TEMP\claude-plugin-run.jsonl"
+& "$env:USERPROFILE\.local\bin\claude.exe" -p "Call the get_overview tool of the codewiki MCP server once. Then answer with one line: the title of the wiki's home note." --allowedTools "mcp__plugin_codewiki_codewiki__*" --output-format stream-json --verbose --max-turns 6 --model haiku 2>&1 | Out-File -Encoding utf8 $out
+"claude exit: $LASTEXITCODE"
+function Cut { param([string]$Text, [int]$Length) $flat = $Text -replace "\s+", " "; $flat.Substring(0, [Math]::Min($Length, $flat.Length)) }
+foreach ($line in Get-Content $out) {
+    try { $event = $line | ConvertFrom-Json } catch { "not json: $(Cut $line 200)"; continue }
+    if ($event.type -eq "system" -and $event.subtype -eq "init") {
+        "claude code: $($event.claude_code_version), model $($event.model), permission mode $($event.permissionMode)"
+        "codewiki server: $(($event.mcp_servers | Where-Object { $_.name -match 'codewiki' } | ForEach-Object { "$($_.name)=$($_.status)" }) -join ', ')"
+        "other servers in the session: $(@($event.mcp_servers | Where-Object { $_.name -notmatch 'codewiki' }).Count)"
+        "codewiki plugin loaded: $([bool]($event.plugins | Where-Object { $_.name -eq 'codewiki' }))"
+        "plugin errors: $(@($event.plugin_errors).Count)"
+        "codewiki tools offered: $(@($event.tools | Where-Object { $_ -like 'mcp__plugin_codewiki_*' }).Count)"
+    } elseif ($event.type -eq "system" -and $event.subtype -eq "hook_response") {
+        "briefing: $(Cut "$($event.output)" 600)"
+    } elseif ($event.type -eq "system" -and $event.subtype -eq "informational") {
+        "notice: $(Cut "$($event.content)" 400)"
+    } elseif ($event.type -eq "assistant") {
+        foreach ($part in $event.message.content) { if ($part.type -eq "tool_use") { "tool call: $($part.name)" } }
+    } elseif ($event.type -eq "user") {
+        foreach ($part in $event.message.content) {
+            if ($part.type -eq "tool_result") { "tool result (error '$($part.is_error)'): $(Cut ($part.content | ConvertTo-Json -Compress -Depth 4) 300)" }
+        }
+    } elseif ($event.type -eq "result") {
+        "result: error $($event.is_error), turns $($event.num_turns), denials $(@($event.permission_denials).Count)"
+        "answer: $(Cut "$($event.result)" 300)"
+    }
+}
+Remove-Item $out -Force
+$global:LASTEXITCODE = 0
+'@).Replace("{{REPO}}", $guestRepo)
+        $script:session = $run.Output
+        $tools = if ($run.Output -match "codewiki tools offered: (\d+)") { [int]$Matches[1] } else { 0 }
+        $answer = if ($run.Output -match "(?m)^answer: (.+)$") { $Matches[1].Trim() } else { "" }
+        $ok = $run.Output -match "codewiki server: plugin:codewiki:codewiki=connected" -and $tools -eq 24 -and
+            $run.Output -match "tool call: mcp__plugin_codewiki_codewiki__get_overview" -and $run.Output -match "result: error False, turns \d+, denials 0"
+        Add-Result -Id "CC5" -Title "Claude calls a CodeWiki tool" -Expect "24 tools offered; get_overview called and answered" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed "tools offered: $tools; get_overview called: $($run.Output -match 'tool call: mcp__plugin_codewiki_codewiki__get_overview'); Claude's answer: '$answer' (the home note's title is expected)"
+    }
+
+    Test-Case "CC6" "The session-start briefing" "the hook adds CodeWiki's lines to the session" {
+        if (-not $session) { throw "no session ran (CC5)" }
+        $briefing = if ($session -match "(?m)^briefing: (.+)$") { $Matches[1].Trim() } else { "" }
+        $notice = if ($session -match "(?m)^notice: (.+)$") { $Matches[1].Trim() } else { "" }
+        Add-Result -Id "CC6" -Title "The session-start briefing" -Expect "the hook's lines start with 'CodeWiki:'" `
+            -Status $(if ($briefing -match "^CodeWiki:") { "pass" } else { "fail" }) `
+            -Observed "briefing: $(if ($briefing) { $briefing } else { 'none' }); Claude Code's notice about the hook: $(if ($notice) { $notice } else { 'none' })"
+    }
+
+    Test-Case "CC7" "Remove the plugin as README says" "the plugin and the marketplace are gone" {
+        $run = Invoke-GuestScript -TimeoutSec 300 -Script @'
+$claude = "$env:USERPROFILE\.local\bin\claude.exe"
+"--- claude plugin uninstall codewiki@codewiki"; & $claude plugin uninstall codewiki@codewiki 2>&1; "uninstall exit: $LASTEXITCODE"
+"--- claude plugin marketplace remove codewiki"; & $claude plugin marketplace remove codewiki 2>&1; "remove exit: $LASTEXITCODE"
+"--- claude plugin list"; $list = @(& $claude plugin list 2>&1 | ForEach-Object { "$_" }); $list; "list exit: $LASTEXITCODE"
+"still listed: $([bool]($list -match 'codewiki@codewiki'))"
+$global:LASTEXITCODE = 0
+'@
+        $ok = $run.Output -match "uninstall exit: 0" -and $run.Output -match "remove exit: 0" -and $run.Output -match "still listed: False"
+        Add-Result -Id "CC7" -Title "Remove the plugin as README says" -Expect "plugin and marketplace gone" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed $(if ($ok) { "'claude plugin uninstall' and 'claude plugin marketplace remove' both succeeded; the plugin is no longer listed" } else { "not removed cleanly; see the output" })
+    }
+
+    # Whatever the cases did: the token does not stay in the guest.
+    Remove-ClaudeLogin
+}
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run.
 Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH entry and shortcut removed" {
@@ -1183,6 +1426,29 @@ if ($OldZip) {
             -Observed "installed $oldVersion (exit $($install.ExitCode)), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
         Stop-GuestApp
         Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+    }
+}
+
+# Defender writes down each thing it stops: a detection (1116, 1117), an
+# attack surface reduction rule (1121), controlled folder access (1123, 1127),
+# network protection (1126). Read at the end, for the whole run.
+if ($Hardened) {
+    Test-Case "S2" "What Windows protection stopped" "nothing of CodeWiki" {
+        $run = Invoke-GuestScript -Background -TimeoutSec 180 -Script @'
+$ids = 1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119, 1121, 1123, 1126, 1127
+$events = @(Get-WinEvent -FilterHashtable @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Id = $ids } -ErrorAction SilentlyContinue)
+"stopped: $($events.Count)"
+foreach ($event in $events | Sort-Object TimeCreated) {
+    $what = ($event.Message -split "`r?`n" | Where-Object { $_ -match "Path|Name|ID:|Process|Rule|Detection|Target|Destination" } | ForEach-Object { $_.Trim() }) -join " | "
+    "$($event.TimeCreated.ToString('HH:mm:ss')) event $($event.Id): $what"
+}
+'@
+        if ($run.Output -notmatch "stopped: (\d+)") { throw "the guest did not answer: $($run.Stderr)" }
+        $count = [int]$Matches[1]
+        $ours = @($run.Output -split "`n" | Where-Object { $_ -match "event \d+:" -and $_ -match "codewiki" })
+        Add-Result -Id "S2" -Title "What Windows protection stopped" -Expect "nothing of CodeWiki" `
+            -Status $(if ($ours) { "fail" } elseif ($count) { "note" } else { "pass" }) -Output $run.Output `
+            -Observed "Defender recorded $count blocks or detections in this run; $($ours.Count) of them name CodeWiki. See the output for each"
     }
 }
 

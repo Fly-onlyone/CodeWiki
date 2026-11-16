@@ -19,6 +19,7 @@ mod glass;
 mod graph;
 mod icons;
 mod illustration;
+mod instance;
 mod live;
 mod markdown;
 mod motion;
@@ -32,6 +33,8 @@ mod standard;
 mod startup;
 mod themes;
 mod update;
+#[cfg(windows)]
+mod win32;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -112,6 +115,15 @@ enum Landing {
     Startup,
     /// The user picked the repository: its wiki map.
     WikiMap,
+}
+
+/// What reaches the app from outside GPUI: from another thread, or from
+/// code that runs with no way to the app's state. Each is sent through a
+/// channel and carried out by one task of the app's view (`AppView::listen`),
+/// so that none of it ever runs while GPUI is in the middle of something.
+enum Event {
+    /// A second launch of the app handed over what it was asked to open.
+    Handover(instance::Request),
 }
 
 #[derive(Clone)]
@@ -210,6 +222,12 @@ struct AppView {
     pending_command: Option<Command>,
     /// Open the editor once the first note has loaded; set by a startup argument.
     pending_edit: bool,
+    /// The note or view to open on once a repository has loaded: what the
+    /// launch named, or the last launch that handed over to this app.
+    requested_view: Option<String>,
+    /// What a second launch asked for before the backend was reached; carried
+    /// out as soon as it is.
+    pending_request: Option<instance::Request>,
     focus: FocusHandle,
     theme_menu_open: bool,
     /// The row of the theme menu that the keys act on.
@@ -277,7 +295,12 @@ const DETAILS_WIDTH: f32 = 260.0;
 const OUTLINE_DOT: f32 = 6.0;
 
 impl AppView {
-    fn new(page_slot: Rc<doc_view::PageSlot>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(
+        page_slot: Rc<doc_view::PageSlot>,
+        events: async_channel::Receiver<Event>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         // What a link, row or button of a generated page asks for comes back
         // here.
         let view = cx.entity().downgrade();
@@ -341,6 +364,8 @@ impl AppView {
             pending_palette: None,
             pending_command: None,
             pending_edit: false,
+            requested_view: startup::launch().view.clone(),
+            pending_request: None,
             focus: cx.focus_handle(),
             theme_menu_open: false,
             theme_menu_highlight: 0,
@@ -384,7 +409,68 @@ impl AppView {
         };
         this.connect(cx);
         this.start_updates(cx);
+        this.listen(events, window, cx);
         this
+    }
+
+    /// Carry out what reaches the app from outside GPUI, one event at a
+    /// time, for as long as the window lives.
+    fn listen(
+        &mut self,
+        events: async_channel::Receiver<Event>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn_in(window, async move |this, cx| {
+            while let Ok(event) = events.recv().await {
+                let handled =
+                    this.update_in(cx, |this, window, cx| this.handle_event(event, window, cx));
+                if handled.is_err() {
+                    return;
+                }
+            }
+        })
+        .detach();
+    }
+
+    fn handle_event(&mut self, event: Event, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            Event::Handover(request) => {
+                log::info!(
+                    "a second launch handed over: folder {:?}, view {:?}",
+                    request.repo,
+                    request.view
+                );
+                // Started for the tray, it wants no window; the app runs.
+                if !request.tray {
+                    window.activate_window();
+                }
+                self.open_request(request, cx);
+            }
+        }
+    }
+
+    /// Open what a second launch asked for: its folder, on its view, or the
+    /// view alone in the repository that is open. A launch that named
+    /// neither only brought the window up.
+    fn open_request(&mut self, request: instance::Request, cx: &mut Context<Self>) {
+        if self.backend.is_none() {
+            // Still connecting. `connect` comes back to it.
+            self.pending_request = Some(request);
+            return;
+        }
+        match request.repo {
+            Some(path) => {
+                self.requested_view = request.view;
+                self.open_repo_folder(path, Landing::Startup, cx);
+            }
+            None if request.view.is_some() && self.repo.is_some() => {
+                self.requested_view = request.view;
+                self.open_startup_view(cx);
+                cx.notify();
+            }
+            None => {}
+        }
     }
 
     /// Run blocking backend work off the UI thread, then apply the result.
@@ -451,6 +537,9 @@ impl AppView {
                         match first {
                             Some(repo) => this.select_repo(repo, Landing::Startup, cx),
                             None => this.set_page(Page::Home, false),
+                        }
+                        if let Some(request) = this.pending_request.take() {
+                            this.open_request(request, cx);
                         }
                     }
                     Err(message) => {
@@ -624,6 +713,9 @@ impl AppView {
                     let outcome = match installed {
                         Ok(how) => {
                             log::info!("update: {how:?}; restarting");
+                            // The new app must become the running one, not
+                            // hand over to this one, which is about to end.
+                            instance::release();
                             match cw_update::relaunch(&install, &args) {
                                 Ok(()) => Ok(true),
                                 Err(e) => {
@@ -712,13 +804,17 @@ impl AppView {
                 return;
             };
             let path = path.to_string_lossy().into_owned();
-            _ = this.update(cx, |this, cx| this.open_repo_folder(path, cx));
+            _ = this.update(cx, |this, cx| {
+                this.open_repo_folder(path, Landing::WikiMap, cx);
+            });
         })
         .detach();
     }
 
-    /// Register `path` with the backend, if it is new, and open it.
-    fn open_repo_folder(&mut self, path: String, cx: &mut Context<Self>) {
+    /// Register `path` with the backend, if it is new, and open it: on its
+    /// wiki map when the user picked the folder, on the view a launch named
+    /// when `landing` is [`Landing::Startup`].
+    fn open_repo_folder(&mut self, path: String, landing: Landing, cx: &mut Context<Self>) {
         self.run(
             "Opening",
             cx,
@@ -727,9 +823,13 @@ impl AppView {
                 let (repos, missing) = registered_repos(b)?;
                 Ok((id, repos, missing))
             },
-            |this, (id, repos, missing), cx| {
+            move |this, (id, repos, missing), cx| {
                 this.take_repos(repos, missing);
-                this.open_repo(&id, cx);
+                if landing == Landing::Startup {
+                    this.open_launched_repo(&id, cx);
+                } else {
+                    this.open_repo(&id, cx);
+                }
             },
         );
     }
@@ -801,6 +901,23 @@ impl AppView {
         }
     }
 
+    /// Open the registered repository `id` as a launch that handed over
+    /// asked: on the view it named, as a start of the app would. A launch
+    /// that named only the repository that is open already changes nothing;
+    /// its window came up, and the page stays where the user left it.
+    fn open_launched_repo(&mut self, id: &str, cx: &mut Context<Self>) {
+        if self.repo.as_ref().is_some_and(|repo| repo.id == id) {
+            if self.requested_view.is_some() {
+                self.open_startup_view(cx);
+                cx.notify();
+            }
+            return;
+        }
+        if let Some(repo) = self.repos.iter().find(|repo| repo.id == id).cloned() {
+            self.select_repo(repo, Landing::Startup, cx);
+        }
+    }
+
     fn select_repo(&mut self, repo: Repo, landing: Landing, cx: &mut Context<Self>) {
         if !self.can_leave() {
             cx.notify();
@@ -867,10 +984,11 @@ impl AppView {
         );
     }
 
-    /// Show the view the second argument names, so that other tools can open
-    /// the app on a note or a view; Home when there is none.
+    /// Show the view the launch named (its second argument, or that of the
+    /// last launch that handed over), so that other tools can open the app
+    /// on a note or a view; Home when there is none.
     fn open_startup_view(&mut self, cx: &mut Context<Self>) {
-        let first = std::env::args().nth(2).unwrap_or_default();
+        let first = self.requested_view.clone().unwrap_or_default();
         if first.is_empty() || first == "home:" {
             self.set_page(Page::Home, false);
             return;
@@ -1513,11 +1631,10 @@ impl AppView {
                     },
                     remember,
                 );
-                // `--illustration` as the third argument opens the first note on
-                // its illustration.
+                // `--illustration` opens the first note on its illustration.
                 this.show_figure = this.figure.is_some()
                     && this.history.is_empty()
-                    && std::env::args().nth(3).as_deref() == Some("--illustration");
+                    && startup::launch().illustration;
             },
         );
     }
@@ -3328,6 +3445,18 @@ fn main() {
     // `logs\app.log`, GPUI's own included (it names the graphics adapter it
     // picked), and so does every panic.
     cw_core::logs::init("app", log::LevelFilter::Info);
+    // Before anything of GPUI: a launch that hands over to the running app
+    // ends here, with no window of its own.
+    let (events, inbox) = async_channel::unbounded();
+    let deliver = {
+        let events = events.clone();
+        move |request| events.try_send(Event::Handover(request)).is_ok()
+    };
+    match instance::acquire(startup::launch(), deliver) {
+        instance::Acquired::HandedOver => return,
+        instance::Acquired::Primary(held) => instance::hold(held),
+        instance::Acquired::Separate => {}
+    }
     let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);
@@ -3350,7 +3479,7 @@ fn main() {
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
             let slot = Rc::new(doc_view::PageSlot::default());
             let app = cx.new(|cx| {
-                let view = AppView::new(slot.clone(), window, cx);
+                let view = AppView::new(slot.clone(), inbox, window, cx);
                 // Shortcuts need a focused element to dispatch from.
                 window.focus(&view.focus, cx);
                 view
@@ -3376,6 +3505,8 @@ fn main() {
             cx.on_app_quit({
                 let app = app.clone();
                 move |cx| {
+                    // A launch from now on is the app itself.
+                    instance::release();
                     let backend = app.read(cx).backend_to_stop();
                     cx.background_executor().spawn(async move {
                         let Some(backend) = backend else {

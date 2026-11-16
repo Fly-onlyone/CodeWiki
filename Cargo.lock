@@ -1043,6 +1043,7 @@ dependencies = [
 name = "codewiki-app"
 version = "0.1.0"
 dependencies = [
+ "async-channel",
  "cw-client",
  "cw-core",
  "cw-illustrate",
@@ -1053,6 +1054,7 @@ dependencies = [
  "log",
  "openui-lang",
  "serde_json",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

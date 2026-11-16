@@ -26,6 +26,10 @@ use super::tokens::{self, curve, duration, easing};
 
 /// `Switch.js`, `SwitchRoot`: `padding: 12` around the track.
 const PADDING: f32 = 12.0;
+/// How far the track is from the switch's left edge. A row that lines the
+/// track up with what is above it pulls the switch left by this much, as
+/// MUI's `FormControlLabel` does (`marginLeft: -11`).
+pub const INSET: f32 = PADDING;
 /// `Switch.js`, `SwitchRoot`: `width: 34 + 12 * 2`, `height: 14 + 12 * 2`.
 const TRACK_WIDTH: f32 = 34.0;
 const TRACK_HEIGHT: f32 = 14.0;

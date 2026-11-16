@@ -28,6 +28,10 @@ mod palette;
 mod panes;
 mod prefs;
 mod reading;
+mod settings;
+mod settings_layout;
+mod settings_pages;
+mod settings_view;
 mod standard;
 mod startup;
 mod themes;
@@ -73,7 +77,8 @@ actions!(
         GoBack,
         SaveNote,
         ToggleSidebar,
-        ToggleDetails
+        ToggleDetails,
+        OpenSettings
     ]
 );
 
@@ -179,6 +184,9 @@ enum Page {
     /// repositories. Its page is built from the app's state on every frame,
     /// so going back to it never shows an old list.
     Home,
+    /// The settings, at one of their categories. Built on every frame too,
+    /// and drawn by this view itself (`settings_view.rs`).
+    Settings(settings::Category),
 }
 
 struct AppView {
@@ -267,6 +275,9 @@ struct AppView {
     /// while a pane slides in or out.
     sidebar_shown: f32,
     details_shown: f32,
+    /// What the Settings page remembers: the backend's settings, the text
+    /// inputs, the news beside each field.
+    settings: settings_view::State,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -318,6 +329,7 @@ impl AppView {
         });
         let sidebar_open = panes::load(Pane::Sidebar);
         let details_open = panes::load(Pane::Details);
+        let (settings, settings_subscriptions) = settings_view::State::new(window, cx);
         let mut this = Self {
             backend: None,
             repos: Vec::new(),
@@ -375,6 +387,7 @@ impl AppView {
             details_open,
             sidebar_shown: if sidebar_open { 1.0 } else { 0.0 },
             details_shown: if details_open { 1.0 } else { 0.0 },
+            settings,
             _subscriptions: vec![
                 subscription,
                 palette_subscription,
@@ -382,6 +395,7 @@ impl AppView {
                 theme_menu_blur,
             ],
         };
+        this._subscriptions.extend(settings_subscriptions);
         this.connect(cx);
         this.start_updates(cx);
         this
@@ -562,11 +576,10 @@ impl AppView {
         self.refresh_settings(cx);
     }
 
-    /// Show what changed on the settings page, when it is open.
+    /// Show what changed on the settings page, when it is open. The page is
+    /// built from the app's state on every frame, so a new frame is all it
+    /// takes.
     fn refresh_settings(&mut self, cx: &mut Context<Self>) {
-        if self.on_settings_page() {
-            self.open_settings(false, cx);
-        }
         cx.notify();
     }
 
@@ -891,8 +904,15 @@ impl AppView {
             cx.notify();
             return;
         }
+        // `settings:` opens the settings; `settings:ai` one of their
+        // categories, by its slug.
+        if let Some(slug) = first.strip_prefix("settings:") {
+            let category = settings::Category::from_slug(slug);
+            self.pending_command = Some(Command::Settings(Some(category)));
+            cx.notify();
+            return;
+        }
         let command = match first.as_str() {
-            "settings:" => Some(Command::Settings),
             "themes:" => Some(Command::Themes),
             "decisions:" => Some(Command::Decisions),
             "health:" => Some(Command::Health),
@@ -1253,13 +1273,9 @@ impl AppView {
                 self.open_report("Change coupling", "history", pages::coupling_page, cx)
             }
             Command::Themes => self.open_theme_menu(window, cx),
-            Command::Settings => self.open_settings(true, cx),
+            Command::Settings(category) => self.open_settings(category, cx),
             Command::Motion(pref) => {
                 motion::set(pref, cx);
-                // Show the new value where the setting is listed.
-                if self.on_settings_page() {
-                    self.open_settings(false, cx);
-                }
                 cx.notify();
             }
             Command::NewTab => self.new_tab(cx),
@@ -1272,7 +1288,7 @@ impl AppView {
             Command::OpenLogs => self.open_logs(cx),
             Command::CheckUpdates => {
                 // The result shows on the settings page.
-                self.open_settings(true, cx);
+                self.open_settings(Some(settings::Category::Updates), cx);
                 self.check_for_update(cx);
             }
             Command::InstallUpdate => self.install_update(cx),
@@ -1328,43 +1344,6 @@ impl AppView {
                 );
             },
         );
-    }
-
-    fn on_settings_page(&self) -> bool {
-        matches!(&self.page, Page::Generated { title, .. } if title == "Settings")
-    }
-
-    /// Show the settings page. `remember` puts the page left on the history;
-    /// pass false when the page only refreshes itself.
-    fn open_settings(&mut self, remember: bool, cx: &mut Context<Self>) {
-        let backend = self
-            .backend
-            .as_ref()
-            .map(|b| b.url().to_string())
-            .unwrap_or_else(|| "nothing".into());
-        let repos: Vec<(String, String)> = self
-            .repos
-            .iter()
-            .map(|r| (r.name.clone(), r.path.clone()))
-            .collect();
-        let theme = cx.theme().theme_name().to_string();
-        let doc = pages::settings_page(
-            &backend,
-            &theme,
-            motion::current(cx),
-            !cx.reduce_motion(),
-            &repos,
-            &self.update,
-            update::auto_check(),
-        );
-        self.set_page(
-            Page::Generated {
-                title: "Settings".into(),
-                doc: Rc::new(doc),
-            },
-            remember,
-        );
-        cx.notify();
     }
 
     /// Path of the current note on this machine, when the repository is local.
@@ -1423,7 +1402,8 @@ impl AppView {
             | Page::Generated { .. }
             | Page::Proposal { .. }
             | Page::Graph
-            | Page::Home => String::new(),
+            | Page::Home
+            | Page::Settings(_) => String::new(),
         };
     }
 
@@ -1466,6 +1446,12 @@ impl AppView {
     }
 
     fn go_back(&mut self, cx: &mut Context<Self>) {
+        // The settings fill the window: with no page before them (the app
+        // was started on them) Back must still lead somewhere.
+        if self.history.is_empty() && self.on_settings_page() {
+            self.leave_settings(cx);
+            return;
+        }
         if self.history.is_empty() || !self.can_leave() {
             cx.notify();
             return;
@@ -1593,10 +1579,7 @@ impl AppView {
     /// Apply a theme and remember it. An open theme menu stays open, so that
     /// several can be tried in a row.
     fn select_theme(&mut self, name: &str, cx: &mut Context<Self>) {
-        if themes::select(name, cx) && self.on_settings_page() {
-            // Show the new value where the setting is listed.
-            self.open_settings(false, cx);
-        }
+        themes::select(name, cx);
         cx.notify();
     }
 
@@ -1771,15 +1754,9 @@ impl AppView {
             Action::Note(target) => self.open_note(target.clone(), true, cx),
             Action::Symbol(qualified) => self.open_symbol(qualified.clone(), cx),
             Action::File(path) => self.open_file(path.clone(), cx),
-            // The menu takes the focus, which needs the window: the next
-            // frame has it.
-            Action::Themes => {
-                self.pending_command = Some(Command::Themes);
-                cx.notify();
-            }
             Action::Motion(pref) => {
                 motion::set(*pref, cx);
-                self.open_settings(false, cx);
+                cx.notify();
             }
             Action::Reconnect => self.reconnect(cx),
             Action::OpenFolder => self.open_folder(cx),
@@ -1787,12 +1764,16 @@ impl AppView {
             Action::InstallUpdate => self.install_update(cx),
             Action::AutoUpdate(on) => {
                 update::set_auto_check(*on);
-                self.open_settings(false, cx);
+                cx.notify();
             }
             Action::OpenRepo(id) => self.open_repo(id, cx),
             Action::ForgetRepo(id) => self.forget_repo(id.clone(), cx),
             Action::Sync => self.sync(cx),
             Action::OpenLogs => self.open_logs(cx),
+            // The rest belong to the Settings page.
+            other => {
+                self.run_settings_action(other, cx);
+            }
         }
     }
 
@@ -1917,6 +1898,10 @@ impl AppView {
                     .overflow_y_scrollbar()
                     .child(list),
             )
+            // The way into the settings stays in view under the notes,
+            // however long their list is.
+            .child(glass::hairline(cx))
+            .child(self.settings_entry(cx))
     }
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
@@ -2466,7 +2451,8 @@ impl AppView {
                     return self.doc_element(&Rc::new(live::message_page(message)), cx);
                 }
                 Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
-                Page::Graph => div().into_any_element(),
+                // Each has a view of its own (`graph_view`, `settings_frame`).
+                Page::Graph | Page::Settings(_) => div().into_any_element(),
             };
             // A new note rises into place. The id changes with the page, so
             // this runs once per page and not on a redraw.
@@ -2953,7 +2939,7 @@ impl AppView {
                         .child("Drag to pan, scroll to zoom, click a node to open it. Size shows how much depends on a symbol; color shows its cluster."),
                 );
             }
-            Page::Message(_) | Page::Notice(_) | Page::Home => {}
+            Page::Message(_) | Page::Notice(_) | Page::Home | Page::Settings(_) => {}
         }
         // Home lists the repositories itself.
         if self.repos.len() > 1 && !matches!(self.page, Page::Home) {
@@ -3032,6 +3018,7 @@ fn page_title(page: &Page) -> String {
         Page::Generated { title, .. } => title.clone(),
         Page::Proposal { .. } => "Review".into(),
         Page::Graph => "Graph".into(),
+        Page::Settings(_) => "Settings".into(),
     }
 }
 
@@ -3069,6 +3056,9 @@ impl Render for AppView {
         if let Some(command) = self.pending_command.take() {
             self.run_command(command, window, cx);
         }
+        // The inputs of the settings take the values that arrived since the
+        // last frame; that needs the window.
+        self.sync_settings_fields(window, cx);
         // Read once so unused-field lints stay honest about what the UI shows.
         let _ = self.notes.iter().filter(|n| n.state == "stale").count();
         self.page_placed.set(false);
@@ -3114,6 +3104,7 @@ impl Render for AppView {
             .on_action(
                 cx.listener(|this, _: &ToggleDetails, _, cx| this.toggle_pane(Pane::Details, cx)),
             )
+            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(None, cx)))
             // The palette's input would otherwise use these keys itself.
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                 if this.palette_open {
@@ -3145,6 +3136,8 @@ impl Render for AppView {
             .when(theme_menu.should_render(), |root| {
                 root.children(self.theme_menu_view(theme_menu.progress, window, cx))
             })
+            // The list of a select of the Settings page, while one is open.
+            .children(self.settings_menu_view(cx))
             // The place of the title bar, which the shell draws.
             .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())
             .child(glass::hairline(cx))
@@ -3225,11 +3218,12 @@ fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyEle
 
 impl AppView {
     /// Whether the page takes the whole window, with no sidebar, toolbar,
-    /// tabs or details: Home, and what shows before a repository has loaded,
-    /// so the app does not flash its chrome on the way to Home.
+    /// tabs or details: Home, the settings, and what shows before a
+    /// repository has loaded, so the app does not flash its chrome on the
+    /// way to Home.
     fn fills_window(&self) -> bool {
         match self.page {
-            Page::Home => true,
+            Page::Home | Page::Settings(_) => true,
             Page::Message(_) | Page::Notice(_) => !self.notes_loaded,
             _ => false,
         }
@@ -3238,7 +3232,7 @@ impl AppView {
     /// Everything below the title bar: sidebar, toolbar, tabs, page, details.
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
         if self.fills_window() {
-            return v_flex()
+            let column = v_flex()
                 .flex_1()
                 .min_h_0()
                 .w_full()
@@ -3247,14 +3241,27 @@ impl AppView {
                     .pane(glass::tinted_pane(cx.theme().background, cx)))
                 .when(self.busy.is_some(), |column| {
                     column.child(feedback::linear_progress("busy", cx))
-                })
+                });
+            if let Page::Settings(category) = self.page {
+                return column.child(self.settings_frame(category, window, cx));
+            }
+            // Home has no sidebar to hold the way into the settings, so it
+            // is at Home's own foot. The pages shown before a repository
+            // has loaded have none: there is nothing to set up yet.
+            let home = matches!(self.page, Page::Home);
+            return column
                 .child(
                     h_flex()
                         .flex_1()
                         .min_h_0()
                         .w_full()
                         .child(self.page_view(window, cx)),
-                );
+                )
+                .when(home, |column| {
+                    column
+                        .child(glass::hairline(cx))
+                        .child(h_flex().child(self.settings_entry(cx)))
+                });
         }
         h_flex()
             .flex_1()
@@ -3327,7 +3334,12 @@ fn main() {
     // would be kept anywhere: every record at Info and above goes to
     // `logs\app.log`, GPUI's own included (it names the graphics adapter it
     // picked), and so does every panic.
-    cw_core::logs::init("app", log::LevelFilter::Info);
+    // The level is the one chosen in the settings, unless `CODEWIKI_LOG`
+    // names another for this run.
+    let level = prefs::read(settings_view::LOG_LEVEL_PREF)
+        .and_then(|name| cw_core::logs::level_named(&name))
+        .unwrap_or(log::LevelFilter::Info);
+    cw_core::logs::init("app", level);
     let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(|cx| {
         gpui_kit::init(cx);
@@ -3343,6 +3355,7 @@ fn main() {
             KeyBinding::new("ctrl-s", SaveNote, None),
             KeyBinding::new("ctrl-b", ToggleSidebar, None),
             KeyBinding::new("ctrl-alt-b", ToggleDetails, None),
+            KeyBinding::new("ctrl-,", OpenSettings, None),
         ]);
         let (window, _) = gpui_kit::open_window(window_options(cx), cx, |window, cx| {
             window.set_window_title("CodeWiki");

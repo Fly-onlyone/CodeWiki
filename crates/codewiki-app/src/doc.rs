@@ -8,6 +8,7 @@
 use crate::icons::Glyph;
 use crate::motion::MotionPref;
 use crate::mui::feedback::Tone;
+use crate::settings::{Category, FieldId, Note};
 
 /// What following a link or pressing a row does.
 #[derive(Debug, Clone, PartialEq)]
@@ -18,8 +19,6 @@ pub enum Action {
     Symbol(String),
     /// Open the page of a source file.
     File(String),
-    /// Open the theme menu.
-    Themes,
     /// Choose how animations behave.
     Motion(MotionPref),
     /// Try to reach the backend again.
@@ -41,6 +40,38 @@ pub enum Action {
     Sync,
     /// Show the folder of the log files in Explorer.
     OpenLogs,
+    /// Open the settings: at this category, or at the first.
+    Settings(Option<Category>),
+    /// Apply the theme with this name.
+    Theme(String),
+    /// Save a setting the backend keeps, named by its section and field in
+    /// `GET /v1/settings`. No value puts it back to its default.
+    SetSetting {
+        section: String,
+        field: String,
+        value: Option<String>,
+    },
+    /// Keep this much in the app's log: `error`, `warn`, `info`, `debug` or
+    /// `trace`.
+    LogLevel(String),
+    /// Show the input of a saved secret, to type another in its place.
+    ReplaceSecret(FieldId),
+    /// Leave the saved secret as it is after all.
+    KeepSecret(FieldId),
+    /// Forget the saved secret.
+    RemoveSecret(FieldId),
+    /// Send the chosen LLM one small request and show whether it answered.
+    TestLlm,
+    /// The same for the embedder of semantic search.
+    TestEmbedder,
+    /// Check the backend typed into the fields and, when it answers, use it.
+    ConnectRemote,
+    /// Go back to the backend on this machine.
+    UseLocalBackend,
+    /// Forget the saved backend and its token.
+    ForgetRemote,
+    /// Show the data folder in Explorer.
+    OpenDataFolder,
 }
 
 /// A stretch of text within a line.
@@ -324,6 +355,62 @@ pub struct Choice {
     pub selected: bool,
 }
 
+/// Where a setting that is typed once and then hidden stands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SecretState {
+    /// Nothing is saved: the input shows.
+    Empty,
+    /// One is saved, and the input shows to type another in its place.
+    Typing,
+    /// One is saved; `hint` is its last characters, or empty for a short one.
+    Saved { hint: String },
+    /// One is saved that this user or this machine cannot read.
+    Unreadable,
+}
+
+impl SecretState {
+    /// What the page says in place of the input, when it shows none.
+    pub fn text(&self) -> Option<String> {
+        match self {
+            Self::Empty | Self::Typing => None,
+            Self::Saved { hint } if hint.is_empty() => Some("Saved".into()),
+            Self::Saved { hint } => Some(format!("Saved, ends in {hint}")),
+            Self::Unreadable => Some("Saved, but it cannot be read by this Windows user".into()),
+        }
+    }
+}
+
+/// One thing to press in a row of buttons.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Press {
+    pub label: String,
+    pub action: Action,
+    /// The main action of the row: drawn filled.
+    pub primary: bool,
+    pub disabled: bool,
+}
+
+impl Press {
+    pub fn new(label: impl Into<String>, action: Action) -> Self {
+        Self {
+            label: label.into(),
+            action,
+            primary: false,
+            disabled: false,
+        }
+    }
+
+    pub fn primary(mut self) -> Self {
+        self.primary = true;
+        self
+    }
+
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
+        self
+    }
+}
+
 /// A part of a page.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Block {
@@ -366,6 +453,44 @@ pub enum Block {
         label: String,
         choices: Vec<Choice>,
     },
+    /// A setting that is on or off. `action` is what a click asks for.
+    /// `locked` says why it cannot be changed here, when it cannot.
+    Switch {
+        label: String,
+        help: Option<String>,
+        on: bool,
+        action: Action,
+        locked: Option<String>,
+    },
+    /// A setting with a few named values, shown as a list that drops down.
+    /// The option in effect is the one `selected`.
+    Select {
+        label: String,
+        help: Option<String>,
+        options: Vec<Choice>,
+        locked: Option<String>,
+        note: Option<Note>,
+    },
+    /// A setting that is typed. Its text is in the input the app keeps for
+    /// `id`, not here.
+    Field {
+        id: FieldId,
+        label: String,
+        help: Option<String>,
+        locked: Option<String>,
+        note: Option<Note>,
+    },
+    /// A setting that is typed once and never shown again, such as a key.
+    Secret {
+        id: FieldId,
+        label: String,
+        help: Option<String>,
+        state: SecretState,
+        locked: Option<String>,
+        note: Option<Note>,
+    },
+    /// Things to press, side by side.
+    Buttons(Vec<Press>),
     /// The app's logo.
     Logo,
 }
@@ -474,7 +599,72 @@ impl Doc {
                     let names: Vec<&str> = choices.iter().map(|c| c.label.as_str()).collect();
                     out.push(format!("{label}: {}", names.join(" / ")));
                 }
+                Block::Switch {
+                    label, on, locked, ..
+                } => out.push(with_state(
+                    format!("{label}: {}", if *on { "on" } else { "off" }),
+                    locked,
+                    &None,
+                )),
+                Block::Select {
+                    label,
+                    options,
+                    locked,
+                    note,
+                    ..
+                } => {
+                    let chosen = options
+                        .iter()
+                        .find(|option| option.selected)
+                        .map_or("", |option| option.label.as_str());
+                    let names: Vec<&str> = options.iter().map(|o| o.label.as_str()).collect();
+                    out.push(with_state(
+                        format!("{label}: {chosen} ({})", names.join(" / ")),
+                        locked,
+                        note,
+                    ));
+                }
+                Block::Field {
+                    label,
+                    locked,
+                    note,
+                    ..
+                } => out.push(with_state(format!("{label}: <typed>"), locked, note)),
+                Block::Secret {
+                    label,
+                    state,
+                    locked,
+                    note,
+                    ..
+                } => out.push(with_state(
+                    format!(
+                        "{label}: {}",
+                        state.text().unwrap_or_else(|| "<typed, hidden>".into())
+                    ),
+                    locked,
+                    note,
+                )),
+                Block::Buttons(buttons) => {
+                    let labels: Vec<&str> = buttons.iter().map(|b| b.label.as_str()).collect();
+                    out.push(labels.join(" | "));
+                }
                 Block::Logo => {}
+            }
+            // The line of help under a control's name.
+            if let Block::Switch {
+                help: Some(help), ..
+            }
+            | Block::Select {
+                help: Some(help), ..
+            }
+            | Block::Field {
+                help: Some(help), ..
+            }
+            | Block::Secret {
+                help: Some(help), ..
+            } = block
+            {
+                out.push(help.clone());
             }
         }
         out.join("\n")
@@ -508,11 +698,74 @@ impl Doc {
                 Block::Choices { choices, .. } => {
                     out.extend(choices.iter().map(|choice| choice.action.clone()))
                 }
+                // A locked control offers nothing to do.
+                Block::Switch {
+                    action,
+                    locked: None,
+                    ..
+                } => out.push(action.clone()),
+                Block::Select {
+                    options,
+                    locked: None,
+                    ..
+                } => out.extend(options.iter().map(|option| option.action.clone())),
+                Block::Secret {
+                    id,
+                    state,
+                    locked: None,
+                    ..
+                } => match state {
+                    SecretState::Saved { .. } | SecretState::Unreadable => {
+                        out.push(Action::ReplaceSecret(*id));
+                        out.push(Action::RemoveSecret(*id));
+                    }
+                    SecretState::Typing => out.push(Action::KeepSecret(*id)),
+                    SecretState::Empty => {}
+                },
+                Block::Buttons(buttons) => out.extend(
+                    buttons
+                        .iter()
+                        .filter(|button| !button.disabled)
+                        .map(|button| button.action.clone()),
+                ),
                 _ => {}
             }
         }
         out
     }
+
+    /// The fields the page asks the user to type into, in order. A locked
+    /// one is listed too: its input shows the value, and takes none.
+    pub fn fields(&self) -> Vec<FieldId> {
+        self.flat()
+            .into_iter()
+            .filter_map(|block| match block {
+                Block::Field { id, .. } => Some(*id),
+                Block::Secret {
+                    id,
+                    state: SecretState::Empty | SecretState::Typing,
+                    ..
+                } => Some(*id),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
+/// A line of [`Doc::words`] for a control, with why it is locked and the
+/// news beside it.
+#[cfg(test)]
+fn with_state(mut line: String, locked: &Option<String>, note: &Option<Note>) -> String {
+    if let Some(locked) = locked {
+        line.push_str(&format!(" [{locked}]"));
+    }
+    match note {
+        Some(Note::Working) => line.push_str(" (saving)"),
+        Some(Note::Saved) => line.push_str(" (saved)"),
+        Some(Note::Error(error)) => line.push_str(&format!(" (error: {error})")),
+        None => {}
+    }
+    line
 }
 
 #[cfg(test)]

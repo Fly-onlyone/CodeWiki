@@ -3,8 +3,8 @@
 //! The editing itself is gpui-kit's `Input`, with its own border and fill
 //! turned off. This draws what MUI draws around an input: the outline, which
 //! takes the primary color and a second pixel when the field has focus, an
-//! icon before the text, something after it, and a line of help or of news
-//! under it (`OutlinedInput/OutlinedInput.js`,
+//! icon before the text, and a line of help or of news under it
+//! (`OutlinedInput/OutlinedInput.js`,
 //! `InputAdornment/InputAdornment.js`, `FormHelperText/FormHelperText.js`).
 //! The outline's colors at rest and under the pointer, and the fill of a
 //! disabled field, are TradingAgent's (`components.ts`, `MuiTextField` and
@@ -18,8 +18,8 @@ use gpui_kit::component::input::{Input, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, BoxShadow, ElementId, Entity, Focusable as _, InteractiveElement as _,
-    IntoElement, ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div, point, px,
+    App, BoxShadow, ElementId, Entity, Focusable as _, InteractiveElement as _, IntoElement,
+    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div, point, px,
 };
 
 use super::base::Hover;
@@ -45,21 +45,12 @@ const DISABLED_FILL: f32 = 0.5;
 const HELPER_TOP: f32 = 4.0;
 const HELPER_SIDE: f32 = 14.0;
 
-/// How tall a field is with its helper line: the field, the gap, and one
-/// line of caption text.
-#[allow(dead_code)] // Its first user is the Settings page, not built yet.
-pub fn height_with_helper() -> f32 {
-    let caption = Variant::Caption.spec();
-    HEIGHT + HELPER_TOP + caption.size * caption.line_height
-}
-
 /// A single-line text field.
 #[derive(IntoElement)]
 pub struct TextField {
     id: ElementId,
     state: Entity<InputState>,
     icon: Option<Glyph>,
-    end: Option<AnyElement>,
     disabled: bool,
     helper: Option<(SharedString, Tone)>,
 }
@@ -70,7 +61,6 @@ impl TextField {
             id: id.into(),
             state: state.clone(),
             icon: None,
-            end: None,
             disabled: false,
             helper: None,
         }
@@ -82,16 +72,7 @@ impl TextField {
         self
     }
 
-    /// MUI's end `InputAdornment`: something after the text, such as the
-    /// button that shows a hidden value.
-    #[allow(dead_code)] // Its first user is the Settings page, not built yet.
-    pub fn end(mut self, end: impl IntoElement) -> Self {
-        self.end = Some(end.into_any_element());
-        self
-    }
-
     /// A field that shows its value and takes no input.
-    #[allow(dead_code)] // As above.
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
@@ -100,7 +81,6 @@ impl TextField {
     /// A line under the field: help in the neutral tone, or news about the
     /// value, such as that it was saved or why it was refused. An error also
     /// colors the outline.
-    #[allow(dead_code)] // As above.
     pub fn helper(mut self, text: impl Into<SharedString>, tone: Tone) -> Self {
         self.helper = Some((text.into(), tone));
         self
@@ -194,26 +174,12 @@ impl RenderOnce for TextField {
                         .px_0()
                         .text_size(px(FONT)),
                 ),
-            )
-            .children(self.end);
+            );
         let field = if self.disabled {
             field
         } else {
             hover.attach(field)
         };
         div().w_full().child(field).children(helper)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_helper_line_adds_one_line_of_caption_under_the_field() {
-        // 12 px text at a line height of 1.66, 4 px under the field.
-        let line = 12.0 * 1.66;
-        assert!((height_with_helper() - (40.0 + 4.0 + line)).abs() < 1e-3);
-        assert!(height_with_helper() > HEIGHT);
     }
 }

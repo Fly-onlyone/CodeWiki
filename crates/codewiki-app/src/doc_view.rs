@@ -47,6 +47,7 @@ use crate::mui::tokens::{Variant, curve, duration, easing};
 use crate::reading;
 use crate::settings::{FieldId, Note};
 use crate::settings_layout as layout;
+use crate::themes;
 
 /// What a link, row or button of a page does when used.
 pub type OnAction = Rc<dyn Fn(&Action, &mut Window, &mut App)>;
@@ -681,11 +682,29 @@ fn select_control(
             }
         }
     };
+    // The icon of the choice in effect, as its row in the list shows it.
+    let icon = options
+        .iter()
+        .find(|option| option.selected)
+        .and_then(|option| Some((option.icon?, choice_tint(option, cx))));
     let select = Select::new(page.id(path), chosen)
         .open(open)
         .disabled(disabled)
+        .when_some(icon, |select, (icon, tint)| select.icon(icon, tint))
         .on_click(request);
     anchor.track(select, |_, _| {}).w_full().into_any_element()
+}
+
+/// The color of a choice's icon. A theme's icon is in a color of that theme,
+/// as in the theme menu; any other takes the hue its kind has everywhere.
+pub fn choice_tint(choice: &Choice, cx: &App) -> Option<Hsla> {
+    if let Action::Theme(name) = &choice.action {
+        return themes::entries(cx)
+            .iter()
+            .find(|entry| entry.name == *name)
+            .map(|entry| themes::glyph_tint(entry.swatches[1], cx));
+    }
+    choice.icon.and_then(|icon| icons::tint(icon, cx))
 }
 
 /// A setting that is typed once and hidden: its input, or what is known of

@@ -17,17 +17,17 @@ use gpui_kit::base::motion as kit;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    App, Bounds, BoxShadow, ClickEvent, ElementId, FocusHandle, InteractiveElement as _,
+    App, Bounds, BoxShadow, ClickEvent, ElementId, FocusHandle, Hsla, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, RenderOnce, SharedString, Styled as _, Window, div,
     point, px,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
-use super::menu::{Align, Menu, MenuItem, MenuSection};
+use super::menu::{Align, Menu, MenuSection};
 use super::motion::scaled;
 use super::text_field::HEIGHT;
 use super::tokens::{self, curve, duration, easing};
-use crate::icons;
+use crate::icons::{self, Glyph};
 
 /// `OutlinedInput.js`, `size: 'small'`: `padding: '8.5px 14px'`.
 const PADDING: f32 = 14.0;
@@ -39,6 +39,10 @@ const ARROW_ROOM: f32 = 32.0;
 const ARROW_RIGHT: f32 = 7.0;
 /// `SvgIcon/SvgIcon.js`: an icon is 24 px.
 const ARROW: f32 = 24.0;
+/// The icon of the choice in effect: the size and the gap of a text field's
+/// start adornment (`text_field.rs`), so that the two controls match.
+const ICON: f32 = 20.0;
+const ICON_GAP: f32 = 8.0;
 /// `OutlinedInput.js`: the outline is the text color at 23%.
 const OUTLINE_OPACITY: f32 = 0.23;
 /// `styles/createPalette.js`, `text.disabled`, light and dark.
@@ -53,23 +57,21 @@ pub fn menu_width(control: f32) -> f32 {
     control.max(MENU_MIN_WIDTH)
 }
 
-/// The list of choices of a select, under the control at `anchor`. `selected`
-/// marks the choice in effect.
+/// The list of choices of a select, under the control at `anchor`: its
+/// rows, in one group or several, as the caller made them. The row of the
+/// choice in effect is the one made `selected`.
 pub fn menu(
     id: impl Into<SharedString>,
     anchor: Bounds<Pixels>,
     focus: &FocusHandle,
-    options: impl IntoIterator<Item = SharedString>,
-    selected: Option<usize>,
+    sections: impl IntoIterator<Item = MenuSection>,
 ) -> Menu {
-    let items = options
-        .into_iter()
-        .enumerate()
-        .map(|(index, label)| MenuItem::new(label).selected(selected == Some(index)));
-    Menu::new(id, anchor, focus)
-        .align(Align::Start)
-        .width(menu_width(anchor.size.width / px(1.)))
-        .section(MenuSection::plain().items(items))
+    sections.into_iter().fold(
+        Menu::new(id, anchor, focus)
+            .align(Align::Start)
+            .width(menu_width(anchor.size.width / px(1.))),
+        Menu::section,
+    )
 }
 
 /// A setting with a few named values, one of them in effect.
@@ -77,6 +79,7 @@ pub fn menu(
 pub struct Select {
     id: ElementId,
     value: SharedString,
+    icon: Option<(Glyph, Option<Hsla>)>,
     open: bool,
     disabled: bool,
     on_click: Option<OnClick>,
@@ -88,10 +91,19 @@ impl Select {
         Self {
             id: id.into(),
             value: value.into(),
+            icon: None,
             open: false,
             disabled: false,
             on_click: None,
         }
+    }
+
+    /// The icon of the choice in effect, before its label, as its row in
+    /// the list has it. `tint` is its color; without one it takes the color
+    /// of the arrow.
+    pub fn icon(mut self, icon: Glyph, tint: Option<Hsla>) -> Self {
+        self.icon = Some((icon, tint));
+        self
     }
 
     /// Whether its list is open: the control then looks focused.
@@ -196,6 +208,12 @@ impl RenderOnce for Select {
             .shadow(shadows)
             .text_color(text)
             .text_size(px(FONT))
+            .gap(px(ICON_GAP))
+            .when_some(self.icon, |select, (icon, tint)| {
+                // A disabled select fades its icon with its text.
+                let color = tint.filter(|_| !self.disabled).unwrap_or(arrow);
+                select.child(Icon::new(icon).with_size(px(ICON)).text_color(color))
+            })
             .child(div().flex_1().min_w_0().truncate().child(self.value))
             .child(
                 div()

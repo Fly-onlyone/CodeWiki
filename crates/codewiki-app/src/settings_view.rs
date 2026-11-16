@@ -29,7 +29,7 @@ use crate::doc_view::{self, Controls, SelectRequest};
 use crate::mui::button::{Button, IconButton};
 use crate::mui::feedback::{self, Tone};
 use crate::mui::list::ListItemButton;
-use crate::mui::menu::Menu;
+use crate::mui::menu::{Menu, MenuItem, MenuSection};
 use crate::mui::motion::{NOTE_HOLD, scaled};
 use crate::mui::tokens::Variant;
 use crate::mui::{select, surfaces};
@@ -164,6 +164,14 @@ fn test_line(result: Result<Value, String>) -> Tested {
             format!("{name}: {error}")
         },
     }
+}
+
+/// Whether the options of a select are the themes.
+fn lists_themes(options: &[Choice]) -> bool {
+    !options.is_empty()
+        && options
+            .iter()
+            .all(|option| matches!(option.action, Action::Theme(_)))
 }
 
 /// The body of a `PUT /v1/settings` that changes one field.
@@ -651,11 +659,41 @@ impl AppView {
     /// The list of the open select, when one is open.
     pub(crate) fn settings_menu_view(&self, cx: &mut Context<Self>) -> Option<Menu> {
         let menu = self.settings.menu.as_ref()?;
-        let labels = menu
-            .options
-            .iter()
-            .map(|option| SharedString::from(option.label.clone()));
-        let selected = menu.options.iter().position(|option| option.selected);
+        let themes_listed = lists_themes(&menu.options);
+        let sections: Vec<MenuSection> = if themes_listed {
+            // As the toolbar's theme menu lists them: dark, then light, each
+            // with its icon, its colors, and a mark on the one in use. The
+            // options are in that order already.
+            let active = cx.theme().theme_name().clone();
+            let entries = themes::entries(cx);
+            [(true, "Dark"), (false, "Light")]
+                .into_iter()
+                .filter_map(|(dark, label)| {
+                    let items: Vec<MenuItem> = menu
+                        .options
+                        .iter()
+                        .filter_map(|option| {
+                            let Action::Theme(name) = &option.action else {
+                                return None;
+                            };
+                            let entry = entries.iter().find(|entry| entry.name == *name)?;
+                            (entry.dark == dark)
+                                .then(|| crate::theme_menu_item(entry, entry.name == active, cx))
+                        })
+                        .collect();
+                    (!items.is_empty()).then(|| MenuSection::new(label).items(items))
+                })
+                .collect()
+        } else {
+            let items = menu.options.iter().map(|option| {
+                let item = MenuItem::new(option.label.clone()).selected(option.selected);
+                match option.icon {
+                    Some(icon) => item.icon(icon).tint(doc_view::choice_tint(option, cx)),
+                    None => item,
+                }
+            });
+            vec![MenuSection::plain().items(items)]
+        };
         let (select, highlight, close) = (
             cx.entity().downgrade(),
             cx.entity().downgrade(),
@@ -666,8 +704,7 @@ impl AppView {
                 "settings-select",
                 menu.anchor,
                 &self.settings.menu_focus,
-                labels,
-                selected,
+                sections,
             )
             .highlighted(menu.highlighted)
             .on_select(move |index, window, cx| {

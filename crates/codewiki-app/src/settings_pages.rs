@@ -16,6 +16,7 @@ use serde_json::Value;
 use crate::doc::{
     Action, Block, Cell, Choice, Column, Doc, Press, SecretState, Span, Table, code, text,
 };
+use crate::icons;
 use crate::motion::MotionPref;
 use crate::mui::feedback::Tone;
 use crate::settings::{Category, FieldId, Note};
@@ -121,6 +122,9 @@ fn appearance(model: &Model) -> Vec<Block> {
                             label: name.clone(),
                             action: Action::Theme(name.clone()),
                             selected: name == model.theme,
+                            // The same icon the theme has in the toolbar's
+                            // theme menu.
+                            icon: Some(icons::for_theme(name)),
                         })
                         .collect(),
                     locked: None,
@@ -146,6 +150,7 @@ fn appearance(model: &Model) -> Vec<Block> {
                             label: pref.label().into(),
                             action: Action::Motion(pref),
                             selected: pref == model.motion,
+                            icon: None,
                         })
                         .collect(),
                 },
@@ -266,6 +271,7 @@ fn provider(
                     value: Some(option.into()),
                 },
                 selected: option == chosen,
+                icon: None,
             })
             .collect(),
         locked: lock(model, settings, entry),
@@ -618,6 +624,7 @@ fn diagnostics(model: &Model) -> Vec<Block> {
                             label: label.into(),
                             action: Action::LogLevel(level.into()),
                             selected: level == model.log_level,
+                            icon: None,
                         })
                         .collect(),
                     locked: model
@@ -791,6 +798,19 @@ mod tests {
         assert!(words.contains("Animations are off."));
         let actions = doc.actions();
         assert!(actions.contains(&Action::Theme("CodeWiki Violet".into())));
+        // Every theme has the icon it has in the theme menu; the other
+        // selects have none.
+        for block in doc.flat() {
+            if let Block::Select { options, .. } = block {
+                for option in options {
+                    let themed = matches!(option.action, Action::Theme(_));
+                    assert_eq!(option.icon.is_some(), themed, "{}", option.label);
+                    if themed {
+                        assert_eq!(option.icon, Some(icons::for_theme(&option.label)));
+                    }
+                }
+            }
+        }
         for pref in MotionPref::ALL {
             assert!(actions.contains(&Action::Motion(pref)));
         }

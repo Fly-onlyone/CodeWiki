@@ -2234,7 +2234,6 @@ impl AppView {
             self.theme_anchor.get()?
         };
         let active = cx.theme().theme_name().clone();
-        let mark = cx.theme().primary;
         let entries = themes::entries(cx);
         let mut menu = Menu::new("theme-menu", anchor, &self.theme_menu_focus)
             .width(THEME_MENU_WIDTH)
@@ -2245,27 +2244,7 @@ impl AppView {
             let items: Vec<MenuItem> = entries
                 .iter()
                 .filter(|entry| entry.dark == dark)
-                .map(|entry| {
-                    let in_use = entry.name == active;
-                    MenuItem::new(entry.name.clone())
-                        .icon(icons::for_theme(&entry.name))
-                        .tint(Some(themes::glyph_tint(entry.swatches[1], cx)))
-                        .selected(in_use)
-                        .trailing(
-                            h_flex()
-                                .flex_shrink_0()
-                                .gap_2()
-                                .items_center()
-                                .child(feedback::dots(entry.swatches, cx))
-                                .child(div().size(px(THEME_MARK)).when(in_use, |slot| {
-                                    slot.child(
-                                        Icon::new(icons::CHECK)
-                                            .with_size(px(THEME_MARK))
-                                            .text_color(mark),
-                                    )
-                                })),
-                        )
-                })
+                .map(|entry| theme_menu_item(entry, entry.name == active, cx))
                 .collect();
             if !items.is_empty() {
                 menu = menu.section(MenuSection::new(label).items(items));
@@ -3009,6 +2988,32 @@ fn parse_notes(value: &Value) -> Vec<NoteInfo> {
             })
         })
         .collect()
+}
+
+/// A theme as a row of a menu: its icon in a color of its own, its name, a
+/// sample of its four colors, and a mark on the one in use. The toolbar's
+/// theme menu and the theme select of the settings list themes with it, so
+/// that a theme looks the same in both.
+fn theme_menu_item(entry: &themes::Entry, in_use: bool, cx: &App) -> MenuItem {
+    let mark = cx.theme().primary;
+    MenuItem::new(entry.name.clone())
+        .icon(icons::for_theme(&entry.name))
+        .tint(Some(themes::glyph_tint(entry.swatches[1], cx)))
+        .selected(in_use)
+        .trailing(
+            h_flex()
+                .flex_shrink_0()
+                .gap_2()
+                .items_center()
+                .child(feedback::dots(entry.swatches, cx))
+                .child(div().size(px(THEME_MARK)).when(in_use, |slot| {
+                    slot.child(
+                        Icon::new(icons::CHECK)
+                            .with_size(px(THEME_MARK))
+                            .text_color(mark),
+                    )
+                })),
+        )
 }
 
 /// Short name for a tab.

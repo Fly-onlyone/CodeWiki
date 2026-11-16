@@ -353,6 +353,8 @@ pub struct Choice {
     pub label: String,
     pub action: Action,
     pub selected: bool,
+    /// Drawn before the label, in a select and in its list.
+    pub icon: Option<Glyph>,
 }
 
 /// Where a setting that is typed once and then hidden stands.
@@ -535,7 +537,7 @@ impl Doc {
 #[cfg(test)]
 impl Doc {
     /// Every block, with the bodies of cards opened out.
-    fn flat(&self) -> Vec<&Block> {
+    pub fn flat(&self) -> Vec<&Block> {
         fn walk<'a>(blocks: &'a [Block], out: &mut Vec<&'a Block>) {
             for block in blocks {
                 out.push(block);

@@ -472,8 +472,17 @@ impl AppView {
                         this.error = Some(message);
                         let log = cw_core::logs::path("backend").display().to_string();
                         let logs = cw_core::logs::dir().display().to_string();
+                        // The backend saved in the settings, when it is the
+                        // one that was tried: the variable wins over it.
+                        let remote = cw_client::saved_remote()
+                            .filter(|remote| remote.in_use && cw_client::env_remote().is_none())
+                            .map(|remote| remote.url);
                         this.set_page(
-                            Page::Notice(Rc::new(live::offline_page(&log, &logs))),
+                            Page::Notice(Rc::new(live::offline_page(
+                                &log,
+                                &logs,
+                                remote.as_deref(),
+                            ))),
                             false,
                         );
                     }

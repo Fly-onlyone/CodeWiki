@@ -1133,6 +1133,31 @@ foreach ($window in $open) { "path: $($window.Document.Folder.Self.Path)"; $wind
     Stop-GuestApp
 }
 
+# The Settings page fills the window: a list of eight categories on the left,
+# the open one on the right. The rows are at x 92, y 109 + 36 n of the
+# window's client area at 100 percent (settings_layout.rs), anchored to its
+# top left corner. Each is clicked and photographed; the provider and the
+# keys are left alone, so nothing is sent anywhere.
+Test-Case "ST1" "The Settings page and its categories" "each row of the list opens its category" {
+    Start-GuestApp -Arguments $guestRepo, "settings:"
+    Wait-For 15
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $taken = @()
+    $row = 0
+    foreach ($name in "appearance", "ai-model", "semantic-search", "backend", "repositories", "updates", "keyboard", "diagnostics") {
+        $x = $info.Left + [int](92 * $info.Scale)
+        $y = $info.Top + [int]((109 + 36 * $row) * $info.Scale)
+        Send-RestedClick -X $x -Y $y -RestSeconds 0.6
+        Wait-For 2
+        $taken += Shot "settings-$name"
+        $row += 1
+    }
+    Add-Result -Id "ST1" -Title "The Settings page and its categories" -Expect "eight categories, each opened by its row" -Status note -Shots $taken `
+        -Observed "started on 'settings:' and clicked the eight rows of the list; read the screenshots: each must show its own heading (Appearance, AI model, Semantic search, Backend, Repositories, Updates, Keyboard, Diagnostics) with its row marked, cards on the right, and no sidebar or tabs. Updates must have the 'Daily check' switch, Appearance the 'Start with Windows' switch"
+    Stop-GuestApp
+}
+
 Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the file" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"

@@ -1455,6 +1455,7 @@ dependencies = [
  "serde_json",
  "sha2 0.11.1",
  "thiserror 2.0.21",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1536,6 +1537,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "cw-core",
+ "cw-embed",
  "cw-index",
  "cw-llm",
  "cw-vault",

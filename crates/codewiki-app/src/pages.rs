@@ -1,15 +1,13 @@
-//! The report pages: decisions, dead code, health, drift, settings and the
-//! rest. Each turns what the backend sent into a [`Doc`].
+//! The report pages: decisions, dead code, health, drift and the rest. Each
+//! turns what the backend sent into a [`Doc`]. The pages of the settings are
+//! in `settings_pages.rs`.
 
 use serde_json::Value;
 
 use crate::doc::{
-    Action, Block, Cell, Choice, Column, Doc, Line, Stat, Table, code, file, note, rich, symbol,
-    text,
+    Block, Cell, Column, Doc, Line, Stat, Table, code, file, note, rich, symbol, text,
 };
-use crate::motion::MotionPref;
 use crate::mui::feedback::Tone;
-use crate::update;
 
 fn strings<'a>(value: &'a Value, key: &str) -> Vec<&'a str> {
     value[key]
@@ -227,201 +225,6 @@ pub fn drift_page(report: &Value) -> Doc {
         doc.push(file_list(&undocumented, 60));
     }
     doc
-}
-
-/// The settings page: appearance, where data comes from, updates and the
-/// keyboard shortcuts. `animations_on` is what the choice in `motion` comes
-/// to; `repos` holds `(name, path)` pairs; `auto_update` is whether the app
-/// looks for updates by itself; `autostart` is whether Windows starts the app
-/// at sign-in, `None` for a copy that is not installed.
-#[allow(clippy::too_many_arguments)]
-pub fn settings_page(
-    backend: &str,
-    theme: &str,
-    motion: MotionPref,
-    animations_on: bool,
-    repos: &[(String, String)],
-    update: &update::State,
-    auto_update: bool,
-    autostart: Option<bool>,
-) -> Doc {
-    let mut doc = Doc::new("Settings");
-    doc.push(Block::Card {
-        title: "Appearance".into(),
-        chips: Vec::new(),
-        body: vec![
-            Block::Setting {
-                label: "Theme".into(),
-                value: theme.into(),
-                button: Some(("Choose a theme".into(), Action::Themes)),
-            },
-            Block::Text(vec![
-                text("Your own themes load from the "),
-                code("themes"),
-                text(" folder in "),
-                code("%APPDATA%\\CodeWiki"),
-                text(", in the same JSON format."),
-            ]),
-            Block::Choices {
-                label: "Animations".into(),
-                choices: MotionPref::ALL
-                    .into_iter()
-                    .map(|pref| Choice {
-                        label: pref.label().into(),
-                        action: Action::Motion(pref),
-                        selected: pref == motion,
-                    })
-                    .collect(),
-            },
-            Block::Text(vec![text(format!(
-                "Animations are {}.",
-                if animations_on { "on" } else { "off" }
-            ))]),
-        ],
-    });
-    doc.push(Block::Card {
-        title: "Backend".into(),
-        chips: Vec::new(),
-        body: vec![
-            Block::Text(vec![text("Connected to "), code(backend), text(".")]),
-            Block::Text(vec![
-                text("Set "),
-                code("CODEWIKI_URL"),
-                text(" and "),
-                code("CODEWIKI_TOKEN"),
-                text(
-                    " before starting the app to use a backend in Docker or on another machine. Without them the app starts a local backend.",
-                ),
-            ]),
-        ],
-    });
-    doc.push(Block::Card {
-        title: "Logs".into(),
-        chips: Vec::new(),
-        body: vec![
-            Block::Setting {
-                label: "Folder".into(),
-                value: cw_core::logs::dir().display().to_string(),
-                button: Some(("Open logs folder".into(), Action::OpenLogs)),
-            },
-            Block::Text(vec![
-                text("Attach "),
-                code("app.log"),
-                text(" and "),
-                code("backend.log"),
-                text(" to a bug report; they name the folders you open. Set "),
-                code("CODEWIKI_LOG=debug"),
-                text(" before starting the app to keep more."),
-            ]),
-        ],
-    });
-    let mut repositories = Table::new([
-        Column::new("Repository").weight(0.6),
-        Column::new("Folder").weight(1.6),
-    ]);
-    for (name, path) in repos {
-        repositories.row([Cell::text(name), code(path).into()]);
-    }
-    doc.push(Block::Card {
-        title: "Repositories".into(),
-        chips: Vec::new(),
-        body: vec![Block::Table(repositories)],
-    });
-    doc.push(startup_card(autostart));
-    doc.push(updates_card(update, auto_update));
-    let mut keys = Table::new([
-        Column::new("Keys").weight(0.6),
-        Column::new("Action").weight(1.6),
-    ]);
-    for (chord, action) in [
-        ("Ctrl+K", "Command palette"),
-        ("Ctrl+T", "New tab"),
-        ("Ctrl+W", "Close tab"),
-        ("Ctrl+Tab", "Next tab"),
-        ("Alt+Left", "Back"),
-    ] {
-        keys.row([Cell::chip(chord, Tone::Neutral), Cell::text(action)]);
-    }
-    doc.push(Block::Card {
-        title: "Keyboard".into(),
-        chips: Vec::new(),
-        body: vec![Block::Table(keys)],
-    });
-    doc
-}
-
-/// Whether Windows starts the app at sign-in, and what closing the window
-/// does: the two belong together, since an app started that way is seen only
-/// as its tray icon.
-fn startup_card(autostart: Option<bool>) -> Block {
-    let setting = match autostart {
-        Some(on) => Block::Setting {
-            // Short: the label column is narrow, and a longer one wraps.
-            label: "Start with Windows".into(),
-            value: if on {
-                "On, in the tray, with no window".into()
-            } else {
-                "Off".into()
-            },
-            button: Some((
-                if on { "Turn off" } else { "Turn on" }.into(),
-                Action::Autostart(!on),
-            )),
-        },
-        None => Block::Setting {
-            label: "Start with Windows".into(),
-            value: "Only an installed copy can start with Windows".into(),
-            button: None,
-        },
-    };
-    Block::Card {
-        title: "Startup".into(),
-        chips: Vec::new(),
-        body: vec![
-            setting,
-            Block::Text(vec![text(
-                "Closing the window keeps CodeWiki running in the tray, so that agents find its backend at once. Click the tray icon to open the window again; right-click it to quit.",
-            )]),
-        ],
-    }
-}
-
-/// The version, what the last check found, and whether the app checks by
-/// itself.
-fn updates_card(update: &update::State, auto_update: bool) -> Block {
-    use update::State;
-    let button = match update {
-        State::Available(_) => Some(("Install and restart".to_string(), Action::InstallUpdate)),
-        State::Idle | State::UpToDate | State::Unavailable(_) => {
-            Some(("Check now".to_string(), Action::CheckUpdates))
-        }
-        State::NotInstalled | State::Checking | State::Installing(_) | State::Installed(_) => None,
-    };
-    let mut body = vec![Block::Setting {
-        label: "Version".into(),
-        value: update.describe(),
-        button,
-    }];
-    if *update != State::NotInstalled {
-        body.push(Block::Setting {
-            // Short: the label column is narrow, and a longer one wraps.
-            label: "Daily check".into(),
-            value: if auto_update {
-                "On, once a day while CodeWiki runs".into()
-            } else {
-                "Off".into()
-            },
-            button: Some((
-                if auto_update { "Turn off" } else { "Turn on" }.into(),
-                Action::AutoUpdate(!auto_update),
-            )),
-        });
-    }
-    Block::Card {
-        title: "Updates".into(),
-        chips: Vec::new(),
-        body,
-    }
 }
 
 /// The test map: where the tests are and which files have none.
@@ -856,6 +659,7 @@ pub fn contracts_page(contracts: &Value) -> Doc {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::doc::Action;
     use serde_json::json;
 
     #[test]
@@ -1069,7 +873,7 @@ mod tests {
     }
 
     #[test]
-    fn dead_code_and_settings_render() {
+    fn dead_code_renders() {
         let page = dead_code_page(&json!([{
             "certainty": "likely", "qualified": "demo::old", "kind": "function",
             "file": "src/lib.rs", "lines": 4
@@ -1084,159 +888,6 @@ mod tests {
                 Action::Symbol("demo::old".into()),
                 Action::File("src/lib.rs".into())
             ]
-        );
-        let settings = settings_page(
-            "http://127.0.0.1:7411",
-            "Nord",
-            MotionPref::Reduced,
-            false,
-            &[("demo".into(), "C:/demo".into())],
-            &update::State::UpToDate,
-            true,
-            Some(false),
-        );
-        let words = settings.words();
-        assert!(words.contains("Theme: Nord"));
-        assert!(words.contains("Your own themes load from the themes folder"));
-        assert!(words.contains("Animations: follow Windows / reduced / full"));
-        assert!(words.contains("Animations are off."));
-        assert!(words.contains("Connected to http://127.0.0.1:7411."));
-        assert!(words.contains("demo | C:/demo"));
-        assert!(words.contains("Ctrl+K | Command palette"));
-        assert!(words.contains("Attach app.log and backend.log to a bug report"));
-        // One choice per setting, each carrying the value it sets.
-        let actions = settings.actions();
-        assert_eq!(actions[0], Action::Themes);
-        assert!(actions.contains(&Action::OpenLogs));
-        for pref in MotionPref::ALL {
-            assert!(actions.contains(&Action::Motion(pref)));
-        }
-        let Some(Block::Card { body, .. }) = settings.blocks.first() else {
-            panic!("no appearance card");
-        };
-        let Some(Block::Choices { choices, .. }) = body.get(2) else {
-            panic!("no animation choices");
-        };
-        let chosen: Vec<&str> = choices
-            .iter()
-            .filter(|choice| choice.selected)
-            .map(|choice| choice.label.as_str())
-            .collect();
-        assert_eq!(chosen, ["reduced"]);
-    }
-
-    fn updates(settings: &Doc) -> Vec<Block> {
-        settings
-            .blocks
-            .iter()
-            .find_map(|block| match block {
-                Block::Card { title, body, .. } if title == "Updates" => Some(body.clone()),
-                _ => None,
-            })
-            .expect("no updates card")
-    }
-
-    fn settings_with(state: update::State, auto: bool) -> Doc {
-        settings_page("", "", MotionPref::Full, true, &[], &state, auto, None)
-    }
-
-    #[test]
-    fn settings_offer_the_start_with_windows_only_to_an_installed_copy() {
-        let with = |autostart| {
-            settings_page(
-                "",
-                "",
-                MotionPref::Full,
-                true,
-                &[],
-                &update::State::Idle,
-                true,
-                autostart,
-            )
-        };
-        let off = with(Some(false));
-        assert!(off.words().contains("Start with Windows: Off"));
-        assert!(off.actions().contains(&Action::Autostart(true)));
-
-        let on = with(Some(true));
-        assert!(
-            on.words()
-                .contains("Start with Windows: On, in the tray, with no window")
-        );
-        assert!(on.actions().contains(&Action::Autostart(false)));
-
-        // A build from the sources says why it has no switch.
-        let dev = with(None);
-        assert!(
-            dev.words()
-                .contains("Start with Windows: Only an installed copy can start with Windows")
-        );
-        assert!(
-            dev.actions()
-                .iter()
-                .all(|a| !matches!(a, Action::Autostart(_)))
-        );
-        // Whoever closes the window is told where the app went.
-        for page in [off, on, dev] {
-            assert!(
-                page.words()
-                    .contains("Closing the window keeps CodeWiki running in the tray")
-            );
-        }
-    }
-
-    #[test]
-    fn settings_offer_what_the_update_state_allows() {
-        let version = cw_core::VERSION;
-
-        let checked = settings_with(update::State::UpToDate, true);
-        assert!(
-            checked
-                .words()
-                .contains(&format!("Version: {version}, the latest version"))
-        );
-        assert!(
-            checked
-                .words()
-                .contains("Daily check: On, once a day while CodeWiki runs")
-        );
-        assert!(checked.actions().contains(&Action::CheckUpdates));
-        assert!(checked.actions().contains(&Action::AutoUpdate(false)));
-
-        let release = cw_update::Release {
-            version: cw_update::Version::new(9, 0, 0),
-            zip_name: "CodeWiki-9.0.0-windows-x64.zip".into(),
-            zip_url: String::new(),
-            sha256_url: String::new(),
-        };
-        let available = settings_with(update::State::Available(release), false);
-        assert!(
-            available
-                .words()
-                .contains(&format!("Version: {version}; 9.0.0 is available"))
-        );
-        assert!(available.actions().contains(&Action::InstallUpdate));
-        assert!(!available.actions().contains(&Action::CheckUpdates));
-        assert!(available.actions().contains(&Action::AutoUpdate(true)));
-
-        // Nothing to press while a check or an install runs.
-        let busy = settings_with(update::State::Checking, true);
-        assert!(
-            busy.actions()
-                .iter()
-                .all(|a| !matches!(a, Action::CheckUpdates | Action::InstallUpdate))
-        );
-
-        // A development build says so, and offers neither a check nor the
-        // daily setting.
-        let dev = settings_with(update::State::NotInstalled, true);
-        let rows = updates(&dev);
-        assert_eq!(rows.len(), 1);
-        assert!(dev.words().contains("development build"));
-        assert!(
-            dev.actions()
-                .iter()
-                .all(|a| !matches!(a, Action::CheckUpdates | Action::AutoUpdate(_)))
         );
     }
 }

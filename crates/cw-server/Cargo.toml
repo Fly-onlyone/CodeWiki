@@ -12,6 +12,7 @@ workspace = true
 [dependencies]
 axum = "0.8.9"
 cw-core = { path = "../cw-core" }
+cw-embed = { path = "../cw-embed" }
 cw-index = { path = "../cw-index" }
 cw-llm = { version = "0.1.0", path = "../cw-llm" }
 cw-vault = { path = "../cw-vault" }

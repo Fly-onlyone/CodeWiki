@@ -218,9 +218,14 @@ fn run(cli: Cli) -> Result<()> {
         .canonicalize()
         .map_err(|e| cw_core::Error::io(&cli.repo, e))?;
     let vault = root.join(VAULT_DIR);
+    // The settings the backend keeps apply here too, under the environment:
+    // a provider or an embedder chosen in the app is the one this program
+    // uses.
+    let settings = cw_core::settings::Resolved::load(&cw_core::paths::data_dir());
+    cw_wiki::semantic::configure(&settings);
     match cli.command {
         Command::Init | Command::Update => {
-            let writer = cw_llm::writer_from_env()?;
+            let writer = cw_llm::writer_from(&settings)?;
             let report = service::update(
                 &root,
                 writer.as_ref().map(|w| w as &dyn cw_wiki::ProseWriter),

@@ -1,6 +1,7 @@
 //! The command palette's entries and matching. No UI here.
 
 use crate::motion::MotionPref;
+use crate::settings::Category;
 
 /// What running a palette entry does.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,7 +32,8 @@ pub enum Command {
     Workspace,
     Contracts,
     Themes,
-    Settings,
+    /// Open the settings: at this category, or where they were left.
+    Settings(Option<Category>),
     /// Choose whether the app animates.
     Motion(MotionPref),
     NewTab,
@@ -96,7 +98,7 @@ pub fn actions() -> Vec<Entry> {
         ("Show workspace", Command::Workspace),
         ("Show API contracts", Command::Contracts),
         ("Choose theme", Command::Themes),
-        ("Open settings", Command::Settings),
+        ("Open settings", Command::Settings(None)),
         ("New tab", Command::NewTab),
         ("Close tab", Command::CloseTab),
         ("Toggle sidebar", Command::ToggleSidebar),
@@ -114,6 +116,14 @@ pub fn actions() -> Vec<Entry> {
             format!("Animations: {}", pref.label()),
             "Setting",
             Command::Motion(pref),
+        )
+    }))
+    // Each category of the settings, so that typing its name leads there.
+    .chain(Category::ALL.into_iter().map(|category| {
+        Entry::new(
+            format!("Settings: {}", category.label()),
+            "Settings",
+            Command::Settings(Some(category)),
         )
     }))
     .collect()
@@ -191,6 +201,24 @@ mod tests {
         assert_eq!(all.len(), 3);
         assert_eq!(all[0].command, Command::Sync);
         assert!(all.iter().all(|e| e.hint != "Search"));
+    }
+
+    #[test]
+    fn each_category_of_the_settings_has_an_entry() {
+        let all = actions();
+        for category in Category::ALL {
+            assert!(
+                all.iter()
+                    .any(|entry| entry.command == Command::Settings(Some(category))),
+                "{category:?}"
+            );
+        }
+        let found = filter(&all, "settings ai", 5);
+        assert_eq!(found[0].label, "Settings: AI model");
+        assert_eq!(found[0].command, Command::Settings(Some(Category::AiModel)));
+        // The plain entry still opens the settings where they were left.
+        let found = filter(&all, "open settings", 5);
+        assert_eq!(found[0].command, Command::Settings(None));
     }
 
     #[test]

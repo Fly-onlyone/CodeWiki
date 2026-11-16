@@ -15,6 +15,7 @@
 mod activity;
 mod api;
 mod repos;
+mod settings;
 pub mod workspace;
 
 use std::net::SocketAddr;
@@ -36,6 +37,14 @@ pub struct ServerConfig {
     /// Secret a git host signs webhook calls with. `None` turns the webhook
     /// route off.
     pub webhook_secret: Option<String>,
+    /// Whether a client may change the settings (`PUT /v1/settings`). False
+    /// for a server that listens beyond this machine: someone holding its
+    /// token could otherwise point a provider's address at their own host
+    /// and be sent the API key.
+    pub settings_writable: bool,
+    /// Reads an environment variable for the settings, which a variable
+    /// overrides: `cw_core::settings::process_env`, except in tests.
+    pub env: fn(&str) -> Option<String>,
 }
 
 /// Environment variable that holds the webhook secret.
@@ -45,6 +54,9 @@ pub(crate) struct Inner {
     pub config: ServerConfig,
     /// Serializes writers: repository list changes and vault updates.
     pub write_lock: Mutex<()>,
+    /// Serializes changes of the settings. Its own lock: an update of a wiki
+    /// holds `write_lock` for minutes, and a setting must not wait for it.
+    pub settings_lock: Mutex<()>,
     /// Woken by `POST /v1/shutdown`; [`serve`] stops when it fires.
     pub stop: Notify,
     /// Running updates and the last bridge call, for `GET /v1/status`.
@@ -58,6 +70,7 @@ fn state(config: ServerConfig) -> AppState {
     AppState(Arc::new(Inner {
         config,
         write_lock: Mutex::new(()),
+        settings_lock: Mutex::new(()),
         stop: Notify::new(),
         activity: activity::Activity::default(),
     }))
@@ -85,6 +98,9 @@ pub async fn serve(
         .map_err(|e| Error::external("reading the bound address", e))?;
     on_bound(bound)?;
     let state = state(config);
+    // Semantic search uses the embedder the settings name, not only the one
+    // the environment names.
+    cw_wiki::semantic::configure(&settings::resolved(&state));
     let inner = state.0.clone();
     let stop = async move {
         tokio::select! {

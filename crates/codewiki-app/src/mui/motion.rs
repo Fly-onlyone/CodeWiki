@@ -59,6 +59,10 @@ pub const STAGGER_CAP: usize = 12;
 /// `scaleIn` exit, and the exit of `tabSwitch` and `pageEntrance`.
 pub const EXIT: Duration = Duration::from_millis(120);
 
+/// How long the word "Saved" stays beside a setting. Not a motion of MUI or
+/// of TradingAgent: long enough to be read, and gone before the next change.
+pub const NOTE_HOLD: Duration = Duration::from_millis(2500);
+
 /// Springs settle to within this share of their travel.
 const EPSILON: f32 = 0.001;
 

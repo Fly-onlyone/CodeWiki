@@ -3,11 +3,15 @@
 //! Clients hold no index of their own. They find a running backend, starting
 //! a local one when none is running, and send every request to it.
 
+mod remote;
+
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
+
+pub use remote::Remote;
 
 /// Explicit backend address, for a backend running in Docker or on another
 /// machine. Requires `CODEWIKI_TOKEN`.
@@ -19,10 +23,22 @@ const BACKEND_FILE: &str = "backend.json";
 /// take much longer.
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// How a client came to the backend it uses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Origin {
+    /// Named by `CODEWIKI_URL`.
+    Env,
+    /// The backend saved in the app's settings (`remote.json`).
+    Saved,
+    /// The backend on this machine, found running or started.
+    Local,
+}
+
 #[derive(Debug, Clone)]
 pub struct Backend {
     url: String,
     token: String,
+    origin: Origin,
     agent: ureq::Agent,
     /// What this client says it is in [`cw_core::CLIENT_HEADER`], if anything.
     client: Option<&'static str>,
@@ -44,10 +60,67 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
-/// Whether clients use a backend named by `CODEWIKI_URL`, in Docker or on
-/// another machine, rather than one on this machine.
+fn process_env(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+/// The address `CODEWIKI_URL` names, when it is set. It wins over a saved
+/// backend.
+pub fn env_remote() -> Option<String> {
+    process_env(URL_ENV)
+}
+
+/// Whether clients use a backend in Docker or on another machine, named by
+/// `CODEWIKI_URL` or saved in the app's settings, rather than one on this
+/// machine. Such a backend is not this user's to stop.
 pub fn uses_remote() -> bool {
-    std::env::var(URL_ENV).is_ok_and(|url| !url.is_empty())
+    env_remote().is_some() || saved_remote().is_some_and(|remote| remote.in_use)
+}
+
+/// The backend saved in the app's settings, without its token.
+pub fn saved_remote() -> Option<Remote> {
+    remote::saved_in(&cw_core::paths::data_dir())
+}
+
+/// Check that a CodeWiki backend answers at `url` and accepts `token`, and
+/// return its version. `token: None` checks with the saved token. Nothing is
+/// saved.
+pub fn check_remote(url: &str, token: Option<&str>) -> Result<String, String> {
+    check_remote_in(&cw_core::paths::data_dir(), url, token)
+}
+
+fn check_remote_in(data_dir: &Path, url: &str, token: Option<&str>) -> Result<String, String> {
+    let url = remote::normalized(url)?;
+    let token = match token.map(str::trim).filter(|token| !token.is_empty()) {
+        Some(token) => token.to_string(),
+        None => remote::token_in(data_dir)?,
+    };
+    let version =
+        health_version(&url).ok_or_else(|| format!("no CodeWiki backend answers at {url}"))?;
+    // Health needs no token; a request that does shows a wrong one now, not
+    // after it is saved.
+    Backend::new(url.clone(), token, Origin::Saved)
+        .get("/v1/repos")
+        .map_err(|e| format!("the backend at {url} did not accept the token: {e}"))?;
+    Ok(version)
+}
+
+/// Save a backend's address and token and make every client on this machine
+/// use it: the app and an agent's MCP bridge alike. `token: None` keeps the
+/// token saved for the same address. Check it with [`check_remote`] first.
+pub fn save_remote(url: &str, token: Option<&str>) -> Result<(), String> {
+    remote::save_in(&cw_core::paths::data_dir(), url, token)
+}
+
+/// Go back to the backend on this machine. The saved address and token are
+/// kept for the next time.
+pub fn use_local() -> Result<(), String> {
+    remote::set_in_use_in(&cw_core::paths::data_dir(), false)
+}
+
+/// Forget the saved backend and its token.
+pub fn forget_remote() -> Result<(), String> {
+    remote::forget_in(&cw_core::paths::data_dir())
 }
 
 /// Percent-encode a query-string value.
@@ -115,21 +188,64 @@ fn codewiki_binary() -> PathBuf {
 }
 
 impl Backend {
+    /// The backend that was named: by `CODEWIKI_URL`, or else by the app's
+    /// settings. `None` when neither names one, and the backend on this
+    /// machine is the one to use.
+    ///
+    /// A named backend that cannot be used is an error, never a reason to
+    /// fall back to this machine: the user chose where their wikis are, and a
+    /// local backend started in its place would show other ones, or none.
+    fn named(
+        data_dir: &Path,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Option<Result<Self, String>> {
+        if let Some(url) = env(URL_ENV) {
+            return Some(
+                env(TOKEN_ENV)
+                    .ok_or_else(|| format!("{URL_ENV} is set but {TOKEN_ENV} is not"))
+                    .map(|token| {
+                        Self::new(url.trim_end_matches('/').to_string(), token, Origin::Env)
+                    }),
+            );
+        }
+        let saved = remote::saved_in(data_dir).filter(|remote| remote.in_use)?;
+        let url = saved.url;
+        Some(
+            remote::token_in(data_dir)
+                .map_err(|e| format!("the backend at {url} cannot be used: {e}"))
+                .and_then(|token| {
+                    if health_version(&url).is_none() {
+                        return Err(format!(
+                            "the backend at {url}, chosen in Settings, does not answer"
+                        ));
+                    }
+                    Ok(Self::new(url.clone(), token, Origin::Saved))
+                }),
+        )
+    }
+
     /// Find a backend, starting a local one if needed.
     pub fn connect() -> Result<Self, String> {
-        if let Ok(url) = std::env::var(URL_ENV)
-            && !url.is_empty()
-        {
-            let token = std::env::var(TOKEN_ENV)
-                .map_err(|_| format!("{URL_ENV} is set but {TOKEN_ENV} is not"))?;
-            log::info!("using the backend at {url}, named by {URL_ENV}");
-            return Ok(Self::new(url.trim_end_matches('/').to_string(), token));
-        }
         let data_dir = cw_core::paths::data_dir();
+        if let Some(named) = Self::named(&data_dir, process_env) {
+            match &named {
+                Ok(backend) => log::info!(
+                    "using the backend at {}, named by {}",
+                    backend.url,
+                    if backend.origin == Origin::Env {
+                        URL_ENV
+                    } else {
+                        "the app's settings"
+                    }
+                ),
+                Err(error) => log::warn!("{error}"),
+            }
+            return named;
+        }
         let live_with_version = || {
             let (url, token) = read_backend_file(&data_dir)?;
             let version = health_version(&url)?;
-            Some((Self::new(url, token), version))
+            Some((Self::new(url, token, Origin::Local), version))
         };
         let live = || live_with_version().map(|(backend, _)| backend);
         if let Some((backend, version)) = live_with_version() {
@@ -211,6 +327,18 @@ impl Backend {
         &self.url
     }
 
+    /// How this client came to its backend.
+    pub fn origin(&self) -> Origin {
+        self.origin
+    }
+
+    /// Whether the backend was named, by `CODEWIKI_URL` or in the app's
+    /// settings, rather than found or started on this machine. A named
+    /// backend is not this client's to stop.
+    pub fn is_remote(&self) -> bool {
+        self.origin != Origin::Local
+    }
+
     /// Ask the backend to stop once its running requests are done.
     pub fn shutdown(&self) -> Result<(), String> {
         Self::finish(
@@ -241,10 +369,11 @@ impl Backend {
         false
     }
 
-    fn new(url: String, token: String) -> Self {
+    fn new(url: String, token: String, origin: Origin) -> Self {
         Self {
             url,
             token,
+            origin,
             // Generation on a large repository can take minutes.
             agent: agent(Duration::from_secs(600)),
             client: None,
@@ -497,12 +626,12 @@ mod tests {
     #[test]
     fn only_a_client_that_names_itself_sends_the_client_header() {
         let url = echoing_backend();
-        let app = Backend::new(url.clone(), "secret".into());
+        let app = Backend::new(url.clone(), "secret".into(), Origin::Local);
         let sent = app.get("/v1/repos").unwrap();
         assert_eq!(sent["authorization"], "Bearer secret");
         assert_eq!(sent[cw_core::CLIENT_HEADER], Value::Null);
 
-        let bridge = Backend::new(url, "secret".into()).with_client(MCP_CLIENT);
+        let bridge = Backend::new(url, "secret".into(), Origin::Local).with_client(MCP_CLIENT);
         for sent in [
             bridge.get("/v1/repos").unwrap(),
             bridge.post("/v1/repos", &serde_json::json!({})).unwrap(),
@@ -518,24 +647,180 @@ mod tests {
 
     #[test]
     fn a_backend_without_the_status_route_has_no_status() {
-        let backend = Backend::new(echoing_backend(), "secret".into());
+        let backend = Backend::new(echoing_backend(), "secret".into(), Origin::Local);
         assert_eq!(backend.status(), Ok(None));
         // A backend that is gone is an error, not "no status".
         let gone = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let url = format!("http://{}", gone.local_addr().unwrap());
         drop(gone);
-        assert!(Backend::new(url, "secret".into()).status().is_err());
+        assert!(
+            Backend::new(url, "secret".into(), Origin::Local)
+                .status()
+                .is_err()
+        );
     }
 
     #[test]
     fn stop_asks_with_the_token_and_waits_until_the_backend_is_gone() {
         let url = stoppable_backend("secret");
         assert_eq!(health_version(&url).as_deref(), Some("0.0.1"));
-        let wrong = Backend::new(url.clone(), "wrong".into());
+        let wrong = Backend::new(url.clone(), "wrong".into(), Origin::Local);
         assert!(!wrong.stop());
         assert!(wrong.answers());
-        let backend = Backend::new(url, "secret".into());
+        let backend = Backend::new(url, "secret".into(), Origin::Local);
         assert!(backend.stop());
         assert!(!backend.answers());
+    }
+
+    fn temp_dir(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "codewiki-client-{name}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn no_env(_: &str) -> Option<String> {
+        None
+    }
+
+    /// An address nothing listens on.
+    fn dead_address() -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    }
+
+    #[test]
+    fn the_environment_names_the_backend_first() {
+        let dir = temp_dir("env");
+        // Nothing names a backend: the one on this machine is used.
+        assert!(Backend::named(&dir, no_env).is_none());
+
+        let env = |name: &str| match name {
+            "CODEWIKI_URL" => Some("http://docker:7411/".to_string()),
+            "CODEWIKI_TOKEN" => Some("from-env".to_string()),
+            _ => None,
+        };
+        let backend = Backend::named(&dir, env).unwrap().unwrap();
+        assert_eq!(backend.url(), "http://docker:7411");
+        assert_eq!(backend.origin(), Origin::Env);
+        assert!(backend.is_remote());
+
+        // An address without its token is an error, not a fall back.
+        let env = |name: &str| (name == "CODEWIKI_URL").then(|| "http://docker:7411".to_string());
+        let error = Backend::named(&dir, env).unwrap().unwrap_err();
+        assert!(error.contains("CODEWIKI_TOKEN"), "{error}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_saved_backend_is_used_and_never_replaced_by_a_local_one() {
+        // Made up: not a real token.
+        const TOKEN: &str = "sample-token-for-tests-0042";
+        let dir = temp_dir("saved");
+        let url = stoppable_backend(TOKEN);
+        remote::save_in(&dir, &url, Some(TOKEN)).unwrap();
+
+        let backend = Backend::named(&dir, no_env).unwrap().unwrap();
+        assert_eq!(backend.url(), url);
+        assert_eq!(backend.origin(), Origin::Saved);
+        assert!(backend.is_remote());
+
+        // The environment still wins over it.
+        let env = |name: &str| match name {
+            "CODEWIKI_URL" => Some("http://docker:7411".to_string()),
+            "CODEWIKI_TOKEN" => Some("from-env".to_string()),
+            _ => None,
+        };
+        assert_eq!(
+            Backend::named(&dir, env).unwrap().unwrap().origin(),
+            Origin::Env
+        );
+
+        // It stops answering: that is an error. `connect` returns it and
+        // starts nothing on this machine.
+        assert!(backend.stop());
+        let error = Backend::named(&dir, no_env).unwrap().unwrap_err();
+        assert!(
+            error.contains(&url) && error.contains("does not answer"),
+            "{error}"
+        );
+
+        // Only the user's choice brings the local backend back.
+        remote::set_in_use_in(&dir, false).unwrap();
+        assert!(Backend::named(&dir, no_env).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_check_finds_a_dead_address_and_a_wrong_token() {
+        let dir = temp_dir("check");
+        let error = check_remote_in(&dir, "nas:7411", Some("t")).unwrap_err();
+        assert!(error.contains("http://"), "{error}");
+        // No token given and none saved.
+        assert!(check_remote_in(&dir, "http://nas:7411", None).is_err());
+
+        let dead = dead_address();
+        let error = check_remote_in(&dir, &dead, Some("t")).unwrap_err();
+        assert!(error.contains("no CodeWiki backend answers"), "{error}");
+
+        let url = guarded_backend("right");
+        let error = check_remote_in(&dir, &url, Some("wrong")).unwrap_err();
+        assert!(error.contains("did not accept the token"), "{error}");
+        assert_eq!(
+            check_remote_in(&dir, &format!("{url}/"), Some("right")).as_deref(),
+            Ok("0.0.1")
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A backend that answers `/v1/health` to anyone and everything else
+    /// only to the holder of `token`.
+    fn guarded_backend(token: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(stream) = stream else { return };
+                let mut reader = BufReader::new(stream);
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                let mut authorized = false;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    let line = line.trim_end();
+                    if line.is_empty() {
+                        break;
+                    }
+                    authorized |=
+                        line.eq_ignore_ascii_case(&format!("authorization: Bearer {token}"));
+                }
+                let (status, body) = if request_line.starts_with("GET /v1/health ") {
+                    ("200 OK", r#"{"status":"ok","version":"0.0.1"}"#)
+                } else if authorized {
+                    ("200 OK", "[]")
+                } else {
+                    (
+                        "401 Unauthorized",
+                        r#"{"error":"missing or invalid bearer token"}"#,
+                    )
+                };
+                let mut stream = reader.into_inner();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        url
     }
 }

@@ -7,10 +7,11 @@
 use serde_json::Value;
 
 use crate::doc::{
-    Action, Block, Cell, Column, Doc, Line, Row, Stat, Table, code, file, rich, strong, text,
+    Action, Block, Cell, Column, Doc, Line, Press, Row, Stat, Table, code, file, rich, strong, text,
 };
 use crate::icons;
 use crate::mui::feedback::Tone;
+use crate::settings::Category;
 
 fn list(value: &Value) -> Vec<&Value> {
     value.as_array().into_iter().flatten().collect()
@@ -487,8 +488,24 @@ fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a
 
 /// The page shown when no backend could be reached: where its log is, and a
 /// button that tries again.
-pub fn offline_page(log: &str, logs: &str) -> Doc {
+///
+/// `remote` is the address of the backend saved in the settings, when that
+/// is the one that did not answer. The app does not go back to a backend on
+/// this machine by itself, which would show other wikis or none; the page
+/// offers it.
+pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc {
     let mut doc = message_page("The backend is not reachable.");
+    if let Some(remote) = remote {
+        doc.push(Block::Text(vec![
+            text("The backend at "),
+            code(remote),
+            text(", chosen in Settings, does not answer."),
+        ]));
+        doc.push(Block::Buttons(vec![
+            Press::new("Use local backend", Action::UseLocalBackend),
+            Press::new("Open settings", Action::Settings(Some(Category::Backend))),
+        ]));
+    }
     doc.push(Block::Setting {
         label: "Backend log".into(),
         value: log.into(),
@@ -509,11 +526,35 @@ mod tests {
 
     #[test]
     fn the_offline_page_names_the_log_and_offers_to_try_again() {
-        let page = offline_page(r"C:\data\logs\backend.log", r"C:\data\logs");
+        let page = offline_page(r"C:\data\logs\backend.log", r"C:\data\logs", None);
         assert!(page.words().contains("not reachable"));
         assert!(page.words().contains(r"C:\data\logs\backend.log"));
         assert!(page.words().contains(r"Logs folder: C:\data\logs"));
         assert_eq!(page.actions(), [Action::Reconnect, Action::OpenLogs]);
+    }
+
+    #[test]
+    fn a_saved_backend_that_does_not_answer_offers_the_local_one() {
+        let page = offline_page(
+            r"C:\data\logs\backend.log",
+            r"C:\data\logs",
+            Some("http://nas:7411"),
+        );
+        let words = page.words();
+        assert!(
+            words.contains("The backend at http://nas:7411, chosen in Settings, does not answer."),
+            "{words}"
+        );
+        assert!(words.contains("Use local backend | Open settings"));
+        assert_eq!(
+            page.actions(),
+            [
+                Action::UseLocalBackend,
+                Action::Settings(Some(Category::Backend)),
+                Action::Reconnect,
+                Action::OpenLogs
+            ]
+        );
     }
 
     fn home<'a>(projects: &'a [Project<'a>], recent: &'a [String]) -> HomeInput<'a> {

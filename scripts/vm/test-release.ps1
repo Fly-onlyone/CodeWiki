@@ -391,6 +391,68 @@ Test-Case "C4" "Install a second time" "nothing duplicated" {
 }
 
 # ---------------------------------------------------------------- D, command line
+# Under the protection S1 set, Windows may refuse to start the programs at
+# all: two of the attack surface reduction rules judge a program by how many
+# machines have seen it and for how long, and a new unsigned build has no
+# such history. Whether it does is the first thing to know, so it is recorded
+# here. The rules that refuse the programs are then set to audit, or no case
+# after this one could be judged; nothing else is loosened.
+$auditedRules = @()
+if ($Hardened) {
+    Test-Case "S3" "The programs start under the protection" "recorded: whether Windows lets codewiki.exe start" {
+        $ruleNames = @{
+            "01443614-cd74-433a-b99e-2ecdc07bfc25" = "Block executable files from running unless they meet a prevalence, age, or trusted list criterion"
+            "c1db55ab-c21a-4637-bb3f-a12568109d35" = "Use advanced protection against ransomware"
+        }
+        # The command-line program, then the MCP bridge with its input closed,
+        # which makes it end at once. Not the app: it would open a window and
+        # start a backend. One rule can let one program through and stop
+        # another, so "started" needs both.
+        $start = (@'
+$refused = 0
+try { $version = & "{{TARGET}}\codewiki.exe" --version 2>&1; "codewiki.exe: exit $LASTEXITCODE, $version" } catch { $refused += 1; "codewiki.exe: refused, $($_.Exception.Message)" }
+try { $null | & "{{TARGET}}\codewiki-mcp.exe" 2>&1 | Out-Null; "codewiki-mcp.exe: exit $LASTEXITCODE" } catch { $refused += 1; "codewiki-mcp.exe: refused, $($_.Exception.Message)" }
+if ($refused) { "start: refused, $refused of 2 programs" } else { "start: exit 0" }
+$global:LASTEXITCODE = 0
+'@).Replace("{{TARGET}}", $guestTarget)
+        $blocks = @'
+$events = @(Get-WinEvent -FilterHashtable @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Id = 1121 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match "codewiki" })
+$rules = @($events | ForEach-Object { if ($_.Message -match "(?m)^\s*ID:\s*([0-9A-Fa-f-]{36})") { $Matches[1].ToLowerInvariant() } } | Sort-Object -Unique)
+"rules: $($rules -join ',')"
+"blocks: $($events.Count)"
+'@
+        $first = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
+        $last = $first
+        $log = "first start:`n$first"
+        foreach ($round in 1..3) {
+            if ($last -match "start: exit 0") { break }
+            $found = (Invoke-GuestScript -Background -TimeoutSec 180 -Script $blocks).Output
+            $rules = if ($found -match "(?m)^rules: (\S+)") { @($Matches[1] -split ",") } else { @() }
+            $log += "`n--- Defender, round ${round}:`n$found"
+            if (-not $rules) { break }
+            # The two rules that judge a program by its history go together:
+            # which of them speaks first differs from start to start, and the
+            # app, which is not started here, meets both.
+            $rules = @(@($rules) + @($ruleNames.Keys) | Sort-Object -Unique)
+            $script:auditedRules = @(@($auditedRules) + @($rules) | Sort-Object -Unique)
+            $relaxed = Invoke-GuestExe -Background -TimeoutSec 300 -Exe $powershell -Arguments "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                "-File", "$($script:Vm.GuestDir)\harden.ps1", "-Audit", ($auditedRules -join ",")
+            Set-Content (Join-Path $logs "hardening-after-audit.json") $relaxed.Stdout
+            Wait-For 5
+            $last = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
+            $log += "`n--- start after setting to audit: $($rules -join ', ')`n$last"
+        }
+        $named = @($auditedRules | ForEach-Object { if ($ruleNames[$_]) { "'$($ruleNames[$_])' ($_)" } else { $_ } })
+        $status = if ($first -match "start: exit 0") { "pass" } elseif ($last -match "start: exit 0") { "note" } else { "fail" }
+        $observed = switch ($status) {
+            "pass" { "codewiki.exe started with every rule on block" }
+            "note" { "Windows refused to start CodeWiki's programs ($((($first -split "`n") | Where-Object { $_ -match 'refused,' } | ForEach-Object { ($_ -split ':')[0] }) -join ', ')): 'Access is denied'. Set to audit so that the run can go on: $($named -join '; '). With that the programs start. These rules are off unless an administrator turns them on; where they are on, a new unsigned build does not run" }
+            default { "Windows refuses to start CodeWiki's programs, and setting the rules that Defender names to audit did not change it; the cases after this cannot be judged. See the output" }
+        }
+        Add-Result -Id "S3" -Title "The programs start under the protection" -Expect "recorded" -Status $status -Output $log -Observed $observed
+    }
+}
+
 Test-Case "D1" "codewiki through PATH" "a new process finds codewiki and it runs" {
     $run = Invoke-GuestScript -TimeoutSec 90 -Script @'
 "where: " + ((& where.exe codewiki 2>&1) -join " | ")
@@ -878,6 +940,7 @@ Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the p
     $a = Shot "panes-both-shown"
     Send-Keys "ctrl+b"; Wait-For 3
     $b = Shot "panes-sidebar-hidden"
+    $afterFirst = Get-GuestPanes
     Send-Keys "ctrl+alt+b"; Wait-For 3
     $c = Shot "panes-both-hidden"
     $afterKeys = Get-GuestPanes
@@ -899,7 +962,7 @@ Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the p
     $shown = $afterClicks.Sidebar -eq "shown" -and $afterClicks.Details -eq "shown"
     Add-Result -Id "PN1" -Title "Hide and show the side panes" -Expect "both hidden after the shortcuts and after a restart; both shown after the clicks" `
         -Status $(if ($hidden -and $shown) { "pass" } else { "fail" }) -Shots @($a, $b, $c, $d, $e, $f) `
-        -Observed "after Ctrl+B and Ctrl+Alt+B the app remembers sidebar '$($afterKeys.Sidebar)', details '$($afterKeys.Details)'; after clicks at ($sidebarX,$y) and ($detailsX,$y): sidebar '$($afterClicks.Sidebar)', details '$($afterClicks.Details)'; read the screenshots: the page must take the room of a hidden pane, and the fourth must show both still hidden"
+        -Observed "after Ctrl+B the app remembers sidebar '$($afterFirst.Sidebar)', details '$($afterFirst.Details)'; after Ctrl+Alt+B as well: sidebar '$($afterKeys.Sidebar)', details '$($afterKeys.Details)'; after clicks at ($sidebarX,$y) and ($detailsX,$y): sidebar '$($afterClicks.Sidebar)', details '$($afterClicks.Details)'; read the screenshots: the page must take the room of a hidden pane, and the fourth must show both still hidden"
     Stop-GuestApp
 }
 
@@ -909,7 +972,9 @@ Test-Case "L3" "Open the logs folder from the palette" "Explorer opens on the lo
     Start-GuestApp -Arguments $guestRepo, "_HOME"
     Wait-For 15
     Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "logs"; Wait-For 2
+    # The whole name: "logs" alone finds a note named after logs first, when
+    # the wiki has one, and Enter then opens the note.
+    Send-Text "open logs folder"; Wait-For 2
     $a = Shot "palette-logs"
     Send-Keys "enter"; Wait-For 8
     $b = Shot "logs-folder-open"
@@ -1488,20 +1553,29 @@ if ($OldZip) {
 if ($Hardened) {
     Test-Case "S2" "What Windows protection stopped" "nothing of CodeWiki" {
         $run = Invoke-GuestScript -Background -TimeoutSec 180 -Script @'
-$ids = 1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119, 1121, 1123, 1126, 1127
+$ids = 1006, 1007, 1008, 1015, 1116, 1117, 1118, 1119, 1121, 1122, 1123, 1126, 1127
 $events = @(Get-WinEvent -FilterHashtable @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Id = $ids } -ErrorAction SilentlyContinue)
-"stopped: $($events.Count)"
+"recorded: $($events.Count)"
+# The same block is written down every time it happens: one line for each
+# kind, with how often.
+$kinds = [ordered]@{}
 foreach ($event in $events | Sort-Object TimeCreated) {
-    $what = ($event.Message -split "`r?`n" | Where-Object { $_ -match "Path|Name|ID:|Process|Rule|Detection|Target|Destination" } | ForEach-Object { $_.Trim() }) -join " | "
-    "$($event.TimeCreated.ToString('HH:mm:ss')) event $($event.Id): $what"
+    $what = ($event.Message -split "`r?`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ -match "^(ID|Path|Name|Process Name|Threat|Destination):" }) -join " | "
+    $kind = "event $($event.Id): $what"
+    if ($kinds.Contains($kind)) { $kinds[$kind] += 1 } else { $kinds[$kind] = 1 }
 }
+foreach ($kind in $kinds.Keys) { "$($kinds[$kind])x $kind" }
 '@
-        if ($run.Output -notmatch "stopped: (\d+)") { throw "the guest did not answer: $($run.Stderr)" }
+        if ($run.Output -notmatch "recorded: (\d+)") { throw "the guest did not answer: $($run.Stderr)" }
         $count = [int]$Matches[1]
+        # 1122 is a rule in audit: it says what the rule would have stopped.
         $ours = @($run.Output -split "`n" | Where-Object { $_ -match "event \d+:" -and $_ -match "codewiki" })
-        Add-Result -Id "S2" -Title "What Windows protection stopped" -Expect "nothing of CodeWiki" `
-            -Status $(if ($ours) { "fail" } elseif ($count) { "note" } else { "pass" }) -Output $run.Output `
-            -Observed "Defender recorded $count blocks or detections in this run; $($ours.Count) of them name CodeWiki. See the output for each"
+        $audited = @($ours | Where-Object { $_ -match "event 1122:" })
+        # A block of CodeWiki that S3 did not already record is new.
+        $new = @($ours | Where-Object { $line = $_; $line -notmatch "event 1122:" -and -not ($auditedRules | Where-Object { $line -match [regex]::Escape($_) }) })
+        Add-Result -Id "S2" -Title "What Windows protection stopped" -Expect "nothing of CodeWiki beyond what S3 recorded" `
+            -Status $(if ($new) { "fail" } elseif ($count) { "note" } else { "pass" }) -Output $run.Output `
+            -Observed "Defender recorded $count events in this run. Kinds that name CodeWiki: $($ours.Count), of which $($audited.Count) are rules in audit (what they would have stopped) and $($new.Count) are blocks that S3 did not record. See the output for each"
     }
 }
 

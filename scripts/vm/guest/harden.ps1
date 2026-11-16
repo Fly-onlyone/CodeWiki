@@ -6,6 +6,16 @@
 #
 # It only turns protection up. It adds no exclusion and allows no program:
 # what Windows then stops is the finding.
+#
+# With -Audit it does one other thing instead: it sets the named attack
+# surface reduction rules from "block" to "audit". The run uses that after it
+# has recorded that those rules stop CodeWiki's programs, so that the cases
+# after it can still be judged. Defender goes on writing down what each such
+# rule would have stopped.
+param(
+    # Rule GUIDs, as one text with commas between them.
+    [string]$Audit
+)
 $ErrorActionPreference = "Stop"
 $failed = New-Object System.Collections.Generic.List[string]
 
@@ -46,6 +56,21 @@ $rules = [ordered]@{
     "c1db55ab-c21a-4637-bb3f-a12568109d35" = "ransomware (advanced protection)"
 }
 
+if ($Audit) {
+    Invoke-Step "Rules to audit" {
+        $wanted = @($Audit -split "," | ForEach-Object { $_.Trim().ToLowerInvariant() } | Where-Object { $_ })
+        $names = @{ 0 = "Disabled"; 1 = "Enabled"; 2 = "AuditMode"; 6 = "Warn" }
+        $now = Get-MpPreference
+        $ids = @($now.AttackSurfaceReductionRules_Ids)
+        $actions = @($now.AttackSurfaceReductionRules_Actions)
+        $unknown = @($wanted | Where-Object { $ids -notcontains $_ })
+        if ($unknown) { throw "not among the rules that are set: $($unknown -join ', ')" }
+        $new = for ($i = 0; $i -lt $ids.Count; $i++) {
+            if ($wanted -contains "$($ids[$i])".ToLowerInvariant()) { "AuditMode" } else { $names[[int]$actions[$i]] }
+        }
+        Set-MpPreference -AttackSurfaceReductionRules_Ids $ids -AttackSurfaceReductionRules_Actions $new
+    }
+} else {
 # Protection is only as good as what it knows: fetch today's definitions.
 Invoke-Step "Defender definitions" { Update-MpSignature }
 Invoke-Step "Defender scanning" {
@@ -85,6 +110,7 @@ Invoke-Step "LSA protection" {
     $key = "HKLM:\SYSTEM\CurrentControlSet\Control\Lsa"
     if ((Get-ItemProperty $key).RunAsPPL -notin 1, 2) { Set-ItemProperty $key -Name RunAsPPL -Value 2 -Type DWord }
 }
+}
 
 $ErrorActionPreference = "SilentlyContinue"
 $status = Get-MpComputerStatus
@@ -108,6 +134,7 @@ $smartScreen = Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Syste
     controlledFolderAccess = [int]$preference.EnableControlledFolderAccess
     reductionRules         = @($preference.AttackSurfaceReductionRules_Ids).Count
     reductionRulesBlocking = @($actions | Where-Object { [int]$_ -eq 1 }).Count
+    reductionRulesAuditing = @(for ($i = 0; $i -lt $actions.Count; $i++) { if ([int]$actions[$i] -eq 2) { "$(@($preference.AttackSurfaceReductionRules_Ids)[$i])" } })
     exclusions             = @(@($preference.ExclusionPath) + @($preference.ExclusionProcess) | Where-Object { $_ })
     uacPrompt              = $uac.ConsentPromptBehaviorAdmin
     uacSecureDesktop       = $uac.PromptOnSecureDesktop

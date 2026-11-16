@@ -1,9 +1,10 @@
 //! Updating the app: when to look for a new release, and what the settings
 //! page says about it. The work itself is in `cw-update`.
 //!
-//! An installed app looks once a day, when it starts, unless the user turned
-//! that off. The check's time is kept only when GitHub gave an answer, so a
-//! check without network is tried again at the next start.
+//! An installed app looks once a day unless the user turned that off: when
+//! it starts, and, since it stays in the tray for weeks, every hour it looks
+//! whether the day is over. The check's time is kept only when GitHub gave
+//! an answer, so a check without network is tried again within the hour.
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 

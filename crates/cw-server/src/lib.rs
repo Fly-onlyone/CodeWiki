@@ -5,8 +5,9 @@
 //! the other exception: a git host cannot send the token, so it signs its
 //! request with the webhook secret instead.
 //!
-//! `POST /v1/shutdown` stops the server. The desktop app calls it before an
-//! update replaces the programs, so the old backend does not keep serving.
+//! `POST /v1/shutdown` stops the server. The desktop app calls it when the
+//! user quits it, and before an update replaces the programs, so the old
+//! backend does not keep serving.
 //!
 //! `GET /v1/status` says what the backend is doing: the wiki updates that are
 //! running and when an agent's MCP bridge last called (`activity`).

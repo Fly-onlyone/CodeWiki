@@ -10,7 +10,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-cw-client = { version = "0.1.0", path = "../cw-client" }
+cw-client = { version = "0.2.0", path = "../cw-client" }
 cw-core = { path = "../cw-core" }
 log = "0.4"
 rmcp = { version = "3.9.0", features = ["server", "transport-io"] }

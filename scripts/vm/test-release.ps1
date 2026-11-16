@@ -41,12 +41,13 @@ param(
     # (guest\harden.ps1) before anything is installed, and make the whole run
     # under it. Case S1 records what is in force, case S2 what it stopped.
     [switch]$Hardened,
-    # Also test the Claude Code plugin (cases CC1 to CC7): install Claude Code
-    # in the guest as its docs say, sign it in with the access token of the
-    # host's own Claude login, install the plugin as README says and have
-    # Claude call one of its tools. It makes two short requests on the
-    # account's cheapest model. The token is taken from the guest again before
-    # the run ends; see Copy-ClaudeLogin for what is and is not handed over.
+    # Also test the Claude Code plugin (cases CC0 to CC8): install Git for
+    # Windows and Claude Code in the guest as their docs say, sign Claude Code
+    # in with the access token of the host's own Claude login, install the
+    # plugin as README says and have Claude call one of its tools. It makes
+    # two short requests on the account's cheapest model. The token is taken
+    # from the guest again before the run ends; see Copy-ClaudeLogin for what
+    # is and is not handed over.
     [switch]$Plugin,
     # Run only these cases (their IDs), after the usual setup of the guest.
     # For one case that can stand alone, such as U2; most cases build on the
@@ -1390,6 +1391,39 @@ if ($Plugin) {
         "the Claude login in the guest: $(if ($run.Output) { $run.Output -join ' ' } else { "no answer ($($run.Errors -join '; '))" })"
     }
 
+    # Claude Code runs its commands and hooks in Git Bash when Git for Windows
+    # is there and in PowerShell when it is not, and it clones a marketplace
+    # named by its repository with git. Its users nearly all have git, so the
+    # plugin is tested with it. The checkpoint stays without git: this comes
+    # after every case that needs a guest without it (B1, D2). The installer
+    # is the one git-scm.com hands out, run with the rights that "Yes" at its
+    # UAC prompt gives it.
+    Test-Case "CC0" "Install Git for Windows" "git and Git Bash are installed" {
+        $run = Invoke-GuestScript -Background -TimeoutSec 1200 -Script @'
+$ProgressPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$release = Invoke-RestMethod "https://api.github.com/repos/git-for-windows/git/releases/latest" -UseBasicParsing
+$asset = $release.assets | Where-Object { $_.name -match '^Git-[\d\.]+-64-bit\.exe$' } | Select-Object -First 1
+if (-not $asset) { throw "release $($release.tag_name) has no 64-bit installer" }
+$file = Join-Path $env:TEMP $asset.name
+Invoke-WebRequest $asset.browser_download_url -OutFile $file -UseBasicParsing
+$signature = Get-AuthenticodeSignature $file
+"installer: $($asset.name), signature $($signature.Status)"
+if ($signature.Status -ne "Valid") { throw "the installer's signature is $($signature.Status)" }
+$setup = Start-Process $file -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-" -Wait -PassThru
+"setup exit: $($setup.ExitCode)"
+Remove-Item $file -Force
+"git: $(& "$env:ProgramFiles\Git\cmd\git.exe" --version 2>&1)"
+"bash: $(Test-Path "$env:ProgramFiles\Git\bin\bash.exe")"
+$global:LASTEXITCODE = 0
+'@
+        $ok = $run.Output -match "setup exit: 0" -and $run.Output -match "git: git version" -and $run.Output -match "bash: True"
+        $version = if ($run.Output -match "git: git version (\S+)") { $Matches[1] } else { "none" }
+        Add-Result -Id "CC0" -Title "Install Git for Windows" -Expect "git and Git Bash are installed" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed $(if ($ok) { "Git for Windows $version from its latest release at GitHub, installer signature valid, silent install" } else { "not installed; see the output" })
+    }
+
     Test-Case "CC1" "Install Claude Code as its docs say" "claude.exe is installed for the user, carries Anthropic's signature and prints its version" {
         $run = Invoke-GuestScript -TimeoutSec 900 -Script @'
 irm https://claude.ai/install.ps1 | iex
@@ -1400,14 +1434,14 @@ if (Test-Path $claude) {
     "signature: $($signature.Status), Anthropic: $($signature.SignerCertificate.Subject -match 'Anthropic')"
     "version: $(& $claude --version 2>&1)"
 }
-"git in the guest: $([bool](Get-Command git -ErrorAction SilentlyContinue))"
+"git in the guest: $(Test-Path "$env:ProgramFiles\Git\bin\bash.exe")"
 $global:LASTEXITCODE = 0
 '@
         $ok = $run.Output -match "installed: True" -and $run.Output -match "signature: Valid, Anthropic: True" -and $run.Output -match "version: \d"
         $version = if ($run.Output -match "version: (.+)") { $Matches[1].Trim() } else { "none" }
         Add-Result -Id "CC1" -Title "Install Claude Code as its docs say" -Expect "installed, signed by Anthropic, prints its version" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-            -Observed "'irm https://claude.ai/install.ps1 | iex' as the user: version $version; Git for Windows in the guest: $(if ($run.Output -match 'git in the guest: True') { 'yes' } else { 'no, so Claude Code runs commands in PowerShell' })"
+            -Observed "'irm https://claude.ai/install.ps1 | iex' as the user: version $version; Git Bash in the guest: $(if ($run.Output -match 'git in the guest: True') { 'yes' } else { 'no, so Claude Code runs commands and hooks in PowerShell' })"
     }
 
     $signedIn = $false
@@ -1546,6 +1580,25 @@ $global:LASTEXITCODE = 0
         Add-Result -Id "CC7" -Title "Remove the plugin as README says" -Expect "plugin and marketplace gone" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
             -Observed $(if ($ok) { "'claude plugin uninstall' and 'claude plugin marketplace remove' both succeeded; the plugin is no longer listed" } else { "not removed cleanly; see the output" })
+    }
+
+    # README's other way, for a build from source: the repository at GitHub
+    # as the marketplace. Claude Code clones it, which is why it needs git.
+    # It installs the plugin as the repository's default branch has it.
+    Test-Case "CC8" "The repository as marketplace" "claude plugin marketplace add Fly-onlyone/CodeWiki clones it, and the plugin installs from it" {
+        $run = Invoke-GuestScript -TimeoutSec 900 -Script @'
+$claude = "$env:USERPROFILE\.local\bin\claude.exe"
+"--- claude plugin marketplace add Fly-onlyone/CodeWiki"; & $claude plugin marketplace add Fly-onlyone/CodeWiki 2>&1; "add exit: $LASTEXITCODE"
+"--- claude plugin install codewiki@codewiki"; & $claude plugin install codewiki@codewiki 2>&1; "install exit: $LASTEXITCODE"
+"--- claude plugin list"; $list = @(& $claude plugin list 2>&1 | ForEach-Object { "$_" }); $list
+"listed: $([bool]($list -match 'codewiki@codewiki'))"
+"--- removal"; & $claude plugin uninstall codewiki@codewiki 2>&1; & $claude plugin marketplace remove codewiki 2>&1; "removal exit: $LASTEXITCODE"
+$global:LASTEXITCODE = 0
+'@
+        $ok = $run.Output -match "add exit: 0" -and $run.Output -match "install exit: 0" -and $run.Output -match "listed: True"
+        Add-Result -Id "CC8" -Title "The repository as marketplace" -Expect "cloned, and the plugin installs from it" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed $(if ($ok) { "the repository was cloned as the marketplace and codewiki@codewiki installed from it; removed again" } else { "it did not install; see the output" })
     }
 
     # Whatever the cases did: the token does not stay in the guest.

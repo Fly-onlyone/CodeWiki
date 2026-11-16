@@ -1,0 +1,14 @@
+{
+  "name": "codewiki",
+  "description": "CodeWiki's plugin for Claude Code, as the Windows package installs it.",
+  "owner": {
+    "name": "CodeWiki contributors"
+  },
+  "plugins": [
+    {
+      "name": "codewiki",
+      "source": "./claude-code",
+      "description": "Maintained wiki and structural index of the repository, served to Claude Code over MCP."
+    }
+  ]
+}

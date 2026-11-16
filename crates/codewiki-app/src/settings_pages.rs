@@ -571,7 +571,9 @@ fn updates(model: &Model) -> Vec<Block> {
     if *model.update != State::NotInstalled {
         body.push(Block::Switch {
             label: "Daily check".into(),
-            help: Some("Once a day, when CodeWiki starts".into()),
+            // Says how often, not when: the check runs at the app's start
+            // today, and may come to run while the app stays open.
+            help: Some("Looks for a newer release once a day".into()),
             on: model.auto_update,
             action: Action::AutoUpdate(!model.auto_update),
             locked: None,

@@ -29,10 +29,10 @@ Public API:
 - [[Units Module]] — uses `discover`, `is_test_file`
 - [[Unit]] — uses `Unit`, `is_rust`
 - [[Model Module]] — uses `Edge`
-- [[Store Module]] — uses `NodeMetrics`
 - [[Scan Module]] — uses `RepoFacts`
 - [[Plan Module]] — uses `is_test_path`
 - [[Language]] — uses `from_path`
+- [[Symbol]] — uses `Symbol`
 
 ## Used by
 

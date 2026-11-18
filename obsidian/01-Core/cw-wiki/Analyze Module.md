@@ -27,8 +27,8 @@ Main items:
 - [[Layout Module]] — uses `default`, `force_layout`
 - [[Model Module]] — uses `EdgeKind`
 - [[Community Module]] — uses `louvain`
-- [[Store Module]] — uses `NodeMetrics`
 - [[Scan Module]] — uses `RepoFacts`
+- [[NodeMetrics]] — uses `NodeMetrics`
 
 ## Used by
 

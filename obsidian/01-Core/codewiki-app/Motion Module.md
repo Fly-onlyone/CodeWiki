@@ -15,9 +15,9 @@ tags: [core, codewiki-app, module]
 Main items:
 
 - [[MotionPref]] — what the user asked for.
-- `current` — the current choice.
 - `set` — make a choice, apply it and remember it.
 - `init` — apply the remembered choice.
+- `current` — the current choice.
 - `State` — struct
 - `SETTING` — name of the setting in `prefs`.
 
@@ -28,7 +28,7 @@ Main items:
 
 ## Used by
 
-- [[codewiki-app]] — from `main`, `open_settings`, `run_action`, `run_command`
+- [[codewiki-app]] — from `main`, `run_action`, `run_command`, `settings_frame`
 
 ## See also
 

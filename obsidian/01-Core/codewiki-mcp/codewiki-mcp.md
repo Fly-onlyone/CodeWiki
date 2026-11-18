@@ -20,16 +20,18 @@ Defined at the crate root:
 - `Bridge` — struct
 - `text` — function
 - `connected` — the backend in `slot`, connecting on first use.
-- `rows` — function
 - `pretty` — function
+- `rows` — function
+- `failed` — A tool call that failed: logged, and returned to the agent as an error.
 - `RepoParam` — struct
 - `field` — the string under `key`, or an empty string.
-- `ChangeParams` — struct
 
 ## Depends on
 
 - [[Backend]] — uses `Backend`, `answers`, `connect`, `repo_id`
 - [[cw-client]] — uses `encode`
+- [[cw-core]] — uses `MCP_CLIENT`
+- [[Logs Module]] — uses `init`
 
 ## See also
 

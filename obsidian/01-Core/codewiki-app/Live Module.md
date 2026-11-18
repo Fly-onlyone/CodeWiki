@@ -17,12 +17,12 @@ Like the reports in `pages`, each turns what the backend sent into a `Doc`. Thes
 Main items:
 
 - `Project` — A registered repository, as Home lists it.
-- `message_page` — A page that only says something, such as that there is no wiki yet.
 - `proposal_page` — one proposal for review.
 - `hotspots_page` — the hotspot ranking.
 - `sync_page` — what a sync did.
-- `search_page` — search results, grouped by what was found.
+- `message_page` — A page that only says something, such as that there is no wiki yet.
 - `symbol_page` — one symbol: what it is, where it is, and what it touches.
+- `search_page` — search results, grouped by what was found.
 - `file_page` — one file: risk, symbols, relations and notes.
 
 ## Depends on

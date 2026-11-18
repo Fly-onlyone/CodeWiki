@@ -20,7 +20,8 @@ Declared as `pub(crate) struct AppState`.
 
 ## Used by
 
-- [[Api Module]] — from `add_repo`, `approve_proposal`, `ask`, `blast_radius`
+- [[Api Module]] — from `add_repo`, `approve_proposal`, `ask`, `backend_status`
+- [[Settings Module (cw-server)]] — from `change`, `describe`, `resolved`, `test_embedder`
 - [[cw-server]] — from `state`
 
 ## See also

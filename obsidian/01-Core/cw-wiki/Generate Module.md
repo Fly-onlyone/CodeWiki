@@ -36,9 +36,9 @@ Main items:
 
 ## Used by
 
+- [[Service Module]] — from `run_update`, `update`, `update_in`
 - [[cw-wiki]] — from `run`, `run_settled`
 - [[Api Module]] — from `run_update`, `update_repo`
-- [[Service Module]] — from `update`, `update_in`
 - [[LlmWriter]] — from `illustrate`, `rewrite`
 - [[ProseWriter]] — from `illustrate`, `rewrite`
 - [[codewiki]] — from `print_report`

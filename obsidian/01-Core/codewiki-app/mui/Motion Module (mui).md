@@ -15,7 +15,7 @@ tags: [core, codewiki-app, module]
 Main items:
 
 - [[Spring]] — A spring as Framer Motion describes one.
-- [[Enter]] — an entrance: where the element comes from, on which spring, after what wait.
+- `Enter` — an entrance: where the element comes from, on which spring, after what wait.
 - `scale` — the factor every motion is stretched by; 1 unless `CODEWIKI_MOTION_SCALE` says otherwise.
 - `EnterExt` — elements that can make an entrance.
 - `scaled` — `duration` stretched by `scale`.
@@ -25,19 +25,21 @@ Main items:
 
 ## Depends on
 
-- [[Enter]] — uses `Enter`, `at`
+- [[Curve Module]] — uses `EASE_OUT`, `SHARP`
+- [[Duration Module]] — uses `ENTERING_SCREEN`, `LEAVING_SCREEN`
+- [[Tokens Module]] — uses `easing`
 - [[Spring]] — uses `Spring`
 
 ## Used by
 
-- [[codewiki-app]] — from `check_for_update`, `connect`, `install_update`, `new`
-- [[Doc View Module]] — from `draw_strip`, `line`, `render`, `stat_tile`
+- [[codewiki-app]] — from `check_for_update`, `connect`, `draw_queued_diagrams`, `forget_saved_note`
+- [[Doc View Module]] — from `column`, `draw_strip`, `line`, `render`
 - [[Ripple Module]] — from `finished`, `frame`, `moving`
 - [[Spring]] — from `animation`, `config`, `policy`
 - [[Button Module]] — from `ease`, `render`
-- [[Enter]] — from `card`, `row`
 - [[Illustration Module]] — from `tabs`
 - [[Feedback Module]] — from `linear_progress`
+- [[List Module]] — from `render`
 
 ## See also
 

@@ -14,17 +14,18 @@ tags: [core, codewiki-app, module]
 
 Main items:
 
-- [[Doc]] — A generated page.
 - [[Action]] — what following a link or pressing a row does.
+- [[Doc]] — A generated page.
 - [[Span]] — A stretch of text within a line.
 - [[Block]] — A part of a page.
 - `Row` — A row that can be pressed.
 - `Cell` — what a table cell holds.
 - `Column` — A column of a table.
-- `Table` — A table: columns, and rows of one cell for each.
+- `text` — function
 
 ## Depends on
 
+- [[Settings Module]] — uses `Note`
 - [[Action]] — uses `Action`
 - [[Span]] — uses `Span`
 - [[Glyph]] — uses `Glyph`
@@ -32,11 +33,13 @@ Main items:
 
 ## Used by
 
-- [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Live Module]] — from `file_page`, `file_row`, `home_page`, `hotspots_page`
-- [[Doc View Module]] — from `choices_row`, `draw_cell`, `draw_row`, `draw_table`
+- [[Doc View Module]] — from `SelectRequest`, `choice_tint`, `choices_row`, `draw_cell`
+- [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
+- [[Settings Pages Module]] — from `ai_model`, `appearance`, `backend`, `diagnostics`
 - [[Doc]] — from `tables`, `text`, `words`
 - [[Illustration Module]] — from `render`, `table`
+- [[Settings View Module]] — from `OpenMenu`, `lists_themes`
 - [[Block]] — from `Block`
 
 ## See also

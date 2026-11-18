@@ -33,7 +33,7 @@ Implemented by [[LlmWriter]].
 
 ## Used by
 
-- [[Service Module]] — from `update`, `update_in`
+- [[Service Module]] — from `run_update`, `update`, `update_in`
 - [[codewiki]] — from `run`
 - [[Api Module]] — from `run_update`
 - [[Generate Module]] — from `generate`

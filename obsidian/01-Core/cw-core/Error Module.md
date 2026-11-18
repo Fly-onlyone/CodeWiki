@@ -26,11 +26,11 @@ Main items:
 - [[Index]] — from `collect`, `crates`, `edges`, `edges_from`
 - [[Query Module]] — from `answer`, `check_vault_path`, `context`, `dependency_path`
 - [[Proposal Module]] — from `approve`, `check_id`, `create`, `get`
-- [[Coverage Module]] — from `import`, `import_text`, `load`, `parse`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`, `open_index`
+- [[Coverage Module]] — from `import`, `import_text`, `load`, `parse`
+- [[cw-index]] — from `document_opening`, `nearest`, `replace_documents`, `search`
 - [[Generate Module]] — from `adopt_existing`, `generate`, `list_notes`, `read_optional`
 - [[Gitintel Module]] — from `blast_radius`, `change_risk`, `dependents_by_file`, `file_risk`
-- [[cw-index]] — from `document_opening`, `nearest`, `replace_documents`, `search`
 
 ## See also
 

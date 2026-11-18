@@ -16,8 +16,8 @@ Declared as `pub struct LocalEmbedder`.
 
 Public API:
 
-- `pub fn embed_one(&self, text: &str) -> Vec<f32>`
 - `fn default() -> Self`
+- `pub fn embed_one(&self, text: &str) -> Vec<f32>`
 - `fn name(&self) -> String`
 - `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>`
 
@@ -29,7 +29,7 @@ Public API:
 
 ## Used by
 
-- [[cw-embed]] — from `from_config`
+- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config`
 
 ## See also
 

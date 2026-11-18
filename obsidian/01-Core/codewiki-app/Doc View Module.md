@@ -16,34 +16,30 @@ Main items:
 
 - `PageSlot` — where in the window the page goes.
 - `DocPage` — A generated page as a view of its own, so that it can be drawn cached.
+- `SelectRequest` — A select that was clicked: where it is, and what it offers.
 - `OnAction` — what a link, row or button of a page does when used.
 - `notify_after_draw` — ask for `view` to be drawn again, from a place that runs while a frame is being drawn.
-- `stat_tile` — TradingAgent's metric tile: a label, a large figure that counts up when the tile appears, and a note under it.
-- `plain_table` — A table outside a page, such as one in an illustration: no links, and named by `key` among the other things drawn that frame.
-- `Page` — what every block needs to draw itself.
-- `Strip` — one strip of a page, as the list scrolls it: the title, a whole block, or a piece of a long table.
+- `Controls` — what the blocks that hold live controls need from the view that owns them: the text inputs, and the list of a select.
+- `OnSelect` — what a click on a select does: its owner opens the list.
+- `column` — A short page drawn whole, with live controls: a category of the settings.
 
 ## Depends on
 
-- [[Motion Module (mui)]] — uses `EnterExt`, `GENTLE`, `STAGGER_CAP`, `count_up`
-- [[Doc Module]] — uses `Cell`, `Choice`, `Row`, `Stat`
+- [[Motion Module (mui)]] — uses `EnterExt`, `GENTLE`, `PAGE`, `STAGGER_CAP`
+- [[Doc Module]] — uses `Cell`, `Choice`, `Row`, `SecretState`
 - [[Surfaces Module]] — uses `CARD_PADDING`, `card`, `card_content`, `card_piece`
 - [[Feedback Module]] — uses `alert`, `alert_action`, `chip`, `progress`
-- [[ListItemButton]] — uses `ListItemButton`, `new`, `secondary`
-- [[Enter]] — uses `PAGE`, `card`, `row`
-- [[Tokens Module]] — uses `easing`, `spec`
-- [[Reading Module]] — uses `WIDE_MEASURE`, `gutter`
+- [[Switch Module]] — uses `INSET`, `new`, `on`, `on_change`
+- [[Settings Layout Module]] — uses `CONTROL_WIDTH`, `LABEL_WIDTH`, `ROW_GAP`, `ROW_SPACING`
+- [[Text Field Module]] — uses `HEIGHT`, `helper`, `new`
+- [[Button]] — uses `contained`, `error`, `new`
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `doc_element`, `edit_view`, `graph_view`
+- [[codewiki-app]] — from `AppView`, `doc_element`, `graph_view`, `new`
 - [[Backdrop Module]] — from `Shell`, `new`, `render`
 - [[Illustration Module]] — from `render`, `table`
-- [[Button Module]] — from `render`
 - [[Menu Module]] — from `track`
-- [[Tabs Module]] — from `render`
-- [[Text Field Module]] — from `render`
-- [[Button]] — from `render`
 
 ## See also
 

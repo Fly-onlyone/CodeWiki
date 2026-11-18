@@ -29,7 +29,7 @@ Defined at the crate root:
 
 ## Used by
 
-- [[codewiki-app]] — from `prepare_page`
+- [[codewiki-app]] — from `draw_queued_diagrams`
 
 ## See also
 

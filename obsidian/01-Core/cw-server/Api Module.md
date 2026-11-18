@@ -15,13 +15,13 @@ tags: [core, cw-server, module]
 Main items:
 
 - `routes` — function
-- `Repo` — resolved repository: its root folder and its index.
 - `ApiError` — struct
+- `Repo` — resolved repository: its root folder and its index.
 - `blocking` — run blocking work (SQLite, file I/O, parsing) off the async runtime.
 - `Api` — type alias
 - `default_search_limit` — function
+- `SLOW_REQUEST` — A request that takes longer than this is logged at Info.
 - `GraphNode` — struct
-- `default_limit` — function
 
 ## Depends on
 
@@ -32,7 +32,7 @@ Main items:
 - [[Coverage Module]] — uses `CoverageReport`, `import`, `import_text`, `load`
 - [[Health Module]] — uses `DeadSymbol`, `DocReport`, `FileHealth`, `dead_code`
 - [[Repos Module]] — uses `RepoEntry`, `add`, `get`, `load`
-- [[Workspace Module (cw-server)]] — uses `Workspace`, `WorkspaceContractsView`, `repo_contracts`, `workspace`
+- [[Settings Module (cw-server)]] — uses `change`, `describe`, `resolved`, `test_embedder`
 
 ## Used by
 

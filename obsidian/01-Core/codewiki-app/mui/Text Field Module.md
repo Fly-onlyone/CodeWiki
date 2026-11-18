@@ -16,25 +16,28 @@ Main items:
 
 - `TextField` — A single-line text field.
 - `HEIGHT` — `OutlinedInput.js`, `size: 'small'`: `padding: '8.5px 14px'` around a line of `1.4375em` at 16 px.
+- `DISABLED_FILL` — `MuiInputBase`, disabled: the sidebar color at 50% behind the field.
 - `FONT` — const
+- `HELPER_SIDE` — const
+- `HELPER_TOP` — `FormHelperText.js`, `size: 'small'`: `marginTop: 4`; contained: `marginLeft: 14`, `marginRight: 14`.
 - `ICON` — const
 - `ICON_GAP` — `InputAdornment.js`: `marginRight: 8`.
-- `OUTLINE_OPACITY` — `OutlinedInput.js`: the outline is the text color at 23%.
-- `PADDING` — const
 
 ## Depends on
 
-- [[Doc View Module]] — uses `id`
+- [[Tokens Module]] — uses `easing`, `spec`, `states`
 - [[Base Module]] — uses `new`
 - [[Motion Module (mui)]] — uses `scaled`
-- [[Tokens Module]] — uses `easing`
 - [[Curve Module]] — uses `EASE_OUT`
 - [[Duration Module]] — uses `SHORTER`
 - [[Glyph]] — uses `Glyph`
+- [[Tone]] — uses `Tone`
 
 ## Used by
 
+- [[Doc View Module]] — from `choices_row`, `draw`, `row`, `secret_control`
 - [[codewiki-app]] — from `palette_view`, `toolbar`
+- [[Select Module]] — from `render`
 
 ## See also
 

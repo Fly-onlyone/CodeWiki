@@ -16,8 +16,8 @@ Main items:
 
 - `Touch` — the remembered state of one control.
 - `Base` — the state of one control for this frame, and the means to wire it up.
-- `Hover` — whether the pointer is over an element that is not pressable, such as a text field or a card.
 - `OnClick` — what a click does.
+- `Hover` — whether the pointer is over an element that is not pressable, such as a text field or a card.
 - `Ink` — how a control's ripple is drawn.
 - `focus_ring` — the ring a control shows while it has keyboard focus.
 
@@ -28,9 +28,11 @@ Main items:
 ## Used by
 
 - [[Button Module]] — from `IconButton`, `render`
+- [[Select Module]] — from `Select`, `render`
 - [[Button]] — from `Button`, `render`
 - [[ListItemButton]] — from `ListItemButton`, `render`
 - [[Doc View Module]] — from `table_row`
+- [[Switch Module]] — from `render`
 - [[Tabs Module]] — from `render`
 - [[Text Field Module]] — from `render`
 

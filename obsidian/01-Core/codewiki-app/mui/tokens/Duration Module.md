@@ -17,11 +17,11 @@ tags: [core, codewiki-app, module]
 Main items:
 
 - `SHORTER` — const
+- `ENTERING_SCREEN` — const
+- `LEAVING_SCREEN` — const
 - `SHORTEST` — const
 - `STANDARD` — const
 - `COMPLEX` — const
-- `ENTERING_SCREEN` — const
-- `LEAVING_SCREEN` — const
 - `SHORT` — const
 
 ## Used by
@@ -29,6 +29,9 @@ Main items:
 - [[Doc View Module]] — from `table_row`
 - [[Button Module]] — from `render`
 - [[List Module]] — from `render`
+- [[Motion Module (mui)]] — from `drawer`
+- [[Select Module]] — from `render`
+- [[Switch Module]] — from `render`
 - [[Text Field Module]] — from `render`
 - [[ListItemButton]] — from `render`
 

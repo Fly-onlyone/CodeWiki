@@ -74,6 +74,7 @@ flowchart LR
     n9 --> n15
     n11 --> n4
     n12 --> n4
+    n12 --> n5
     n12 --> n8
     n12 --> n9
     n12 --> n14
@@ -97,7 +98,7 @@ An arrow points from a crate to a crate it depends on. Foundations with no works
 - [[codewiki]] — used by 0 workspace crates
 - [[cw-client]] — used by 2 workspace crates
 - [[cw-core]] — used by 12 workspace crates
-- [[cw-embed]] — used by 1 workspace crates
+- [[cw-embed]] — used by 2 workspace crates
 - [[cw-graph]] — used by 1 workspace crates
 - [[cw-illustrate]] — used by 3 workspace crates
 - [[cw-index]] — used by 4 workspace crates

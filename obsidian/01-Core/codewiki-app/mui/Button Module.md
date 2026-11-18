@@ -27,7 +27,6 @@ Main items:
 
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
 - [[Tokens Module]] — uses `easing`, `spec`, `states`
-- [[Doc View Module]] — uses `id`
 - [[Feedback Module]] — uses `tooltip`
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
@@ -36,7 +35,7 @@ Main items:
 
 ## Used by
 
-- [[codewiki-app]] — from `tab_bar`, `toolbar`
+- [[codewiki-app]] — from `settings_frame`, `tab_bar`, `toolbar`
 - [[Button]] — from `Button`, `render`
 - [[Doc View Module]] — from `choices_row`
 

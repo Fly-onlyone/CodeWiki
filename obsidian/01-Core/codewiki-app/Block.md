@@ -16,15 +16,18 @@ Declared as `pub enum Block`.
 
 ## Depends on
 
-- [[Doc Module]] — uses `Choice`, `Line`, `Row`, `Stat`
+- [[Doc Module]] — uses `Choice`, `Line`, `Press`, `Row`
+- [[Settings Module]] — uses `Note`
 - [[Action]] — uses `Action`
 - [[Tone]] — uses `Tone`
+- [[FieldId]] — uses `FieldId`
 
 ## Used by
 
+- [[Settings Pages Module]] — from `ai_model`, `appearance`, `backend`, `card`
 - [[Doc]] — from `Doc`, `flat`, `push`, `walk`
-- [[Pages Module]] — from `file_list`, `updates_card`
 - [[Doc View Module]] — from `draw`
+- [[Pages Module]] — from `file_list`
 
 ## See also
 

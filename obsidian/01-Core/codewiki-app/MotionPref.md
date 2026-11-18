@@ -25,7 +25,7 @@ Public API:
 
 - [[Motion Module]] — from `State`, `current`, `init`, `set`
 - [[Palette Module]] — from `Command`, `actions`
-- [[Pages Module]] — from `settings_page`
+- [[Settings Pages Module]] — from `Model`, `appearance`
 - [[Action]] — from `Action`
 
 ## See also

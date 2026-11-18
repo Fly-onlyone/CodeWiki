@@ -1,0 +1,5 @@
+root = Card([summary, flow], "codewiki-mcp Startup Flow")
+summary = TextContent("Call sequence from the `main` entry point of `codewiki-mcp` across 3 parts of the codebase.", "muted")
+flow = Steps([s0, s1])
+s0 = Step("init()", "codewiki-mcp calls into Logs Module")
+s1 = Step("data_dir()", "Logs Module calls into Paths Module")

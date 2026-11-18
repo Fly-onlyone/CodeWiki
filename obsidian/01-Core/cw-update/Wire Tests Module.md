@@ -25,10 +25,9 @@ Main items:
 
 ## Depends on
 
-- [[Logfile Module]] — uses `flush`
+- [[Logs Module]] — uses `flush`
 - [[Download Module]] — uses `download_limited`
 - [[Release Module]] — uses `check`
-- [[Glyph]] — uses `path`
 - [[Release]] — uses `Release`
 
 ## See also

@@ -18,17 +18,19 @@ Main items:
 
 - `EASE_IN_OUT` — const
 - `EASE_OUT` — const
-- `EASE_IN` — const
 - `SHARP` — const
+- `EASE_IN` — const
 
 ## Used by
 
 - [[Button Module]] — from `ease`, `render`
 - [[Doc View Module]] — from `table_row`
 - [[List Module]] — from `render`
+- [[Motion Module (mui)]] — from `drawer`
 - [[Ripple Module]] — from `frame`
+- [[Select Module]] — from `render`
+- [[Switch Module]] — from `render`
 - [[Text Field Module]] — from `render`
-- [[ListItemButton]] — from `render`
 
 ## See also
 

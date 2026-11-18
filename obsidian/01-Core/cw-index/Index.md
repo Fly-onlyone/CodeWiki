@@ -21,11 +21,11 @@ Public API:
 - `pub fn open_in_memory() -> Result<Self>`
 - `pub fn open(path: &Path) -> Result<Self>`
 - `pub fn files(&self) -> Result<Vec<FileRecord>>`
-- `pub fn symbols(&self) -> Result<Vec<Symbol>>`
+- `pub fn meta(&self, key: &str) -> Result<Option<String>>`
 
 ## Depends on
 
-- [[Store Module]] — uses `NodeMetrics`, `SYMBOL_COLUMNS`, `db`, `edge_from_row`
+- [[Store Module]] — uses `SYMBOL_COLUMNS`, `db`, `edge_from_row`, `symbol_from_row`
 - [[Schema Module]] — uses `DROP_ALL`, `SCHEMA`, `SCHEMA_VERSION`
 - [[Model Module]] — uses `Edge`, `FileRecord`
 - [[Error]] — uses `external`, `io`
@@ -39,10 +39,10 @@ Public API:
 - [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `apply_writes_both_files_and_preserves_the_authors_text`, `fixture`, `indexed`
 - [[Gitintel Module]] — from `blast_radius`, `change_risk`, `dependents_by_file`, `file_risk`
 - [[Query Module]] — from `answer`, `context`, `dependency_path`, `overview`
+- [[Semantic Module]] — from `embed_documents`, `made_by`, `nearest`, `refresh`
 - [[Service Module]] — from `built`, `index_notes`, `open_index`, `open_index_in`
 - [[Coverage Module]] — from `import`, `import_text`, `load`, `report`
 - [[Api Module]] — from `find_symbols`, `graph`, `index`, `list_files`
-- [[Semantic Module]] — from `embed_documents`, `refresh`, `search`, `search_with`
 - [[Health Module]] — from `dead_code`, `doc_drift`, `file_health`
 
 ## See also

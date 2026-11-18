@@ -36,8 +36,8 @@ Main items:
 ## Used by
 
 - [[codewiki-app]] — from `sidebar`
+- [[Menu Module]] — from `render`
 - [[ListItemButton]] — from `render`
-- [[Menu]] — from `render`
 
 ## See also
 

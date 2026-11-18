@@ -18,8 +18,8 @@ Main items:
 
 - `State` — where the app stands with updates.
 - `check` — ask GitHub, and remember when it answered.
-- `auto_check` — whether the app checks by itself when it starts.
 - `set_auto_check` — function
+- `auto_check` — whether the app checks by itself when it starts.
 - `due` — whether the daily check is due.
 - `now` — function
 - `AUTO_CHECK` — the setting that turns the daily check off ("off") or on.
@@ -36,7 +36,7 @@ Main items:
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `backend_to_stop`, `check_for_update`, `home_doc`
-- [[Pages Module]] — from `settings_page`, `updates_card`
+- [[Settings Pages Module]] — from `Model`
 
 ## See also
 

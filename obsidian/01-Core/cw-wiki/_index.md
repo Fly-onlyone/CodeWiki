@@ -16,7 +16,6 @@ tags: [moc, core, cw-wiki]
 - [[Coverage Module]] — test coverage imported from LCOV (`lcov.info`) and Cobertura XML reports.
 - [[cw-wiki]] — concept selection and wiki generation pipeline for CodeWiki.
 - [[Decisions Module]] — decision records and the "why" query.
-- [[FileHistory]] — `FileHistory` struct defined in `cw_wiki::gitintel`.
 - [[Generate Module]] — the generation pipeline: scan, plan, freeze names, render, lint, write.
 - [[Git Module]] — minimal git access through the `git` command line.
 - [[Gitintel Module]] — Git intelligence: what history says about each file.
@@ -37,6 +36,7 @@ tags: [moc, core, cw-wiki]
 - [[Security Module]] — security pattern findings for Rust source.
 - [[Semantic Module]] — semantic search: embeds search documents and blends vector matches with full-text matches.
 - [[Service Module]] — High-level operations shared by the CLI, the server and the MCP tools.
+- [[Slot]] — the place that holds the embedder in use.
 - [[TestFn]] — A `test`-like function found in a file.
 - [[Testmap Module]] — test map: which tests exist, what they exercise, and which to run after a change.
 - [[Unit]] — one top-level part of the repository.

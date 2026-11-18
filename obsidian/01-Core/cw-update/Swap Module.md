@@ -26,7 +26,6 @@ Main items:
 ## Depends on
 
 - [[cw-update]] — uses `UPDATE_DIR`
-- [[Glyph]] — uses `path`
 
 ## Used by
 

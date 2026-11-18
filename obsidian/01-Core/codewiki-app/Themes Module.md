@@ -17,10 +17,10 @@ Main items:
 - `Entry` — A theme the user can choose.
 - `Brand` — the three colors a theme is known by.
 - `entries` — the themes the user can choose, in menu order.
-- `brand` — the brand colors of the active theme.
 - `select` — apply a theme by name and remember the choice.
-- `init` — load bundled and user themes, then apply the saved or default theme.
+- `brand` — the brand colors of the active theme.
 - `glyph_tint` — `color` for an icon on the active theme's menu.
+- `init` — load bundled and user themes, then apply the saved or default theme.
 - `Baseline` — fonts, radius and shadow as they were before any theme was applied.
 
 ## Depends on
@@ -35,6 +35,7 @@ Main items:
 - [[codewiki-app]] — from `main`, `open_theme_menu`, `palette_matches`, `select_theme`
 - [[Reading Module]] — from `frame`, `style`
 - [[Backdrop Module]] — from `shapes`
+- [[Doc View Module]] — from `choice_tint`
 - [[List Module]] — from `subheader`
 - [[Standard Module]] — from `from_json`
 - [[ListItemButton]] — from `render`

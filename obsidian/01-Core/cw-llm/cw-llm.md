@@ -24,26 +24,29 @@ Modules:
 
 Defined at the crate root:
 
-- `writer_from_env` — the writer selected by the environment, or `None` for keyless mode.
+- `writer_from` — the writer selected by the settings in effect, or `None` for keyless mode.
 
 ## Depends on
 
-- [[Provider Module]] — uses `Ollama`, `OpenAiCompatible`, `from_env`
 - [[LlmWriter]] — uses `LlmWriter`, `new`
-- [[Logfile Module]] — uses `flush`
 - [[Error Module]] — uses `Result`
+- [[Logs Module]] — uses `flush`
+- [[Provider Module]] — uses `from_settings`
+- [[Resolved]] — uses `Resolved`
 - [[Anthropic]] — uses `Anthropic`
+- [[Ollama]] — uses `Ollama`
+- [[OpenAiCompatible]] — uses `OpenAiCompatible`
 
 ## Used by
 
-- [[Backend]] — from `delete`, `get`, `post`, `put`
-- [[cw-server]] — from `call`, `hook`
+- [[cw-server]] — from `call_as`, `hook`
 - [[codewiki]] — from `run`
 - [[cw-embed]] — from `post_json`
 - [[Provider Module]] — from `post_json`
 - [[Api Module]] — from `run_update`
 - [[Download Module]] — from `get`
 - [[Release Module]] — from `check`
+- [[Proposal Module]] — from `unified_diff`
 
 ## See also
 

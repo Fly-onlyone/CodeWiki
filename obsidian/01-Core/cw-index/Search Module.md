@@ -14,14 +14,15 @@ tags: [core, cw-index, module]
 
 Main items:
 
-- [[Document]] — one searchable unit.
+- `Document` — one searchable unit.
 - `Hit` — struct
 - `fts_query` — turn free text into an FTS5 query: each word becomes a quoted prefix term, joined with OR so partial matches still rank.
 
 ## Used by
 
-- [[cw-index]] — from `nearest`, `search`
-- [[Semantic Module]] — from `search`, `search_with`
+- [[Semantic Module]] — from `embed_documents`, `nearest`, `refresh`, `search`
+- [[cw-index]] — from `nearest`, `replace_documents`, `search`
+- [[Service Module]] — from `index_notes`, `reindex`
 - [[Api Module]] — from `search`
 - [[Query Module]] — from `Answer`
 

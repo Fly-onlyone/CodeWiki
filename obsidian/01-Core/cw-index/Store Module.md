@@ -15,7 +15,7 @@ tags: [core, cw-index, module]
 Main items:
 
 - [[Index]] — struct
-- `NodeMetrics` — struct
+- [[NodeMetrics]] — struct
 - `db` — function
 - `edge_from_row` — function
 - `SYMBOL_COLUMNS` — const
@@ -33,9 +33,6 @@ Main items:
 
 - [[Index]] — from `collect`, `edges`, `edges_from`, `edges_to`
 - [[cw-index]] — from `document_opening`, `nearest`, `replace_documents`, `search`
-- [[Repo]] — from `at`, `build`, `new`
-- [[Analyze Module]] — from `analyze`, `metrics_map`
-- [[Generate Module]] — from `generate`
 
 ## See also
 

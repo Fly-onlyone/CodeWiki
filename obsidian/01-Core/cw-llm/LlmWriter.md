@@ -34,7 +34,7 @@ Public API:
 
 ## Used by
 
-- [[cw-llm]] — from `writer_from_env`
+- [[cw-llm]] — from `writer_from`
 
 ## See also
 

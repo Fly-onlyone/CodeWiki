@@ -16,8 +16,8 @@ Main items:
 
 - `Format` — enum
 - `FileCoverage` — struct
-- `import` — read and import a report file.
 - `import_text` — parse report `text` and match its files to the index.
+- `import` — read and import a report file.
 - `CoverageData` — coverage as imported, with paths matched to the index.
 - `report` — summarise imported coverage and rank the gaps.
 - `Gap` — A poorly covered file and why it matters.

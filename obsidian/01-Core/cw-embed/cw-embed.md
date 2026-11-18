@@ -19,26 +19,32 @@ Defined at the crate root:
 
 - [[Embedder]] — trait
 - [[LocalEmbedder]] — the built-in embedder: signed feature hashing, no model and no network.
+- [[OpenAiEmbedder]] — any endpoint that speaks the OpenAI embeddings API.
+- [[OllamaEmbedder]] — A model served by Ollama on this machine or another.
 - `normalize` — scale `vector` to unit length.
-- `OllamaEmbedder` — A model served by Ollama on this machine or another.
-- `OpenAiEmbedder` — any endpoint that speaks the OpenAI embeddings API.
-- `from_env` — the embedder chosen by the environment; `None` turns semantic search off.
 - `from_config` — the embedder for a provider name.
-- `stem` — strip a common English ending so `computes`, `computed` and `computing` count as one word.
+- `from_settings` — the embedder chosen by the settings in effect: the environment over the settings file.
+- `PROVIDERS` — the embedders a user can choose, in the order a page lists them.
 
 ## Depends on
 
 - [[Error]] — uses `external`, `invalid`
 - [[cw-llm]] — uses `header`
-- [[Logfile Module]] — uses `flush`
 - [[Error Module]] — uses `Result`
+- [[Logs Module]] — uses `flush`
+- [[Backend]] — uses `status`
+- [[Resolved]] — uses `Resolved`
 - [[Embedder]] — uses `Embedder`
 - [[LocalEmbedder]] — uses `default`
 
 ## Used by
 
+- [[Settings Module (cw-server)]] — from `checked`, `describe`, `test_embedder`
+- [[OllamaEmbedder]] — from `embed`, `embed_within`, `probe`
+- [[OpenAiEmbedder]] — from `embed`, `embed_within`, `probe`
 - [[LocalEmbedder]] — from `add`, `embed_one`
-- [[Semantic Module]] — from `embedder`
+- [[Slot]] — from `configure`, `get`
+- [[Embedder]] — from `probe`
 
 ## See also
 

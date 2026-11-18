@@ -4,7 +4,7 @@ tags: [architecture, flow]
 
 # codewiki-app Startup Flow
 
-> Call sequence from the `main` entry point of `codewiki-app` across 14 parts of the codebase.
+> Call sequence from the `main` entry point of `codewiki-app` across 12 parts of the codebase.
 
 ## Source
 
@@ -18,31 +18,29 @@ sequenceDiagram
     participant p0 as codewiki-app
     participant p1 as Backdrop Module
     participant p2 as Fonts Module
-    participant p3 as Logfile Module
+    participant p3 as Instance Module
     participant p4 as Motion Module
-    participant p5 as Themes Module
-    participant p6 as Backend
-    participant p7 as Update Module
-    participant p8 as cw-client
-    participant p9 as Doc View Module
-    participant p10 as Startup Module
-    participant p11 as Sink
-    participant p12 as Glass Module
-    participant p13 as Logs Module
+    participant p5 as Prefs Module
+    participant p6 as Startup Module
+    participant p7 as Themes Module
+    participant p8 as Backend
+    participant p9 as Logs Module
+    participant p10 as Update Module
+    participant p11 as cw-client
     p0->>p1: new()
     p0->>p2: register()
-    p0->>p3: init()
+    p0->>p3: acquire()
+    p0->>p3: hold()
+    p0->>p3: release()
     p0->>p4: init()
-    p0->>p5: init()
-    p0->>p6: shutdown()
-    p0->>p7: installing()
-    p0->>p8: uses_remote()
-    p0->>p9: new()
-    p0->>p10: recent()
-    p0->>p11: value()
-    p1->>p9: read_by()
-    p1->>p12: debug_backdrop()
-    p3->>p13: path()
+    p0->>p5: read()
+    p0->>p6: launch()
+    p0->>p7: init()
+    p0->>p8: shutdown()
+    p0->>p9: init()
+    p0->>p9: level_named()
+    p0->>p10: installing()
+    p0->>p11: uses_remote()
 ```
 
 The sequence follows resolved calls outward from `main`, keeping only calls that cross from one documented part into another. Calls reached through trait objects or macros do not appear.
@@ -52,17 +50,15 @@ The sequence follows resolved calls outward from `main`, keeping only calls that
 - [[codewiki-app]]
 - [[Backdrop Module]]
 - [[Fonts Module]]
-- [[Logfile Module]]
+- [[Instance Module]]
 - [[Motion Module]]
+- [[Prefs Module]]
+- [[Startup Module]]
 - [[Themes Module]]
 - [[Backend]]
+- [[Logs Module]]
 - [[Update Module]]
 - [[cw-client]]
-- [[Doc View Module]]
-- [[Startup Module]]
-- [[Sink]]
-- [[Glass Module]]
-- [[Logs Module]]
 
 ## See also
 

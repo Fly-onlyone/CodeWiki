@@ -25,8 +25,11 @@ Main items:
 
 - [[Startup Module]] — from `keep_recent`, `recent`, `remember`, `repo`
 - [[Update Module]] — from `auto_check`, `check`, `due`, `set_auto_check`
+- [[codewiki-app]] — from `after_hide`, `main`, `run_settings_action`
 - [[Themes Module]] — from `init`, `select`, `user_theme_dir`
 - [[Motion Module]] — from `init`, `set`
+- [[Panes Module]] — from `load`, `store`
+- [[Instance Module]] — from `acquire`
 
 ## See also
 

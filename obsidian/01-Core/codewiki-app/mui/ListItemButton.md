@@ -28,19 +28,19 @@ Public API:
 - [[List Module]] — uses `BAR`, `FONT`, `ICON`, `ICON_GAP`
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
 - [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
-- [[Doc View Module]] — uses `id`
 - [[Tokens Module]] — uses `easing`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`
 - [[Themes Module]] — uses `of`
+- [[Glyph]] — uses `Glyph`
 
 ## Used by
 
+- [[codewiki-app]] — from `palette_view`, `settings_entry`, `settings_frame`, `sidebar`
 - [[List Module]] — from `ListFolder`, `render`, `rows`
-- [[codewiki-app]] — from `palette_view`, `sidebar`
 - [[Doc View Module]] — from `draw_row`
-- [[Logfile Module]] — from `enabled`
-- [[Menu]] — from `render`
+- [[Menu Module]] — from `render`
+- [[Logs Module]] — from `enabled`
 
 ## See also
 

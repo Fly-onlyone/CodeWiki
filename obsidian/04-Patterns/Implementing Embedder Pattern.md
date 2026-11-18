@@ -8,7 +8,7 @@ tags: [pattern]
 
 ## When to apply
 
-When adding a type that must act as a `Embedder`. Existing implementations: [[LocalEmbedder]], `OllamaEmbedder`, and `OpenAiEmbedder`.
+When adding a type that must act as a `Embedder`. Existing implementations: [[LocalEmbedder]], [[OllamaEmbedder]], and [[OpenAiEmbedder]].
 
 ## The pattern
 
@@ -18,6 +18,9 @@ impl Embedder for NewType {
         todo!()
     }
     fn name(&self) -> String {
+        todo!()
+    }
+    fn probe(&self) -> Result<usize> {
         todo!()
     }
 }

@@ -15,31 +15,35 @@ tags: [core, cw-llm, module]
 Main items:
 
 - [[LlmProvider]] — trait
-- [[AgentCli]] — an installed agent CLI run in non-interactive mode.
 - [[Anthropic]] — struct
-- `Ollama` — struct
-- `OpenAiCompatible` — any server speaking the OpenAI chat-completions protocol.
+- [[Ollama]] — struct
+- [[OpenAiCompatible]] — any server speaking the OpenAI chat-completions protocol.
+- [[AgentCli]] — an installed agent CLI run in non-interactive mode.
 - `Completion` — struct
-- `DEFAULT_ANTHROPIC_MODEL` — default Anthropic model for prose generation.
-- `from_env` — build the provider chosen by the environment.
+- `from_settings` — the provider chosen by the settings in effect: the environment over the settings file.
+- `from_config` — build the provider that `lookup` describes.
 
 ## Depends on
 
-- [[Error]] — uses `external`, `invalid`
+- [[Settings Module (cw-core)]] — uses `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_PROVIDER`, `OLLAMA_HOST`
+- [[Error]] — uses `Error`, `external`, `invalid`
 - [[AgentCli]] — uses `claude`, `codex`
 - [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
-- [[Anthropic]] — uses `new`
-- [[LlmProvider]] — uses `LlmProvider`
+- [[Backend]] — uses `status`
+- [[Key]] — uses `Key`
+- [[Resolved]] — uses `Resolved`
 
 ## Used by
 
-- [[cw-llm]] — from `ollama_sends_a_non_streaming_chat_request`, `openai_compatible_sends_chat_completions_with_a_bearer_token`, `writer_from_env`
-- [[Anthropic]] — from `complete`, `new`
+- [[Anthropic]] — from `complete`, `new`, `probe`, `send`
+- [[Settings Module (cw-server)]] — from `checked`, `describe`, `test_llm`
+- [[Ollama]] — from `complete`, `probe`, `send`
+- [[OpenAiCompatible]] — from `complete`, `probe`, `send`
+- [[LlmProvider]] — from `complete`, `probe`
+- [[cw-llm]] — from `writer_from`
+- [[Serve Module]] — from `writer_name`
 - [[Illustrate Module]] — from `draw`
-- [[Api Module]] — from `ask`
-- [[AgentCli]] — from `complete`
-- [[LlmProvider]] — from `complete`
 
 ## See also
 

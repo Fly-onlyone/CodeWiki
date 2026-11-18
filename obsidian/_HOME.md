@@ -6,13 +6,14 @@ tags: [moc, home]
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 17 crates and 265 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 293 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
 - [[Crate Dependency Flow]] — how the 17 workspace crates depend on each other, from entry points down to shared foundations.
-- [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 10 parts of the codebase.
-- [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 14 parts of the codebase.
+- [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 11 parts of the codebase.
+- [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 12 parts of the codebase.
+- [[codewiki-mcp Startup Flow]] — call sequence from the `main` entry point of `codewiki-mcp` across 3 parts of the codebase.
 
 → [[00-Architecture/_index|All architecture concepts]]
 

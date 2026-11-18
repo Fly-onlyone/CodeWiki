@@ -21,14 +21,18 @@ Main items:
 - `publish` — tell local clients (the app, the MCP bridge) where the backend listens.
 - `random_token` — function
 - `withdraw` — delete the connection file, if it is still this backend's.
+- `writer_name` — the LLM provider the settings in effect choose, by name; never its key.
 
 ## Depends on
 
+- [[cw-server]] — uses `ServerConfig`, `WEBHOOK_SECRET_ENV`, `serve`
 - [[Error]] — uses `external`, `invalid`, `io`
-- [[cw-server]] — uses `WEBHOOK_SECRET_ENV`, `serve`
+- [[Semantic Module]] — uses `configure`, `embedder`
+- [[Resolved]] — uses `Resolved`, `load`
 - [[Error Module]] — uses `Result`
 - [[Paths Module]] — uses `data_dir`
-- [[ServerConfig]] — uses `ServerConfig`
+- [[Settings Module (cw-core)]] — uses `process_env`
+- [[Provider Module]] — uses `from_settings`
 
 ## Used by
 

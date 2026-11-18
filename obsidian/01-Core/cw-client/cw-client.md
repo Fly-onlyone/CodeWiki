@@ -15,27 +15,34 @@ tags: [core, cw-client]
 
 Builds a library.
 
+Modules:
+
+- [[Remote Module]] — A backend on another machine, or in Docker, that the user chose in the app instead of naming it with `CODEWIKI_URL`.
+
 Defined at the crate root:
 
 - [[Backend]] — struct
+- `Origin` — how a client came to the backend it uses.
 - `encode` — Percent-encode a query-string value.
-- `uses_remote` — whether clients use a backend named by `CODEWIKI_URL`, in Docker or on another machine, rather than one on this machine.
-- `agent` — function
-- `health_version` — the version a backend reports, when it answers `/v1/health`.
-- `URL_ENV` — explicit backend address, for a backend running in Docker or on another machine.
-- `BACKEND_FILE` — const
-- `STOP_TIMEOUT` — how long an old backend may take to stop after it is asked to: it first finishes the requests it is running.
+- `saved_remote` — the backend saved in the app's settings, without its token.
+- `env_remote` — the address `CODEWIKI_URL` names, when it is set.
+- `uses_remote` — whether clients use a backend in Docker or on another machine, named by `CODEWIKI_URL` or saved in the app's settings, rather than one on this machine.
+- `check_remote` — check that a CodeWiki backend answers at `url` and accepts `token`, and return its version.
+- `save_remote` — save a backend's address and token and make every client on this machine use it: the app and an agent's MCP bridge alike.
 
 ## Depends on
 
-- [[Logs Module]] — uses `open`, `path`, `timestamp`
+- [[Remote Module]] — uses `Remote`, `forget_in`, `normalized`, `save_in`
+- [[Backend]] — uses `new`, `status`
+- [[Paths Module]] — uses `data_dir`
 
 ## Used by
 
+- [[codewiki-app]] — from `backend_to_stop`, `connect`, `connect_remote`, `install_update`
 - [[codewiki-mcp]] — from `get_architecture`, `get_blast_radius`, `get_context`, `get_dependency_path`
-- [[codewiki-app]] — from `backend_to_stop`, `install_update`, `open_file`, `open_in_obsidian`
-- [[Backend]] — from `answers`, `connect`, `new`, `stop`
+- [[Backend]] — from `Backend`, `answers`, `connect`, `named`
 - [[Markdown Module]] — from `encode`
+- [[Settings Pages Module]] — from `Model`
 
 ## See also
 

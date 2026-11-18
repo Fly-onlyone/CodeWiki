@@ -25,7 +25,7 @@ Main items:
 
 - [[Release Module]] — uses `agent`, `user_agent`
 - [[cw-llm]] — uses `header`
-- [[Logfile Module]] — uses `flush`
+- [[Logs Module]] — uses `flush`
 - [[Release]] — uses `Release`
 
 ## Used by

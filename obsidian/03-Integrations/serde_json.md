@@ -4,20 +4,20 @@ tags: [integration]
 
 # serde_json
 
-> External crate `serde_json`, imported by 15 source files.
+> External crate `serde_json`, imported by 23 source files.
 
 ## Used for
 
-Imported by 15 source files. Main users:
+Imported by 23 source files. Main users:
 
 - [[cw-embed]]
+- [[Activity Module]]
 - [[Api Module]]
 - [[Ci Module]]
 - [[Graph Module (codewiki-app)]]
+- [[Instance Module]]
 - [[Live Module]]
 - [[Pages Module]]
-- [[Provider Module]]
-- [[Serve Module]]
 
 ## Configuration
 
@@ -37,13 +37,13 @@ Imported by 15 source files. Main users:
 ## Wire-up
 
 - `crates/codewiki-app/src/graph.rs` — imports `serde_json`
+- `crates/codewiki-app/src/instance.rs` — imports `serde_json`
 - `crates/codewiki-app/src/live.rs` — imports `serde_json`
 - `crates/codewiki-app/src/main.rs` — imports `serde_json`
 - `crates/codewiki-app/src/pages.rs` — imports `serde_json`
+- `crates/codewiki-app/src/settings_pages.rs` — imports `serde_json`
+- `crates/codewiki-app/src/settings_view.rs` — imports `serde_json`
 - `crates/codewiki-app/src/standard.rs` — imports `serde_json`
-- `crates/codewiki-mcp/src/main.rs` — imports `serde_json`
-- `crates/codewiki/src/serve.rs` — imports `serde_json`
-- `crates/cw-client/src/lib.rs` — imports `serde_json`
 
 ## See also
 

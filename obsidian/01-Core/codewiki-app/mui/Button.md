@@ -28,7 +28,6 @@ Public API:
 - [[Button Module]] — uses `HOVER_TIME`, `ICON_GAP`, `Kind`, `LIFT`
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
 - [[Tokens Module]] — uses `spec`, `states`
-- [[Doc View Module]] — uses `id`
 - [[Feedback Module]] — uses `tooltip`
 - [[Motion Module (mui)]] — uses `SNAPPY`
 - [[Glyph]] — uses `Glyph`
@@ -36,8 +35,8 @@ Public API:
 
 ## Used by
 
-- [[codewiki-app]] — from `details`, `edit_view`, `proposal_actions`, `toolbar`
-- [[Doc View Module]] — from `draw`
+- [[codewiki-app]] — from `details`, `edit_view`, `proposal_actions`, `settings_frame`
+- [[Doc View Module]] — from `draw`, `secret_control`
 
 ## See also
 

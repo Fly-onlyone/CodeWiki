@@ -19,6 +19,7 @@ Chosen to match the surface the diagram is drawn on.
 ## Used by
 
 - [[cw-mermaid]] — from `render_png`, `themed`
+- [[Diagrams Module]] — from `Key`, `lookup`
 - [[codewiki-app]] — from `AppView`
 
 ## See also

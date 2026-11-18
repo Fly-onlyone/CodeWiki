@@ -16,12 +16,12 @@ Main items:
 
 - `Variant` — A text style.
 - `TextSpec` — what a `Variant` comes to.
-- `StateOpacity` — how strongly a state tints a control.
 - `easing` — an easing function for one of the `curve` constants.
+- `StateOpacity` — how strongly a state tints a control.
 - `elevation_between` — A shadow part of the way from one elevation to another, for a surface that is rising or settling.
 - `SPACING` — one step of MUI's spacing scale (`theme.spacing(1)`).
 - `elevation` — the shadow of a surface raised to `level` (0 to 24).
-- `DARK_STATES` — const
+- `states` — the state opacities for a dark or a light theme.
 
 Submodules: [[Curve Module]], [[Duration Module]].
 
@@ -32,9 +32,9 @@ Submodules: [[Curve Module]], [[Duration Module]].
 - [[Surfaces Module]] — from `card_content`, `paper`, `text`
 - [[Feedback Module]] — from `indeterminate`
 - [[List Module]] — from `render`
+- [[Motion Module (mui)]] — from `drawer`
 - [[Ripple Module]] — from `frame`
-- [[Text Field Module]] — from `render`
-- [[Button]] — from `render`
+- [[Select Module]] — from `render`
 
 ## See also
 

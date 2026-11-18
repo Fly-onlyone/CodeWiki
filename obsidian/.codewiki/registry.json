@@ -5,6 +5,16 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_server::activity::Activity",
+    "path": "01-Core/cw-server/Activity.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::activity",
+    "path": "01-Core/cw-server/Activity Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_llm::provider::AgentCli",
     "path": "01-Core/cw-llm/AgentCli.md",
     "kind": "concept"
@@ -37,6 +47,11 @@
   {
     "id": "type:cw_server::AppState",
     "path": "01-Core/cw-server/AppState.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::autostart",
+    "path": "01-Core/codewiki-app/Autostart Module.md",
     "kind": "concept"
   },
   {
@@ -90,6 +105,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_app::settings::Category",
+    "path": "01-Core/codewiki-app/Category.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::ci",
     "path": "01-Core/cw-wiki/Ci Module.md",
     "kind": "concept"
@@ -118,6 +138,11 @@
     "id": "crate:codewiki_mcp",
     "path": "01-Core/codewiki-mcp/codewiki-mcp.md",
     "kind": "concept"
+  },
+  {
+    "id": "flow:startup:codewiki_mcp",
+    "path": "00-Architecture/codewiki-mcp Startup Flow.md",
+    "kind": "flow"
   },
   {
     "id": "mod:cw_graph::community",
@@ -225,6 +250,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::diagrams",
+    "path": "01-Core/codewiki-app/Diagrams Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:codewiki_app::doc::Doc",
     "path": "01-Core/codewiki-app/Doc.md",
     "kind": "concept"
@@ -237,11 +267,6 @@
   {
     "id": "mod:codewiki_app::doc_view",
     "path": "01-Core/codewiki-app/Doc View Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_index::search::Document",
-    "path": "01-Core/cw-index/Document.md",
     "kind": "concept"
   },
   {
@@ -265,11 +290,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:codewiki_app::mui::motion::Enter",
-    "path": "01-Core/codewiki-app/mui/Enter.md",
-    "kind": "concept"
-  },
-  {
     "id": "type:cw_core::error::Error",
     "path": "01-Core/cw-core/Error.md",
     "kind": "concept"
@@ -290,13 +310,13 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_illustrate::Figure",
-    "path": "01-Core/cw-illustrate/Figure.md",
+    "id": "type:codewiki_app::settings::FieldId",
+    "path": "01-Core/codewiki-app/FieldId.md",
     "kind": "concept"
   },
   {
-    "id": "type:cw_wiki::gitintel::FileHistory",
-    "path": "01-Core/cw-wiki/FileHistory.md",
+    "id": "type:cw_illustrate::Figure",
+    "path": "01-Core/cw-illustrate/Figure.md",
     "kind": "concept"
   },
   {
@@ -395,8 +415,18 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::instance",
+    "path": "01-Core/codewiki-app/Instance Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_parse::java",
     "path": "01-Core/cw-parse/Java Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::settings::Key",
+    "path": "01-Core/cw-core/Key.md",
     "kind": "concept"
   },
   {
@@ -485,11 +515,6 @@
     "kind": "concept"
   },
   {
-    "id": "mod:codewiki_app::logfile",
-    "path": "01-Core/codewiki-app/Logfile Module.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:cw_core::logs",
     "path": "01-Core/cw-core/Logs Module.md",
     "kind": "concept"
@@ -502,11 +527,6 @@
   {
     "id": "mod:codewiki_app::markdown",
     "path": "01-Core/codewiki-app/Markdown Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:codewiki_app::mui::menu::Menu",
-    "path": "01-Core/codewiki-app/mui/Menu.md",
     "kind": "concept"
   },
   {
@@ -550,6 +570,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_index::store::NodeMetrics",
+    "path": "01-Core/cw-index/NodeMetrics.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_vault::note::Note",
     "path": "01-Core/cw-vault/Note.md",
     "kind": "concept"
@@ -562,6 +587,26 @@
   {
     "id": "type:cw_vault::note::NoteKind",
     "path": "01-Core/cw-vault/NoteKind.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_llm::provider::Ollama",
+    "path": "01-Core/cw-llm/Ollama.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_embed::OllamaEmbedder",
+    "path": "01-Core/cw-embed/OllamaEmbedder.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_llm::provider::OpenAiCompatible",
+    "path": "01-Core/cw-llm/OpenAiCompatible.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_embed::OpenAiEmbedder",
+    "path": "01-Core/cw-embed/OpenAiEmbedder.md",
     "kind": "concept"
   },
   {
@@ -582,6 +627,11 @@
   {
     "id": "mod:codewiki_app::palette",
     "path": "01-Core/codewiki-app/Palette Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::panes",
+    "path": "01-Core/codewiki-app/Panes Module.md",
     "kind": "concept"
   },
   {
@@ -607,6 +657,11 @@
   {
     "id": "type:cw_wiki::plan::Planned",
     "path": "01-Core/cw-wiki/Planned.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::secret::platform",
+    "path": "01-Core/cw-core/secret/Platform Module.md",
     "kind": "concept"
   },
   {
@@ -675,6 +730,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_client::remote",
+    "path": "01-Core/cw-client/Remote Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::render",
     "path": "01-Core/cw-wiki/Render Module.md",
     "kind": "concept"
@@ -697,6 +757,11 @@
   {
     "id": "mod:cw_parse::resolve",
     "path": "01-Core/cw-parse/Resolve Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::settings::Resolved",
+    "path": "01-Core/cw-core/Resolved.md",
     "kind": "concept"
   },
   {
@@ -745,8 +810,18 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_core::secret",
+    "path": "01-Core/cw-core/Secret Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::security",
     "path": "01-Core/cw-wiki/Security Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::select",
+    "path": "01-Core/codewiki-app/mui/Select Module.md",
     "kind": "concept"
   },
   {
@@ -775,13 +850,43 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_server::ServerConfig",
-    "path": "01-Core/cw-server/ServerConfig.md",
+    "id": "mod:cw_wiki::service",
+    "path": "01-Core/cw-wiki/Service Module.md",
     "kind": "concept"
   },
   {
-    "id": "mod:cw_wiki::service",
-    "path": "01-Core/cw-wiki/Service Module.md",
+    "id": "type:cw_core::settings::Settings",
+    "path": "01-Core/cw-core/Settings.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::settings_layout",
+    "path": "01-Core/codewiki-app/Settings Layout Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::settings",
+    "path": "01-Core/codewiki-app/Settings Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_core::settings",
+    "path": "01-Core/cw-core/Settings Module (cw-core).md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::settings",
+    "path": "01-Core/cw-server/Settings Module (cw-server).md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::settings_pages",
+    "path": "01-Core/codewiki-app/Settings Pages Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::settings_view",
+    "path": "01-Core/codewiki-app/Settings View Module.md",
     "kind": "concept"
   },
   {
@@ -792,6 +897,11 @@
   {
     "id": "type:cw_parse::lang::Sink",
     "path": "01-Core/cw-parse/Sink.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::semantic::Slot",
+    "path": "01-Core/cw-wiki/Slot.md",
     "kind": "concept"
   },
   {
@@ -820,6 +930,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::status",
+    "path": "01-Core/codewiki-app/Status Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_index::store",
     "path": "01-Core/cw-index/Store Module.md",
     "kind": "concept"
@@ -832,6 +947,11 @@
   {
     "id": "mod:cw_update::swap",
     "path": "01-Core/cw-update/Swap Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::switch",
+    "path": "01-Core/codewiki-app/mui/Switch Module.md",
     "kind": "concept"
   },
   {
@@ -880,6 +1000,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::tray",
+    "path": "01-Core/codewiki-app/Tray Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "integration:tree_sitter",
     "path": "03-Integrations/tree_sitter.md",
     "kind": "integration"
@@ -922,6 +1047,11 @@
   {
     "id": "mod:cw_index::vectors",
     "path": "01-Core/cw-index/Vectors Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::win32",
+    "path": "01-Core/codewiki-app/Win32 Module.md",
     "kind": "concept"
   },
   {
@@ -992,6 +1122,11 @@
   {
     "id": "index:01-Core/cw-core",
     "path": "01-Core/cw-core/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-core/secret",
+    "path": "01-Core/cw-core/secret/_index.md",
     "kind": "index"
   },
   {

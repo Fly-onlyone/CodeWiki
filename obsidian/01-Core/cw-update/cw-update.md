@@ -26,13 +26,13 @@ Modules:
 Defined at the crate root:
 
 - `UPDATE_DIR` — folder inside the installation that holds downloads, the unpacked package and the swap journal.
-- `install` — download, verify and unpack `release`, then stop the backend with `stop_backend` and swap the files of the installation at `install`.
 - `is_installation` — whether `dir` is an installation made by `install.ps1`.
+- `install` — download, verify and unpack `release`, then stop the backend with `stop_backend` and swap the files of the installation at `install`.
+- `installed_dir` — the installation this program runs from, if it was installed.
 - `REPOSITORY` — GitHub repository whose releases are offered.
 - `URL_ENV` — overrides the GitHub API address, for tests against a stand-in server.
 - `PROGRAMS` — the programs a package must hold.
 - `api_base` — address of the GitHub API: `URL_ENV` when set, otherwise GitHub's.
-- `installed_dir` — the installation this program runs from, if it was installed.
 
 ## Depends on
 
@@ -45,6 +45,7 @@ Defined at the crate root:
 
 - [[Swap Module]] — from `journal_path`, `leftovers`, `recover_and_clean`
 - [[codewiki-app]] — from `install_update`, `start_updates`
+- [[Autostart Module]] — from `enabled`, `set`
 - [[Release Module]] — from `check`, `from_repository`
 - [[Update Module]] — from `check`
 - [[Stage Module]] — from `stage`

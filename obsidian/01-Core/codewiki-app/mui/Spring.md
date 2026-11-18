@@ -26,11 +26,11 @@ Public API:
 ## Depends on
 
 - [[Motion Module (mui)]] — uses `EPSILON`, `scale`, `scaled`
+- [[Tokens Module]] — uses `easing`
 
 ## Used by
 
-- [[Motion Module (mui)]] — from `BOUNCY`, `GENTLE`, `PAGE`, `SNAPPY`
-- [[Enter]] — from `Enter`, `rise`, `slide`
+- [[Motion Module (mui)]] — from `BOUNCY`, `Enter`, `GENTLE`, `PAGE`
 - [[Doc View Module]] — from `stat_tile`
 - [[Tabs Module]] — from `render`
 - [[Button]] — from `render`

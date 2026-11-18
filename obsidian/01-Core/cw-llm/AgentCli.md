@@ -32,7 +32,7 @@ Public API:
 
 ## Used by
 
-- [[Provider Module]] — from `from_env`
+- [[Provider Module]] — from `from_config`
 
 ## See also
 

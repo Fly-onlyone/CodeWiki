@@ -25,6 +25,7 @@ Main items:
 ## Depends on
 
 - [[MotionPref]] — uses `ALL`, `MotionPref`
+- [[Category]] — uses `ALL`, `Category`
 
 ## Used by
 

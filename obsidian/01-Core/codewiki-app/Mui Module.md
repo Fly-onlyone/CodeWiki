@@ -12,7 +12,7 @@ tags: [core, codewiki-app, module]
 
 ## How it works
 
-Submodules: [[Base Module]], [[Button Module]], [[Feedback Module]], [[List Module]], [[Menu Module]], [[Motion Module (mui)]], [[Ripple Module]], [[Surfaces Module]], [[Tabs Module]], [[Text Field Module]], [[Tokens Module]].
+Submodules: [[Base Module]], [[Button Module]], [[Feedback Module]], [[List Module]], [[Menu Module]], [[Motion Module (mui)]], [[Ripple Module]], [[Select Module]], [[Surfaces Module]], [[Switch Module]], [[Tabs Module]], [[Text Field Module]], [[Tokens Module]].
 
 ## See also
 

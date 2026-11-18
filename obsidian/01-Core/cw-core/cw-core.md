@@ -22,23 +22,27 @@ Modules:
 - [[Logs Module]] — log files of the programs, under `<data dir>/logs`.
 - [[Model Module]] — data model shared between the parser, index, graph and API layers.
 - [[Paths Module]] — locations of per-user data.
+- [[Secret Module]] — secrets kept in a settings file: API keys and the token of a remote backend.
+- [[Settings Module (cw-core)]] — settings the backend keeps for its user: which LLM writes prose, which embedder serves semantic search, and the keys and addresses they need.
 
 Defined at the crate root:
 
 - `MANIFEST_DIR` — folder inside the vault that holds machine metadata.
 - `VAULT_DIR` — folder, relative to a repository root, that holds the generated vault.
+- `CLIENT_HEADER` — request header in which a client of the backend says what it is.
 - `VERSION` — crate version, exposed so binaries report one consistent version string.
+- `MCP_CLIENT` — what the MCP bridge sends in `CLIENT_HEADER`.
 
 ## Used by
 
 - [[Query Module]] — from `answer`, `list_notes`, `notes_citing`, `overview`
+- [[Api Module]] — from `health`, `require_token`, `vault`
 - [[Decisions Module]] — from `create`, `list`, `why`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`
+- [[cw-server]] — from `backend_status_needs_the_token_and_counts_only_bridge_calls`, `call_as`
 - [[Update Module]] — from `check`, `describe`
-- [[Api Module]] — from `health`, `vault`
 - [[Briefing Module]] — from `session_start`, `vault_root`
 - [[Ci Module]] — from `check`, `to_sarif`
-- [[codewiki]] — from `run`
 
 ## See also
 

@@ -25,7 +25,7 @@ Main items:
 
 ## Used by
 
-- [[Service Module]] — from `is_stale`, `reindex`, `update_in`
+- [[Service Module]] — from `is_stale`, `reindex`, `run_update`
 - [[cw-wiki]] — from `update`
 - [[Briefing Module]] — from `session_start`
 - [[Query Module]] — from `status`

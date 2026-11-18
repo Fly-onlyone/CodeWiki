@@ -16,8 +16,8 @@ Main items:
 
 - `sha256_hex` — lowercase hex SHA-256 of `bytes`.
 - `hmac_sha256` — HMAC-SHA256 of `message` under `key` (RFC 2104), used to verify webhook signatures.
-- `constant_time_eq` — compare without leaking how many leading bytes matched.
 - `normalize_text` — normalize text before hashing so that line-ending and trailing-whitespace differences (git autocrlf, editor settings) are not reported as edits.
+- `constant_time_eq` — compare without leaking how many leading bytes matched.
 - `BLOCK` — SHA-256 block size in bytes.
 
 ## Used by

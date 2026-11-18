@@ -16,7 +16,8 @@ Declared as `pub(crate) struct Inner`.
 
 ## Depends on
 
-- [[ServerConfig]] — uses `ServerConfig`
+- [[cw-server]] — uses `ServerConfig`
+- [[Activity]] — uses `Activity`
 
 ## Used by
 

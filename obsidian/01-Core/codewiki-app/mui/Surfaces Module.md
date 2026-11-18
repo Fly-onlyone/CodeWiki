@@ -30,10 +30,10 @@ Main items:
 
 ## Used by
 
-- [[Doc View Module]] — from `choices_row`, `code_block`, `draw`, `draw_strip`
-- [[codewiki-app]] — from `details`, `palette_view`
+- [[Doc View Module]] — from `caption`, `code_block`, `column`, `draw`
+- [[codewiki-app]] — from `details`, `palette_view`, `settings_frame`
 - [[Illustration Module]] — from `render`, `steps`
-- [[Menu]] — from `render`
+- [[Menu Module]] — from `render`
 
 ## See also
 

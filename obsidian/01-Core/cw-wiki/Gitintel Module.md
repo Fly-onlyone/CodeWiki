@@ -14,7 +14,7 @@ tags: [core, cw-wiki, module]
 
 Main items:
 
-- [[FileHistory]] — struct
+- `FileHistory` — struct
 - `load` — load mined history from the index; empty when none was stored.
 - `Partner` — struct
 - `RiskLevel` — enum
@@ -28,7 +28,6 @@ Main items:
 - [[Index]] — uses `Index`, `edges`, `files`, `meta`
 - [[Error Module]] — uses `Result`
 - [[Error]] — uses `external`
-- [[FileHistory]] — uses `FileHistory`
 
 ## Used by
 

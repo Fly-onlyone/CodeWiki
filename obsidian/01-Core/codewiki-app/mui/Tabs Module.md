@@ -26,7 +26,6 @@ Main items:
 ## Depends on
 
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
-- [[Doc View Module]] — uses `id`
 - [[Motion Module (mui)]] — uses `SNAPPY`
 - [[Spring]] — uses `policy`
 

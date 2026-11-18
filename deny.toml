@@ -18,6 +18,9 @@ ignore = [
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, transitive through gpui-kit" },
     { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, transitive through gpui-kit" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, transitive through gpui-kit, no safe upgrade" },
+    # Not only gpui-kit: rmcp (the MCP bridge) and schemars pull it in too.
+    # Remove this when all three have moved off it.
+    { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, transitive through gpui-kit, rmcp and schemars, no safe upgrade" },
 ]
 
 [licenses]

@@ -819,16 +819,17 @@ foreach ($class in $classes) {
             $box = $current.BoundingRectangle
             $place = if ($box.IsEmpty) { "0,0,0,0" } else { "$([int]$box.X),$([int]$box.Y),$([int]$box.Width),$([int]$box.Height)" }
             $kind = $current.ControlType.ProgrammaticName -replace "^ControlType\.", ""
-            "element=$class;$kind;$place;$([int]$current.IsOffscreen);$([int]$current.IsEnabled);$($current.Name -replace '\s+', ' ')"
+            "element=$class;$kind;$place;$([int]$current.IsOffscreen);$([int]$current.IsEnabled);$($current.ClassName -replace ';', ' ');$($current.Name -replace '\s+', ' ')"
         }
     }
 }
 '@
 
 # The elements of the guest's screen, under top-level windows of the given
-# window classes, whose name is like -Like. Each has Class, Kind, Name, its
-# place (Left, Top, Width, Height), the point in its middle (X, Y), and
-# whether it is on screen (OnScreen) and can be chosen (Enabled).
+# window classes, whose name is like -Like. Each has Class (of the window),
+# Kind, UiClass (of the element itself), Name, its place (Left, Top, Width,
+# Height), the point in its middle (X, Y), and whether it is on screen
+# (OnScreen) and can be chosen (Enabled).
 function Get-GuestElements {
     param(
         [Parameter(Mandatory)][string[]]$Class,
@@ -837,9 +838,9 @@ function Get-GuestElements {
     $classes = ($Class | ForEach-Object { "'$_'" }) -join ", "
     $run = Invoke-GuestScript -TimeoutSec 90 -Script "`$classes = @($classes)`n`$like = '$($Like -replace "'", "''")'`n$script:GuestElementsScript"
     @($run.Output -split "`r?`n" | ForEach-Object {
-            if ($_ -match '^element=([^;]*);([^;]*);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d);(\d);(.*)$') {
+            if ($_ -match '^element=([^;]*);([^;]*);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d);(\d);([^;]*);(.*)$') {
                 [pscustomobject]@{
-                    Class = $Matches[1]; Kind = $Matches[2]; Name = $Matches[9].Trim()
+                    Class = $Matches[1]; Kind = $Matches[2]; UiClass = $Matches[9]; Name = $Matches[10].Trim()
                     Left = [int]$Matches[3]; Top = [int]$Matches[4]; Width = [int]$Matches[5]; Height = [int]$Matches[6]
                     X = [int]$Matches[3] + [int]([int]$Matches[5] / 2); Y = [int]$Matches[4] + [int]([int]$Matches[6] / 2)
                     OnScreen = $Matches[7] -eq "0" -and [int]$Matches[5] -gt 0
@@ -853,25 +854,59 @@ function Get-GuestElements {
 # does not show on the taskbar. A new icon starts in the flyout.
 $script:TrayClasses = "Shell_TrayWnd", "TopLevelWindowForOverflowXamlIsland"
 
-# The tray icons whose tooltip is like -Like. Windows lists an icon of the
-# flyout also while the flyout is closed; it is then not on screen.
+# The taskbar's arrow that opens and closes the flyout ("Show Hidden Icons";
+# while the flyout is open its name also holds "Hide"). Asked for up to three
+# times: while Windows draws a notification the taskbar can be missing from
+# what UI Automation lists.
+function Get-GuestTrayArrow {
+    foreach ($try in 1..3) {
+        $arrow = Get-GuestElements -Class "Shell_TrayWnd" -Like "*Hidden Icons*" | Where-Object { $_.OnScreen } | Select-Object -First 1
+        if ($arrow) { return $arrow }
+        Start-Sleep -Seconds 2
+    }
+}
+
+# Open the flyout of hidden icons when it is closed. Says whether it had to.
+function Open-GuestTrayFlyout {
+    $arrow = Get-GuestTrayArrow
+    if (-not $arrow -or $arrow.Name -match "Hide") { return $false }
+    Send-Click -X $arrow.X -Y $arrow.Y
+    Start-Sleep -Milliseconds 1500
+    $true
+}
+
+# Close the flyout of hidden icons when it is open.
+function Close-GuestTrayFlyout {
+    $arrow = Get-GuestTrayArrow
+    if ($arrow -and $arrow.Name -match "Hide") {
+        Send-Click -X $arrow.X -Y $arrow.Y
+        Start-Sleep -Milliseconds 800
+    }
+}
+
+# The tray icons whose tooltip is like -Like, on the taskbar and in the
+# flyout. The flyout's window exists only while it is open, and a new icon
+# starts in it: when the taskbar shows no such icon the flyout is opened to
+# look, and closed again unless -KeepOpen. An icon's place is good for a click
+# only while what holds it is open.
 function Get-GuestTrayIcons {
-    param([string]$Like = "*CodeWiki*")
-    @(Get-GuestElements -Class $script:TrayClasses -Like $Like | Where-Object { $_.Kind -eq "Button" })
+    param([string]$Like = "*CodeWiki*", [switch]$KeepOpen)
+    # The taskbar also has a button for each running program, named after it
+    # ("codewiki-app - 1 running window"); that one is not a tray icon.
+    $isIcon = { $_.Kind -eq "Button" -and $_.UiClass -notlike "Taskbar.*" }
+    $icons = @(Get-GuestElements -Class $script:TrayClasses -Like $Like | Where-Object $isIcon)
+    if ($icons) { return $icons }
+    $opened = Open-GuestTrayFlyout
+    $icons = @(Get-GuestElements -Class $script:TrayClasses -Like $Like | Where-Object $isIcon)
+    if ($opened -and -not $KeepOpen) { Close-GuestTrayFlyout }
+    $icons
 }
 
 # One tray icon that can be clicked: on the taskbar, or in the flyout, which
-# is opened for it by a click on the taskbar's arrow. Null when there is none.
+# is opened for it and left open. Null when there is none.
 function Get-GuestTrayIcon {
     param([string]$Like = "*CodeWiki*")
-    $icon = Get-GuestTrayIcons $Like | Where-Object { $_.OnScreen } | Select-Object -First 1
-    if ($icon) { return $icon }
-    if (-not (Get-GuestTrayIcons $Like)) { return $null }
-    $arrow = Get-GuestElements -Class "Shell_TrayWnd" -Like "*Hidden Icons*" | Where-Object { $_.OnScreen } | Select-Object -First 1
-    if (-not $arrow) { return $null }
-    Send-Click -X $arrow.X -Y $arrow.Y
-    Start-Sleep -Milliseconds 1500
-    Get-GuestTrayIcons $Like | Where-Object { $_.OnScreen } | Select-Object -First 1
+    Get-GuestTrayIcons $Like -KeepOpen | Where-Object { $_.OnScreen } | Select-Object -First 1
 }
 
 # Click a tray icon, as a user does: the left button for what the icon does,
@@ -888,21 +923,10 @@ function Send-GuestTrayClick {
     $icon
 }
 
-# The rows of the menu that is open on the guest's screen, top to bottom: a
-# program's own pop-up menu, such as the one a tray icon opens.
-function Get-GuestMenu {
-    @(Get-GuestElements -Class "#32768" | Where-Object { $_.Kind -in "MenuItem", "Separator" })
-}
-
-# Click the row of the open menu whose text is like -Like.
-function Send-GuestMenuClick {
-    param([Parameter(Mandatory)][string]$Like)
-    $row = Get-GuestMenu | Where-Object { $_.Kind -eq "MenuItem" -and $_.Name -like $Like } | Select-Object -First 1
-    if (-not $row) { throw "the open menu has no row like '$Like'" }
-    Send-Click -X $row.X -Y $row.Y
-    Start-Sleep -Milliseconds 800
-    $row
-}
+# A tray icon's menu cannot be read this way: it closes as soon as another
+# program starts, and every question to the guest starts one. Take a picture
+# of it instead (the host does that without the guest), and choose a row with
+# the keyboard: Up from a newly opened menu is its last row.
 
 # ------------------------------------------------------------ Windows Update
 # Windows version of the running guest as "build.revision", for example 26200.6584.

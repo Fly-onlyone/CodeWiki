@@ -398,58 +398,75 @@ Test-Case "C4" "Install a second time" "nothing duplicated" {
 # here. The rules that refuse the programs are then set to audit, or no case
 # after this one could be judged; nothing else is loosened.
 $auditedRules = @()
-if ($Hardened) {
-    Test-Case "S3" "The programs start under the protection" "recorded: whether Windows lets codewiki.exe start" {
-        $ruleNames = @{
-            "01443614-cd74-433a-b99e-2ecdc07bfc25" = "Block executable files from running unless they meet a prevalence, age, or trusted list criterion"
-            "c1db55ab-c21a-4637-bb3f-a12568109d35" = "Use advanced protection against ransomware"
-        }
-        # The command-line program, then the MCP bridge with its input closed,
-        # which makes it end at once. Not the app: it would open a window and
-        # start a backend. One rule can let one program through and stop
-        # another, so "started" needs both.
-        $start = (@'
+$ruleNames = @{
+    "01443614-cd74-433a-b99e-2ecdc07bfc25" = "Block executable files from running unless they meet a prevalence, age, or trusted list criterion"
+    "c1db55ab-c21a-4637-bb3f-a12568109d35" = "Use advanced protection against ransomware"
+}
+
+# Try to start the installed programs, and when Windows refuses them, set the
+# rules that Defender names to audit and try again. Returns Status ("started",
+# "audited" when they start only with the rules in audit, "refused"), the
+# programs that were refused at first (Programs), the rules now in audit by
+# name (Rules), and what was tried (Log). It is asked after each install of a
+# build: Defender judges each file by itself, so the build an update starts
+# from can be refused where the one under test is not.
+function Resolve-GuestRefusal {
+    # The command-line program, then the MCP bridge with its input closed,
+    # which makes it end at once. Not the app: it would open a window and
+    # start a backend. One rule can let one program through and stop
+    # another, so "started" needs both.
+    $start = (@'
 $refused = 0
 try { $version = & "{{TARGET}}\codewiki.exe" --version 2>&1; "codewiki.exe: exit $LASTEXITCODE, $version" } catch { $refused += 1; "codewiki.exe: refused, $($_.Exception.Message)" }
 try { $null | & "{{TARGET}}\codewiki-mcp.exe" 2>&1 | Out-Null; "codewiki-mcp.exe: exit $LASTEXITCODE" } catch { $refused += 1; "codewiki-mcp.exe: refused, $($_.Exception.Message)" }
 if ($refused) { "start: refused, $refused of 2 programs" } else { "start: exit 0" }
 $global:LASTEXITCODE = 0
 '@).Replace("{{TARGET}}", $guestTarget)
-        $blocks = @'
+    $blocks = @'
 $events = @(Get-WinEvent -FilterHashtable @{ LogName = "Microsoft-Windows-Windows Defender/Operational"; Id = 1121 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match "codewiki" })
 $rules = @($events | ForEach-Object { if ($_.Message -match "(?m)^\s*ID:\s*([0-9A-Fa-f-]{36})") { $Matches[1].ToLowerInvariant() } } | Sort-Object -Unique)
 "rules: $($rules -join ',')"
 "blocks: $($events.Count)"
 '@
-        $first = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
-        $last = $first
-        $log = "first start:`n$first"
-        foreach ($round in 1..3) {
-            if ($last -match "start: exit 0") { break }
-            $found = (Invoke-GuestScript -Background -TimeoutSec 180 -Script $blocks).Output
-            $rules = if ($found -match "(?m)^rules: (\S+)") { @($Matches[1] -split ",") } else { @() }
-            $log += "`n--- Defender, round ${round}:`n$found"
-            if (-not $rules) { break }
-            # The two rules that judge a program by its history go together:
-            # which of them speaks first differs from start to start, and the
-            # app, which is not started here, meets both.
-            $rules = @(@($rules) + @($ruleNames.Keys) | Sort-Object -Unique)
-            $script:auditedRules = @(@($auditedRules) + @($rules) | Sort-Object -Unique)
-            $relaxed = Invoke-GuestExe -Background -TimeoutSec 300 -Exe $powershell -Arguments "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
-                "-File", "$($script:Vm.GuestDir)\harden.ps1", "-Audit", ($auditedRules -join ",")
-            Set-Content (Join-Path $logs "hardening-after-audit.json") $relaxed.Stdout
-            Wait-For 5
-            $last = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
-            $log += "`n--- start after setting to audit: $($rules -join ', ')`n$last"
-        }
-        $named = @($auditedRules | ForEach-Object { if ($ruleNames[$_]) { "'$($ruleNames[$_])' ($_)" } else { $_ } })
-        $status = if ($first -match "start: exit 0") { "pass" } elseif ($last -match "start: exit 0") { "note" } else { "fail" }
-        $observed = switch ($status) {
-            "pass" { "codewiki.exe started with every rule on block" }
-            "note" { "Windows refused to start CodeWiki's programs ($((($first -split "`n") | Where-Object { $_ -match '^codewiki\S*: refused,' } | ForEach-Object { ($_ -split ':')[0] }) -join ', ')): 'Access is denied'. Set to audit so that the run can go on: $($named -join '; '). With that the programs start. These rules are off unless an administrator turns them on; where they are on, a new unsigned build does not run" }
+    $first = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
+    $last = $first
+    $log = "first start:`n$first"
+    foreach ($round in 1..3) {
+        if ($last -match "start: exit 0") { break }
+        $found = (Invoke-GuestScript -Background -TimeoutSec 180 -Script $blocks).Output
+        $rules = if ($found -match "(?m)^rules: (\S+)") { @($Matches[1] -split ",") } else { @() }
+        $log += "`n--- Defender, round ${round}:`n$found"
+        if (-not $rules) { break }
+        # The two rules that judge a program by its history go together:
+        # which of them speaks first differs from start to start, and the
+        # app, which is not started here, meets both.
+        $rules = @(@($rules) + @($ruleNames.Keys) | Sort-Object -Unique)
+        $script:auditedRules = @(@($auditedRules) + @($rules) | Sort-Object -Unique)
+        $relaxed = Invoke-GuestExe -Background -TimeoutSec 300 -Exe $powershell -Arguments "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+            "-File", "$($script:Vm.GuestDir)\harden.ps1", "-Audit", ($auditedRules -join ",")
+        Set-Content (Join-Path $logs "hardening-after-audit.json") $relaxed.Stdout
+        Wait-For 5
+        $last = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
+        $log += "`n--- start after setting to audit: $($rules -join ', ')`n$last"
+    }
+    [pscustomobject]@{
+        Status   = if ($first -match "start: exit 0") { "started" } elseif ($last -match "start: exit 0") { "audited" } else { "refused" }
+        Programs = @(($first -split "`n") | Where-Object { $_ -match '^codewiki\S*: refused,' } | ForEach-Object { ($_ -split ':')[0] })
+        Rules    = @($auditedRules | ForEach-Object { if ($ruleNames[$_]) { "'$($ruleNames[$_])' ($_)" } else { $_ } })
+        Log      = $log
+    }
+}
+
+if ($Hardened) {
+    Test-Case "S3" "The programs start under the protection" "recorded: whether Windows lets the programs start" {
+        $tried = Resolve-GuestRefusal
+        $status = @{ started = "pass"; audited = "note"; refused = "fail" }[$tried.Status]
+        $observed = switch ($tried.Status) {
+            "started" { "codewiki.exe and codewiki-mcp.exe started with every rule on block" }
+            "audited" { "Windows refused to start CodeWiki's programs ($($tried.Programs -join ', ')): 'Access is denied'. Set to audit so that the run can go on: $($tried.Rules -join '; '). With that the programs start. These rules are off unless an administrator turns them on; where they are on, a build that Microsoft's cloud has not known for a while does not run" }
             default { "Windows refuses to start CodeWiki's programs, and setting the rules that Defender names to audit did not change it; the cases after this cannot be judged. See the output" }
         }
-        Add-Result -Id "S3" -Title "The programs start under the protection" -Expect "recorded" -Status $status -Output $log -Observed $observed
+        Add-Result -Id "S3" -Title "The programs start under the protection" -Expect "recorded" -Status $status -Output $tried.Log -Observed $observed
     }
 }
 
@@ -694,7 +711,32 @@ Test-Case "TR4" "The tray menu" "a right click opens it: what the app is doing, 
         -Observed "right-clicked the icon at ($($icon.X),$($icon.Y)); read the screenshot: the menu must show, greyed, the repository (cw-core), the state (Idle), the MCP line and the version, then 'Open CodeWiki', 'Update wiki now', 'Recent repositories', 'Settings', 'Check for updates' and, last, 'Quit'"
 }
 
+# Opening the icon's menu gives the keyboard to the icon's own window, which
+# never shows, and it keeps it after the menu closes. Alt+F4 then went to
+# that window, Windows destroyed it, and the icon was gone while the app ran
+# on. The icon must outlive that. A dead icon stays drawn until the pointer
+# moves over it, so the pointer is put on it before the icons are counted.
+Test-Case "TR7" "Alt+F4 after the tray menu leaves the icon" "the menu is opened and closed with Escape, then Alt+F4: the icon is still there and the app runs" {
+    $icon = Send-GuestTrayClick -Button right
+    Wait-For 2
+    Send-Keys "esc"; Wait-For 1
+    Send-Keys "alt+f4"; Wait-For 3
+    $again = Get-GuestTrayIcon
+    if ($again) { Move-Pointer -X $again.X -Y $again.Y; Wait-For 2 }
+    $left = @(Get-GuestTrayIcons).Count
+    $shot = Shot "tray-after-menu-alt-f4"
+    $probe = Get-Probe "tray-alt-f4" -Quick
+    $apps = (Get-App $probe).Count
+    Send-Keys "esc"; Wait-For 1
+    Add-Result -Id "TR7" -Title "Alt+F4 after the tray menu leaves the icon" -Expect "one tray icon, one app" `
+        -Status $(if ($left -eq 1 -and $apps -eq 1) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "right-clicked the icon at ($($icon.X),$($icon.Y)), Escape, Alt+F4, pointer on the icon; tray icons named CodeWiki: $left; app processes: $apps"
+}
+
 Test-Case "SI1" "Starting the app again shows the running one" "with the window hidden, the Start menu brings the same app back; no second app, no second backend" {
+    # The keyboard may be with the tray or its flyout: the window takes it
+    # back first, as a click on it would.
+    [void](Show-GuestWindow -ProcessName "codewiki-app")
     Send-Keys "alt+f4"
     Wait-For 4
     $hidden = Get-GuestWindowInfo "codewiki-app"
@@ -1059,8 +1101,8 @@ foreach ($pane in "sidebar", "details") {
 }
 '@
     @{
-        Sidebar = if ($run.Output -match "sidebar=(\S+)") { $Matches[1] } else { "" }
-        Details = if ($run.Output -match "details=(\S+)") { $Matches[1] } else { "" }
+        Sidebar = if ($run.Output -match "(?m)^sidebar=(.+)$") { $Matches[1].Trim() } else { "" }
+        Details = if ($run.Output -match "(?m)^details=(.+)$") { $Matches[1].Trim() } else { "" }
     }
 }
 
@@ -1481,7 +1523,23 @@ if ($Plugin) {
     # after every case that needs a guest without it (B1, D2). The installer
     # is the one git-scm.com hands out, run with the rights that "Yes" at its
     # UAC prompt gives it.
+    # After a restart of Windows the guest's network takes a while, and the
+    # host's own (a VPN that reconnects) can drop it for a moment: names did
+    # not resolve when this block's first download was asked for. Wait for
+    # them, so that a slow network is not taken for a failed install.
+    function Wait-GuestNetwork {
+        param([int]$TimeoutSec = 240)
+        $deadline = (Get-Date).AddSeconds($TimeoutSec)
+        do {
+            $run = Invoke-GuestScript -TimeoutSec 60 -Script 'try { [void][System.Net.Dns]::GetHostAddresses("api.github.com"); [void][System.Net.Dns]::GetHostAddresses("claude.ai"); "names resolve" } catch { "no names yet" }'
+            if ($run.Output -match "names resolve") { return $true }
+            Start-Sleep -Seconds 10
+        } while ((Get-Date) -lt $deadline)
+        $false
+    }
+
     Test-Case "CC0" "Install Git for Windows" "git and Git Bash are installed" {
+        if (-not (Wait-GuestNetwork)) { throw "the guest resolves no names: it has no network for the downloads" }
         $run = Invoke-GuestScript -Background -TimeoutSec 1200 -Script @'
 $ProgressPreference = "SilentlyContinue"
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -1508,6 +1566,7 @@ $global:LASTEXITCODE = 0
     }
 
     Test-Case "CC1" "Install Claude Code as its docs say" "claude.exe is installed for the user, carries Anthropic's signature and prints its version" {
+        if (-not (Wait-GuestNetwork)) { throw "the guest resolves no names: it has no network for the downloads" }
         $run = Invoke-GuestScript -TimeoutSec 900 -Script @'
 irm https://claude.ai/install.ps1 | iex
 $claude = "$env:USERPROFILE\.local\bin\claude.exe"
@@ -1736,6 +1795,9 @@ if ($OldZip) {
         Copy-ToGuest -Path $OldZip -GuestDirectory $guestOld
         Invoke-GuestScript -Script "Expand-Archive -Path '$guestOld\$(Split-Path -Leaf $OldZip)' -DestinationPath '$guestOld\CodeWiki' -Force" | Out-Null
         $install = Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestOld\CodeWiki\install.cmd"
+        # The older build is other files than the one under test, and Defender
+        # judges each file by itself.
+        $oldStart = if ($Hardened) { Resolve-GuestRefusal } else { $null }
         $was = (Invoke-GuestScript -Script $version).Output.Trim()
         $serve = "$($script:Vm.GuestDir)\update"
         if (-not $RealRelease) {
@@ -1777,7 +1839,7 @@ if ($OldZip) {
         $ok = $install.ExitCode -eq 0 -and $was -match [regex]::Escape($oldVersion) -and $now -match [regex]::Escape($newVersion) -and $window.Count -eq 1 -and (Get-App $probe).Count -eq 1 -and -not $left
         Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) -Output ("requests the stand-in saw:`n" + $asked + "`n--- app.log`n" + $log).Trim() `
-            -Observed "installed $oldVersion (exit $($install.ExitCode)), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
+            -Observed "installed $oldVersion (exit $($install.ExitCode))$(if ($oldStart -and $oldStart.Status -ne 'started') { ", which Windows refused to start until the rules $($oldStart.Rules -join '; ') were in audit" }), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
         Stop-GuestApp
         Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
     }

@@ -1670,7 +1670,8 @@ foreach ($line in Get-Content $out) {
         "codewiki server: $(($event.mcp_servers | Where-Object { $_.name -match 'codewiki' } | ForEach-Object { "$($_.name)=$($_.status)" }) -join ', ')"
         "other servers in the session: $(@($event.mcp_servers | Where-Object { $_.name -notmatch 'codewiki' }).Count)"
         "codewiki plugin loaded: $([bool]($event.plugins | Where-Object { $_.name -eq 'codewiki' }))"
-        "plugin errors: $(@($event.plugin_errors).Count)"
+        $errors = @($event.plugin_errors | Where-Object { $_ })
+        "plugin errors: $($errors.Count)$(if ($errors) { ': ' + (Cut ($errors | ConvertTo-Json -Compress -Depth 4) 400) })"
         "codewiki tools offered: $(@($event.tools | Where-Object { $_ -like 'mcp__plugin_codewiki_*' }).Count)"
     } elseif ($event.type -eq "system" -and $event.subtype -eq "hook_response") {
         "briefing: $(Cut "$($event.output)" 600)"

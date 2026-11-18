@@ -446,7 +446,7 @@ $rules = @($events | ForEach-Object { if ($_.Message -match "(?m)^\s*ID:\s*([0-9
         $status = if ($first -match "start: exit 0") { "pass" } elseif ($last -match "start: exit 0") { "note" } else { "fail" }
         $observed = switch ($status) {
             "pass" { "codewiki.exe started with every rule on block" }
-            "note" { "Windows refused to start CodeWiki's programs ($((($first -split "`n") | Where-Object { $_ -match 'refused,' } | ForEach-Object { ($_ -split ':')[0] }) -join ', ')): 'Access is denied'. Set to audit so that the run can go on: $($named -join '; '). With that the programs start. These rules are off unless an administrator turns them on; where they are on, a new unsigned build does not run" }
+            "note" { "Windows refused to start CodeWiki's programs ($((($first -split "`n") | Where-Object { $_ -match '^codewiki\S*: refused,' } | ForEach-Object { ($_ -split ':')[0] }) -join ', ')): 'Access is denied'. Set to audit so that the run can go on: $($named -join '; '). With that the programs start. These rules are off unless an administrator turns them on; where they are on, a new unsigned build does not run" }
             default { "Windows refuses to start CodeWiki's programs, and setting the rules that Defender names to audit did not change it; the cases after this cannot be judged. See the output" }
         }
         Add-Result -Id "S3" -Title "The programs start under the protection" -Expect "recorded" -Status $status -Output $log -Observed $observed

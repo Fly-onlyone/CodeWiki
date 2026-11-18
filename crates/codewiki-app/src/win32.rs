@@ -9,12 +9,15 @@
 
 #![allow(unsafe_code)]
 
+use std::sync::atomic::{AtomicIsize, Ordering};
+
 use gpui_kit::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use windows_sys::Win32::Foundation::HWND;
+use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
-    AllowSetForegroundWindow, GetSystemMetrics, IsWindowVisible, SM_CXSMICON, SW_HIDE, SW_SHOW,
-    ShowWindow,
+    AllowSetForegroundWindow, CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetSystemMetrics,
+    IsWindowVisible, SM_CXSMICON, SW_HIDE, SW_SHOW, SetWindowLongPtrW, ShowWindow, WM_CLOSE,
+    WNDPROC,
 };
 
 /// A window of this process, as Windows names it. Only [`hwnd`] makes one,
@@ -59,6 +62,66 @@ pub fn show(window: Hwnd) {
 pub fn is_visible(window: Hwnd) -> bool {
     // SAFETY: as for `hide`; the call only reads the window's state.
     unsafe { IsWindowVisible(window.raw()) != 0 }
+}
+
+/// The window procedure the tray icon's window had before [`keep_open`]
+/// replaced it; 0 until then.
+static TRAY_PROCEDURE: AtomicIsize = AtomicIsize::new(0);
+
+/// Make the window behind the tray icon ignore a request to close.
+///
+/// The tray icon lives in a window of its own that never shows. Opening the
+/// icon's menu makes that window the one that has the keyboard, and it stays
+/// so after the menu closes. Alt+F4 then goes to it. Windows' own answer to
+/// that is to destroy the window, and the icon went with it while the app
+/// ran on, with nothing left on screen to reach it by. The window must end
+/// only when the icon is dropped, which destroys it directly and asks nobody.
+///
+/// `window` is what `TrayIcon::window_handle` returns: a window of this
+/// process that lives as long as the icon. Call this once, from the thread
+/// that made the icon, before that thread handles another message.
+pub fn keep_open(window: HWND) {
+    let replacement: unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT =
+        tray_procedure;
+    // SAFETY: `window` is a live window of this process (see above), and
+    // `tray_procedure` has the signature Windows asks of a window procedure.
+    // The call returns the procedure it replaces. No message reaches the new
+    // one before that is stored: messages for the window are handled on this
+    // thread, which handles none until this function has returned.
+    let previous =
+        unsafe { SetWindowLongPtrW(window, GWLP_WNDPROC, replacement as usize as isize) };
+    if previous == 0 {
+        log::warn!("the tray icon's window keeps its own answer to a close request");
+        return;
+    }
+    TRAY_PROCEDURE.store(previous, Ordering::Relaxed);
+}
+
+/// The tray window's procedure after [`keep_open`]: a close request is
+/// answered as handled and does nothing; every other message goes to the
+/// procedure the window had before.
+unsafe extern "system" fn tray_procedure(
+    window: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_CLOSE {
+        return 0;
+    }
+    let previous = TRAY_PROCEDURE.load(Ordering::Relaxed);
+    // SAFETY: Windows calls this for the tray icon's window with a message
+    // meant for it. `previous` is 0, or the value `SetWindowLongPtrW`
+    // returned for that window's procedure in `keep_open`, which is a window
+    // procedure by that function's contract; `WNDPROC` is an optional
+    // pointer to one and has the size of `isize`. Each call passes the
+    // message on unchanged.
+    unsafe {
+        match std::mem::transmute::<isize, WNDPROC>(previous) {
+            Some(procedure) => CallWindowProcW(Some(procedure), window, message, wparam, lparam),
+            None => DefWindowProcW(window, message, wparam, lparam),
+        }
+    }
 }
 
 /// The side of a small icon, as in the notification area, in pixels on the

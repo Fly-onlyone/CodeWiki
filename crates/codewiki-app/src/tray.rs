@@ -240,6 +240,9 @@ impl Tray {
             .with_menu_on_left_click(false)
             .build()
             .map_err(|e| format!("adding the tray icon: {e}"))?;
+        // After its menu was open, the icon's window has the keyboard, and
+        // Alt+F4 would destroy it and take the icon away.
+        crate::win32::keep_open(icon.window_handle());
         // Only the first handler set in a process is kept, which is this one:
         // the app has one tray icon.
         TrayIconEvent::set_event_handler(Some(move |event| {

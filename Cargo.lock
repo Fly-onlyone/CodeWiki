@@ -1135,6 +1135,7 @@ dependencies = [
  "cw-embed-engine",
  "cw-index",
  "cw-llm",
+ "cw-models",
  "cw-server",
  "cw-vault",
  "cw-wiki",

@@ -1,5 +1,6 @@
 //! CodeWiki command line.
 
+mod model;
 mod serve;
 
 use std::path::PathBuf;
@@ -132,6 +133,12 @@ enum Command {
     Approve { id: String },
     /// Discard a proposal; the same change is not proposed again.
     Reject { id: String },
+    /// The built-in embedding models for semantic search: what there is,
+    /// what fits this machine, and what is installed.
+    Model {
+        #[command(subcommand)]
+        action: model::ModelAction,
+    },
     /// The process that holds a built-in embedding model. CodeWiki starts it
     /// by itself and speaks with it over its standard input and output.
     #[command(hide = true)]
@@ -223,6 +230,10 @@ fn print_json(encoded: serde_json::Result<String>) -> Result<()> {
 fn run(cli: Cli) -> Result<()> {
     if let Command::Serve { host, port } = cli.command {
         return serve::run(host, port);
+    }
+    // The models belong to the machine, not to a repository.
+    if let Command::Model { action } = &cli.command {
+        return model::run(action, cli.json);
     }
     let root = cli
         .repo
@@ -772,7 +783,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("rejected {}", p.id);
             Ok(())
         }
-        Command::Serve { .. } | Command::EmbedWorker { .. } => {
+        Command::Serve { .. } | Command::Model { .. } | Command::EmbedWorker { .. } => {
             unreachable!("handled before the repository is resolved")
         }
     }

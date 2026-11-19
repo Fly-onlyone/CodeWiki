@@ -8,9 +8,10 @@ use sha2::{Digest, Sha256};
 
 use crate::release::{Release, agent, user_agent};
 
-/// Largest package accepted. A release is about 25 MB; anything far larger is
-/// not one.
-const MAX_PACKAGE: u64 = 200 * 1024 * 1024;
+/// Largest package accepted. A release is about 490 MB, nearly all of it the
+/// NVIDIA libraries beside the worker for the graphics card (`cuda\`);
+/// anything far larger is not one.
+const MAX_PACKAGE: u64 = 1024 * 1024 * 1024;
 
 /// Download the package of `release` into `dir` and verify it. Returns the
 /// path of the verified zip. A package that does not match its checksum is

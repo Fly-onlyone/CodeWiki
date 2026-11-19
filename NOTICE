@@ -40,6 +40,20 @@ of the language defined by https://github.com/thesysdev/openui (MIT,
 Copyright Thesys Inc.). Its behavior was checked against that project's
 reference parser; no source from it is included.
 
+The folder cuda of the Windows package holds three libraries of the NVIDIA
+CUDA Toolkit 13.4, unmodified: curand64_10.dll, cublas64_13.dll and
+cublasLt64_13.dll. They are not part of the source of this product and are
+not under its licence. They are redistributed under the NVIDIA CUDA Toolkit
+End User License Agreement, whose text is in that folder as
+NVIDIA-CUDA-EULA.txt (Attachment A lists them as redistributable). The worker
+beside them, codewiki-embed-cuda.exe, uses them to run an embedding model on
+an NVIDIA graphics card.
+
+The embedding models CodeWiki can download are not part of this product. Each
+is fetched from its publisher's repository on Hugging Face under its own
+licence, Apache License 2.0 for every model of the catalog
+(crates/cw-models/catalog.json).
+
 Dependencies under the Mozilla Public License 2.0 (for example cssparser, used
 by the Mermaid renderer) are used unmodified as libraries. Their source is
 available from crates.io.

@@ -23,7 +23,7 @@ foreach ($exe in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe") {
 # Windows lets go of the file, so wait for each process to end. The app may
 # be running with no window, in the tray: say that it was stopped.
 $appWasRunning = $false
-foreach ($process in "codewiki-app", "codewiki-mcp", "codewiki") {
+foreach ($process in "codewiki-app", "codewiki-mcp", "codewiki", "codewiki-embed-cuda") {
     $running = @(Get-Process $process -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($Target, [StringComparison]::OrdinalIgnoreCase) })
     if ($running -and $process -eq "codewiki-app") { $appWasRunning = $true }
@@ -38,6 +38,11 @@ foreach ($item in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICEN
 }
 if (Test-Path (Join-Path $source "plugins")) {
     Copy-Item -Recurse -Force (Join-Path $source "plugins") $Target
+}
+# The worker for NVIDIA cards and the NVIDIA libraries it needs. A package
+# built without them runs models on the processor.
+if (Test-Path (Join-Path $source "cuda")) {
+    Copy-Item -Recurse -Force (Join-Path $source "cuda") $Target
 }
 
 if (-not $NoPath) {

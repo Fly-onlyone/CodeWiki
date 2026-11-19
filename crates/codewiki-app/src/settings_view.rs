@@ -40,6 +40,11 @@ use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update};
 
 /// The name the app's log level is saved under (`prefs.rs`).
 pub const LOG_LEVEL_PREF: &str = "log_level";
+/// File of the app's settings that says the offer of a built-in model on
+/// Home was turned down.
+pub const MODEL_HINT: &str = "model_hint";
+/// How long the app waits before it asks again how far a model's job is.
+const MODELS_PAUSE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The list of a select that is open.
 struct OpenMenu {
@@ -71,6 +76,17 @@ pub struct State {
     typing: HashSet<FieldId>,
     llm_test: Tested,
     embed_test: Tested,
+    /// The backend's built-in embedding models (`GET /v1/models`), once
+    /// they have arrived. Home reads it too, for its offer.
+    pub(crate) models: Option<Value>,
+    /// Why they could not be read.
+    models_error: Option<String>,
+    /// Why the last thing asked of a model was refused.
+    models_note: Option<String>,
+    /// Whether the loop that asks again while a job runs is going.
+    models_watched: bool,
+    /// Whether the offer of a built-in model on Home was turned down.
+    pub(crate) model_hint_dismissed: bool,
     /// The news about the last try to connect to a backend elsewhere.
     connect: Option<Note>,
     menu: Option<OpenMenu>,
@@ -115,6 +131,11 @@ impl State {
             typing: HashSet::new(),
             llm_test: Tested::Not,
             embed_test: Tested::Not,
+            models: None,
+            models_error: None,
+            models_note: None,
+            models_watched: false,
+            model_hint_dismissed: prefs::read(MODEL_HINT).is_some(),
             connect: None,
             menu: None,
             menu_focus,
@@ -208,6 +229,7 @@ impl AppView {
             .pending
             .insert(FieldId::RemoteToken, String::new());
         self.load_settings(cx);
+        self.load_models(cx);
         cx.notify();
     }
 
@@ -216,6 +238,10 @@ impl AppView {
     fn show_settings_category(&mut self, category: Category, cx: &mut Context<Self>) {
         self.commit_settings_fields(cx);
         self.settings.menu = None;
+        if category == Category::Search {
+            // What is installed may have changed outside the app.
+            self.load_models(cx);
+        }
         self.settings.last = category;
         self.page = Page::Settings(category);
         self.page_serial += 1;
@@ -264,6 +290,82 @@ impl AppView {
             });
         })
         .detach();
+    }
+
+    /// Ask the backend for its built-in embedding models, and go on asking
+    /// while a job runs. A backend on another machine keeps its models to
+    /// itself, and is not asked.
+    pub(crate) fn load_models(&mut self, cx: &mut Context<Self>) {
+        if self.backend.as_ref().is_none_or(Backend::is_remote) {
+            self.settings.models = None;
+            self.settings.models_error = None;
+            return;
+        }
+        self.settings_request(
+            cx,
+            |backend| backend.get("/v1/models"),
+            |this, result, cx| match result {
+                Ok(models) => this.take_models(models, cx),
+                Err(error) => {
+                    log::warn!("could not read the backend's models: {error}");
+                    this.settings.models_error = Some(error);
+                }
+            },
+        );
+    }
+
+    /// Keep what the backend says about its models.
+    fn take_models(&mut self, models: Value, cx: &mut Context<Self>) {
+        let ran = self
+            .settings
+            .models
+            .as_ref()
+            .is_some_and(settings_pages::job_runs);
+        let runs = settings_pages::job_runs(&models);
+        self.settings.models = Some(models);
+        self.settings.models_error = None;
+        if runs {
+            self.watch_models(cx);
+        } else if ran {
+            // The job that ended may have changed the embedder.
+            self.load_settings(cx);
+        }
+    }
+
+    /// Ask for the models again in a moment. One such wait at a time.
+    fn watch_models(&mut self, cx: &mut Context<Self>) {
+        if self.settings.models_watched {
+            return;
+        }
+        self.settings.models_watched = true;
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(MODELS_PAUSE).await;
+            _ = this.update(cx, |this, cx| {
+                this.settings.models_watched = false;
+                this.load_models(cx);
+            });
+        })
+        .detach();
+    }
+
+    /// Ask the backend to do something with a model, and show the models
+    /// as they are afterwards. What it refuses is said above the models.
+    fn model_request(
+        &mut self,
+        cx: &mut Context<Self>,
+        work: impl FnOnce(&Backend) -> Result<Value, String> + Send + 'static,
+    ) {
+        self.settings.models_note = None;
+        cx.notify();
+        self.settings_request(cx, work, |this, result, cx| {
+            if let Err(error) = result {
+                log::warn!("the backend refused a model request: {error}");
+                this.settings.models_note = Some(error);
+            }
+            this.load_models(cx);
+            // Removing a model in use changes the embedder.
+            this.load_settings(cx);
+        });
     }
 
     /// Ask the backend for its settings.
@@ -607,6 +709,28 @@ impl AppView {
                 }
                 cx.notify();
             }
+            Action::InstallModel(id) => {
+                let path = format!("/v1/models/{id}/install");
+                log::info!("installing the model {id}");
+                self.model_request(cx, move |backend| backend.post(&path, &json!({})));
+            }
+            Action::UseModel(id) => {
+                let path = format!("/v1/models/{id}/use");
+                self.model_request(cx, move |backend| backend.post(&path, &json!({})));
+            }
+            Action::RemoveModel(id) => {
+                let path = format!("/v1/models/{id}");
+                log::info!("removing the model {id}");
+                self.model_request(cx, move |backend| backend.delete(&path));
+            }
+            Action::CancelModelJob => {
+                self.model_request(cx, |backend| backend.post("/v1/models/cancel", &json!({})));
+            }
+            Action::DismissModelHint => {
+                prefs::write(MODEL_HINT, "dismissed");
+                self.settings.model_hint_dismissed = true;
+                cx.notify();
+            }
             Action::OpenDataFolder => {
                 let dir = cw_core::paths::data_dir();
                 log::info!("opening the data folder {}", dir.display());
@@ -789,6 +913,9 @@ impl AppView {
                     typing: &self.settings.typing,
                     llm_test: &self.settings.llm_test,
                     embed_test: &self.settings.embed_test,
+                    models: self.settings.models.as_ref(),
+                    models_error: self.settings.models_error.as_deref(),
+                    models_note: self.settings.models_note.as_deref(),
                     backend_url: self.backend.as_ref().map(Backend::url),
                     origin: self.backend.as_ref().map(Backend::origin),
                     env_url: env_url.as_deref(),

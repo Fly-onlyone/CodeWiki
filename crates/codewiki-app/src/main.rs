@@ -511,7 +511,10 @@ impl AppView {
         let connected = self.backend.is_some() && !self.backend_silent;
         tray::Snapshot {
             repo: self.repo.as_ref().map(|repo| repo.name.clone()),
-            state: status::state_text(connected, self.busy.as_deref(), &updating, current),
+            state: status::state_with_job(
+                status::state_text(connected, self.busy.as_deref(), &updating, current),
+                self.backend_status.model_job.as_deref(),
+            ),
             mcp: status::mcp_text(self.backend_status.bridge),
             can_sync: connected
                 && self.repo.is_some()
@@ -576,6 +579,7 @@ impl AppView {
                 self.backend_status = status::Backend {
                     updating: Vec::new(),
                     bridge: status::Bridge::OldBackend,
+                    model_job: None,
                 };
                 self.backend_silent = false;
             }
@@ -821,6 +825,8 @@ impl AppView {
                     Ok((backend, repos, missing, opened)) => {
                         this.backend = Some(backend);
                         this.take_repos(repos, missing);
+                        // For Home's offer of a built-in model.
+                        this.load_models(cx);
                         let first = opened
                             .and_then(|id| this.repos.iter().find(|r| r.id == id).cloned())
                             .or_else(|| this.newest_recent());
@@ -2942,6 +2948,11 @@ impl AppView {
             .as_ref()
             .filter(|_| self.notes_loaded && self.notes.is_empty())
             .map(|repo| repo.name.as_str());
+        let offer = self
+            .settings
+            .models
+            .as_ref()
+            .and_then(|models| live::model_offer(models, self.settings.model_hint_dismissed));
         live::home_page(&live::HomeInput {
             projects: &projects,
             recent: &self.recent,
@@ -2949,6 +2960,7 @@ impl AppView {
             no_wiki,
             missing: &missing,
             update: update.as_deref(),
+            model_offer: offer.as_ref(),
         })
     }
 

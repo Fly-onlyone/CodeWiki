@@ -53,6 +53,13 @@ pub struct Model<'a> {
     pub typing: &'a HashSet<FieldId>,
     pub llm_test: &'a Tested,
     pub embed_test: &'a Tested,
+    /// The backend's built-in embedding models (`GET /v1/models`), once
+    /// they have arrived.
+    pub models: Option<&'a Value>,
+    /// Why they could not be read.
+    pub models_error: Option<&'a str>,
+    /// Why the last thing asked of a model was refused.
+    pub models_note: Option<&'a str>,
     /// The backend in use, and how the app came to it.
     pub backend_url: Option<&'a str>,
     pub origin: Option<Origin>,
@@ -283,7 +290,20 @@ fn provider(
     help: &str,
     name: fn(&str) -> &str,
 ) -> Block {
-    let entry = &settings[section]["provider"];
+    select(model, settings, section, "provider", label, help, name)
+}
+
+/// A select over the `options` the backend lists for `section.field`.
+fn select(
+    model: &Model,
+    settings: &Value,
+    section: &str,
+    field: &str,
+    label: &str,
+    help: &str,
+    name: fn(&str) -> &str,
+) -> Block {
+    let entry = &settings[section][field];
     let chosen = entry["value"].as_str().unwrap_or("");
     Block::Select {
         label: label.into(),
@@ -297,7 +317,7 @@ fn provider(
                 label: name(option).to_string(),
                 action: Action::SetSetting {
                     section: section.into(),
-                    field: "provider".into(),
+                    field: field.into(),
                     value: Some(option.into()),
                 },
                 selected: option == chosen,
@@ -323,7 +343,8 @@ fn llm_name(provider: &str) -> &str {
 
 fn embedder_name(provider: &str) -> &str {
     match provider {
-        "local" => "Built in: no model needed",
+        "local" => "Word forms: no model needed",
+        "builtin" => "Built-in model",
         "ollama" => "Ollama",
         "openai" => "OpenAI-compatible",
         "none" => "Off: full-text search only",
@@ -443,22 +464,26 @@ fn search(model: &Model) -> Vec<Block> {
     let Some(settings) = model.settings else {
         return without_settings(model);
     };
-    let mut embedder = vec![
-        provider(
-            model,
-            settings,
-            "embed",
-            "Embedder",
-            "Finds notes and symbols by meaning",
-            embedder_name,
-        ),
-        field(
+    let built_in_chosen = settings["embed"]["provider"]["value"] == "builtin";
+    let mut embedder = vec![provider(
+        model,
+        settings,
+        "embed",
+        "Embedder",
+        "Finds notes and symbols by meaning",
+        embedder_name,
+    )];
+    // A built-in model is chosen below, by its Use button, not typed.
+    if !built_in_chosen {
+        embedder.push(field(
             model,
             settings,
             FieldId::EmbedModel,
             "Model",
             "For Ollama and OpenAI; empty takes their default",
-        ),
+        ));
+    }
+    embedder.extend([
         in_use(settings, "embed", "Semantic search is off."),
         Block::Text(vec![text(
             "A new embedder serves the next search. The stored vectors are rebuilt at the next Sync; until then search is full-text alone.",
@@ -467,10 +492,11 @@ fn search(model: &Model) -> Vec<Block> {
             Press::new("Test", Action::TestEmbedder).disabled(*model.embed_test == Tested::Running),
             Press::new("Sync now", Action::Sync),
         ]),
-    ];
+    ]);
     embedder.extend(tested(model.embed_test));
     let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
     blocks.push(card("Embedder", embedder));
+    blocks.extend(built_in(model, settings));
     blocks.push(Block::Text(vec![
         text("The OpenAI key and address and the Ollama address are under "),
         Span::Link {
@@ -480,6 +506,336 @@ fn search(model: &Model) -> Vec<Block> {
         },
         text("."),
     ]));
+    blocks
+}
+
+fn device_name(device: &str) -> &str {
+    match device {
+        "auto" => "Automatic: the graphics card when it can",
+        "cpu" => "Processor",
+        "cuda" => "Graphics card (NVIDIA)",
+        other => other,
+    }
+}
+
+/// Bytes as a person reads them: megabytes below a gigabyte.
+fn size(bytes: u64) -> String {
+    const MB: f64 = 1024.0 * 1024.0;
+    let megabytes = bytes as f64 / MB;
+    if megabytes >= 1024.0 {
+        format!("{:.1} GB", megabytes / 1024.0)
+    } else {
+        format!("{megabytes:.0} MB")
+    }
+}
+
+/// The name of the model `id` in what the backend lists.
+fn model_name<'a>(models: &'a Value, id: &'a str) -> &'a str {
+    models["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry["id"] == id)
+        .and_then(|entry| entry["name"].as_str())
+        .unwrap_or(id)
+}
+
+/// Whether a job is under way: installing, switching, embedding or paused.
+pub fn job_runs(models: &Value) -> bool {
+    matches!(
+        models["job"]["phase"].as_str(),
+        Some("downloading" | "switching" | "embedding" | "paused")
+    )
+}
+
+/// What the job that runs, or the last that ran, has to say.
+fn job(models: &Value) -> Vec<Block> {
+    let job = &models["job"];
+    let count = |name: &str| job[name].as_u64().unwrap_or(0);
+    let share = |done: u64, total: u64| (total > 0).then(|| done as f32 / total as f32);
+    let name = job["model"]
+        .as_str()
+        .map(|id| model_name(models, id).to_string());
+    let documents = || {
+        let repo = job["repo"].as_str().unwrap_or("a repository");
+        let place = if count("repo_count") > 1 {
+            format!(" ({} of {})", count("repo_index"), count("repo_count"))
+        } else {
+            String::new()
+        };
+        (
+            format!("{repo}{place}"),
+            format!(
+                "{} of {} documents",
+                count("docs_done"),
+                count("docs_total")
+            ),
+            share(count("docs_done"), count("docs_total")),
+        )
+    };
+    let cancel = Block::Buttons(vec![Press::new("Cancel", Action::CancelModelJob)]);
+    let alert = |tone: Tone, text: String| Block::Alert {
+        tone,
+        text,
+        button: None,
+    };
+    match job["phase"].as_str() {
+        Some("downloading") => vec![
+            Block::Progress {
+                label: format!("Downloading {}", name.as_deref().unwrap_or("the model")),
+                share: share(count("bytes_done"), count("bytes_total")),
+                detail: format!(
+                    "{} of {}",
+                    size(count("bytes_done")),
+                    size(count("bytes_total"))
+                ),
+                moving: true,
+            },
+            cancel,
+        ],
+        Some("switching") => vec![Block::Progress {
+            label: "Making it the embedder".into(),
+            share: None,
+            detail: "A moment".into(),
+            moving: true,
+        }],
+        Some("embedding") => {
+            let (repo, detail, share) = documents();
+            vec![
+                Block::Progress {
+                    label: format!("Embedding {repo}"),
+                    share,
+                    detail,
+                    moving: true,
+                },
+                cancel,
+            ]
+        }
+        Some("paused") => {
+            let (repo, detail, share) = documents();
+            vec![
+                Block::Progress {
+                    label: "Paused while a game is running".into(),
+                    share,
+                    detail: format!("{detail} of {repo}. It goes on by itself."),
+                    moving: false,
+                },
+                cancel,
+            ]
+        }
+        Some("failed") => vec![alert(
+            Tone::Error,
+            format!(
+                "It did not work: {}",
+                job["error"].as_str().unwrap_or("no reason was given")
+            ),
+        )],
+        Some("cancelled") => vec![alert(
+            Tone::Info,
+            "Stopped. What was downloaded and embedded is kept; the next try goes on from there."
+                .into(),
+        )],
+        Some("done") => {
+            let mut out = Vec::new();
+            if let Some(note) = job["note"].as_str() {
+                out.push(alert(Tone::Info, note.to_string()));
+            }
+            let skipped: Vec<String> = job["skipped"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|skipped| {
+                    format!(
+                        "{} ({})",
+                        skipped["repo"].as_str().unwrap_or("a repository"),
+                        skipped["error"].as_str().unwrap_or("no reason was given")
+                    )
+                })
+                .collect();
+            if !skipped.is_empty() {
+                out.push(alert(
+                    Tone::Warning,
+                    format!("Left out: {}.", skipped.join("; ")),
+                ));
+            }
+            out
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// One model of the catalog: what it is, and what can be done with it.
+fn model_card(entry: &Value, recommended: bool, busy: bool) -> Block {
+    let id = entry["id"].as_str().unwrap_or_default().to_string();
+    let (installed, active) = (entry["installed"] == true, entry["active"] == true);
+    let mut chips = vec![
+        (size(entry["size"].as_u64().unwrap_or(0)), Tone::Neutral),
+        (
+            entry["languages"].as_str().unwrap_or_default().to_string(),
+            Tone::Neutral,
+        ),
+        (
+            entry["license"].as_str().unwrap_or_default().to_string(),
+            Tone::Neutral,
+        ),
+    ];
+    if recommended {
+        chips.push(("Recommended".into(), Tone::Info));
+    }
+    if active {
+        chips.push(("In use".into(), Tone::Success));
+    } else if installed {
+        chips.push(("Installed".into(), Tone::Neutral));
+    }
+    let about = match entry["tier"].as_str() {
+        Some("small") => "The smallest and fastest. For a machine with little memory.",
+        Some("balanced") => "Good results at a speed a processor keeps up with.",
+        Some("large") => "Understands many languages. Wants a graphics card.",
+        _ => "",
+    };
+    let main = |press: Press| {
+        if recommended { press.primary() } else { press }
+    };
+    let buttons = match (installed, active) {
+        (false, _) => vec![main(Press::new("Install", Action::InstallModel(id))).disabled(busy)],
+        (true, false) => vec![
+            main(Press::new("Use", Action::UseModel(id.clone()))).disabled(busy),
+            Press::new("Remove", Action::RemoveModel(id)).disabled(busy),
+        ],
+        (true, true) => vec![Press::new("Remove", Action::RemoveModel(id)).disabled(busy)],
+    };
+    Block::Card {
+        title: entry["name"].as_str().unwrap_or_default().to_string(),
+        chips,
+        body: vec![Block::Text(vec![text(about)]), Block::Buttons(buttons)],
+    }
+}
+
+/// The models CodeWiki can fetch and run by itself: the machine, what fits
+/// it, what a job is doing, and each model with what can be done about it.
+fn built_in(model: &Model, settings: &Value) -> Vec<Block> {
+    let mut blocks = vec![Block::Heading("Built-in model".into())];
+    if model.remote() {
+        // A model takes the disk, the memory and the graphics card of the
+        // machine it runs on, so that machine's owner decides.
+        blocks.push(Block::Alert {
+            tone: Tone::Info,
+            text: "A built-in model is installed on the backend's machine and is managed there, not from here.".into(),
+            button: None,
+        });
+        return blocks;
+    }
+    let Some(models) = model.models else {
+        blocks.push(match model.models_error {
+            Some(error) => Block::Alert {
+                tone: Tone::Error,
+                text: format!("The models could not be read: {error}"),
+                button: None,
+            },
+            None => Block::Empty("Reading the models…".into()),
+        });
+        return blocks;
+    };
+    if models["available"] != true {
+        blocks.push(Block::Text(vec![text(
+            models["reason"]
+                .as_str()
+                .unwrap_or("This backend cannot run a built-in model."),
+        )]));
+        return blocks;
+    }
+    blocks.push(Block::Text(vec![text(
+        "CodeWiki can download a model and run it by itself, on this machine. Search then finds notes and code by what they mean, not only by the words in them.",
+    )]));
+
+    let hardware = &models["hardware"];
+    let gb = |bytes: &Value| bytes.as_u64().unwrap_or(0) as f64 / (1024.0 * 1024.0 * 1024.0);
+    let mut machine = format!(
+        "This machine: {:.1} GB of memory, {} processor cores",
+        gb(&hardware["ram_total"]),
+        hardware["physical_cores"].as_u64().unwrap_or(0)
+    );
+    if let Some(card) = hardware["nvidia"]["name"].as_str() {
+        machine.push_str(&format!(
+            ", {card} with {:.1} GB of video memory",
+            gb(&hardware["nvidia"]["vram_total"])
+        ));
+    }
+    machine.push('.');
+    blocks.push(Block::Text(vec![text(machine)]));
+
+    let recommended = models["recommended"]["model"].as_str();
+    let reason = models["recommended"]["reason"].as_str().unwrap_or("");
+    blocks.push(match recommended {
+        Some(id) => Block::Text(vec![
+            text("Recommended: "),
+            Span::Strong(model_name(models, id).to_string()),
+            text(format!(
+                ", on the {}. {reason}",
+                if models["recommended"]["device"] == "cuda" {
+                    "graphics card"
+                } else {
+                    "processor"
+                }
+            )),
+        ]),
+        None => Block::Alert {
+            tone: Tone::Info,
+            text: format!("No model is recommended. {reason}"),
+            button: None,
+        },
+    });
+
+    if let Some(refused) = model.models_note {
+        blocks.push(Block::Alert {
+            tone: Tone::Error,
+            text: refused.to_string(),
+            button: None,
+        });
+    }
+    blocks.extend(job(models));
+
+    let worker = &models["worker"];
+    if worker["cuda_given_up"] == true {
+        blocks.push(Block::Alert {
+            tone: Tone::Warning,
+            text: "The graphics card failed twice in a row, so the model runs on the processor until the backend starts again.".into(),
+            button: None,
+        });
+    }
+    if let (Some(id), Some(device)) = (worker["running"][0].as_str(), worker["running"][1].as_str())
+    {
+        blocks.push(Block::Text(vec![text(format!(
+            "Loaded now: {}, on the {}. It is put away after ten idle minutes.",
+            model_name(models, id),
+            if device == "cuda" {
+                "graphics card"
+            } else {
+                "processor"
+            }
+        ))]));
+    }
+
+    let entries: Vec<&Value> = models["models"].as_array().into_iter().flatten().collect();
+    if entries.iter().any(|entry| entry["installed"] == true)
+        && settings["embed"]["device"].is_object()
+    {
+        blocks.push(select(
+            model,
+            settings,
+            "embed",
+            "device",
+            "Runs on",
+            "What runs a built-in model",
+            device_name,
+        ));
+    }
+    let busy = job_runs(models);
+    blocks.extend(
+        entries
+            .into_iter()
+            .map(|entry| model_card(entry, recommended == entry["id"].as_str(), busy)),
+    );
     blocks
 }
 
@@ -715,6 +1071,8 @@ mod tests {
                 "provider": { "value": "local", "source": "default", "env": "CODEWIKI_EMBED",
                     "options": ["local", "ollama", "openai", "none"] },
                 "model": { "value": null, "source": "default", "env": "CODEWIKI_EMBED_MODEL" },
+                "device": { "value": "auto", "source": "default", "env": "CODEWIKI_EMBED_DEVICE",
+                    "options": ["auto", "cpu"] },
                 "name": "local-hash-v1:384", "problem": null,
             },
             "anthropic": { "api_key": { "state": "unset", "hint": "", "env": "ANTHROPIC_API_KEY" } },
@@ -726,11 +1084,45 @@ mod tests {
         })
     }
 
+    /// What a backend on a machine with 16 GB, 12 cores and no NVIDIA card
+    /// reports about its models before one is installed.
+    fn models() -> Value {
+        let entry = |id: &str, name: &str, tier: &str, languages: &str, size: u64| {
+            json!({
+                "id": id, "name": name, "tier": tier, "languages": languages,
+                "license": "Apache-2.0", "dimensions": 768, "size": size,
+                "installed": false, "active": false,
+            })
+        };
+        json!({
+            "available": true,
+            "hardware": {
+                "ram_total": 16u64 << 30, "ram_available": 8u64 << 30, "physical_cores": 12,
+                "nvidia": null, "disk_free": 100u64 << 30,
+            },
+            "cuda": false,
+            "recommended": {
+                "model": "gte-modernbert-base", "device": "cpu",
+                "reason": "16.0 GB of memory and 12 processor cores.",
+            },
+            "models": [
+                entry("granite-small-english-r2", "Granite Embedding Small English R2", "small", "English", 98_916_591),
+                entry("gte-modernbert-base", "GTE ModernBERT Base", "balanced", "English", 301_625_980),
+                entry("qwen3-embedding-0.6b", "Qwen3 Embedding 0.6B", "large", "Multilingual", 1_203_010_848),
+            ],
+            "job": null,
+            "worker": { "running": null, "cuda_given_up": false },
+        })
+    }
+
     /// Owns what a [`Model`] borrows.
     struct Fixture {
         themes: Vec<String>,
         settings: Option<Value>,
         error: Option<String>,
+        models: Option<Value>,
+        models_error: Option<String>,
+        models_note: Option<String>,
         notes: HashMap<FieldId, Note>,
         typing: HashSet<FieldId>,
         llm_test: Tested,
@@ -753,6 +1145,9 @@ mod tests {
                 themes: vec!["CodeWiki Violet".into(), "Nord".into()],
                 settings: Some(defaults()),
                 error: None,
+                models: Some(models()),
+                models_error: None,
+                models_note: None,
                 notes: HashMap::new(),
                 typing: HashSet::new(),
                 llm_test: Tested::Not,
@@ -784,6 +1179,9 @@ mod tests {
                     typing: &self.typing,
                     llm_test: &self.llm_test,
                     embed_test: &self.embed_test,
+                    models: self.models.as_ref(),
+                    models_error: self.models_error.as_deref(),
+                    models_note: self.models_note.as_deref(),
                     backend_url: self.url.as_deref(),
                     origin: self.origin,
                     env_url: self.env_url.as_deref(),
@@ -1063,7 +1461,7 @@ mod tests {
         let doc = fixture.page(Category::Search);
         let words = doc.words();
         assert!(
-            words.contains("Embedder: Built in: no model needed ("),
+            words.contains("Embedder: Word forms: no model needed ("),
             "{words}"
         );
         assert!(words.contains("In use: local-hash-v1:384."));
@@ -1083,6 +1481,269 @@ mod tests {
         let doc = fixture.page(Category::Search);
         assert!(doc.words().contains("Testing…"));
         assert!(!doc.actions().contains(&Action::TestEmbedder));
+    }
+
+    const BALANCED: &str = "gte-modernbert-base";
+
+    fn install(id: &str) -> Action {
+        Action::InstallModel(id.into())
+    }
+
+    #[test]
+    fn the_built_in_models_are_offered_with_the_machine_and_the_recommendation() {
+        let fixture = Fixture::new();
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(doc.headings().contains(&"Built-in model"), "{words}");
+        assert!(
+            words.contains("This machine: 16.0 GB of memory, 12 processor cores."),
+            "{words}"
+        );
+        assert!(
+            words.contains(
+                "Recommended: GTE ModernBERT Base, on the processor. 16.0 GB of memory and 12 processor cores."
+            ),
+            "{words}"
+        );
+        // Each model with its size, languages and licence; one is marked.
+        assert!(
+            words.contains("Granite Embedding Small English R2 [94 MB, English, Apache-2.0]"),
+            "{words}"
+        );
+        assert!(
+            words.contains("GTE ModernBERT Base [288 MB, English, Apache-2.0, Recommended]"),
+            "{words}"
+        );
+        assert!(
+            words.contains("Qwen3 Embedding 0.6B [1.1 GB, Multilingual, Apache-2.0]"),
+            "{words}"
+        );
+        let actions = doc.actions();
+        for id in ["granite-small-english-r2", BALANCED, "qwen3-embedding-0.6b"] {
+            assert!(actions.contains(&install(id)), "{id}");
+        }
+        // Nothing is installed: nothing to use, to remove or to run on.
+        assert!(!words.contains("Runs on"), "{words}");
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, Action::UseModel(_) | Action::RemoveModel(_)))
+        );
+
+        // A machine with a card says so.
+        let mut fixture = Fixture::new();
+        let models = fixture.models.as_mut().unwrap();
+        models["hardware"]["nvidia"] =
+            json!({ "name": "NVIDIA GeForce RTX 4070", "vram_total": 12u64 << 30, "vram_free": 0 });
+        models["recommended"] = json!({
+            "model": "qwen3-embedding-0.6b", "device": "cuda",
+            "reason": "NVIDIA GeForce RTX 4070 with 12.0 GB of video memory.",
+        });
+        let words = fixture.page(Category::Search).words();
+        assert!(
+            words.contains(
+                "12 processor cores, NVIDIA GeForce RTX 4070 with 12.0 GB of video memory."
+            ),
+            "{words}"
+        );
+        assert!(
+            words.contains("Recommended: Qwen3 Embedding 0.6B, on the graphics card."),
+            "{words}"
+        );
+    }
+
+    #[test]
+    fn an_installed_model_can_be_used_or_removed_and_one_in_use_names_its_device() {
+        let mut fixture = Fixture::new();
+        let models = fixture.models.as_mut().unwrap();
+        models["models"][0]["installed"] = json!(true);
+        models["models"][1]["installed"] = json!(true);
+        models["models"][1]["active"] = json!(true);
+        models["worker"]["running"] = json!([BALANCED, "cpu"]);
+        let settings = fixture.settings.as_mut().unwrap();
+        settings["embed"]["provider"]["value"] = json!("builtin");
+        settings["embed"]["provider"]["options"] =
+            json!(["local", "builtin", "ollama", "openai", "none"]);
+        settings["embed"]["model"]["value"] = json!(BALANCED);
+        settings["embed"]["name"] = json!("builtin:gte-modernbert-base@e7f32e3c00f9");
+
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(words.contains("Embedder: Built-in model ("), "{words}");
+        assert!(
+            words
+                .contains("GTE ModernBERT Base [288 MB, English, Apache-2.0, Recommended, In use]"),
+            "{words}"
+        );
+        assert!(
+            words.contains(
+                "Granite Embedding Small English R2 [94 MB, English, Apache-2.0, Installed]"
+            ),
+            "{words}"
+        );
+        assert!(
+            words.contains("Loaded now: GTE ModernBERT Base, on the processor."),
+            "{words}"
+        );
+        assert!(
+            words.contains(
+                "Runs on: Automatic: the graphics card when it can (Automatic: the graphics card when it can / Processor)"
+            ),
+            "{words}"
+        );
+        let actions = doc.actions();
+        assert!(actions.contains(&Action::UseModel("granite-small-english-r2".into())));
+        assert!(actions.contains(&Action::RemoveModel("granite-small-english-r2".into())));
+        assert!(actions.contains(&Action::RemoveModel(BALANCED.into())));
+        assert!(!actions.contains(&Action::UseModel(BALANCED.into())));
+        assert!(!actions.contains(&install(BALANCED)));
+        assert!(actions.contains(&Action::SetSetting {
+            section: "embed".into(),
+            field: "device".into(),
+            value: Some("cpu".into()),
+        }));
+        // A built-in model is chosen by its button: no model is typed.
+        assert!(doc.fields().is_empty(), "{:?}", doc.fields());
+
+        // A card that failed twice is said.
+        fixture.models.as_mut().unwrap()["worker"]["cuda_given_up"] = json!(true);
+        let words = fixture.page(Category::Search).words();
+        assert!(
+            words.contains("The graphics card failed twice in a row"),
+            "{words}"
+        );
+    }
+
+    #[test]
+    fn a_job_shows_how_far_it_is_and_what_became_of_it() {
+        let mut fixture = Fixture::new();
+        let mut job = |job: Value| {
+            fixture.models.as_mut().unwrap()["job"] = job;
+            fixture.page(Category::Search)
+        };
+        let doc = job(json!({
+            "kind": "install", "phase": "downloading", "model": BALANCED,
+            "bytes_done": 126_682_911u64, "bytes_total": 301_625_980u64,
+        }));
+        let words = doc.words();
+        assert!(
+            words.contains("Downloading GTE ModernBERT Base 42%: 121 MB of 288 MB"),
+            "{words}"
+        );
+        // While it runs it can be cancelled, and nothing else started.
+        let actions = doc.actions();
+        assert!(actions.contains(&Action::CancelModelJob));
+        assert!(!actions.iter().any(|a| matches!(a, Action::InstallModel(_))));
+
+        let doc = job(json!({
+            "kind": "install", "phase": "embedding", "model": BALANCED, "repo": "demo",
+            "repo_index": 2, "repo_count": 3, "docs_done": 30, "docs_total": 120,
+        }));
+        assert!(
+            doc.words()
+                .contains("Embedding demo (2 of 3) 25%: 30 of 120 documents"),
+            "{}",
+            doc.words()
+        );
+        let doc = job(json!({
+            "kind": "reembed", "phase": "paused", "model": null, "repo": "demo",
+            "repo_index": 1, "repo_count": 1, "docs_done": 5, "docs_total": 20,
+        }));
+        let words = doc.words();
+        assert!(
+            words.contains(
+                "Paused while a game is running 25%: 5 of 20 documents of demo. It goes on by itself."
+            ),
+            "{words}"
+        );
+        assert!(doc.actions().contains(&Action::CancelModelJob));
+
+        // A job that is over leaves its word and gives the buttons back.
+        let doc = job(json!({
+            "kind": "install", "phase": "failed", "model": BALANCED,
+            "error": "downloading https://huggingface.co/x: timed out",
+        }));
+        assert!(
+            doc.words()
+                .contains("It did not work: downloading https://huggingface.co/x: timed out"),
+            "{}",
+            doc.words()
+        );
+        assert!(doc.actions().contains(&install(BALANCED)));
+        assert!(!doc.actions().contains(&Action::CancelModelJob));
+        let doc = job(json!({ "kind": "install", "phase": "cancelled", "model": BALANCED }));
+        assert!(
+            doc.words()
+                .contains("Stopped. What was downloaded and embedded is kept")
+        );
+        let doc = job(json!({
+            "kind": "use", "phase": "done", "model": BALANCED,
+            "note": "The embedder is set by the environment variable CODEWIKI_EMBED, so this model is installed and not in use.",
+            "skipped": [{ "repo": "old", "error": "the index is damaged" }],
+        }));
+        let words = doc.words();
+        assert!(words.contains("installed and not in use"), "{words}");
+        assert!(
+            words.contains("Left out: old (the index is damaged)."),
+            "{words}"
+        );
+        // A job that went well says nothing.
+        let quiet =
+            job(json!({ "kind": "use", "phase": "done", "model": BALANCED, "skipped": [] }));
+        assert!(!quiet.words().contains("Left out"));
+    }
+
+    #[test]
+    fn the_built_in_models_say_when_they_cannot_be_managed_here() {
+        // Still on its way, and failed.
+        let mut fixture = Fixture::new();
+        fixture.models = None;
+        assert!(
+            fixture
+                .page(Category::Search)
+                .words()
+                .contains("Reading the models…")
+        );
+        fixture.models_error = Some("the backend answered 500".into());
+        let words = fixture.page(Category::Search).words();
+        assert!(
+            words.contains("The models could not be read: the backend answered 500"),
+            "{words}"
+        );
+
+        // A backend that holds no engine.
+        let mut fixture = Fixture::new();
+        fixture.models = Some(json!({
+            "available": false,
+            "reason": "This build cannot run a built-in model; it runs on Windows.",
+        }));
+        let doc = fixture.page(Category::Search);
+        assert!(
+            doc.words().contains("it runs on Windows"),
+            "{}",
+            doc.words()
+        );
+        assert!(
+            !doc.actions()
+                .iter()
+                .any(|a| matches!(a, Action::InstallModel(_)))
+        );
+
+        // A backend on another machine: its models are its own.
+        let mut fixture = Fixture::new();
+        fixture.origin = Some(Origin::Saved);
+        fixture.url = Some("http://nas:7411".into());
+        let doc = fixture.page(Category::Search);
+        assert!(
+            doc.words().contains("is managed there, not from here"),
+            "{}",
+            doc.words()
+        );
+        assert!(
+            !doc.actions()
+                .iter()
+                .any(|a| matches!(a, Action::InstallModel(_)))
+        );
     }
 
     #[test]

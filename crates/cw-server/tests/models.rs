@@ -270,6 +270,7 @@ async fn the_models_are_listed_with_the_machine_and_the_recommendation() {
         })
     );
     assert_eq!(models["job"], Value::Null);
+    assert_eq!(models["embedder"], "local");
     let listed = models["models"].as_array().unwrap();
     let ids: Vec<&str> = listed.iter().map(|m| m["id"].as_str().unwrap()).collect();
     assert_eq!(ids, [SMALL, "gte-modernbert-base", "qwen3-embedding-0.6b"]);

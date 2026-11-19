@@ -272,6 +272,9 @@ pub(crate) fn describe(state: &AppState) -> Value {
         "hardware": hardware,
         "cuda": cuda,
         "recommended": cw_models::recommend(&hardware, cuda),
+        // The embedder in use, by its provider. A page offers a model only
+        // to someone who has chosen no other way to search by meaning.
+        "embedder": crate::settings::resolved(state).get(settings::EMBED_PROVIDER.env),
         "models": models,
         "job": state.0.jobs.snapshot(),
         "worker": cw_models::worker::global().status(),

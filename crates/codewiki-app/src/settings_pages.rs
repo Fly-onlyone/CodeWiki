@@ -714,7 +714,9 @@ fn model_card(entry: &Value, recommended: bool, busy: bool) -> Block {
 /// The models CodeWiki can fetch and run by itself: the machine, what fits
 /// it, what a job is doing, and each model with what can be done about it.
 fn built_in(model: &Model, settings: &Value) -> Vec<Block> {
-    let mut blocks = vec![Block::Heading("Built-in model".into())];
+    // What is said about the models as a whole goes in one card, so that its
+    // rows line up with those of the card above; each model has its own.
+    let mut blocks = Vec::new();
     if model.remote() {
         // A model takes the disk, the memory and the graphics card of the
         // machine it runs on, so that machine's owner decides.
@@ -723,7 +725,7 @@ fn built_in(model: &Model, settings: &Value) -> Vec<Block> {
             text: "A built-in model is installed on the backend's machine and is managed there, not from here.".into(),
             button: None,
         });
-        return blocks;
+        return vec![card("Built-in model", blocks)];
     }
     let Some(models) = model.models else {
         blocks.push(match model.models_error {
@@ -734,7 +736,7 @@ fn built_in(model: &Model, settings: &Value) -> Vec<Block> {
             },
             None => Block::Empty("Reading the models…".into()),
         });
-        return blocks;
+        return vec![card("Built-in model", blocks)];
     };
     if models["available"] != true {
         blocks.push(Block::Text(vec![text(
@@ -742,7 +744,7 @@ fn built_in(model: &Model, settings: &Value) -> Vec<Block> {
                 .as_str()
                 .unwrap_or("This backend cannot run a built-in model."),
         )]));
-        return blocks;
+        return vec![card("Built-in model", blocks)];
     }
     blocks.push(Block::Text(vec![text(
         "CodeWiki can download a model and run it by itself, on this machine. Search then finds notes and code by what they mean, not only by the words in them.",
@@ -831,6 +833,7 @@ fn built_in(model: &Model, settings: &Value) -> Vec<Block> {
         ));
     }
     let busy = job_runs(models);
+    let mut blocks = vec![card("Built-in model", blocks)];
     blocks.extend(
         entries
             .into_iter()

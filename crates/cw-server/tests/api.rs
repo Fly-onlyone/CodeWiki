@@ -6,7 +6,7 @@ use std::path::Path;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use cw_server::{ServerConfig, router};
+use cw_server::{Host, ServerConfig, router};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -72,6 +72,7 @@ impl Harness {
             webhook_secret: secret.map(str::to_string),
             settings_writable,
             env,
+            host: Host::default(),
         });
         Self { app, data, repo }
     }
@@ -794,6 +795,7 @@ async fn shutdown_route_ends_serve() {
         webhook_secret: None,
         settings_writable: true,
         env: no_env,
+        host: Host::default(),
     };
     let (bound_tx, bound_rx) = std::sync::mpsc::channel();
     let server = tokio::spawn(cw_server::serve(

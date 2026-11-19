@@ -78,6 +78,7 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         // Only a client on this machine may change the settings.
         settings_writable: host.is_loopback(),
         env: cw_core::settings::process_env,
+        host: cw_server::Host::default(),
     };
     // The settings in effect, so that the first line of the log names the
     // writer and the embedder the backend really uses.

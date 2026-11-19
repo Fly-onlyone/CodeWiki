@@ -4,7 +4,8 @@ Status as of 2026-11-18. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (582 tests) and `cargo deny check` all pass.
+- 19 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (642 tests) and `cargo deny check` all pass. One more test downloads a model from Hugging Face and is run by hand (`cargo test -p cw-models -- --ignored`); it passed on 2026-11-19.
+- Not released yet, on the branch `feat/builtin-embedder`: the built-in embedding model (M7 below). CodeWiki downloads one of three embedding models and runs it by itself, in a hidden worker process, on the processor or on an NVIDIA card, so that search finds notes and code by meaning with no key and no other install.
 - Version 0.2.0 is the second release: a Windows zip on GitHub Releases and a backend image on GHCR, both built by CI from the tag `v0.2.0`. It adds the Settings page with the settings the backend keeps, the app in the tray with one app per program and a start with Windows, a log for every program, side panes that hide, and a plugin that installs from the package without git. 0.1.0 was the first, on 2026-11-15.
 - CodeWiki documents its own repository: 243 notes, 100% of wikilinks resolve, a second sync writes nothing.
 - The Docker image builds (271 MB) and was exercised over HTTP and through the MCP bridge.
@@ -22,7 +23,8 @@ Status as of 2026-11-18. "Verified" means covered by automated tests or by a liv
 | M6 Incremental updates, proposals, adoption | Verified | |
 | M7 HTTP server with token auth | Verified | |
 | M7 Docker image | Verified | Final image (271 MB) built and run: 401 without token, repository registered by container path, sync, semantic search, workspace, signed webhook (202, and 401 on a bad signature), runs as a non-root user. The MCP bridge was driven against an earlier build of the image |
-| M7 Semantic search | Verified with the built-in embedder | Vectors stored in the index, merged with full-text results by rank. The Ollama and OpenAI-compatible embedders are tested over real HTTP against a stand-in server, not against the real services. See Deviations |
+| M7 Semantic search | Verified with the embedder that needs no model | Vectors stored in the index, merged with full-text results by rank. The Ollama and OpenAI-compatible embedders are tested over real HTTP against a stand-in server, not against the real services. See Deviations |
+| M7 Built-in embedding model | Verified, with the limits under "Checks left to the owner" | Spike S5 (`spikes/VERDICTS.md`): all three models of the catalog give the vectors of the reference implementation, on the processor and on CUDA. Run against a real backend on this machine: a download from Hugging Face with a stop and a resume, the switch of the embedder, the embedding of a repository in the background, searches by meaning, a worker ended by force (search falls back to words and the next search starts a new worker), the worker put away after ten idle minutes, and the packaged programs on the RTX 4070 with the large model. In the clean guest, from the installed package, without a card and with the host's card shared in: the model commands, the Settings page, and an install, search and removal through the backend's routes; the model ran on the processor in the one and on CUDA in the other. Evidence on the development machine in `report\vm-test-2026-11-19-builtin-embedder\` |
 | M8 MCP bridge and Claude Code plugin | Verified | 24 tools. All were driven over real stdio except `get_coverage` with a report present (it answered "no coverage report", as it should here). A live Claude Code run called tools through the plugin's `.mcp.json` |
 | M8 Codex integration | Skipped | Not tested by the owner's choice (no Codex subscription at present). Config is documented in `plugins/codex/README.md` |
 | M9 Viewer, search, sync, review queue | Seen | |
@@ -72,6 +74,7 @@ Status as of 2026-11-18. "Verified" means covered by automated tests or by a liv
 
 ## Deviations from the original plan
 
+- **A model that CodeWiki runs itself.** The plan had no neural model without Ollama or a key. `CODEWIKI_EMBED=builtin` now runs one of three embedding models with `candle`, in a hidden worker process, on the processor or on an NVIDIA card; the catalog, the recommendation by machine and the downloads are CodeWiki's own. llama.cpp was the first choice of engine and was dropped for candle, which needs no C++ build; the cost is that only NVIDIA cards are used, through CUDA, and that the NVIDIA libraries make the package about 490 MB instead of 30. Spike S5 in `spikes/VERDICTS.md` has the measurements.
 - **Embeddings.** The default embedder is built in: it hashes words, word pairs and character trigrams into a 384-dimension vector. It needs no model file and works in Docker, and it finds other forms of the words typed, but it does not know that two unrelated words mean the same thing. A neural model is available through Ollama or an OpenAI-compatible endpoint (`CODEWIKI_EMBED`). `fastembed` and `sqlite-vec` are not used; vectors are compared in Rust.
 - **Editor.** The plan asked for an in-place live-preview editor. What exists is a source editor with a live preview beside it.
 - **Installer.** A zip with PowerShell install and uninstall scripts and `.cmd` launchers for them, not an MSI. No installer toolchain (WiX, Inno Setup) is on this machine and none was installed.
@@ -84,7 +87,11 @@ Status as of 2026-11-18. "Verified" means covered by automated tests or by a liv
 
 ## Known issues
 
-- Search with the built-in embedder ranks by shared words and word stems; a query such as "resolving names" can put a loosely related symbol first.
+- Search with the embedder that needs no model (`local`) ranks by shared words and word stems; a query such as "resolving names" can put a loosely related symbol first.
+- A built-in model is recommended only while 2 GB of memory is free at that moment, also on a machine whose graphics card would hold the model: a 2 GB guest with a 12 GB card got no recommendation, and ran the small model without trouble when it was installed anyway. The rule is cautious on purpose; a machine that is busy when the page opens can be told that nothing fits it.
+- The package is 488 MB, of which one NVIDIA library (`cublasLt64_13.dll`) is 471 MB before compression. Every user downloads it, with or without an NVIDIA card, and so does every self-update.
+- A development build has no worker for the graphics card; only a package has. It runs the models on the processor.
+- `codewiki search` on the command line is full-text only, as before: it does not ask the embedder. Search by meaning is in the app, over HTTP and through the MCP tools.
 - Dead-code findings in Python, TypeScript, JavaScript and Java are reported as "possible", never "likely", because dynamic dispatch hides references from a static index.
 - The editor has no Markdown syntax colouring. The UI kit's Markdown highlighter needs a different `tree-sitter` version than the parsers use, and Cargo cannot select both.
 
@@ -94,7 +101,7 @@ Status as of 2026-11-18. "Verified" means covered by automated tests or by a liv
 
 ## Disk use
 
-Debug builds once filled 44 GB. The dev profile now builds dependencies without debug information and without the incremental cache; a full build with tests takes about 7 GB. `scripts/clean.ps1` removes debug artifacts and spike build folders.
+Debug builds once filled 44 GB. The dev profile now builds dependencies without debug information and without the incremental cache; a full build with tests takes about 7 GB. `scripts/clean.ps1` removes debug artifacts and spike build folders. The embedding engine adds about 230 crates to a build of `codewiki`: a worktree's first full build with tests is about 3 GB, a release build of the three programs 2 GB more. The CUDA toolkit for the package is 2 GB outside the repository (`D:\packages\cuda\13.4.3` on the development machine), and each installed model is 0.1 to 1.2 GB in the data folder.
 
 ## Checks left to the owner
 
@@ -106,4 +113,8 @@ These cannot be done from an automated session on this machine.
 - Press Tab through the toolbar and a page, and press Enter and Space on a button, a tab and a sidebar row.
 - Open a note whose illustration has tabs, and switch between them.
 - Close the palette with Escape, to see it fade out.
+- Play a full-screen game while a model is loaded, and while a job embeds: the worker should be gone within about twenty seconds and the job should say "Paused while a game is running" and go on afterwards. The rule and its two readings are tested, each reading was taken on a desktop, but no game was run.
+- Try the package on an NVIDIA card other than the RTX 4070, above all an older one (GTX 16, RTX 20, RTX 30): the worker is built for the oldest generation CUDA 13 supports, and was run on one card only. A card older than that cannot be used and should end, after two failures, on the processor.
+- Let the release workflow build the package once (`release.yml`, by a pull request that touches the packaging): it now fetches NVIDIA's toolkit and builds the CUDA worker on a runner without a card. It has not run on GitHub.
+- Update an installed 0.2.0 to a package with the folder `cuda` (case U2 with `-OldZip`): the swap takes the folder as one more entry and the size limit was raised, but the update itself was not run. Nor was the hardened guest (`-Hardened`), where a new unsigned `codewiki-embed-cuda.exe` meets the same Defender rules as the other programs.
 - Codex round trip, when a Codex subscription is available.

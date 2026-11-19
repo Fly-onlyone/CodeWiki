@@ -1550,7 +1550,7 @@ function Wait-Job(`$what) {
     foreach (`$try in 1..2400) {
         `$job = (Call GET '/v1/models').job
         if (`$null -ne `$job) {
-            if (`$job.phase -ne `$last) { "`$what: `$(`$job.kind) `$(`$job.phase), bytes `$(`$job.bytes_done)/`$(`$job.bytes_total), documents `$(`$job.docs_done)/`$(`$job.docs_total)"; `$last = `$job.phase }
+            if (`$job.phase -ne `$last) { "`${what}: `$(`$job.kind) `$(`$job.phase), bytes `$(`$job.bytes_done)/`$(`$job.bytes_total), documents `$(`$job.docs_done)/`$(`$job.docs_total)"; `$last = `$job.phase }
             if ('done', 'failed', 'cancelled' -contains `$job.phase) {
                 "`$what ended: `$(`$job.phase), documents `$(`$job.docs_done)/`$(`$job.docs_total), error: `$(`$job.error), note: `$(`$job.note)"
                 return

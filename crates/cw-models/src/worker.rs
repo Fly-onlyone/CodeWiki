@@ -485,6 +485,13 @@ pub fn cuda_program() -> Option<PathBuf> {
     program.is_file().then_some(program)
 }
 
+/// Whether a model can run on a graphics card here: this installation has
+/// the worker for it, and the machine has an NVIDIA card. Every installed
+/// package has the worker; most machines have no such card.
+pub fn cuda_usable() -> bool {
+    cuda_program().is_some() && crate::hardware::nvidia_card().is_some()
+}
+
 /// The program that runs models on the processor: `codewiki`, which is this
 /// program when the backend or the command line asks, and otherwise the one
 /// beside this program. A program that is neither (a test, above all) has

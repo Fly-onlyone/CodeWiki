@@ -248,7 +248,7 @@ pub(crate) fn describe(state: &AppState) -> Value {
         });
     }
     let hardware = hardware(state);
-    let cuda = cw_models::worker::cuda_program().is_some();
+    let cuda = cw_models::worker::cuda_usable();
     let store = store(state);
     let chosen = chosen(state);
     let models: Vec<Value> = catalog::all()

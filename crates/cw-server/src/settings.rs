@@ -72,7 +72,7 @@ pub(crate) fn describe(state: &AppState) -> Value {
     }
     out["llm"]["provider"]["options"] = json!(cw_llm::PROVIDERS);
     // A choice that cannot work is not offered: the built-in embedder needs
-    // an installed model, the graphics card a worker for it. The value in
+    // an installed model, the graphics card a card and a worker for it. The value in
     // effect is always listed, so that a page can show it.
     let data_dir = &state.0.config.data_dir;
     let offered = |options: &[&str], key: Key, conditional: &str, usable: bool| -> Vec<String> {
@@ -97,7 +97,7 @@ pub(crate) fn describe(state: &AppState) -> Value {
         &cw_embed::DEVICES,
         settings::EMBED_DEVICE,
         "cuda",
-        cw_models::worker::cuda_program().is_some()
+        cw_models::worker::cuda_usable()
     ));
     let (name, problem) = selected(cw_llm::from_settings(&resolved), |p| p.name());
     out["llm"]["name"] = json!(name);

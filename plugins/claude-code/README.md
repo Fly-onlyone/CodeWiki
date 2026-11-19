@@ -69,10 +69,10 @@ Every tool except `list_repos` and `get_workspace` takes an optional `repo` path
 
 ## Session-start hook
 
-`hooks/hooks.json` runs `codewiki hook session-start` on the `SessionStart` event: when a session starts or resumes, and after `/clear` and compaction. Claude Code adds what the command prints to Claude's context. The briefing is at most five lines:
+`hooks/hooks.json` runs `codewiki hook session-start` on the `SessionStart` event: when a session starts or resumes, and after `/clear` and compaction. Claude Code adds what the command prints to Claude's context. The briefing is four lines, or two when the repository has no wiki yet:
 
 - whether the repository has a wiki, and where its home note is (`obsidian/_HOME.md`);
-- whether the wiki is up to date with `HEAD` or stale;
+- whether the wiki is up to date with `HEAD` or stale. It is stale only when files outside `obsidian/` changed since the commit the wiki was generated at; committing the wiki itself does not make it stale. If git no longer knows that commit (after a rebase, or in a shallow clone), the wiki counts as stale;
 - how many proposals wait for review;
 - that the `get_overview` and `get_context` tools answer from the wiki.
 

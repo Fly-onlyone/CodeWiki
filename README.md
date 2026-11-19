@@ -117,7 +117,18 @@ The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the in
 
 `sync_wiki` follows the same rule as `codewiki update`: a note a person edited is never overwritten, and the change waits in the review queue.
 
-**A session-start briefing.** When a session starts or resumes, and after `/clear` or compaction, a hook runs `codewiki hook session-start` and adds up to five lines to Claude's context: whether the repository has a wiki, whether the wiki is stale against `HEAD`, how many proposals wait for review, and which tools to call first. The hook only reads files and asks git for `HEAD`. It does not start the backend, and it cannot fail a session.
+**A session-start briefing.** When a session starts or resumes, and after `/clear` or compaction, a hook runs `codewiki hook session-start`. Claude Code adds what it prints to Claude's context; it does not show in the chat. The briefing is four lines:
+
+1. how many notes the wiki has, and its home note, `obsidian/_HOME.md`;
+2. whether the wiki is up to date with `HEAD`. It is stale only when files outside `obsidian/` changed since the commit the wiki was written from, so committing the wiki itself does not make it stale. Without git, the line says the wiki cannot be compared;
+3. how many proposals wait for review;
+4. that `get_overview` and `get_context` answer from the wiki, and that Claude should call them before it explores the code by hand.
+
+In a repository with no wiki yet, the briefing is two lines: there is no wiki, and `sync_wiki` writes one.
+
+The hook reads the wiki's manifest and proposals, and asks git for `HEAD`. It does not start the backend, does not update the wiki and writes nothing. It looks in the project folder and the folders above it, so a session started in a subfolder still finds the wiki. On any error it prints nothing and exits with status 0, so it cannot fail a session.
+
+To see what Claude sees, run `codewiki hook session-start` in the repository. The [user guide](https://fly-3.gitbook.io/codewiki/agents/claude-code-plugin#the-session-start-briefing) explains each line.
 
 `plugins/claude-code/README.md` describes each tool and shows a sample briefing.
 

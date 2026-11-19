@@ -59,6 +59,34 @@ impl Index {
         tx.commit().map_err(&err)
     }
 
+    /// Every stored document of the given kinds, in the order they were
+    /// written. Embedding them again needs no scan of the repository.
+    pub fn documents(&self, kinds: &[&str]) -> Result<Vec<Document>> {
+        let err = db("reading search documents");
+        let mut stmt = self
+            .conn
+            .prepare("SELECT kind, key, title, body FROM documents ORDER BY rowid")
+            .map_err(&err)?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(Document {
+                    kind: r.get(0)?,
+                    key: r.get(1)?,
+                    title: r.get(2)?,
+                    body: r.get(3)?,
+                })
+            })
+            .map_err(&err)?;
+        let mut out = Vec::new();
+        for row in rows {
+            let document = row.map_err(&err)?;
+            if kinds.contains(&document.kind.as_str()) {
+                out.push(document);
+            }
+        }
+        Ok(out)
+    }
+
     /// Search documents. `kind` restricts results when given. Title matches
     /// weigh five times body matches.
     pub fn search(&self, text: &str, kind: Option<&str>, limit: usize) -> Result<Vec<Hit>> {
@@ -163,6 +191,31 @@ mod tests {
             index.search("vault AND (", None, 10).unwrap()[0].key,
             "01-Core/Vault.md"
         );
+    }
+
+    #[test]
+    fn gives_back_the_documents_of_the_kinds_asked_for() {
+        let index = index();
+        let notes = index.documents(&["note"]).unwrap();
+        assert_eq!(
+            notes,
+            [
+                doc(
+                    "note",
+                    "01-Core/Hashing.md",
+                    "Hashing",
+                    "Content hashing detects edited notes.",
+                ),
+                doc(
+                    "note",
+                    "01-Core/Vault.md",
+                    "Vault",
+                    "The vault stores notes. Hashing is mentioned once.",
+                ),
+            ]
+        );
+        assert_eq!(index.documents(&["note", "symbol"]).unwrap().len(), 3);
+        assert!(index.documents(&["file"]).unwrap().is_empty());
     }
 
     #[test]

@@ -57,7 +57,7 @@ Layout for the graph is computed in the backend (`cw-graph`, ForceAtlas2 with Ba
 - One `paint_quad` call costs 5 to 9 microseconds, so shapes are batched into one filled path per palette color.
 - The backend layout time for 50,000 nodes was not measured; the stress graph is synthetic and laid out in the app.
 
-## S5 — Built-in embedding engine: gate A (processor) pass; gate B (CUDA) open
+## S5 — Built-in embedding engine: pass, on the processor and on CUDA
 
 Question: can `candle`, compiled into a CodeWiki program, run the three embedding models of the catalog, on this machine and on a clean Windows?
 
@@ -93,4 +93,25 @@ Gate A, processor:
   - The counter `\GPU Engine(*engtype_3D)\Utilization Percentage` gives the 3D load of each process by its id (`pid_<id>_...`), also in the guest.
 - Not measured: a model larger than the small one in the guest (2048 MB is too little for the others), and the two readings while a game runs.
 
-Gate B, CUDA: not run yet. It needs the CUDA toolkit on this machine.
+Gate B, CUDA (RTX 4070, 12 GB, driver 621.14):
+
+- The toolkit comes from NVIDIA's redistributable archives, unpacked into one folder by `cuda-toolkit.ps1` with each archive's sha256 checked against NVIDIA's manifest: no installer, no administrator rights. The parts are `cuda_nvcc`, `libnvvm`, `cuda_crt`, `cccl`, `cuda_cudart`, `libcublas`, `libcurand` and `cuda_nvrtc` of CUDA 13.4.3; 0.9 GB to download, 2.1 GB unpacked. `cudarc` 0.19.10 refuses 13.5.
+- Two things the build needs beyond the toolkit (`cuda-build.ps1`):
+  - `nvcc` starts `cl.exe`, so the build runs inside Visual Studio's developer environment.
+  - The headers of CUDA 13.2 and later refuse MSVC's traditional preprocessor (candle issue 3686). Setting `CL=/Zc:preprocessor` for the build passes the option to every `cl.exe`.
+  - Without `cccl` the kernels do not compile: `cuda_fp16.h` includes `nv/target`.
+- The build with `--features cuda` and `+crt-static` links: 3 min 33 s from the processor build's `target\`, exe 17.7 MB.
+- That exe imports `curand64_10.dll` and `cublas64_13.dll` at load time. Without them on `PATH` it ends before `main` with 0xC0000135, as candle issue 3900 says. So the CUDA engine cannot be in `codewiki.exe`; it is a second program.
+- The NVIDIA DLLs it needs beside it are three: `curand64_10.dll` (57 MB), `cublas64_13.dll` (52 MB) and `cublasLt64_13.dll` (471 MB), which `cublas` imports. `nvrtc` and `cudart` are not needed. With only those three in its folder and nothing of the toolkit on `PATH`, the exe embeds. The folder is 597 MB, 461 MB as a zip: that is what the release package grows by.
+- All three models give the reference vectors on the card too (cosine 1.000000).
+- Speed, texts cut at 500 tokens, weights as f32:
+
+  | Model | Documents/s | Tokens/s | Against the processor |
+  |---|---|---|---|
+  | granite-embedding-small-english-r2 | 80.7 | 40,400 | 25 times |
+  | gte-modernbert-base | 34.9 | 17,500 | 23 times |
+  | Qwen3-Embedding-0.6B | 17.4 | 8,700 | 29 times |
+
+  With texts of 64 tokens: gte-modernbert-base 388 documents a second, Qwen3 72. The first load on the card takes 2 to 3 s.
+- Guest with the card shared in (Tiny 11, checkpoint `Clean GPU`, 2048 MB, still no `vcruntime140.dll`): the CUDA exe with its three DLLs embeds on the card at 64 documents a second with the small model, and its vectors equal the reference. `nvml.dll` and `nvcuda.dll` are in the guest's `System32` there, and `nvml-wrapper` reports the card.
+- Not measured: half-precision weights on the card, which would halve the video memory a model takes; a card other than this one.

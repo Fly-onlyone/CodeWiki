@@ -74,7 +74,7 @@ impl Default for Host {
         Self {
             embedder: cw_wiki::semantic::embedder,
             hardware: cw_models::hardware::probe,
-            game: || false,
+            game: cw_models::game::busy,
             pause_poll: Duration::from_secs(5),
         }
     }

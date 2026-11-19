@@ -1531,6 +1531,7 @@ dependencies = [
  "sysinfo 0.40.4",
  "tempfile",
  "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

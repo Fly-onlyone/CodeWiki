@@ -523,8 +523,8 @@ const WATCH: Duration = Duration::from_secs(5);
 pub fn global() -> &'static Supervisor {
     static GLOBAL: std::sync::OnceLock<Supervisor> = std::sync::OnceLock::new();
     static WATCHED: std::sync::Once = std::sync::Once::new();
-    let supervisor =
-        GLOBAL.get_or_init(|| Supervisor::new(Box::new(ProgramLauncher), Box::new(|| false)));
+    let supervisor = GLOBAL
+        .get_or_init(|| Supervisor::new(Box::new(ProgramLauncher), Box::new(crate::game::busy)));
     WATCHED.call_once(|| {
         // Looks every few seconds; with no child running a look costs
         // nothing, and it asks about a game only while one runs.

@@ -9,12 +9,15 @@
 //!   resume, verification, removal.
 //! - [`worker`]: the hidden child process that holds a model, its protocol
 //!   and the supervisor that starts and stops it.
+//! - [`game`]: whether a game is running, when the worker and background
+//!   embedding give way.
 //!
 //! Nothing here runs a model. The engine that does is a crate of its own,
 //! linked only into the programs that run one, so that this crate stays
 //! light for everything else that links it.
 
 pub mod catalog;
+pub mod game;
 pub mod hardware;
 pub mod recommend;
 pub mod store;

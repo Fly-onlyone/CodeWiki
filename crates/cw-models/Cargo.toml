@@ -22,5 +22,13 @@ sha2 = "0.11.1"
 sysinfo = { version = "0.40.4", default-features = false, features = ["system", "disk"] }
 ureq = "3.5.1"
 
+# The two readings of "a game is running" (`game.rs`).
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Win32_Foundation",
+    "Win32_System_Performance",
+    "Win32_UI_Shell",
+] }
+
 [dev-dependencies]
 tempfile = "3.27.0"

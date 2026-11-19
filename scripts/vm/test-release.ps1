@@ -20,6 +20,11 @@ param(
     # Give the guest a share of the host's graphics card. Needs the checkpoint
     # "clean-gpu" from provision-gpu.ps1, which is then the default.
     [switch]$Gpu,
+    # With -Gpu, when the checkpoint holds an older graphics driver than the
+    # host now has: copy the host's driver into the guest for this run (about
+    # 2 GB) instead of stopping. The checkpoint itself is left as it is;
+    # provision-gpu.ps1 -Force is what retakes it.
+    [switch]$RefreshGpuDriver,
     # Leave the VM running at the end, for a look by hand.
     [switch]$KeepRunning,
     # A package of an older version. With it, case U2 installs that version
@@ -204,6 +209,12 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
     $archive = [System.IO.Compression.ZipFile]::OpenRead($Zip)
     try { $entries = @($archive.Entries | ForEach-Object { $_.FullName -replace "\\", "/" }) } finally { $archive.Dispose() }
     $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1", "install.cmd", "uninstall.cmd"
+    # The worker for NVIDIA cards, the three NVIDIA libraries it loads, and
+    # NVIDIA's licence for them. A package built with -NoCuda has none of it.
+    $hasCuda = @($entries | Where-Object { $_ -like "cuda/*" }).Count -gt 0
+    if ($hasCuda) {
+        $needed += "cuda/codewiki-embed-cuda.exe", "cuda/curand64_10.dll", "cuda/cublas64_13.dll", "cuda/cublasLt64_13.dll", "cuda/NVIDIA-CUDA-EULA.txt"
+    }
     $missing = @($needed | Where-Object { $entries -notcontains $_ })
     $plugins = @($entries | Where-Object { $_ -like "plugins/*" }).Count
     # Without it the plugins folder cannot be added to Claude Code as a marketplace.
@@ -214,13 +225,17 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
     $imports = foreach ($exe in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe") {
         $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes((Join-Path $unpacked $exe)))
         $dlls = [regex]::Matches($text, '(?i)\b[a-z0-9_\-\.]{2,40}\.dll\b') | ForEach-Object { $_.Value.ToLowerInvariant() } | Sort-Object -Unique
+        # A program that asked for an NVIDIA library would not start on a
+        # machine without one; only the worker in cuda\ may.
+        $nvidia = @($dlls | Where-Object { $_ -match '^(cu[a-z]+64_\d+|nvcuda|nvrtc.*)\.dll$' })
+        if ($nvidia) { $missing += "$exe free of NVIDIA libraries (it imports $($nvidia -join ', '))" }
         "$exe`: " + ($dlls -join ", ")
     }
     Remove-Item -Recurse -Force $unpacked
     $size = [math]::Round((Get-Item $Zip).Length / 1MB, 1)
     $status = if ($missing.Count -eq 0 -and $plugins -gt 0) { "pass" } else { "fail" }
     Add-Result -Id "A1" -Title "Package contents" -Expect "three programs, licence files, the scripts and their launchers, and the plugins" -Status $status `
-        -Observed "$(Split-Path -Leaf $Zip), $size MB, $($entries.Count) entries, $plugins under plugins/, missing: $(if ($missing) { $missing -join ', ' } else { 'none' })" `
+        -Observed "$(Split-Path -Leaf $Zip), $size MB, $($entries.Count) entries, $plugins under plugins/, cuda folder: $(if ($hasCuda) { 'yes' } else { 'no' }), missing: $(if ($missing) { $missing -join ', ' } else { 'none' })" `
         -Output ($imports -join "`n")
 }
 
@@ -240,8 +255,17 @@ Start-Guest
 Wait-Guest -TimeoutSec 900
 if ($Gpu) {
     $driver = Test-GuestGpuDriver
+    if (-not $driver.Match -and $RefreshGpuDriver) {
+        # For this run only: the checkpoint keeps the driver it was taken
+        # with, and the next restore brings that one back.
+        "the guest holds the graphics driver '$($driver.GuestDrivers -join ', ')' and the host now has '$($driver.HostDriver)'; copying the host's into the guest for this run"
+        Copy-GpuDriverToGuest | Out-Null
+        Restart-Guest
+        Wait-Guest -TimeoutSec 900
+        $driver = Test-GuestGpuDriver
+    }
     if (-not $driver.Match) {
-        throw "the guest holds the graphics driver '$($driver.GuestDrivers -join ', ')' and the host now has '$($driver.HostDriver)'; run scripts\vm\provision-gpu.ps1 -Force"
+        throw "the guest holds the graphics driver '$($driver.GuestDrivers -join ', ')' and the host now has '$($driver.HostDriver)'; run scripts\vm\provision-gpu.ps1 -Force, or pass -RefreshGpuDriver to copy the host's driver in for this run alone"
     }
     # Without a screen nothing is drawn, and every measurement would be of nothing.
     if (-not (Test-GuestDisplay)) { throw "the guest's desktop has no screen with the graphics card attached; see Test-GuestDisplay in Vm.ps1" }
@@ -313,15 +337,17 @@ Invoke-WebRequest -UseBasicParsing '$base/$name.sha256' -OutFile (Join-Path `$di
 }
 
 # ---------------------------------------------------------------- C, install
-Test-Case "C1" "Unpack the zip" "Expand-Archive in Windows PowerShell 5.1 gives all ten entries" {
+Test-Case "C1" "Unpack the zip" "Expand-Archive in Windows PowerShell 5.1 gives every entry of the package" {
     $run = Invoke-GuestScript -Script @"
 Expand-Archive -Path '$guestZip' -DestinationPath '$guestUnpacked' -Force
 Get-ChildItem '$guestUnpacked' | ForEach-Object { `$_.Name }
 "@
     $names = @($run.Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ })
     $needed = "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "LICENSE", "NOTICE", "install.ps1", "uninstall.ps1", "install.cmd", "uninstall.cmd", "plugins"
+    # A package built with the worker for NVIDIA cards holds its folder too.
+    if ($names -contains "cuda") { $needed += "cuda" }
     $missing = @($needed | Where-Object { $names -notcontains $_ })
-    Add-Result -Id "C1" -Title "Unpack the zip" -Expect "all ten entries" -Status $(if ($missing) { "fail" } else { "pass" }) `
+    Add-Result -Id "C1" -Title "Unpack the zip" -Expect "every entry of the package" -Status $(if ($missing) { "fail" } else { "pass" }) `
         -Observed "unpacked: $($names -join ', ')" -Output $run.Output
 }
 
@@ -1464,6 +1490,120 @@ foreach ($name in "app", "backend", "mcp") {
     Add-Result -Id "L2" -Title "Every program writes its own log" -Expect "three logs, none empty" `
         -Status $(if (-not $run.Output.Trim()) { "error" } elseif ($missing) { "fail" } else { "pass" }) -Output $run.Output `
         -Observed $(if (-not $run.Output.Trim()) { "the guest did not answer" } elseif ($missing) { "missing or empty: $($missing -join ', ')" } else { "app.log $($sizes.app) bytes, backend.log $($sizes.backend) bytes, mcp.log $($sizes.mcp) bytes" })
+}
+
+# ---------------------------------------------------------------- EM, built-in embedding models
+# A model's engine is native code inside codewiki.exe, and on an NVIDIA card
+# a program of its own with NVIDIA's libraries beside it. Whether either runs
+# on a Windows without the C++ runtime shows only here. The guest without a
+# card must embed on the processor; with -Gpu the card is expected, and a
+# guest that does not offer it to CUDA is recorded, not failed.
+$smallModel = "granite-small-english-r2"
+
+Test-Case "EM1" "The built-in models from the command line" "codewiki model list names the three models; recommend names one of them, or says why none fits" {
+    $run = Invoke-GuestScript -TimeoutSec 120 -Script @"
+& codewiki model list 2>&1
+"list exit: `$LASTEXITCODE"
+& codewiki model recommend 2>&1
+"recommend exit: `$LASTEXITCODE"
+"cuda worker installed: " + (Test-Path '$guestTarget\cuda\codewiki-embed-cuda.exe')
+`$global:LASTEXITCODE = 0
+"@
+    $named = @("granite-small-english-r2", "gte-modernbert-base", "qwen3-embedding-0.6b" | Where-Object { $run.Output -match [regex]::Escape($_) })
+    $ok = $run.Output -match "list exit: 0" -and $run.Output -match "recommend exit: 0" -and $named.Count -eq 3
+    Add-Result -Id "EM1" -Title "The built-in models from the command line" -Expect "three models listed; a recommendation with its reason" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$($named.Count) of 3 models listed; see the output for the recommendation and its reason"
+}
+
+Test-Case "EM2" "The models in Settings" "Settings > Semantic search shows the machine, the recommendation and a card for each model" {
+    Start-GuestApp -Arguments $guestRepo, "settings:search"
+    Wait-For 15
+    $shot = Shot "settings-models"
+    Add-Result -Id "EM2" -Title "The models in Settings" -Expect "the section 'Built-in model' with the machine, the recommendation and three models" -Status note -Shots @($shot) `
+        -Observed "started on 'settings:search'; read the screenshot: under 'Embedder' it must show 'Built-in model' with a line 'This machine: ...', a recommendation or the reason there is none, and the cards of the three models with an Install button each"
+    Stop-GuestApp
+}
+
+Test-Case "EM3" "Install a model and search by meaning" "the backend downloads the small model, makes it the embedder, embeds the repository in the background, and a search by meaning finds code that shares no word with the question" {
+    # Everything goes through the backend's own routes, as the app's buttons
+    # do. It starts a backend of its own, so nothing of an earlier case is in
+    # the way, and stops it at the end.
+    $run = Invoke-GuestScript -TimeoutSec 1500 -Script @"
+`$ErrorActionPreference = 'Stop'
+Get-Process codewiki-app, codewiki, codewiki-embed-cuda -ErrorAction SilentlyContinue | Stop-Process -Force
+Start-Sleep -Seconds 2
+`$data = "`$env:LOCALAPPDATA\CodeWiki"
+Remove-Item "`$data\backend.json" -ErrorAction SilentlyContinue
+Remove-Item "`$data\logs\embed-worker.log" -ErrorAction SilentlyContinue
+`$backend = Start-Process -FilePath '$guestTarget\codewiki.exe' -ArgumentList 'serve', '--port', '0' -WindowStyle Hidden -PassThru
+foreach (`$try in 1..150) { if (Test-Path "`$data\backend.json") { break }; Start-Sleep -Milliseconds 200 }
+`$connection = Get-Content "`$data\backend.json" -Raw | ConvertFrom-Json
+`$headers = @{ Authorization = "Bearer `$(`$connection.token)" }
+function Call(`$method, `$path, `$body) {
+    `$arguments = @{ Method = `$method; Uri = "`$(`$connection.url)`$path"; Headers = `$headers; TimeoutSec = 600 }
+    if (`$null -ne `$body) { `$arguments.Body = (`$body | ConvertTo-Json -Compress); `$arguments.ContentType = 'application/json' }
+    Invoke-RestMethod @arguments
+}
+function Wait-Job(`$what) {
+    `$last = ''
+    foreach (`$try in 1..2400) {
+        `$job = (Call GET '/v1/models').job
+        if (`$null -ne `$job) {
+            if (`$job.phase -ne `$last) { "`$what: `$(`$job.kind) `$(`$job.phase), bytes `$(`$job.bytes_done)/`$(`$job.bytes_total), documents `$(`$job.docs_done)/`$(`$job.docs_total)"; `$last = `$job.phase }
+            if ('done', 'failed', 'cancelled' -contains `$job.phase) {
+                "`$what ended: `$(`$job.phase), documents `$(`$job.docs_done)/`$(`$job.docs_total), error: `$(`$job.error), note: `$(`$job.note)"
+                return
+            }
+        }
+        Start-Sleep -Milliseconds 500
+    }
+    "`$what did not end"
+}
+try {
+    `$models = Call GET '/v1/models'
+    "machine: `$([math]::Round(`$models.hardware.ram_total / 1GB, 1)) GB, `$(`$models.hardware.physical_cores) cores, card: `$(`$models.hardware.nvidia.name)"
+    "cuda worker usable: `$(`$models.cuda); recommended: `$(`$models.recommended.model) on `$(`$models.recommended.device) (`$(`$models.recommended.reason))"
+    `$repo = Call POST '/v1/repos' @{ path = '$guestRepo' }
+    Call POST "/v1/repos/`$(`$repo.id)/update" @{} | Out-Null
+    `$started = Get-Date
+    Call POST '/v1/models/$smallModel/install' | Out-Null
+    Wait-Job 'install'
+    "install and embedding took `$([int]((Get-Date) - `$started).TotalSeconds) s"
+    `$settings = Call GET '/v1/settings'
+    "embedder: `$(`$settings.embed.name); problem: `$(`$settings.embed.problem)"
+    `$models = Call GET '/v1/models'
+    "worker: `$(`$models.worker.running -join ' on '); card given up: `$(`$models.worker.cuda_given_up)"
+    foreach (`$query in 'keep an API key unreadable to other users of this computer', 'where do the log files go') {
+        `$hits = Call GET "/v1/repos/`$(`$repo.id)/search?q=`$([uri]::EscapeDataString(`$query))&limit=5"
+        "hits for '`$query': " + ((`$hits | ForEach-Object { "`$(`$_.kind):`$(`$_.title)" }) -join ' | ')
+    }
+    `$models = Call DELETE '/v1/models/$smallModel'
+    `$settings = Call GET '/v1/settings'
+    "after removal: installed `$(`$models.models[0].installed), embedder `$(`$settings.embed.provider.value)"
+} finally {
+    try { Call POST '/v1/shutdown' @{} | Out-Null } catch { }
+    "backend exited: " + `$backend.WaitForExit(30000)
+    Start-Sleep -Seconds 2
+    "workers left: " + @(Get-CimInstance Win32_Process | Where-Object { `$_.CommandLine -match 'embed-worker' }).Count
+    "worker log:"
+    Get-Content "`$data\logs\embed-worker.log" -ErrorAction SilentlyContinue | Where-Object { `$_ -match 'loaded|could not' } | ForEach-Object { "    `$_" }
+}
+`$global:LASTEXITCODE = 0
+"@
+    $out = $run.Output
+    $device = if ($out -match "(?m)^worker: \S+ on (\w+)") { $Matches[1] } else { "none" }
+    $installed = $out -match "install ended: done" -and $out -match "embedder: builtin:$smallModel"
+    $found = $out -match "(?m)^hits for 'keep an API key[^:]*: .+" -and $out -match "after removal: installed False, embedder local"
+    $clean = $out -match "backend exited: True" -and $out -match "workers left: 0"
+    $status = if (-not $run.Completed -or -not ($installed -and $found -and $clean)) { "fail" }
+        elseif ($Gpu -and $device -ne "cuda") { "note" }
+        elseif (-not $Gpu -and $device -ne "cpu") { "fail" }
+        else { "pass" }
+    $observed = "the model ran on: $device; installed and made the embedder: $installed; searched and removed: $found; backend and worker gone at the end: $clean. Read the output: the hits for the first question should name the secret module (protect, unprotect), which shares no word with it"
+    if ($Gpu -and $device -ne "cuda") { $observed = "with the graphics card attached the model ran on '$device', not on the card; " + $observed }
+    Add-Result -Id "EM3" -Title "Install a model and search by meaning" -Expect "installed, in use, embedded, found by meaning, removed; on the processor without a card, on the card with -Gpu" `
+        -Status $status -Output $out -Observed $observed
 }
 
 # ---------------------------------------------------------------- CC, Claude Code plugin

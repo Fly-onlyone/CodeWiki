@@ -42,6 +42,21 @@ pub trait Embedder: Send + Sync {
     fn name(&self) -> String;
     /// One vector per text, in order. Every vector has the same length.
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+    /// The vector of what a user searches for. Some models put an
+    /// instruction before a query and none before a document; the others
+    /// embed both alike, which is the default.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(&[text.to_string()])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid(format!("{} returned no vector", self.name())))
+    }
+    /// How many documents to hand to one [`Embedder::embed`] call when many
+    /// wait. Between two calls a long run reports how far it is and can be
+    /// stopped, so a slow embedder names a small number.
+    fn batch_size(&self) -> usize {
+        BATCH
+    }
     /// Check that the embedder answers: embed one word and return the length
     /// of its vector. An error carries the provider's own explanation.
     fn probe(&self) -> Result<usize> {

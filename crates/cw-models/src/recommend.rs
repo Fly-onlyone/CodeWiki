@@ -1,7 +1,7 @@
 //! Which model fits a machine. A fixed rule, so that the same machine always
 //! gets the same answer and the answer can be explained in one line.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::catalog::{self, Tier};
 use crate::hardware::Hardware;
@@ -20,7 +20,7 @@ const LEAST_FREE_RAM: u64 = 2 * GB;
 const DISK_MARGIN: u64 = GB;
 
 /// What runs the model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Device {
     Cpu,

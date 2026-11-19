@@ -7,6 +7,8 @@
 //! - [`recommend`]: which model fits that machine, and why.
 //! - [`store`]: the models on disk, under `<data dir>\models`: download with
 //!   resume, verification, removal.
+//! - [`worker`]: the hidden child process that holds a model, its protocol
+//!   and the supervisor that starts and stops it.
 //!
 //! Nothing here runs a model. The engine that does is a crate of its own,
 //! linked only into the programs that run one, so that this crate stays
@@ -16,6 +18,7 @@ pub mod catalog;
 pub mod hardware;
 pub mod recommend;
 pub mod store;
+pub mod worker;
 
 pub use catalog::{Entry, Family, Pooling, Tier};
 pub use hardware::{Hardware, Nvidia};

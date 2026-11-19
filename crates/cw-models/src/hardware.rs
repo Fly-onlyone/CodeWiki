@@ -75,6 +75,14 @@ fn nvidia() -> Option<Nvidia> {
     best
 }
 
+/// The machine's NVIDIA card, read once for this process: asking the driver
+/// loads its library, and the answer does not change while a program runs.
+/// The free video memory in it is as old as the first call.
+pub fn nvidia_card() -> Option<&'static Nvidia> {
+    static CARD: std::sync::OnceLock<Option<Nvidia>> = std::sync::OnceLock::new();
+    CARD.get_or_init(nvidia).as_ref()
+}
+
 /// Free bytes on the drive whose mount point is the longest start of `path`.
 fn disk_free(path: &Path) -> Option<u64> {
     // The folder may not exist yet; its drive does.

@@ -87,6 +87,11 @@ impl Store {
         }
     }
 
+    /// The folder that holds the installed models.
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// The folder of an installed model.
     pub fn dir(&self, entry: &Entry) -> PathBuf {
         self.root.join(&entry.id)

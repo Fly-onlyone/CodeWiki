@@ -201,6 +201,10 @@ pub struct Supervisor {
     /// Whether a game is running: the child then does not linger.
     game: Box<dyn Fn() -> bool + Send + Sync>,
     state: Mutex<State>,
+    /// What [`Supervisor::status`] answers. Kept beside the state, not read
+    /// from it: the state is locked for as long as a request runs, and a
+    /// page that asks every second must not wait for a batch.
+    shown: Mutex<Status>,
     idle: Duration,
     load_timeout: Duration,
     reply_timeout: Duration,
@@ -233,6 +237,10 @@ impl Supervisor {
             launcher,
             game,
             state: Mutex::new(State::default()),
+            shown: Mutex::new(Status {
+                running: None,
+                cuda_given_up: false,
+            }),
             idle: IDLE,
             load_timeout: LOAD_TIMEOUT,
             reply_timeout: REPLY_TIMEOUT,
@@ -243,6 +251,22 @@ impl Supervisor {
         self.state
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Bring what [`Supervisor::status`] answers in line with the state.
+    /// Called wherever the child or the count of failures changes.
+    fn publish(&self, state: &State) {
+        let status = Status {
+            running: state
+                .child
+                .as_ref()
+                .map(|child| (child.spec.model.clone(), child.hello.device)),
+            cuda_given_up: state.cuda_failures >= CUDA_FAILURES,
+        };
+        *self
+            .shown
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = status;
     }
 
     /// The device a request for `wanted` really runs on: the processor once
@@ -369,6 +393,7 @@ impl Supervisor {
         let result = (|| {
             if state.child.is_none() {
                 state.child = Some(self.start(&spec)?);
+                self.publish(&state);
             }
             let child = state.child.as_mut().expect("just started");
             let vectors = self.ask(child, kind, texts)?;
@@ -399,6 +424,7 @@ impl Supervisor {
                 }
             }
         }
+        self.publish(&state);
         result
     }
 
@@ -416,6 +442,7 @@ impl Supervisor {
         if child.last_used.elapsed() >= self.idle || (self.game)() {
             log::info!("model worker stopped: {}", child.spec.model);
             state.child = None;
+            self.publish(&state);
             return false;
         }
         true
@@ -423,23 +450,25 @@ impl Supervisor {
 
     /// Stop the child now. A request under way is let finish first.
     pub fn stop(&self) {
-        self.lock().child = None;
+        let mut state = self.lock();
+        state.child = None;
+        self.publish(&state);
     }
 
     /// Trust the graphics card again, as after a change of the settings.
     pub fn forgive_cuda(&self) {
-        self.lock().cuda_failures = 0;
+        let mut state = self.lock();
+        state.cuda_failures = 0;
+        self.publish(&state);
     }
 
+    /// Which child runs, and whether the graphics card was given up. Never
+    /// waits for a request under way.
     pub fn status(&self) -> Status {
-        let state = self.lock();
-        Status {
-            running: state
-                .child
-                .as_ref()
-                .map(|child| (child.spec.model.clone(), child.hello.device)),
-            cuda_given_up: state.cuda_failures >= CUDA_FAILURES,
-        }
+        self.shown
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 }
 

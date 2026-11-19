@@ -80,10 +80,11 @@ impl Default for Host {
     }
 }
 
-/// Documents an update of a wiki embeds itself before it leaves the rest to
-/// the background. The embedder that needs no model is through thousands in
-/// a moment either way; a neural one takes seconds over these.
-const INLINE_LIMIT: usize = 64;
+/// How long each step of an update of a wiki embeds for before it leaves the
+/// rest to the background. The embedder that needs no model is through
+/// thousands of documents in that time; a neural one gets a batch or two in,
+/// so that the first search after an update finds something by meaning.
+const INLINE_BUDGET: Duration = Duration::from_secs(1);
 
 /// Environment variable that holds the webhook secret.
 pub const WEBHOOK_SECRET_ENV: &str = "CODEWIKI_WEBHOOK_SECRET";
@@ -150,8 +151,8 @@ pub async fn serve(
     // the environment names.
     cw_wiki::semantic::configure_in(&settings::resolved(&state), &state.0.config.data_dir);
     // An update holds its lock and its client's patience while it embeds;
-    // what is over the limit is embedded in the background.
-    cw_wiki::semantic::set_inline_limit(INLINE_LIMIT);
+    // what does not fit the budget is embedded in the background.
+    cw_wiki::semantic::set_inline_budget(Some(INLINE_BUDGET));
     {
         let state = state.clone();
         tokio::task::spawn_blocking(move || models::resume(&state));

@@ -64,6 +64,12 @@ pub trait Embedder: Send + Sync {
     fn batch_size(&self) -> usize {
         BATCH
     }
+    /// Whether a repository's documents take it minutes. A caller that holds
+    /// a lock, and someone's patience, while it embeds then leaves the work
+    /// to the background.
+    fn slow(&self) -> bool {
+        false
+    }
     /// Check that the embedder answers: embed one word and return the length
     /// of its vector. An error carries the provider's own explanation.
     fn probe(&self) -> Result<usize> {
@@ -517,6 +523,10 @@ impl Embedder for BuiltinEmbedder {
 
     fn batch_size(&self) -> usize {
         self.entry.batch
+    }
+
+    fn slow(&self) -> bool {
+        true
     }
 }
 

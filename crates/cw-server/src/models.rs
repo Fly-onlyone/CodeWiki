@@ -28,7 +28,7 @@ use crate::{AppState, repos};
 
 /// How old a reading of the machine may be before it is taken again. A page
 /// asks every second while a job runs.
-const HARDWARE_AGE: Duration = Duration::from_secs(10);
+const HARDWARE_AGE: Duration = Duration::from_secs(60);
 /// How often a job looks over the repositories again when updates ran while
 /// it worked.
 const PASSES: usize = 3;

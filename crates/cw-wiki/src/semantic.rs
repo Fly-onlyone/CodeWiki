@@ -9,8 +9,9 @@
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 
 use cw_core::settings::Resolved;
 use cw_core::{Result, sha256_hex};
@@ -335,28 +336,39 @@ pub fn embed_documents(
     Ok(progress.done)
 }
 
-/// How many documents [`refresh`] embeds before it leaves the rest to a
-/// later run; 0 is no limit.
-static INLINE_LIMIT: AtomicUsize = AtomicUsize::new(0);
+/// Milliseconds [`refresh`] embeds for before it leaves the rest to a later
+/// run; `u64::MAX` is no limit.
+static INLINE_BUDGET: AtomicU64 = AtomicU64::new(u64::MAX);
 
-/// Let [`refresh`] embed at most about `documents` documents, a batch more
-/// at the most, and leave the rest waiting ([`behind`] then says so). The
-/// backend sets this: an update holds its lock and its client's patience
-/// while it embeds, and a first embedding with a neural model takes minutes.
-/// A program that sets nothing embeds everything where it stands.
-pub fn set_inline_limit(documents: usize) {
-    INLINE_LIMIT.store(documents, Ordering::Relaxed);
+/// Let [`refresh`] embed for about `budget` and leave the rest waiting
+/// ([`behind`] then says so); `None` takes the limit away. The backend sets
+/// this: an update holds its lock and its client's patience while it
+/// embeds, and a first embedding with a neural model takes minutes. The
+/// embedder that needs no model is through thousands of documents within
+/// any budget, so for it nothing changes. A program that sets nothing
+/// embeds everything where it stands.
+///
+/// It is time and not a count of documents, because a document takes one
+/// model a hundred times as long as another.
+pub fn set_inline_budget(budget: Option<Duration>) {
+    let millis = budget.map_or(u64::MAX, |budget| {
+        u64::try_from(budget.as_millis()).unwrap_or(u64::MAX - 1)
+    });
+    INLINE_BUDGET.store(millis, Ordering::Relaxed);
 }
 
-/// [`embed_documents_with`] with the process embedder, up to the inline
-/// limit. A failing embedder (for example an unreachable Ollama) is reported
-/// and leaves full-text search working.
+/// [`embed_documents_with`] with the process embedder, within the inline
+/// budget. A failing embedder (for example an unreachable Ollama) is
+/// reported and leaves full-text search working.
 pub fn refresh(index: &mut Index, kinds: &[&str], documents: &[Document]) {
     let Some(embedder) = embedder() else {
         return;
     };
-    let limit = INLINE_LIMIT.load(Ordering::Relaxed);
-    match embed_up_to(index, embedder.as_ref(), kinds, documents, limit) {
+    let budget = match INLINE_BUDGET.load(Ordering::Relaxed) {
+        u64::MAX => None,
+        millis => Some(Duration::from_millis(millis)),
+    };
+    match embed_within(index, embedder.as_ref(), kinds, documents, budget) {
         Ok(progress) if progress.done < progress.total => log::info!(
             "{} of {} documents wait for their search vectors",
             progress.total - progress.done,
@@ -367,17 +379,26 @@ pub fn refresh(index: &mut Index, kinds: &[&str], documents: &[Document]) {
     }
 }
 
-/// [`embed_documents_with`] that stops once `limit` documents are embedded;
-/// 0 is no limit.
-fn embed_up_to(
+/// [`embed_documents_with`] that stops after the batch during which
+/// `budget` ran out; `None` is no limit. Under a budget, an embedder that
+/// is slow embeds nothing here: its one batch could take longer than the
+/// whole budget, and starting its model longer still. The run is planned,
+/// so that the index knows what waits. Any other embeds at least one batch.
+fn embed_within(
     index: &mut Index,
     embedder: &dyn Embedder,
     kinds: &[&str],
     documents: &[Document],
-    limit: usize,
+    budget: Option<Duration>,
 ) -> Result<Progress> {
-    embed_documents_with(index, embedder, kinds, documents, &mut |progress| {
-        if limit > 0 && progress.done >= limit {
+    if budget.is_some() && embedder.slow() {
+        let run = Run::plan(index, embedder, kinds, documents)?;
+        run.finish(index)?;
+        return Ok(run.progress());
+    }
+    let started = Instant::now();
+    embed_documents_with(index, embedder, kinds, documents, &mut |_| {
+        if budget.is_some_and(|budget| started.elapsed() >= budget) {
             ControlFlow::Break(())
         } else {
             ControlFlow::Continue(())
@@ -732,18 +753,63 @@ mod tests {
         assert_eq!(hits.first().map(|h| h.key.as_str()), Some("resolver.md"));
     }
 
+    /// An embedder that says it is slow, and counts how often it is asked.
+    struct Slow(LocalEmbedder, std::sync::atomic::AtomicUsize);
+
+    impl Embedder for Slow {
+        fn name(&self) -> String {
+            "slow".into()
+        }
+
+        fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+            self.1.fetch_add(1, Ordering::SeqCst);
+            self.0.embed(texts)
+        }
+
+        fn slow(&self) -> bool {
+            true
+        }
+    }
+
     #[test]
-    fn the_inline_limit_leaves_the_rest_waiting() {
+    fn under_a_budget_a_slow_embedder_is_left_to_the_background() {
+        let mut index = indexed();
+        let embedder = Slow(LocalEmbedder::default(), Default::default());
+        let budget = Some(Duration::from_secs(60));
+        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), budget).unwrap();
+        // Nothing was embedded, however large the budget, and the index
+        // knows that all of it waits.
+        assert_eq!(progress, Progress { done: 0, total: 3 });
+        assert_eq!(embedder.1.load(Ordering::SeqCst), 0);
+        assert!(behind(&index, &embedder.name(), &["note"]).unwrap());
+        // With no budget it embeds where it stands, as a command does.
+        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), None).unwrap();
+        assert_eq!(progress, Progress { done: 3, total: 3 });
+        assert!(!behind(&index, &embedder.name(), &["note"]).unwrap());
+        // Nothing to embed is not a reason to wait.
+        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), budget).unwrap();
+        assert_eq!(progress, Progress { done: 0, total: 0 });
+        assert!(!behind(&index, &embedder.name(), &["note"]).unwrap());
+    }
+
+    #[test]
+    fn a_budget_that_ran_out_leaves_the_rest_waiting() {
         let mut index = Index::open_in_memory().unwrap();
         index.replace_documents(&["note"], &corpus()).unwrap();
         let embedder = OneByOne(LocalEmbedder::default());
-        let progress = embed_up_to(&mut index, &embedder, &["note"], &corpus(), 2).unwrap();
-        assert_eq!(progress, Progress { done: 2, total: 3 });
+        // No time at all still embeds one batch, so that every update gets
+        // somewhere.
+        let none = Some(Duration::ZERO);
+        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), none).unwrap();
+        assert_eq!(progress, Progress { done: 1, total: 3 });
         assert!(behind(&index, &embedder.name(), &["note"]).unwrap());
-        // No limit embeds the rest.
-        let progress = embed_up_to(&mut index, &embedder, &["note"], &corpus(), 0).unwrap();
-        assert_eq!(progress, Progress { done: 1, total: 1 });
+        // Time enough embeds the rest, as no limit does.
+        let plenty = Some(Duration::from_secs(60));
+        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), plenty).unwrap();
+        assert_eq!(progress, Progress { done: 2, total: 2 });
         assert!(!behind(&index, &embedder.name(), &["note"]).unwrap());
+        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), None).unwrap();
+        assert_eq!(progress, Progress { done: 0, total: 0 });
     }
 
     #[test]

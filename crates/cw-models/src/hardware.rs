@@ -44,7 +44,7 @@ pub fn probe(data_dir: &Path) -> Hardware {
         ram_total,
         ram_available,
         physical_cores: sysinfo::System::physical_core_count().unwrap_or(0),
-        nvidia: nvidia(),
+        nvidia: nvidia_card().cloned(),
         disk_free: disk_free(data_dir),
     }
 }

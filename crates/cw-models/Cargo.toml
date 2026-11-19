@@ -1,0 +1,26 @@
+[package]
+name = "cw-models"
+description = "Built-in embedding models of CodeWiki: the catalog, the machine's hardware, the recommendation and the model files on disk"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { version = "0.2.0", path = "../cw-core" }
+hex = "0.4.3"
+log = "0.4"
+# Loads nvml.dll at run time; a machine without an NVIDIA driver has none,
+# and that is reported as "no card".
+nvml-wrapper = "0.13.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.11.1"
+sysinfo = { version = "0.40.4", default-features = false, features = ["system", "disk"] }
+ureq = "3.5.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"

@@ -1463,7 +1463,9 @@ name = "cw-embed"
 version = "0.2.0"
 dependencies = [
  "cw-core",
+ "cw-models",
  "serde_json",
+ "tempfile",
  "ureq",
 ]
 
@@ -1556,6 +1558,7 @@ dependencies = [
  "cw-embed",
  "cw-index",
  "cw-llm",
+ "cw-models",
  "cw-vault",
  "cw-wiki",
  "http-body-util",

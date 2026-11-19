@@ -15,9 +15,10 @@ use serde_json::{Value, json};
 use crate::AppState;
 
 /// Settings that decide which embedder semantic search uses.
-const EMBEDDER_KEYS: [Key; 5] = [
+const EMBEDDER_KEYS: [Key; 6] = [
     settings::EMBED_PROVIDER,
     settings::EMBED_MODEL,
+    settings::EMBED_DEVICE,
     settings::OPENAI_API_KEY,
     settings::OPENAI_BASE_URL,
     settings::OLLAMA_HOST,
@@ -70,11 +71,40 @@ pub(crate) fn describe(state: &AppState) -> Value {
         };
     }
     out["llm"]["provider"]["options"] = json!(cw_llm::PROVIDERS);
-    out["embed"]["provider"]["options"] = json!(cw_embed::PROVIDERS);
+    // A choice that cannot work is not offered: the built-in embedder needs
+    // an installed model, the graphics card a worker for it. The value in
+    // effect is always listed, so that a page can show it.
+    let data_dir = &state.0.config.data_dir;
+    let offered = |options: &[&str], key: Key, conditional: &str, usable: bool| -> Vec<String> {
+        let current = resolved.get(key.env);
+        options
+            .iter()
+            .filter(|option| {
+                **option != conditional || usable || current.as_deref() == Some(conditional)
+            })
+            .map(|option| option.to_string())
+            .collect()
+    };
+    let has_model =
+        cw_models::ENGINE && !cw_models::Store::new(data_dir, None).installed().is_empty();
+    out["embed"]["provider"]["options"] = json!(offered(
+        &cw_embed::PROVIDERS,
+        settings::EMBED_PROVIDER,
+        "builtin",
+        has_model
+    ));
+    out["embed"]["device"]["options"] = json!(offered(
+        &cw_embed::DEVICES,
+        settings::EMBED_DEVICE,
+        "cuda",
+        cw_models::worker::cuda_program().is_some()
+    ));
     let (name, problem) = selected(cw_llm::from_settings(&resolved), |p| p.name());
     out["llm"]["name"] = json!(name);
     out["llm"]["problem"] = json!(problem);
-    let (name, problem) = selected(cw_embed::from_settings(&resolved), |e| e.name());
+    let (name, problem) = selected(cw_embed::from_settings_in(&resolved, data_dir), |e| {
+        e.name()
+    });
     out["embed"]["name"] = json!(name);
     out["embed"]["problem"] = json!(problem);
     out
@@ -119,7 +149,7 @@ pub(crate) fn test_llm(state: &AppState) -> Value {
 /// length of its vectors.
 pub(crate) fn test_embedder(state: &AppState) -> Value {
     let started = Instant::now();
-    match cw_embed::from_settings(&resolved(state)) {
+    match cw_embed::from_settings_in(&resolved(state), &state.0.config.data_dir) {
         Ok(Some(embedder)) => test_result(
             Some(embedder.name()),
             embedder
@@ -154,6 +184,8 @@ fn checked(key: Key, value: &str) -> Result<String> {
         one_of(&cw_llm::PROVIDERS, "provider")
     } else if key == settings::EMBED_PROVIDER {
         one_of(&cw_embed::PROVIDERS, "embedder")
+    } else if key == settings::EMBED_DEVICE {
+        one_of(&cw_embed::DEVICES, "device")
     } else if key == settings::OPENAI_BASE_URL || key == settings::OLLAMA_HOST {
         if value.starts_with("http://") || value.starts_with("https://") {
             Ok(value.trim_end_matches('/').to_string())
@@ -221,8 +253,10 @@ pub(crate) fn change(state: &AppState, body: &Value) -> Result<Value> {
         .lock()
         .unwrap_or_else(|p| p.into_inner());
     let before = resolved(state);
+    let config = &state.0.config;
     let mut embedder_changed = false;
-    settings::update(&state.0.config.data_dir, |saved| {
+    let mut model_named = false;
+    settings::update(&config.data_dir, |saved| {
         for (section, fields) in sections {
             let fields = fields.as_object().ok_or_else(|| {
                 Error::invalid(format!("'{section}' must be an object of settings"))
@@ -240,12 +274,37 @@ pub(crate) fn change(state: &AppState, body: &Value) -> Result<Value> {
                 }
                 apply(saved, key, value)?;
                 embedder_changed |= EMBEDDER_KEYS.contains(&key);
+                model_named |= key == settings::EMBED_MODEL;
+            }
+        }
+        if embedder_changed {
+            // The model field means a catalog id to the built-in embedder
+            // and a model name to the others. A change of provider across
+            // that line leaves a value of the wrong kind behind unless the
+            // same change names a model; clear it, so that Ollama is never
+            // asked for a catalog id.
+            let built_in = |settings: &Resolved| {
+                settings.get(settings::EMBED_PROVIDER.env).as_deref() == Some("builtin")
+            };
+            let is_built_in = built_in(&Resolved::from_parts(saved, config.env));
+            if built_in(&before) != is_built_in
+                && !model_named
+                && before.source(settings::EMBED_MODEL) != Source::Env
+            {
+                saved.clear(settings::EMBED_MODEL);
+            }
+            // A built-in embedder that cannot work is refused here, not
+            // found out at the next search: its model must be one of the
+            // catalog and installed, its device one this installation has.
+            if is_built_in {
+                let after = Resolved::from_parts(saved, config.env);
+                cw_embed::from_settings_in(&after, &config.data_dir)?;
             }
         }
         Ok(())
     })?;
     if embedder_changed {
-        cw_wiki::semantic::configure(&resolved(state));
+        cw_wiki::semantic::configure_in(&resolved(state), &config.data_dir);
     }
     Ok(describe(state))
 }

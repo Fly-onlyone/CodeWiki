@@ -8,6 +8,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
+use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -73,9 +74,16 @@ impl Slot {
             .clone()
     }
 
-    /// Use the embedder the settings in effect name, from now on.
+    /// Use the embedder the settings in effect name, from now on. A built-in
+    /// model is looked for under the default data directory.
     pub fn configure(&self, resolved: &Resolved) {
-        let embedder = built(cw_embed::from_settings(resolved));
+        self.configure_in(resolved, &cw_core::paths::data_dir());
+    }
+
+    /// [`Slot::configure`] with the data directory that holds the built-in
+    /// models.
+    pub fn configure_in(&self, resolved: &Resolved, data_dir: &Path) {
+        let embedder = built(cw_embed::from_settings_in(resolved, data_dir));
         *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(embedder);
     }
 }
@@ -98,6 +106,12 @@ pub fn embedder() -> Option<Arc<dyn Embedder>> {
 /// is needed.
 pub fn configure(resolved: &Resolved) {
     EMBEDDER.configure(resolved);
+}
+
+/// [`configure`] with the data directory that holds the built-in models. A
+/// backend passes its own, which need not be the default one.
+pub fn configure_in(resolved: &Resolved, data_dir: &Path) {
+    EMBEDDER.configure_in(resolved, data_dir);
 }
 
 fn text_of(document: &Document) -> String {

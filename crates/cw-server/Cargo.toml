@@ -15,6 +15,7 @@ cw-core = { path = "../cw-core" }
 cw-embed = { path = "../cw-embed" }
 cw-index = { path = "../cw-index" }
 cw-llm = { version = "0.2.0", path = "../cw-llm" }
+cw-models = { version = "0.2.0", path = "../cw-models" }
 cw-vault = { path = "../cw-vault" }
 cw-wiki = { path = "../cw-wiki" }
 log = "0.4"

@@ -100,7 +100,7 @@ pub async fn serve(
     let state = state(config);
     // Semantic search uses the embedder the settings name, not only the one
     // the environment names.
-    cw_wiki::semantic::configure(&settings::resolved(&state));
+    cw_wiki::semantic::configure_in(&settings::resolved(&state), &state.0.config.data_dir);
     let inner = state.0.clone();
     let stop = async move {
         tokio::select! {

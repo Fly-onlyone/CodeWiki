@@ -6,7 +6,8 @@
 //! lines over the child's standard input and output:
 //!
 //! ```text
-//! child:  {"protocol":1,"device":"cpu","dimensions":768}        once, when the model is loaded
+//! child:  {"protocol":1,"device":"cpu","dimensions":768}        once, when the model is loaded;
+//!                                                                or {"error":"..."} and it ends
 //! parent: {"id":1,"kind":"document","texts":["...","..."]}
 //! child:  {"id":1,"vectors":[[...],[...]]}                      or {"id":1,"error":"..."}
 //! ```
@@ -119,6 +120,15 @@ pub fn serve(
         send(serde_json::to_string(&reply)?)?;
     }
     Ok(())
+}
+
+/// The child's only line when it cannot load its model; it ends after it.
+/// `reason` must hold nothing secret: the parent logs it.
+pub fn refuse(mut output: impl Write, reason: &str) -> std::io::Result<()> {
+    let line = serde_json::json!({ "error": reason }).to_string();
+    output.write_all(line.as_bytes())?;
+    output.write_all(b"\n")?;
+    output.flush()
 }
 
 /// Which child is wanted.
@@ -280,7 +290,14 @@ impl Supervisor {
         };
         // On any failure below the child is dropped, which ends it.
         let line = wait_line(&child.lines, self.load_timeout, "loading the model")?;
-        let hello: Hello = serde_json::from_str(&line)
+        let first: serde_json::Value = serde_json::from_str(&line)
+            .map_err(|error| Error::external("reading the model worker's first line", error))?;
+        if let Some(reason) = first["error"].as_str() {
+            return Err(Error::invalid(format!(
+                "the model worker could not load the model: {reason}"
+            )));
+        }
+        let hello: Hello = serde_json::from_value(first)
             .map_err(|error| Error::external("reading the model worker's first line", error))?;
         if hello.protocol != PROTOCOL {
             return Err(Error::invalid(format!(
@@ -495,7 +512,10 @@ impl Launcher for ProgramLauncher {
             use std::os::windows::process::CommandExt;
             // Without this Windows opens a terminal window for the worker.
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            command.creation_flags(CREATE_NO_WINDOW);
+            // A model takes every core it finds. Below the priority of what
+            // the user works with, it takes them only when they are free.
+            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+            command.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
         }
         let mut child = command
             .spawn()
@@ -559,6 +579,8 @@ mod tests {
         Dies,
         /// Says hello with another protocol version.
         OtherProtocol,
+        /// Says that it cannot load its model, and ends.
+        CannotLoad,
         /// Answers with an error of its own.
         Refuses,
         /// Works on the processor, dies on the graphics card.
@@ -600,6 +622,9 @@ mod tests {
                         // Holds its pipes open and says nothing.
                         let _keep = (request_reader, reply_writer);
                         std::thread::sleep(Duration::from_secs(5));
+                    }
+                    Behavior::CannotLoad => {
+                        let _ = refuse(reply_writer, "model.safetensors is damaged");
                     }
                     Behavior::Hangs | Behavior::Dies => {
                         let mut output = reply_writer;
@@ -796,6 +821,10 @@ mod tests {
             (Behavior::Hangs, "did not answer within 0 s while embedding"),
             (Behavior::Dies, "ended while embedding"),
             (Behavior::OtherProtocol, "speaks protocol 2, this program 1"),
+            (
+                Behavior::CannotLoad,
+                "could not load the model: model.safetensors is damaged",
+            ),
             (
                 Behavior::Refuses,
                 "the model could not embed: out of memory",

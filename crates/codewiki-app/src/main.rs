@@ -150,6 +150,9 @@ enum Event {
     Show,
     /// A row of the tray menu was chosen.
     Menu(tray::Command),
+    /// Ctrl+C or Ctrl+Break in the console a dev build runs in, as an IDE's
+    /// Stop sends: end the app as the tray's Quit does.
+    Quit,
 }
 
 #[derive(Clone)]
@@ -664,6 +667,10 @@ impl AppView {
             }
             Event::Show => true,
             Event::Menu(command) => self.run_tray_command(command, cx),
+            Event::Quit => {
+                log::info!("asked to stop from the console");
+                self.quit(cx)
+            }
         }
     }
 
@@ -3819,6 +3826,12 @@ fn main() {
         instance::Acquired::Primary(held) => instance::hold(held),
         instance::Acquired::Separate => {}
     }
+    // Stopped from the console (an IDE's Stop sends Ctrl+C), the app quits as
+    // from the tray, and with it its backend.
+    win32::on_console_stop({
+        let to_app = to_app.clone();
+        move || _ = to_app.try_send(Event::Quit)
+    });
     let app = gpui_kit::application().with_assets(icons::AppAssets);
     app.run(move |cx| {
         gpui_kit::init(cx);

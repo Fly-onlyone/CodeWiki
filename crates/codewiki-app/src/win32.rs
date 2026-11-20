@@ -9,11 +9,13 @@
 
 #![allow(unsafe_code)]
 
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use gpui_kit::Window;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
+use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetSystemMetrics,
     IsWindowVisible, SM_CXSMICON, SW_HIDE, SW_SHOW, SetWindowLongPtrW, ShowWindow, WM_CLOSE,
@@ -151,5 +153,45 @@ pub fn allow_foreground(pid: u32) {
     let allowed = unsafe { AllowSetForegroundWindow(pid) };
     if allowed == 0 {
         log::info!("could not let process {pid} take the foreground");
+    }
+}
+
+/// What [`on_console_stop`] was given; unset until then.
+static CONSOLE_STOP: OnceLock<Box<dyn Fn() + Send + Sync>> = OnceLock::new();
+
+/// Call `stop` when the console the app runs in sends Ctrl+C or Ctrl+Break,
+/// as an IDE's Stop button does, instead of letting Windows end the process.
+///
+/// Windows' own answer ends the process at once, with exit code 0xc000013a.
+/// That skips `on_app_quit`, so the backend is never asked to stop: started
+/// with no console, it never sees the Ctrl+C and runs on, serving the old
+/// build and keeping its file locked. `stop` runs on a thread Windows makes
+/// for the event; it should hand the request over and return. A release
+/// build has no console, so there the handler never runs. The first call
+/// counts; later ones do nothing.
+pub fn on_console_stop(stop: impl Fn() + Send + Sync + 'static) {
+    if CONSOLE_STOP.set(Box::new(stop)).is_err() {
+        return;
+    }
+    // SAFETY: `console_handler` has the signature Windows asks of a console
+    // control handler and is a function of this program, alive as long as
+    // the process. The call takes no other pointer.
+    if unsafe { SetConsoleCtrlHandler(Some(console_handler), 1) } == 0 {
+        log::warn!("Ctrl+C in the console will end the app without stopping the backend");
+    }
+}
+
+/// The console control handler [`on_console_stop`] adds: Ctrl+C and
+/// Ctrl+Break go to its `stop` and count as handled; every other event
+/// (the console closing, logoff, shutdown) goes on to Windows' own answer.
+unsafe extern "system" fn console_handler(event: u32) -> windows_sys::core::BOOL {
+    match event {
+        CTRL_C_EVENT | CTRL_BREAK_EVENT => {
+            if let Some(stop) = CONSOLE_STOP.get() {
+                stop();
+            }
+            1
+        }
+        _ => 0,
     }
 }

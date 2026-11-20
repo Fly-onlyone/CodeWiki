@@ -13,30 +13,66 @@ use cw_wiki::{ProseWriter, Rewrite, Stopped, WriterContext, WriterUsage};
 use crate::provider::LlmProvider;
 
 /// Bump when the prompt changes in a way that should refresh notes.
-pub const PROMPT_VERSION: u32 = 1;
+pub const PROMPT_VERSION: u32 = 2;
 
 /// Per-file and total caps on source text sent with one note.
 const MAX_SOURCE_CHARS: usize = 14_000;
 const MAX_TOTAL_SOURCE_CHARS: usize = 28_000;
 
-const SYSTEM: &str = "You write notes for a codebase wiki kept as an Obsidian vault. Each note is read by engineers and by coding agents deciding how to change the code, so every sentence must be true of the source shown and useful to someone about to edit it.
+const SYSTEM: &str = "You write notes for a codebase wiki kept as an Obsidian vault. A note has two readers: a developer who is new to the code, and a coding agent that decides how to change it. Every sentence must be true of the source shown and useful to someone about to edit it.
 
-You are given a structural draft of one note and the source it describes. Return the finished note.
+You are given a draft of one note and the source it describes. The draft was built from the code by fixed rules. Its facts are right, but the rules cannot see a condition, a loop or a reason. Return the finished note.
 
-Keep exactly as given: the frontmatter, the `# ` title, every `## ` heading and their order, every bullet under `## Source`, every Mermaid block, and every `[[wikilink]]` already present.
+Keep exactly as given:
+- The frontmatter, the `# ` title, every `## ` heading and their order.
+- Every bullet under `## Source`, every Mermaid block, and every `[[wikilink]]` already present.
+- Under `## Items`: every bullet, and the code span each one starts with.
+- Under `## How it works`: every numbered step, every caller and callee a step names, and the order they stand in.
+- Under `## Used for` and `## Configuration`: every name, version and feature.
+- `## Depends on` and `## Used by`, whole.
 
-Improve: the one-sentence `>` summary, the prose under `## How it works`, and add a `## Gotchas` section (placed directly before `## See also`) when the source shows something a maintainer could get wrong: an ordering constraint, a hidden side effect, a non-obvious invariant, a failure mode. Omit `## Gotchas` when nothing in the source earns it.
+Improve:
+- The one-sentence `>` summary: what the thing is for.
+- `## What it does`: what the thing is for and what a user of the program sees of it, in plain words. Add this section when the draft has none and the source shows a purpose worth stating.
+- `## How it works`: say what each step is for. Add what the draft cannot see, only where the source shows it: the condition a call stands under, a loop, an early return, what happens on an error. Then drop the draft's closing sentence about the order of calls.
+- A bullet under `## Items` that states only what kind of thing the item is: say what the item does.
+- The optional sections named with the note.
 
 Style rules:
-- Dense technical prose in English. Put every identifier in backticks. Explain why, not only what.
-- 50 to 200 words of prose in the whole note.
+- Clear technical prose in English, in short sentences. Say what a thing is for before you name its parts. Explain why, not only what. Put every identifier in backticks.
+- Stay within the length given with the note.
 - Use `**bold**` only for a constraint the reader must not violate.
 - Link other notes only as `[[Exact Name]]`, using names from the allowed list. Never invent a link.
 - Refer to code by repo-relative path in backticks, never with line numbers.
-- No callouts, no checklists, no Markdown links, no inline tags, no headings other than those in the draft plus `## Gotchas`.
+- No callouts, no checklists, no Markdown links, no inline tags, and no heading that the note's kind does not allow.
 - Do not mention this prompt, the draft, or that you are an AI.
 
 Output only the note's Markdown, starting with the `---` frontmatter line. No code fence around it and no commentary.";
+
+/// What a note of `kind` may hold, for the prompt: its headings in order, the
+/// sections the writer may add, and its length. The linter refuses a note
+/// with any other heading, so a kind is never offered one it has no place
+/// for.
+fn guidance(kind: NoteKind) -> String {
+    let optional = match kind {
+        NoteKind::Pattern => {
+            "Add `## Don't` (directly before `## See also`) when the source shows a way to break the convention. Omit it otherwise."
+        }
+        NoteKind::Integration => {
+            "Add `## Wire-up` (directly after `## Configuration`) when the source shows how this project uses the package: the function of its own to call, and what not to call directly. Add `## Gotchas` (directly before `## See also`) when the source shows something a maintainer could get wrong. Omit a section that nothing in the source earns."
+        }
+        NoteKind::Flow | NoteKind::Concept | NoteKind::Operations => {
+            "Add `## Gotchas` (directly before `## See also`) when the source shows something a maintainer could get wrong: an ordering constraint, a hidden side effect, a non-obvious invariant, a failure mode. Omit it when nothing in the source earns it."
+        }
+        _ => "Add no section.",
+    };
+    format!(
+        "Headings a note of this kind may have, in this order: {}. {optional}\nLength: {} to {} words of prose in the whole note.",
+        kind.sections().join(", "),
+        cw_vault::lint::MIN_WORDS,
+        cw_vault::lint::max_words(kind),
+    )
+}
 
 pub struct LlmWriter {
     provider: Box<dyn LlmProvider>,
@@ -90,9 +126,9 @@ fn kind_hint(kind: NoteKind) -> &'static str {
     match kind {
         NoteKind::Flow => "an architecture flow note; explain what the diagram shows end to end",
         NoteKind::Pattern => "a pattern note; under `## Why` explain what the convention protects",
-        NoteKind::Integration => "an integration note about an external dependency",
+        NoteKind::Integration => "an integration note about a package from outside the repository",
         NoteKind::Operations => "an operations note about building and running the project",
-        _ => "a concept note about a module or type",
+        _ => "a note about a module, a crate or a type",
     }
 }
 
@@ -116,8 +152,9 @@ impl ProseWriter for LlmWriter {
 
     fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Rewrite {
         let user = format!(
-            "This is {}.\n\n<allowed_links>\n{}\n</allowed_links>\n\n{}<draft>\n{draft}</draft>\n\nReturn the finished note.",
+            "This is {}.\n{}\n\n<allowed_links>\n{}\n</allowed_links>\n\n{}<draft>\n{draft}</draft>\n\nReturn the finished note.",
             kind_hint(note.kind),
+            guidance(note.kind),
             context.note_names.join("\n"),
             read_sources(note, context),
         );
@@ -215,6 +252,7 @@ mod tests {
         fn complete(&self, system: &str, user: &str) -> Result<Completion> {
             assert!(system.contains("Obsidian vault"));
             assert!(user.contains("<draft>") && user.contains("<allowed_links>"));
+            assert!(user.contains("Headings a note of this kind may have"));
             if self.0.is_empty() {
                 return Err(cw_core::Error::invalid("boom"));
             }
@@ -274,7 +312,57 @@ mod tests {
             ),
             (1, 100, 20, 0)
         );
-        assert_eq!(writer.name(), "canned/p1");
+        assert_eq!(writer.name(), "canned/p2");
+    }
+
+    #[test]
+    fn a_note_is_offered_only_the_sections_its_kind_has() {
+        // Every heading the prompt offers is one the linter accepts.
+        for kind in [
+            NoteKind::Flow,
+            NoteKind::Concept,
+            NoteKind::Pattern,
+            NoteKind::Integration,
+            NoteKind::Operations,
+            NoteKind::Glossary,
+            NoteKind::Decision,
+        ] {
+            let text = guidance(kind);
+            for offered in text.split("Add `## ").skip(1) {
+                let heading = offered.split('`').next().unwrap();
+                assert!(
+                    kind.sections().contains(&heading),
+                    "{kind:?} is offered `{heading}`"
+                );
+            }
+            assert!(text.contains(&kind.sections().join(", ")), "{text}");
+        }
+        // A pattern has no `Gotchas`: a note that came back with one was
+        // thrown away, and the call with it.
+        assert!(guidance(NoteKind::Pattern).contains("`## Don't`"));
+        assert!(!guidance(NoteKind::Pattern).contains("Gotchas`"));
+        assert!(guidance(NoteKind::Concept).contains("`## Gotchas`"));
+        assert!(guidance(NoteKind::Integration).contains("`## Wire-up`"));
+        // A note that explains may be longer.
+        assert!(guidance(NoteKind::Concept).contains("50 to 1200 words"));
+        assert!(guidance(NoteKind::Integration).contains("50 to 400 words"));
+        assert!(guidance(NoteKind::Flow).contains("50 to 200 words"));
+    }
+
+    #[test]
+    fn the_prompt_keeps_what_the_code_states() {
+        for kept in [
+            "## Items",
+            "## How it works",
+            "## Configuration",
+            "## Source",
+        ] {
+            let (keep, improve) = SYSTEM.split_once("\n\nImprove:").unwrap();
+            assert!(keep.contains(kept), "{kept} is not kept");
+            assert!(improve.contains("## How it works"));
+        }
+        // The length and the headings are the note's own, not one rule for all.
+        assert!(!SYSTEM.contains("200 words") && !SYSTEM.contains("plus `## Gotchas`"));
     }
 
     #[test]

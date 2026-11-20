@@ -35,7 +35,7 @@ raw-window-handle = "0.6"
 tray-icon = { version = "0.26.1", default-features = false }
 # Already in the tree through GPUI. Reads and writes the one registry value
 # that starts the app with Windows.
-windows-registry = "0.6"
+windows-registry = "0.100"
 # Already in the tree through GPUI. The Win32 calls GPUI has no way to make;
 # all of them are in `win32.rs`.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Console", "Win32_UI_WindowsAndMessaging"] }

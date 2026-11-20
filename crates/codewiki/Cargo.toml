@@ -5,6 +5,9 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
+# The package has a second program, `codewiki-embed-cuda`; `cargo run -p
+# codewiki` (CI's `check`, the wiki's `update`) means this one.
+default-run = "codewiki"
 
 [lints]
 workspace = true

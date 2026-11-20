@@ -37,7 +37,7 @@ const FONT: f32 = 16.0;
 const ARROW_ROOM: f32 = 32.0;
 /// `NativeSelectInput.js`, `NativeSelectIcon`, outlined: `right: 7`.
 const ARROW_RIGHT: f32 = 7.0;
-/// `SvgIcon/SvgIcon.js`: an icon is 24 px.
+/// `SvgIcon.js`: an icon is 24 px.
 const ARROW: f32 = 24.0;
 /// The icon of the choice in effect: the size and the gap of a text field's
 /// start adornment (`text_field.rs`), so that the two controls match.

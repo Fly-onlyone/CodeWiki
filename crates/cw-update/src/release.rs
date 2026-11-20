@@ -121,7 +121,7 @@ fn from_repository(api_base: &str, check: Check) -> Check {
     }
 }
 
-/// Read a `releases/latest` answer.
+/// Read GitHub's answer to `GET /repos/{owner}/{repo}/releases/latest`.
 pub(crate) fn parse(text: &str, current: &Version) -> Check {
     let release: ApiRelease = match serde_json::from_str(text) {
         Ok(release) => release,

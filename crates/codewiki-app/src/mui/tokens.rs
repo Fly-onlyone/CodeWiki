@@ -15,7 +15,7 @@ use gpui_kit::{BoxShadow, FontWeight, Hsla, hsla, point, px};
 /// One step of MUI's spacing scale (`theme.spacing(1)`).
 pub const SPACING: f32 = 8.0;
 
-/// How long a transition takes. `styles/createTransitions.js`, `duration`.
+/// How long a transition takes. `createTransitions.js`, `duration`.
 pub mod duration {
     use super::Duration;
 
@@ -28,7 +28,7 @@ pub mod duration {
     pub const LEAVING_SCREEN: Duration = Duration::from_millis(195);
 }
 
-/// The control points of MUI's easing curves. `styles/createTransitions.js`,
+/// The control points of MUI's easing curves. `createTransitions.js`,
 /// `easing`.
 pub mod curve {
     pub const EASE_IN_OUT: [f32; 4] = [0.4, 0.0, 0.2, 1.0];

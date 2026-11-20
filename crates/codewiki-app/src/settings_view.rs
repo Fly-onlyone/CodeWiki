@@ -206,6 +206,28 @@ fn changes_the_embedder(body: &Value) -> bool {
     body.get("embed").is_some()
 }
 
+/// Whether the models tell of another embedder than the settings read
+/// before: a job switched it since.
+fn settings_behind(models: &Value, settings: Option<&Value>) -> bool {
+    let Some(settings) = settings else {
+        return false;
+    };
+    if models["available"] != true {
+        return false;
+    }
+    let embed = &settings["embed"];
+    if models["embedder"] != embed["provider"]["value"] {
+        return true;
+    }
+    let active = models["models"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|entry| entry["active"] == true)
+        .map(|entry| &entry["id"]);
+    active.is_some_and(|id| *id != embed["model"]["value"])
+}
+
 impl AppView {
     pub(crate) fn on_settings_page(&self) -> bool {
         matches!(self.page, Page::Settings(_))
@@ -328,12 +350,15 @@ impl AppView {
             .as_ref()
             .is_some_and(settings_pages::job_runs);
         let runs = settings_pages::job_runs(&models);
+        let behind = settings_behind(&models, self.settings.backend.as_ref());
         self.settings.models = Some(models);
         self.settings.models_error = None;
         if runs {
             self.watch_models(cx);
-        } else if ran {
-            // The job that ended may have changed the embedder.
+        }
+        // The job that ended may have changed the embedder, and one under
+        // way switches it before it embeds, which can take minutes.
+        if (ran && !runs) || behind {
             self.load_settings(cx);
         }
     }
@@ -1052,8 +1077,53 @@ mod tests {
     // which would stand in for the standard one.
     use serde_json::{Value, json};
 
-    use super::{change, changes_the_embedder, shown_value, test_line};
+    use super::{change, changes_the_embedder, settings_behind, shown_value, test_line};
     use crate::settings_pages::Tested;
+
+    #[test]
+    fn the_settings_are_read_again_when_the_models_tell_of_another_embedder() {
+        let embed = |provider: &str, model: Value| json!({ "embed": { "provider": { "value": provider }, "model": { "value": model } } });
+        let granite_in_use = json!({
+            "available": true,
+            "embedder": "builtin",
+            "models": [{ "id": "granite", "active": true }, { "id": "gte", "active": false }],
+        });
+        // A job switched to Granite after the settings were read.
+        assert!(settings_behind(
+            &granite_in_use,
+            Some(&embed("local", Value::Null))
+        ));
+        assert!(settings_behind(
+            &granite_in_use,
+            Some(&embed("builtin", Value::Null))
+        ));
+        assert!(settings_behind(
+            &granite_in_use,
+            Some(&embed("builtin", json!("gte")))
+        ));
+        // In step.
+        assert!(!settings_behind(
+            &granite_in_use,
+            Some(&embed("builtin", json!("granite")))
+        ));
+        let waiting = json!({
+            "available": true,
+            "embedder": "builtin",
+            "models": [{ "id": "granite", "active": false }],
+        });
+        assert!(!settings_behind(
+            &waiting,
+            Some(&embed("builtin", Value::Null))
+        ));
+        let local = json!({ "available": true, "embedder": "local", "models": [] });
+        assert!(!settings_behind(&local, Some(&embed("local", Value::Null))));
+        // Nothing to compare: no settings yet, or a backend without models.
+        assert!(!settings_behind(&granite_in_use, None));
+        assert!(!settings_behind(
+            &json!({ "available": false }),
+            Some(&embed("local", Value::Null))
+        ));
+    }
 
     #[test]
     fn a_change_of_the_embedder_reads_the_models_again() {

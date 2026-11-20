@@ -474,8 +474,13 @@ fn search(model: &Model) -> Vec<Block> {
         return without_settings(model);
     };
     let built_in_chosen = settings["embed"]["provider"]["value"] == "builtin";
-    // Chosen with no model, the built-in embedder waits for one.
-    let waiting = built_in_chosen && settings["embed"]["model"]["value"].is_null();
+    // Chosen with no model, the built-in embedder waits for one, to be
+    // chosen below. Where this page cannot change the embedder (another
+    // machine's backend, a variable), a model chosen here is not taken, and
+    // what the backend says about the missing model stands instead.
+    let waiting = built_in_chosen
+        && settings["embed"]["model"]["value"].is_null()
+        && lock(model, settings, &settings["embed"]["provider"]).is_none();
     let mut chooser = provider(
         model,
         settings,
@@ -1669,14 +1674,30 @@ mod tests {
         // A built-in model is chosen by its button: no model is typed.
         assert!(doc.fields().is_empty(), "{:?}", doc.fields());
 
-        // Set by the environment, it waits the same way, and the choice is
+        // Set by the environment, a model chosen here would not be taken:
+        // the backend keeps the variable's choice. The page says what the
+        // backend says, which names the variable to set, and the choice is
         // locked.
         fixture.settings.as_mut().unwrap()["embed"]["provider"]["source"] = json!("env");
         let doc = fixture.page(Category::Search);
         let words = doc.words();
-        assert!(words.contains(WAITING), "{words}");
+        assert!(!words.contains(WAITING), "{words}");
+        assert!(
+            words.contains("the built-in embedder needs a model; set CODEWIKI_EMBED_MODEL"),
+            "{words}"
+        );
         assert!(words.contains("Set by CODEWIKI_EMBED"), "{words}");
         assert!(!doc.actions().contains(&set("embed", "local")));
+
+        // Nor does a backend on another machine take a model from here.
+        let mut remote = offering_built_in();
+        let embed = &mut remote.settings.as_mut().unwrap()["embed"];
+        embed["provider"]["value"] = json!("builtin");
+        embed["name"] = Value::Null;
+        embed["problem"] = json!("the built-in embedder needs a model; set CODEWIKI_EMBED_MODEL");
+        remote.origin = Some(Origin::Saved);
+        let words = remote.page(Category::Search).words();
+        assert!(!words.contains(WAITING), "{words}");
     }
 
     const BALANCED: &str = "gte-modernbert-base";

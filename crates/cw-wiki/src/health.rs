@@ -282,6 +282,18 @@ pub fn doc_drift(root: &Path, index: &Index) -> Result<DocReport> {
                 });
             }
         }
+        // A note that only CodeWiki's own rules wrote, and nobody edited,
+        // says what the comments in the source say: a path in it that is
+        // not in the repository is an example there (`docs/adr`), and the
+        // next sync writes the note anew in any case.
+        let copied = entry.model.is_none()
+            && matches!(
+                lifecycle::state(entry, Some(&text), false),
+                NoteState::Generated
+            );
+        if copied {
+            continue;
+        }
         let mut seen: HashSet<&str> = HashSet::new();
         let mut in_fence = false;
         for line in text.lines() {

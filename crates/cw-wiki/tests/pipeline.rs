@@ -929,3 +929,163 @@ fn a_stop_on_an_existing_wiki_keeps_its_commit() {
     assert!(after.written.iter().any(|p| p.ends_with("Price.md")));
     assert!(read(&vault, "01-Core/engine/Price.md").contains("one cent"));
 }
+
+/// A repository whose code says enough for a note to explain it: a module
+/// comment of several parts, calls in a known order, items with and without
+/// a comment, and a package from outside.
+fn explained() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+    write(
+        r,
+        "crates/app/Cargo.toml",
+        "[package]\nname = \"app\"\n[dependencies]\nstore = { path = \"../store\" }\nserde = { version = \"1\", features = [\"derive\"] }\n",
+    );
+    write(
+        r,
+        "crates/app/src/main.rs",
+        "use serde::Serialize;\nuse store::settings;\n\nfn main() {\n    if settings::enabled() {\n        settings::set(false);\n    }\n}\n",
+    );
+    write(
+        r,
+        "crates/store/Cargo.toml",
+        "[package]\nname = \"store\"\n[dependencies]\nserde = \"1\"\n",
+    );
+    write(
+        r,
+        "crates/store/src/lib.rs",
+        "//! Storage.\npub mod many;\npub mod settings;\n",
+    );
+    write(
+        r,
+        "crates/store/src/settings.rs",
+        "//! Keeps the one setting. It is a file beside the program.\n//!\n//! Only an installed copy has it.\n//!\n//! # Errors\n//!\n//! A missing file reads as off, see `127.0.0.1:8080`.\n//!\n//! ```\n//! # use store::settings;\n//! settings::set(true);\n//! ```\nuse serde::Deserialize;\n\n/// Name of the file.\nconst FILE: &str = \"setting.txt\";\n\n/// Whether the setting is on.\n/// `false` when the file is gone.\npub fn enabled() -> bool {\n    parse(&read(FILE))\n}\n\n/// Turn the setting on or off.\npub fn set(on: bool) {\n    if on {\n        write(FILE)\n    } else {\n        remove(FILE)\n    }\n}\n\nfn read(name: &str) -> String {\n    name.to_string()\n}\n\nfn parse(text: &str) -> bool {\n    text == \"on\"\n}\n\nfn write(name: &str) {\n    let _ = name;\n}\n\nfn remove(name: &str) {\n    let _ = read(name);\n}\n\nfn unused_helper() {}\n",
+    );
+    let many: String = (0..23)
+        .map(|i| format!("/// Step {i}.\npub fn step_{i:02}() {{}}\n"))
+        .collect();
+    write(
+        r,
+        "crates/store/src/many.rs",
+        &format!("//! Many steps.\n{many}"),
+    );
+    dir
+}
+
+#[test]
+fn a_module_note_explains_before_it_lists() {
+    let dir = explained();
+    run(dir.path());
+    let vault = dir.path().join("obsidian");
+    let note = read(&vault, "01-Core/store/Settings Module.md");
+
+    // The whole comment after its first sentence, made safe for a note: no
+    // heading of the comment's own, no hidden doctest line, no code span
+    // that reads as a line number.
+    assert!(
+        note.contains(
+            "> Keeps the one setting.\n\n## What it does\n\nIt is a file beside the program.\n\nOnly an installed copy has it.\n\nErrors:\n\nA missing file reads as off, see 127.0.0.1:8080.\n\n```rust\nsettings::set(true);\n```\n\n## Source\n"
+        ),
+        "{note}"
+    );
+
+    // Who calls in, and what each call does next, in the order of the
+    // source: `parse(&read(FILE))` names `parse` first.
+    assert!(
+        note.contains(
+            "## How it works\n\n1. `main` in [[app]] calls `enabled`. `enabled` calls `parse`, then `read`.\n2. `main` in [[app]] calls `set`. `set` calls `write`, then `remove`. `remove` calls `read`.\n\nCalls are listed in the order of the source"
+        ),
+        "{note}"
+    );
+
+    // Every item in source order: its signature and its whole comment, or
+    // what the code says of one that has no comment.
+    let items = [
+        "- `const FILE: &str` — name of the file.",
+        "- `pub fn enabled() -> bool` — whether the setting is on. `false` when the file is gone.",
+        "- `pub fn set(on: bool)` — turn the setting on or off.",
+        "- `fn read(name: &str) -> String` — private function, returns `String`; called by `enabled`, `remove`.",
+        "- `fn parse(text: &str) -> bool` — private function, returns `bool`; called by `enabled`.",
+        "- `fn write(name: &str)` — private function; called by `set`.",
+        "- `fn remove(name: &str)` — private function; called by `set`.",
+    ];
+    let listed = note.split("## Items\n\n").nth(1).unwrap();
+    assert!(listed.starts_with(&items.join("\n")), "{listed}");
+    assert!(
+        listed.contains("\n\nAnd 1 more private item with no comment.\n"),
+        "{listed}"
+    );
+    assert!(!note.contains("unused_helper"));
+
+    let at = |heading: &str| note.find(&format!("\n## {heading}\n")).unwrap();
+    assert!(at("What it does") < at("Source"));
+    assert!(at("Source") < at("How it works"));
+    assert!(at("How it works") < at("Items"));
+    assert!(at("Items") < at("Used by"));
+
+    // A long list stops, and says how much it leaves out.
+    let many = read(&vault, "01-Core/store/Many Module.md");
+    assert_eq!(many.matches("\n- `pub fn step_").count(), 20, "{many}");
+    assert!(many.contains("\n\nAnd 3 more items.\n"), "{many}");
+}
+
+/// Says what `serde` is, as a machine with cargo's cache would.
+struct KnowsSerde;
+
+impl cw_wiki::manifests::PackageInfo for KnowsSerde {
+    fn describe(
+        &self,
+        _language: cw_core::Language,
+        package: &str,
+        _version: Option<&str>,
+    ) -> Option<String> {
+        (package == "serde").then(|| "A serialization framework".to_string())
+    }
+}
+
+#[test]
+fn an_integration_note_says_what_is_taken_and_at_which_version() {
+    let dir = explained();
+    let root = dir.path();
+    run(root);
+    let vault = root.join("obsidian");
+    let path = "03-Integrations/serde.md";
+    let note = read(&vault, path);
+    assert!(
+        note.contains("- [[Settings Module]] — imports `Deserialize`"),
+        "{note}"
+    );
+    assert!(note.contains("- [[app]] — imports `Serialize`"), "{note}");
+    // Each build file with what it asks for; two that differ are two lines.
+    assert!(
+        note.contains(
+            "- `crates/app/Cargo.toml` — declares the dependency: version `1`, features `derive`\n"
+        ),
+        "{note}"
+    );
+    assert!(
+        note.contains("- `crates/store/Cargo.toml` — declares the dependency: version `1`\n"),
+        "{note}"
+    );
+    // Nothing in the repository says what the package is.
+    assert!(!note.contains("## What it does"));
+    assert!(!vault.join(".codewiki/packages.json").exists());
+
+    // A machine that knows writes it, and keeps it in the vault.
+    let facts = scan_repo(root).unwrap();
+    let metrics = analyze(&facts);
+    let commit = Some("commit-1".to_string());
+    let report =
+        cw_wiki::generate_with(root, &facts, &metrics, commit.clone(), None, &KnowsSerde).unwrap();
+    assert_eq!(report.written, [path]);
+    let described = read(&vault, path);
+    assert!(
+        described.contains("\n## What it does\n\nA serialization framework.\n\n## Used for\n"),
+        "{described}"
+    );
+    // A machine that does not know then writes the same note.
+    let report = generate(root, &facts, &metrics, commit, None).unwrap();
+    assert!(report.written.is_empty(), "{report:?}");
+    assert_eq!(read(&vault, path), described);
+}

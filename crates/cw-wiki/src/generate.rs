@@ -23,7 +23,7 @@ use crate::plan::{Plan, Planned, Repo, Subject, plan};
 use crate::render::RenderCtx;
 
 /// Bump when rendering changes in a way that should refresh every note.
-pub const TEMPLATE_VERSION: u32 = 1;
+pub const TEMPLATE_VERSION: u32 = 2;
 
 /// What a [`ProseWriter`] made of one note.
 #[derive(Debug, Clone, PartialEq, Eq)]

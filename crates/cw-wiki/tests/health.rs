@@ -21,7 +21,7 @@ fn fixture() -> tempfile::TempDir {
     write(
         r,
         "crates/lib/src/lib.rs",
-        "//! Shapes.\n\n/// Something with an area.\npub trait Shape {\n    /// Area in square units.\n    fn area(&self) -> f64;\n}\n\n/// A square.\npub struct Square(pub f64);\n\nimpl Shape for Square {\n    fn area(&self) -> f64 { side_squared(self.0) }\n}\n\nfn side_squared(side: f64) -> f64 { side * side }\n\nfn forgotten_helper() -> u8 { 7 }\n\n/// Public API nobody in the repo calls yet.\npub fn exported_but_unused() {}\n\n#[no_mangle]\nfn registered_elsewhere() {}\n\nconst UNUSED_LIMIT: u8 = 3;\n\n#[cfg(test)]\nmod tests {\n    fn test_only_helper() {}\n}\n",
+        "//! Shapes.\n//!\n//! A user may list more in `crates/lib/shapes.toml`.\n\n/// Something with an area.\npub trait Shape {\n    /// Area in square units.\n    fn area(&self) -> f64;\n}\n\n/// A square.\npub struct Square(pub f64);\n\nimpl Shape for Square {\n    fn area(&self) -> f64 { side_squared(self.0) }\n}\n\nfn side_squared(side: f64) -> f64 { side * side }\n\nfn forgotten_helper() -> u8 { 7 }\n\n/// Public API nobody in the repo calls yet.\npub fn exported_but_unused() {}\n\n#[no_mangle]\nfn registered_elsewhere() {}\n\nconst UNUSED_LIMIT: u8 = 3;\n\n#[cfg(test)]\nmod tests {\n    fn test_only_helper() {}\n}\n",
     );
     write(
         r,
@@ -220,6 +220,13 @@ fn reports_documentation_drift_and_coverage() {
     assert!(clean.drift.is_empty(), "{:?}", clean.drift);
     assert_eq!(clean.coverage, 1.0);
     assert_eq!(clean.source_files, 2);
+    // The crate's comment names a file a user may add, and its note says
+    // what the comment says. Nobody edited the note: that is no drift.
+    let crate_note = fs::read_to_string(vault.join("01-Core/shapes/shapes.md")).unwrap();
+    assert!(
+        crate_note.contains("`crates/lib/shapes.toml`"),
+        "{crate_note}"
+    );
 
     // A hand-written note with a dead path and a broken link, then the source moves on.
     write(

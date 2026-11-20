@@ -10,6 +10,9 @@ use cw_core::{Language, Symbol, SymbolKind, Visibility};
 use cw_vault::{NoteKind, Registry};
 
 use crate::analyze::DEPENDENCY_KINDS;
+use crate::doctext::{clean_inline, doc_body, ensure_period, first_sentence};
+use crate::explain;
+use crate::manifests;
 use crate::plan::{
     Plan, Planned, Repo, Subject, ZONE_ARCHITECTURE, ZONE_CORE, ZONE_INTEGRATIONS, ZONE_OPERATIONS,
     ZONE_PATTERNS,
@@ -18,6 +21,8 @@ use crate::units::{Unit, is_test_file};
 
 const MAX_LISTED: usize = 8;
 const MAX_NAMES: usize = 4;
+/// Build files named on one line of an integration note.
+const MAX_MANIFESTS: usize = 3;
 /// Modules listed in the note of a unit that has no root module.
 const MAX_UNIT_MODULES: usize = 12;
 
@@ -550,15 +555,24 @@ impl<'a> RenderCtx<'a> {
             };
             sources.push(format!("- `{path}` — {role}"));
         }
+        if let Some(root) = root {
+            // The summary is the manifest's description when there is one,
+            // and the comment's first sentence otherwise.
+            // A comment often opens with the description in other words;
+            // the reader has just read that.
+            let opening = first_sentence(&root.doc).to_lowercase();
+            let summary = self.summaries[&note.id].to_lowercase();
+            let repeated = summary.starts_with(opening.trim_end_matches('.'));
+            let described = krate.is_some_and(|k| !k.description.trim().is_empty());
+            let language = Language::from_path(&root.file);
+            doc.section(
+                "What it does",
+                doc_body(&root.doc, language, !described || repeated),
+            );
+        }
         doc.section("Source", sources.join("\n"));
 
         let mut body = Vec::new();
-        if let Some(root) = root {
-            let rest = doc_remainder(&root.doc);
-            if !rest.is_empty() {
-                body.push(rest);
-            }
-        }
         let mut modules: Vec<&Symbol> = krate.map(|k| repo.top_modules(k)).unwrap_or_default();
         match krate {
             Some(k) if rust => {
@@ -608,17 +622,25 @@ impl<'a> RenderCtx<'a> {
             })
             .take(if rust { usize::MAX } else { MAX_UNIT_MODULES })
             .collect();
-        if !modules.is_empty() {
-            body.push(format!("Modules:\n\n{}", modules.join("\n")));
-        }
-        let items = root
-            .map(|r| self.item_bullets(&r.qualified))
-            .unwrap_or_default();
-        if !items.is_empty() {
-            let place = if rust { "crate" } else { "package" };
-            body.push(format!("Defined at the {place} root:\n\n{items}"));
+        let place = if rust { "crate" } else { "package" };
+        let walk = explain::walk(self, &note.id);
+        let subject = root.map_or("", |r| r.qualified.as_str());
+        let steps = walk.text(self, &note.id, subject, place);
+        if !steps.is_empty() {
+            body.push(steps);
         }
         doc.section("How it works", body.join("\n\n"));
+        let mut listed = Vec::new();
+        if !modules.is_empty() {
+            listed.push(format!("Modules:\n\n{}", modules.join("\n")));
+        }
+        let items = root
+            .map(|r| explain::items(self, &r.qualified, &walk))
+            .unwrap_or_default();
+        if !items.is_empty() {
+            listed.push(format!("Defined at the {place} root:\n\n{items}"));
+        }
+        doc.section("Items", listed.join("\n\n"));
         doc.section(
             "Depends on",
             self.dep_bullets(&self.depends_on, &note.id, "uses"),
@@ -627,37 +649,18 @@ impl<'a> RenderCtx<'a> {
         doc.section("See also", self.see_also(&[self.link("flow:crates")]));
     }
 
-    /// Bullets for the notable items directly inside `parent`.
-    fn item_bullets(&self, parent: &str) -> String {
-        top_children(self.repo, parent, MAX_LISTED)
-            .iter()
-            .filter(|s| s.kind != SymbolKind::Module)
-            .map(|s| {
-                let label = self
-                    .link(&format!("type:{}", s.qualified))
-                    .unwrap_or_else(|| format!("`{}`", s.name));
-                let summary = first_sentence(&s.doc);
-                if summary.is_empty() {
-                    format!("- {label} — {}", s.kind.as_str().replace('_', " "))
-                } else {
-                    format!("- {label} — {}", lower_first(&summary))
-                }
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-
     fn render_module(&self, doc: &mut Doc, note: &Planned, q: &str) {
         let symbol = self.repo.symbols[q];
+        let language = Language::from_path(&symbol.file);
+        // The summary is the comment's first sentence; the rest is here.
+        doc.section("What it does", doc_body(&symbol.doc, language, true));
         doc.section("Source", format!("- `{}` — module `{q}`", symbol.file));
+        let walk = explain::walk(self, &note.id);
+        doc.section("How it works", walk.text(self, &note.id, q, "module"));
         let mut body = Vec::new();
-        let rest = doc_remainder(&symbol.doc);
-        if !rest.is_empty() {
-            body.push(rest);
-        }
-        let items = self.item_bullets(q);
+        let items = explain::items(self, q, &walk);
         if !items.is_empty() {
-            body.push(format!("Main items:\n\n{items}"));
+            body.push(items);
         }
         let submodules: Vec<String> = self
             .repo
@@ -669,7 +672,7 @@ impl<'a> RenderCtx<'a> {
         if !submodules.is_empty() {
             body.push(format!("Submodules: {}.", submodules.join(", ")));
         }
-        doc.section("How it works", body.join("\n\n"));
+        doc.section("Items", body.join("\n\n"));
         doc.section(
             "Depends on",
             self.dep_bullets(&self.depends_on, &note.id, "uses"),
@@ -688,50 +691,23 @@ impl<'a> RenderCtx<'a> {
     fn render_type(&self, doc: &mut Doc, note: &Planned, q: &str) {
         let repo = self.repo;
         let symbol = repo.symbols[q];
+        let language = Language::from_path(&symbol.file);
+        doc.section("What it does", doc_body(&symbol.doc, language, true));
         doc.section(
             "Source",
             format!("- `{}` — definition of `{}`", symbol.file, symbol.name),
         );
+        let walk = explain::walk(self, &note.id);
+        doc.section("How it works", walk.text(self, &note.id, q, "type"));
         let mut body = vec![format!("Declared as `{}`.", symbol.signature)];
-        let rest = doc_remainder(&symbol.doc);
-        if !rest.is_empty() {
-            body.push(rest);
-        }
-        let mut methods: Vec<&&Symbol> = repo
-            .children_of(q)
-            .iter()
-            .filter(|s| s.visibility != Visibility::Private)
-            .collect();
-        // Documented methods say the most, so they are listed first.
-        methods.sort_by(|a, b| {
-            a.doc
-                .is_empty()
-                .cmp(&b.doc.is_empty())
-                .then(
-                    repo.rank_of(&b.qualified)
-                        .total_cmp(&repo.rank_of(&a.qualified)),
-                )
-                .then(a.start_line.cmp(&b.start_line))
-        });
-        let bullets: Vec<String> = methods
-            .iter()
-            .take(6)
-            .map(|m| {
-                let summary = first_sentence(&m.doc);
-                if summary.is_empty() {
-                    format!("- `{}`", m.signature)
-                } else {
-                    format!("- `{}` — {}", m.signature, lower_first(&summary))
-                }
-            })
-            .collect();
-        if !bullets.is_empty() {
+        let members = explain::items(self, q, &walk);
+        if !members.is_empty() {
             let label = if matches!(symbol.kind, SymbolKind::Trait | SymbolKind::Interface) {
                 "Required and provided methods"
             } else {
-                "Public API"
+                "Members"
             };
-            body.push(format!("{label}:\n\n{}", bullets.join("\n")));
+            body.push(format!("{label}:\n\n{members}"));
         }
         if let Some(impls) = repo.implementors.get(q) {
             let names: Vec<String> = impls
@@ -749,7 +725,7 @@ impl<'a> RenderCtx<'a> {
             };
             body.push(format!("{verb} by {}.", join_and(&names)));
         }
-        doc.section("How it works", body.join("\n\n"));
+        doc.section("Items", body.join("\n\n"));
         doc.section(
             "Depends on",
             self.dep_bullets(&self.depends_on, &note.id, "uses"),
@@ -943,31 +919,55 @@ impl<'a> RenderCtx<'a> {
 
     fn render_integration(&self, doc: &mut Doc, _note: &Planned, krate: &str) {
         let repo = self.repo;
-        let files: BTreeSet<&str> = repo
+        if let Some(what) = repo.packages.descriptions.get(krate) {
+            doc.section("What it does", ensure_period(&clean_inline(what)));
+        }
+        let uses: Vec<&cw_parse::ExternalUse> = repo
             .facts
             .external_uses
             .iter()
             .filter(|u| u.krate == krate)
-            .map(|u| u.file.as_str())
             .collect();
-        let mut users: BTreeMap<String, usize> = BTreeMap::new();
-        for file in &files {
+        let files: BTreeSet<&str> = uses.iter().map(|u| u.file.as_str()).collect();
+        // Each note whose code imports the package: in how many files, and
+        // which names.
+        let mut users: BTreeMap<String, (usize, BTreeSet<&str>)> = BTreeMap::new();
+        for used in &uses {
             let owner = repo
                 .facts
                 .symbols
                 .iter()
-                .find(|s| s.kind == SymbolKind::Module && s.file == *file)
+                .find(|s| s.kind == SymbolKind::Module && s.file == used.file)
                 .and_then(|s| self.plan.owner.get(&s.qualified));
             if let Some(link) = owner.and_then(|id| self.link(id)) {
-                *users.entry(link).or_default() += 1;
+                let user = users.entry(link).or_default();
+                user.0 += 1;
+                user.1.extend(used.names.iter().map(String::as_str));
             }
         }
-        let mut rows: Vec<(&String, &usize)> = users.iter().collect();
-        rows.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(b.0)));
+        let mut rows: Vec<(&String, &(usize, BTreeSet<&str>))> = users.iter().collect();
+        rows.sort_by(|a, b| b.1.0.cmp(&a.1.0).then(a.0.cmp(b.0)));
         let used_for = rows
             .iter()
             .take(MAX_LISTED)
-            .map(|(link, _)| format!("- {link}"))
+            .map(|(link, (_, names))| {
+                // A name in backticks must not read as a link or a line.
+                let fit: Vec<&&str> = names.iter().filter(|n| !n.contains('`')).collect();
+                if fit.is_empty() {
+                    return format!("- {link}");
+                }
+                let listed: Vec<String> = fit
+                    .iter()
+                    .take(MAX_NAMES)
+                    .map(|n| format!("`{n}`"))
+                    .collect();
+                let more = fit.len().saturating_sub(MAX_NAMES);
+                if more > 0 {
+                    format!("- {link} — imports {} and {more} more", listed.join(", "))
+                } else {
+                    format!("- {link} — imports {}", listed.join(", "))
+                }
+            })
             .collect::<Vec<_>>()
             .join("\n");
         doc.section(
@@ -981,36 +981,57 @@ impl<'a> RenderCtx<'a> {
                 )
             },
         );
-        let mut declaring: Vec<String> = Vec::new();
-        for unit in &repo.units.list {
-            let manifests: Vec<&str> = if unit.is_rust() {
-                unit.deps
-                    .iter()
-                    .any(|d| d == krate)
-                    .then(|| unit.manifests.first().map(|m| m.path.as_str()))
-                    .flatten()
-                    .into_iter()
-                    .collect()
-            } else {
-                unit.declares(krate)
-            };
-            for manifest in manifests {
-                let line = format!("- `{manifest}` — declares the dependency");
-                if !declaring.contains(&line) {
-                    declaring.push(line);
-                }
+        // What each build file asks for, as far as it was read. A workspace
+        // names one dependency in many manifests, mostly in the same words:
+        // those share a line.
+        let mut asking: Vec<(String, Vec<String>)> = Vec::new();
+        for d in manifests::declared(repo, krate) {
+            let code =
+                |text: &str| (!text.is_empty() && !text.contains('`')).then(|| format!("`{text}`"));
+            let mut asked: Vec<String> = Vec::new();
+            if let Some(version) = code(&d.requirement) {
+                asked.push(format!("version {version}"));
+            }
+            if let Some(locked) = code(&d.locked) {
+                asked.push(format!("locked {locked}"));
+            }
+            let features: Vec<String> = d.features.iter().filter_map(|f| code(f)).collect();
+            if !features.is_empty() {
+                asked.push(format!("features {}", features.join(", ")));
+            }
+            if !d.default_features {
+                asked.push("without its default features".to_string());
+            }
+            let asked = asked.join(", ");
+            match asking.iter_mut().find(|(known, _)| *known == asked) {
+                Some((_, manifests)) => manifests.push(d.manifest),
+                None => asking.push((asked, vec![d.manifest])),
             }
         }
+        let declaring: Vec<String> = asking
+            .iter()
+            .map(|(asked, manifests)| {
+                let mut files: Vec<String> = manifests
+                    .iter()
+                    .take(MAX_MANIFESTS)
+                    .map(|m| format!("`{m}`"))
+                    .collect();
+                if manifests.len() > MAX_MANIFESTS {
+                    files.push(format!("and {} more", manifests.len() - MAX_MANIFESTS));
+                }
+                let verb = if manifests.len() == 1 {
+                    "declares"
+                } else {
+                    "declare"
+                };
+                let mut line = format!("- {} — {verb} the dependency", files.join(", "));
+                if !asked.is_empty() {
+                    line.push_str(&format!(": {asked}"));
+                }
+                line
+            })
+            .collect();
         doc.section("Configuration", declaring.join("\n"));
-        doc.section(
-            "Wire-up",
-            files
-                .iter()
-                .take(MAX_LISTED)
-                .map(|f| format!("- `{f}` — imports `{krate}`"))
-                .collect::<Vec<_>>()
-                .join("\n"),
-        );
         doc.section("See also", self.see_also(&[]));
     }
 
@@ -1115,16 +1136,8 @@ impl<'a> RenderCtx<'a> {
             }
         };
         doc.section("The pattern", format!("```{fence}\n{code}\n```"));
-        let why = doc_remainder(&symbol.doc);
-        let lead = first_sentence(&symbol.doc);
-        doc.section(
-            "Why",
-            [lead, why]
-                .into_iter()
-                .filter(|s| !s.is_empty())
-                .collect::<Vec<_>>()
-                .join(" "),
-        );
+        // The whole comment: a reason is seldom in its first sentence.
+        doc.section("Why", doc_body(&symbol.doc, language, false));
         doc.section(
             "See also",
             self.see_also(&[
@@ -1640,17 +1653,8 @@ fn build_role(path: &str) -> &'static str {
     }
 }
 
-fn ensure_period(text: &str) -> String {
-    let t = text.trim();
-    if t.is_empty() || t.ends_with(['.', '!', '?']) {
-        t.to_string()
-    } else {
-        format!("{t}.")
-    }
-}
-
 /// Lowercase the first letter unless the text starts with code or an acronym.
-fn lower_first(text: &str) -> String {
+pub(crate) fn lower_first(text: &str) -> String {
     let word = text.split([' ', ',', ':', '.']).next().unwrap_or("");
     let mut chars = word.chars();
     // Only a plain capitalized word is lowered: code, acronyms, CamelCase
@@ -1674,157 +1678,9 @@ const PROPER_NOUNS: [&str; 17] = [
     "Codex", "Unicode", "Louvain", "Tarjan", "Brandes", "Python", "Linux", "Java",
 ];
 
-/// Make doc-comment text safe to place in a note: rustdoc links become code,
-/// Markdown links keep only their text, and wikilink brackets are defused.
-pub fn clean_inline(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    while i < chars.len() {
-        // A code span stays as written: `Agent[/ws/agent]` and `#[derive]`
-        // are code, and Obsidian reads no link or tag inside one.
-        if chars[i] == '`'
-            && let Some(close) = chars[i + 1..]
-                .iter()
-                .position(|c| *c == '`')
-                .map(|p| p + i + 1)
-        {
-            out.extend(&chars[i..=close]);
-            i = close + 1;
-            continue;
-        }
-        if chars[i] == '[' {
-            if let Some(close) = chars[i + 1..]
-                .iter()
-                .position(|c| *c == ']')
-                .map(|p| p + i + 1)
-            {
-                let inner: String = chars[i + 1..close].iter().collect();
-                let mut end = close + 1;
-                // `[text](target)` and `[text][ref]` keep only the text.
-                if let Some(open) = chars.get(end).filter(|c| matches!(c, '(' | '['))
-                    && let Some(stop) = chars[end..]
-                        .iter()
-                        .position(|c| *c == if *open == '(' { ')' } else { ']' })
-                {
-                    end += stop + 1;
-                }
-                if !inner.contains('[') {
-                    out.push_str(&inner);
-                    i = end;
-                    continue;
-                }
-            }
-            out.push('(');
-            i += 1;
-            continue;
-        }
-        if chars[i] == ']' {
-            out.push(')');
-        } else if chars[i] == '#'
-            && chars
-                .get(i + 1)
-                .is_some_and(|c| c.is_alphabetic() || *c == '[')
-        {
-            // Would read as an inline tag.
-        } else {
-            out.push(chars[i]);
-        }
-        i += 1;
-    }
-    out.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// First paragraph of a doc comment, as one cleaned line.
-fn first_paragraph(doc: &str) -> String {
-    let lines: Vec<&str> = doc
-        .lines()
-        .map(str::trim)
-        .skip_while(|l| l.is_empty())
-        .take_while(|l| !l.is_empty() && !l.starts_with("```") && !l.starts_with('#'))
-        .collect();
-    clean_inline(&lines.join(" "))
-}
-
-/// Index of the end of the first sentence, if the paragraph has more than one.
-fn sentence_break(paragraph: &str) -> Option<usize> {
-    let bytes = paragraph.as_bytes();
-    let mut in_code = false;
-    for i in 0..bytes.len() {
-        match bytes[i] {
-            b'`' => in_code = !in_code,
-            b'.' | b'!' | b'?' if !in_code && bytes.get(i + 1) == Some(&b' ') => {
-                // Skip abbreviations such as "e.g." and "i.e.".
-                let before = &paragraph[..i];
-                if before.ends_with("e.g") || before.ends_with("i.e") || before.ends_with("etc") {
-                    continue;
-                }
-                return Some(i + 1);
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-/// First sentence of a doc comment, ending with a period.
-pub fn first_sentence(doc: &str) -> String {
-    let paragraph = first_paragraph(doc);
-    let cut = sentence_break(&paragraph).unwrap_or(paragraph.len());
-    ensure_period(&paragraph[..cut])
-}
-
-/// The first paragraph after its first sentence, capped at about 60 words.
-fn doc_remainder(doc: &str) -> String {
-    let paragraph = first_paragraph(doc);
-    let Some(cut) = sentence_break(&paragraph) else {
-        return String::new();
-    };
-    let words: Vec<&str> = paragraph[cut..].split_whitespace().collect();
-    if words.len() > 60 {
-        ensure_period(&(words[..60].join(" ") + " …"))
-    } else {
-        ensure_period(&words.join(" "))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn splits_doc_comments_into_sentences() {
-        let doc = "Parses a note. It keeps `a.b` intact, e.g. paths.\nSecond line here.\n\nNext paragraph.";
-        assert_eq!(first_sentence(doc), "Parses a note.");
-        assert_eq!(
-            doc_remainder(doc),
-            "It keeps `a.b` intact, e.g. paths. Second line here."
-        );
-        assert_eq!(first_sentence("No period"), "No period.");
-        assert_eq!(first_sentence(""), "");
-        assert_eq!(doc_remainder("Only one sentence."), "");
-    }
-
-    #[test]
-    fn cleans_doc_text() {
-        assert_eq!(
-            clean_inline("See [`Confidence`] and [docs](https://x.y)."),
-            "See `Confidence` and docs."
-        );
-        assert_eq!(
-            clean_inline("Uses [[wiki]] and #tag here"),
-            "Uses (wiki) and tag here"
-        );
-        assert_eq!(
-            clean_inline("Issue #12 and #[derive]"),
-            "Issue #12 and derive"
-        );
-        // Code spans keep their brackets and `#`.
-        assert_eq!(
-            clean_inline("A label that is a path, `Agent[/ws/agent]`, or `#[derive]`."),
-            "A label that is a path, `Agent[/ws/agent]`, or `#[derive]`."
-        );
-    }
 
     #[test]
     fn formats_lists_and_labels() {

@@ -7,6 +7,8 @@ pub mod ci;
 pub mod contracts;
 pub mod coverage;
 pub mod decisions;
+pub mod doctext;
+mod explain;
 pub mod generate;
 pub mod git;
 pub mod gitintel;

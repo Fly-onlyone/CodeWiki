@@ -1608,6 +1608,51 @@ try {
         -Status $status -Output $out -Observed $observed
 }
 
+# ---------------------------------------------------------------- ER, error reports
+# A package built with CODEWIKI_SENTRY_DSN carries a DSN and reports only once
+# the user turns "Send error reports" on, which writes error_reports.txt in
+# %APPDATA%\CodeWiki (crates/cw-telemetry). These cases turn it on through
+# that file, send one test report and one panic with the hidden command, and
+# turn it off again. Whether the reports arrived, with readable stack frames,
+# is read in Sentry afterwards: project fly-theonlyone/codewiki, environment
+# production, tag program:sentry-test.
+Test-Case "ER1" "Error reports from the command line" "off by default; with the switch on, a test report and a panic are sent" {
+    $run = Invoke-GuestScript -TimeoutSec 120 -Script @'
+$consent = Join-Path $env:APPDATA "CodeWiki\error_reports.txt"
+Remove-Item $consent -ErrorAction SilentlyContinue
+"switch off:"
+& codewiki sentry-test 2>&1
+"off exit: $LASTEXITCODE"
+New-Item -ItemType Directory -Force (Split-Path $consent) | Out-Null
+Set-Content $consent "on" -NoNewline
+"switch on:"
+& codewiki sentry-test 2>&1
+"on exit: $LASTEXITCODE"
+& codewiki sentry-test --panic 2>&1
+"panic exit: $LASTEXITCODE"
+Remove-Item $consent -ErrorAction SilentlyContinue
+$global:LASTEXITCODE = 0
+'@
+    $off = $run.Output -match "off exit: 1" -and $run.Output -match "error reports are off"
+    $sent = $run.Output -match "on exit: 0" -and $run.Output -match "sent a test report"
+    $panicked = $run.Output -match "panic exit: 101" -and $run.Output -match "test panic, sent on request"
+    $status = if (-not $off) { "fail" } elseif ($sent -and $panicked) { "pass" } elseif ($run.Output -match "on exit: 1") { "note" } else { "fail" }
+    $observed = if ($status -eq "note") { "this package carries no DSN: it refuses with the switch on too, as a build without CODEWIKI_SENTRY_DSN must" }
+        else { "refused while off: $off; test report sent with the switch on: $sent; panic reported and ended with 101: $panicked. Look in Sentry for the two events of environment production" }
+    Add-Result -Id "ER1" -Title "Error reports from the command line" -Expect "refused while off; sent while on" `
+        -Status $status -Output $run.Output -Observed $observed
+}
+
+Test-Case "ER2" "The switch in Settings" "Settings > Diagnostics shows 'Send error reports', off, and can be turned on" {
+    Invoke-GuestScript -Script 'Remove-Item (Join-Path $env:APPDATA "CodeWiki\error_reports.txt") -ErrorAction SilentlyContinue' | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "settings:diagnostics"
+    Wait-For 15
+    $shot = Shot "settings-error-reports"
+    Add-Result -Id "ER2" -Title "The switch in Settings" -Expect "a card 'Error reports' with the switch 'Send error reports' off and not locked, and the text that says what is sent" -Status note -Shots @($shot) `
+        -Observed "started on 'settings:diagnostics'; read the screenshot: the card 'Error reports' must show the switch off, with no lock note under it in a package that carries a DSN ('This build has no error reporting' in one that does not)"
+    Stop-GuestApp
+}
+
 # ---------------------------------------------------------------- CC, Claude Code plugin
 # The plugin is tested with the real Claude Code: installed as its docs say,
 # then the plugin as README says, from the installation's own plugins folder.

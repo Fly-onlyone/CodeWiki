@@ -32,6 +32,7 @@ cw-index = { path = "../cw-index" }
 cw-llm = { version = "0.2.0", path = "../cw-llm" }
 cw-models = { version = "0.2.0", path = "../cw-models" }
 cw-server = { version = "0.2.0", path = "../cw-server" }
+cw-telemetry = { path = "../cw-telemetry" }
 cw-vault = { path = "../cw-vault" }
 cw-wiki = { path = "../cw-wiki" }
 getrandom = "0.4.3"

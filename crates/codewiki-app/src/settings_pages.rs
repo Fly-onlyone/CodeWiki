@@ -11,6 +11,7 @@
 use std::collections::{HashMap, HashSet};
 
 use cw_client::Origin;
+use cw_telemetry::Reporting;
 use serde_json::Value;
 
 use crate::doc::{
@@ -85,6 +86,10 @@ pub struct Model<'a> {
     pub log_level_locked: bool,
     pub logs_dir: &'a str,
     pub data_dir: &'a str,
+    /// Whether this build can send error reports, and how; and whether the
+    /// user turned them on.
+    pub error_reports: Reporting,
+    pub error_reports_on: bool,
 }
 
 impl Model<'_> {
@@ -1059,7 +1064,33 @@ fn diagnostics(model: &Model) -> Vec<Block> {
                 )]),
             ],
         ),
+        error_reports(model),
     ]
+}
+
+/// The switch for error reports, which only a build that carries a DSN
+/// offers. `SENTRY_DSN` turns them on for a run, whatever the switch says.
+fn error_reports(model: &Model) -> Block {
+    let (on, locked) = match model.error_reports {
+        Reporting::Switch => (model.error_reports_on, None),
+        Reporting::Environment => (true, Some(format!("Set by {}", cw_telemetry::DSN_ENV))),
+        Reporting::Unavailable => (false, Some("This build has no error reporting".into())),
+    };
+    card(
+        "Error reports",
+        vec![
+            Block::Switch {
+                label: "Send error reports".into(),
+                help: Some("Turning them on applies from the next start".into()),
+                on,
+                action: Action::ErrorReports(!on),
+                locked,
+            },
+            Block::Text(vec![text(
+                "A crash or an error of the app, the backend, the agents' bridge or the embedding worker goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key. Sentry keeps the city and country of the network a report comes from, not its address.",
+            )]),
+        ],
+    )
 }
 
 #[cfg(test)]
@@ -1150,6 +1181,8 @@ mod tests {
         autostart: Option<bool>,
         open_last: bool,
         log_level_locked: bool,
+        error_reports: Reporting,
+        error_reports_on: bool,
     }
 
     impl Fixture {
@@ -1176,6 +1209,8 @@ mod tests {
                 autostart: Some(false),
                 open_last: false,
                 log_level_locked: false,
+                error_reports: Reporting::Switch,
+                error_reports_on: false,
             }
         }
 
@@ -1210,6 +1245,8 @@ mod tests {
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
                     data_dir: "C:/data",
+                    error_reports: self.error_reports,
+                    error_reports_on: self.error_reports_on,
                 },
             )
         }
@@ -1957,5 +1994,38 @@ mod tests {
                 .iter()
                 .any(|a| matches!(a, Action::LogLevel(_)))
         );
+    }
+
+    #[test]
+    fn error_reports_are_off_until_the_user_turns_them_on() {
+        let mut fixture = Fixture::new();
+        let off = fixture.page(Category::Diagnostics);
+        let words = off.words();
+        assert!(words.contains("Send error reports: off"), "{words}");
+        assert!(words.contains("Never a file path, note text, a search query or a key."));
+        assert!(off.actions().contains(&Action::ErrorReports(true)));
+
+        fixture.error_reports_on = true;
+        let on = fixture.page(Category::Diagnostics);
+        assert!(on.words().contains("Send error reports: on"));
+        assert!(on.actions().contains(&Action::ErrorReports(false)));
+    }
+
+    #[test]
+    fn error_reports_cannot_be_switched_where_the_build_or_the_environment_decides() {
+        let mut fixture = Fixture::new();
+        fixture.error_reports = Reporting::Unavailable;
+        let doc = fixture.page(Category::Diagnostics);
+        assert!(doc.words().contains("[This build has no error reporting]"));
+        assert!(
+            !doc.actions()
+                .iter()
+                .any(|a| matches!(a, Action::ErrorReports(_)))
+        );
+
+        fixture.error_reports = Reporting::Environment;
+        let doc = fixture.page(Category::Diagnostics);
+        assert!(doc.words().contains("Send error reports: on"));
+        assert!(doc.words().contains("[Set by SENTRY_DSN]"));
     }
 }

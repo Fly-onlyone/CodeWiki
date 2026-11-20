@@ -127,6 +127,12 @@ The backend keeps them in `settings.json` in its data folder, so the command lin
 
 Settings → Backend saves the address and token of a backend in Docker or on another machine, in place of `CODEWIKI_URL` and `CODEWIKI_TOKEN`. "Connect" checks that it answers and takes the token before anything is saved. The app and the MCP bridge on this machine then both use it. If it stops answering, the app says so and offers "Use local backend"; it never goes back to a local backend by itself.
 
+### Error reports
+
+CodeWiki sends nothing about you or your code unless you ask it to. Settings → Diagnostics → "Send error reports" is off until you turn it on. Then a crash or an error of the app, the backend, the agents' bridge or the embedding worker goes to the developer through [Sentry](https://sentry.io): what failed, where in the code, the versions of CodeWiki and Windows, and the log lines just before it. Every file path is replaced by `<path>` before it leaves, and no report holds note text, a search query, a key or your computer's name. The log lines can name a repository, a note, or the address of a backend on another machine. Sentry does not keep the network address a report came from, but it does keep the city and country it places that address in. Turning it off stops the reports at once; turning it on takes effect when each program next starts.
+
+A developer can point a build at their own Sentry project with `SENTRY_DSN`; the switch then shows as set by that variable.
+
 ### Claude Code plugin
 
 The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the index, so that Claude reads what CodeWiki knows about the code before it explores the code by hand. It adds two things.

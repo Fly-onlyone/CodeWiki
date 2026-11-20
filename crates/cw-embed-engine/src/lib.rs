@@ -184,7 +184,7 @@ fn device() -> Result<(Device, cw_models::Device)> {
 /// and answer requests on standard input until it closes. Standard output
 /// carries the protocol and nothing else.
 pub fn worker(id: &str, models_dir: &Path) -> ExitCode {
-    cw_core::logs::init("embed-worker", log::LevelFilter::Info);
+    let _telemetry = cw_telemetry::init("embed-worker", log::LevelFilter::Info);
     let stdout = std::io::stdout();
     let loaded = (|| -> Result<(Engine, cw_models::Device)> {
         let entry = catalog::find(id).ok_or_else(|| format!("unknown model '{id}'"))?;

@@ -20,6 +20,7 @@ candle-core = "0.11.1"
 candle-nn = "0.11.1"
 candle-transformers = "0.11.1"
 cw-core = { version = "0.2.0", path = "../cw-core" }
+cw-telemetry = { version = "0.2.0", path = "../cw-telemetry" }
 cw-models = { version = "0.2.0", path = "../cw-models" }
 log = "0.4"
 serde_json = "1"

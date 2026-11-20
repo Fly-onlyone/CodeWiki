@@ -272,10 +272,10 @@ pub fn set_level(level: LevelFilter) {
     }
 }
 
-/// Install `logger` as the process logger. False when one is set already.
-fn install(logger: Logger) -> bool {
-    let level = logger.level.clone();
-    if log::set_boxed_logger(Box::new(logger)).is_err() {
+/// Install `logger`, whose level is `level`, as the process logger. False
+/// when one is set already.
+fn install(logger: Box<dyn Log>, level: Level) -> bool {
+    if log::set_boxed_logger(logger).is_err() {
         return false;
     }
     log::set_max_level(level.get());
@@ -289,10 +289,23 @@ fn install(logger: Logger) -> bool {
 /// or `None` when the folder is not writable (the records then go to
 /// standard error only) or a logger was installed already.
 pub fn init(name: &str, default: LevelFilter) -> Option<PathBuf> {
+    init_with(name, default, |logger| logger)
+}
+
+/// [`init`], with the file logger passed through `wrap` before it is
+/// installed: `cw-telemetry` puts it inside the logger that also hands
+/// records to Sentry. The level stays the file logger's, so [`set_level`]
+/// still changes it.
+pub fn init_with(
+    name: &str,
+    default: LevelFilter,
+    wrap: impl FnOnce(Box<dyn Log>) -> Box<dyn Log>,
+) -> Option<PathBuf> {
     let path = path(name);
     let logger = Logger::new(Some(path.clone()), level(default), true);
     let writing = logger.sink.lock().is_ok_and(|sink| sink.is_some());
-    if !install(logger) {
+    let level = logger.level.clone();
+    if !install(wrap(Box::new(logger)), level) {
         return None;
     }
     let previous = std::panic::take_hook();
@@ -314,7 +327,9 @@ pub fn init(name: &str, default: LevelFilter) -> Option<PathBuf> {
 /// Send `log` records at `default` and above (or at the level in
 /// `CODEWIKI_LOG`) to standard error only, for a command run in a terminal.
 pub fn init_console(default: LevelFilter) {
-    install(Logger::new(None, level(default), true));
+    let logger = Logger::new(None, level(default), true);
+    let level = logger.level.clone();
+    install(Box::new(logger), level);
 }
 
 /// `time` in UTC as `2026-11-13T20:03:13.123Z`, the form every log line

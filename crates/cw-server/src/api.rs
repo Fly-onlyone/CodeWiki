@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
-use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, MatchedPath, Path, Query, Request, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -13,6 +13,7 @@ use axum::{Json, Router};
 use cw_core::hash::{constant_time_eq, hmac_sha256};
 use cw_core::{Error, Result, VAULT_DIR};
 use cw_index::Index;
+use cw_telemetry::sentry::{self, SentryFutureExt as _};
 use cw_vault::{VaultMeta, proposal};
 use cw_wiki::{query, service};
 use serde::{Deserialize, Serialize};
@@ -30,7 +31,8 @@ impl IntoResponse for ApiError {
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         };
         if status.is_server_error() {
-            log::warn!("request failed: {}", self.0);
+            // At Error, a failure of the backend is an error report too.
+            log::error!("request failed: {}", self.0);
         }
         (status, Json(json!({ "error": self.0.to_string() }))).into_response()
     }
@@ -113,6 +115,50 @@ async fn log_request(request: Request, next: Next) -> Response {
     response
 }
 
+/// Routes that clients poll every few seconds. Traced, they would bury the
+/// requests worth looking at.
+const UNTRACED: [&str; 2] = ["/v1/health", "/v1/status"];
+
+/// The name a request is traced under: its method and its route, never its
+/// path, which holds ids and names. `None` for a request that is not traced.
+fn trace_name(method: &str, route: Option<&str>) -> Option<String> {
+    let route = route.filter(|route| !UNTRACED.contains(route))?;
+    Some(format!("{method} {route}"))
+}
+
+fn span_status(status: StatusCode) -> sentry::protocol::SpanStatus {
+    use sentry::protocol::SpanStatus;
+    match status {
+        status if status.is_success() => SpanStatus::Ok,
+        StatusCode::UNAUTHORIZED => SpanStatus::Unauthenticated,
+        StatusCode::NOT_FOUND => SpanStatus::NotFound,
+        status if status.is_client_error() => SpanStatus::InvalidArgument,
+        status if status.is_server_error() => SpanStatus::InternalError,
+        _ => SpanStatus::UnknownError,
+    }
+}
+
+/// Trace each request in Sentry while error reports are on, as a
+/// transaction named by `trace_name`. Like the log, it records no query,
+/// headers or body; an error reported while the request runs is tied to it.
+async fn trace_request(request: Request, next: Next) -> Response {
+    let route = request.extensions().get::<MatchedPath>();
+    let name = trace_name(request.method().as_str(), route.map(MatchedPath::as_str));
+    let Some(name) = name.filter(|_| cw_telemetry::sending()) else {
+        return next.run(request).await;
+    };
+    let traced = async move {
+        let transaction =
+            sentry::start_transaction(sentry::TransactionContext::new(&name, "http.server"));
+        sentry::configure_scope(|scope| scope.set_span(Some(transaction.clone().into())));
+        let response = next.run(request).await;
+        transaction.set_status(span_status(response.status()));
+        transaction.finish();
+        response
+    };
+    traced.bind_hub(cw_telemetry::task_hub()).await
+}
+
 pub fn routes(state: AppState) -> Router {
     let protected = Router::new()
         .route("/repos", get(list_repos).post(add_repo))
@@ -180,6 +226,8 @@ pub fn routes(state: AppState) -> Router {
         )
         .nest("/v1", protected)
         .layer(middleware::from_fn(log_request))
+        // Outside the log, so that what the log reports joins the trace.
+        .layer(middleware::from_fn(trace_request))
         .with_state(state)
 }
 
@@ -1189,6 +1237,57 @@ mod tests {
         assert_eq!(
             request_level("/v1/health", StatusCode::SERVICE_UNAVAILABLE, FAST),
             log::Level::Warn
+        );
+    }
+
+    #[test]
+    fn a_request_is_traced_by_its_route_and_polls_are_not() {
+        assert_eq!(
+            trace_name("GET", Some("/v1/repos/{id}/search")).as_deref(),
+            Some("GET /v1/repos/{id}/search")
+        );
+        assert_eq!(trace_name("GET", Some("/v1/status")), None);
+        assert_eq!(trace_name("GET", Some("/v1/health")), None);
+        // A request no route matched.
+        assert_eq!(trace_name("GET", None), None);
+    }
+
+    /// The trace layer sits on the outer router, which has the token-guarded
+    /// routes nested under `/v1`: it must see their whole route, not the
+    /// nest's.
+    #[tokio::test]
+    async fn the_outer_layer_sees_the_route_of_a_nested_request() {
+        use std::sync::{Arc, Mutex};
+        use tower::ServiceExt as _;
+
+        let seen = Arc::new(Mutex::new(None::<String>));
+        let record = {
+            let seen = seen.clone();
+            move |request: Request, next: Next| {
+                let seen = seen.clone();
+                async move {
+                    *seen.lock().unwrap() = request
+                        .extensions()
+                        .get::<MatchedPath>()
+                        .map(|path| path.as_str().to_string());
+                    next.run(request).await
+                }
+            }
+        };
+        let inner = Router::new().route("/repos/{id}/notes", get(|| async { "ok" }));
+        let app = Router::new()
+            .route("/v1/health", get(|| async { "ok" }))
+            .nest("/v1", inner)
+            .layer(middleware::from_fn(record));
+
+        let request = axum::http::Request::get("/v1/repos/a1/notes?name=secret")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            seen.lock().unwrap().as_deref(),
+            Some("/v1/repos/{id}/notes")
         );
     }
 }

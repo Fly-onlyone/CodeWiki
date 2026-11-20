@@ -150,6 +150,15 @@ enum Command {
         #[arg(long)]
         models_dir: PathBuf,
     },
+    /// Send a test error report to Sentry, or with `--panic` panic, to check
+    /// that reports arrive. Reports must be on: `SENTRY_DSN` set, or a build
+    /// that carries a DSN with "Send error reports" turned on.
+    #[command(hide = true)]
+    SentryTest {
+        /// Panic instead of logging an error.
+        #[arg(long)]
+        panic: bool,
+    },
     /// Run the backend HTTP server used by the desktop app and agents.
     Serve {
         /// Address to listen on. Anything but loopback requires CODEWIKI_TOKEN.
@@ -783,10 +792,36 @@ fn run(cli: Cli) -> Result<()> {
             println!("rejected {}", p.id);
             Ok(())
         }
-        Command::Serve { .. } | Command::Model { .. } | Command::EmbedWorker { .. } => {
+        Command::Serve { .. }
+        | Command::Model { .. }
+        | Command::EmbedWorker { .. }
+        | Command::SentryTest { .. } => {
             unreachable!("handled before the repository is resolved")
         }
     }
+}
+
+/// `codewiki sentry-test`: one report through the same path an error or a
+/// panic of the backend takes.
+fn sentry_test(panic: bool) -> ExitCode {
+    let _telemetry = cw_telemetry::init("sentry-test", log::LevelFilter::Info);
+    if !cw_telemetry::sending() {
+        eprintln!(
+            "error: error reports are off; set {} or turn on \"Send error reports\" in a build that carries a DSN",
+            cw_telemetry::DSN_ENV
+        );
+        return ExitCode::FAILURE;
+    }
+    log::info!(
+        "a breadcrumb before the test report, from {}",
+        cw_core::paths::data_dir().display()
+    );
+    if panic {
+        panic!("test panic, sent on request");
+    }
+    cw_telemetry::send_test_report("codewiki sentry-test");
+    println!("sent a test report");
+    ExitCode::SUCCESS
 }
 
 #[cfg(windows)]
@@ -823,15 +858,20 @@ fn main() -> ExitCode {
         // Its standard output carries the protocol; it keeps its own log.
         return embed_worker(model, models_dir);
     }
+    if let Command::SentryTest { panic } = cli.command {
+        return sentry_test(panic);
+    }
     // The backend has no console when the app or an agent starts it: it keeps
     // `backend.log`, and prints the same lines when run from a terminal. A
-    // command prints only warnings and errors, as it always has.
+    // command prints only warnings and errors, as it always has. Only the
+    // backend sends error reports.
     let serving = matches!(cli.command, Command::Serve { .. });
-    if serving {
-        cw_core::logs::init("backend", log::LevelFilter::Info);
+    let _telemetry = if serving {
+        Some(cw_telemetry::init("backend", log::LevelFilter::Info))
     } else {
         cw_core::logs::init_console(log::LevelFilter::Warn);
-    }
+        None
+    };
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) if serving => {

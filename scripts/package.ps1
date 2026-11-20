@@ -11,6 +11,12 @@
 #
 # The CUDA worker needs NVIDIA's toolkit and Visual Studio's C++ tools to
 # build. scripts\cuda-toolkit.ps1 fetches the toolkit (0.9 GB, once).
+#
+# Error reports: a build made while CODEWIKI_SENTRY_DSN is set carries that
+# DSN, and sends reports once the user turns them on (crates/cw-telemetry).
+# The programs' debug files go to dist\symbols-<version>\, never into the
+# zip; the release workflow uploads them to Sentry, which needs them to name
+# the functions of a release build's stack trace.
 param(
     # Skip `cargo build` and package what is already in target\release.
     [switch]$NoBuild,
@@ -36,6 +42,12 @@ function Get-CudaImports([string]$Program) {
     @([regex]::Matches($text, '(?i)\b(cu[a-z]+64_\d+|nvcuda|nvrtc[\w-]*)\.dll') |
         ForEach-Object { $_.Value.ToLower() } | Sort-Object -Unique)
 }
+
+# Line tables and a PDB file beside each program. `strip = true` in the
+# release profile would link with /DEBUG:NONE and write none. The Docker
+# image, built by the same profile on Linux, keeps it as it is.
+$env:CARGO_PROFILE_RELEASE_DEBUG = "line-tables-only"
+$env:CARGO_PROFILE_RELEASE_STRIP = "none"
 
 if (-not $NoBuild) {
     cargo build --release --locked -p codewiki -p codewiki-mcp -p codewiki-app
@@ -115,6 +127,22 @@ if (-not $NoCuda) {
     # uses them (Attachment A), and its text goes with them.
     Copy-Item (Join-Path $CudaToolkit "licenses\libcublas.txt") (Join-Path $cuda "NVIDIA-CUDA-EULA.txt")
 }
+
+# Each program and its PDB, for Sentry. Kept out of the zip: the PDBs are
+# large and of no use on the user's machine.
+$symbols = Join-Path $dist "symbols-$version"
+if (Test-Path $symbols) { Remove-Item -Recurse -Force $symbols }
+New-Item -ItemType Directory -Force $symbols | Out-Null
+$programs = @("codewiki", "codewiki-mcp", "codewiki-app")
+if (-not $NoCuda) { $programs += "codewiki-embed-cuda" }
+foreach ($program in $programs) {
+    $pdb = Join-Path $root "target\release\$($program.Replace('-', '_')).pdb"
+    if (-not (Test-Path $pdb)) { throw "missing $pdb; the release build wrote no debug file" }
+    Copy-Item $pdb $symbols
+    Copy-Item (Join-Path $root "target\release\$program.exe") $symbols
+}
+$reports = if ($env:CODEWIKI_SENTRY_DSN) { "carries a DSN" } else { "carries no DSN" }
+"error reports: this build $reports; debug files in $symbols"
 
 foreach ($file in "LICENSE", "NOTICE") { Copy-Item (Join-Path $root $file) $stage }
 Copy-Item -Recurse (Join-Path $root "plugins") (Join-Path $stage "plugins")

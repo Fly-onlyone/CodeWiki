@@ -1,0 +1,25 @@
+[package]
+name = "cw-telemetry"
+description = "Error reports of CodeWiki's programs to Sentry: opt-in, scrubbed of paths and request data"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[dependencies]
+cw-core = { path = "../cw-core" }
+log = { version = "0.4", features = ["std"] }
+# The default transport is reqwest with native-tls; ureq with rustls is the
+# HTTP stack the rest of the workspace already uses.
+sentry = { version = "0.49.6", default-features = false, features = [
+    "backtrace",
+    "contexts",
+    "debug-images",
+    "log",
+    "panic",
+    "rustls",
+    "ureq",
+] }

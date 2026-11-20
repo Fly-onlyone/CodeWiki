@@ -2250,6 +2250,16 @@ impl AppView {
                 );
                 cx.notify();
             }
+            Action::ErrorReports(on) => {
+                match cw_telemetry::set_consent(*on) {
+                    Ok(()) => log::info!("send error reports: {}", if *on { "on" } else { "off" }),
+                    Err(e) => {
+                        log::warn!("could not keep the choice of error reports: {e}");
+                        self.error = Some(format!("Could not save the choice: {e}"));
+                    }
+                }
+                cx.notify();
+            }
             Action::OpenRepo(id) => self.open_repo(id, cx),
             Action::ForgetRepo(id) => self.forget_repo(id.clone(), cx),
             Action::Sync => self.sync(cx),
@@ -3840,7 +3850,8 @@ fn main() {
     let level = prefs::read(settings_view::LOG_LEVEL_PREF)
         .and_then(|name| cw_core::logs::level_named(&name))
         .unwrap_or(log::LevelFilter::Info);
-    cw_core::logs::init("app", level);
+    // Error reports start with the log, when the user turned them on.
+    let _telemetry = cw_telemetry::init("app", level);
     // Before anything of GPUI: a launch that hands over to the running app
     // ends here, with no window of its own.
     let (to_app, inbox) = async_channel::unbounded();
@@ -3924,6 +3935,9 @@ fn main() {
                 move |cx| {
                     // A launch from now on is the app itself.
                     instance::release();
+                    // GPUI may end the process before `main` drops the
+                    // reports' guard: send what is queued now.
+                    cw_telemetry::flush();
                     let backend = app.read(cx).backend_to_stop();
                     cx.background_executor().spawn(async move {
                         let Some(backend) = backend else {

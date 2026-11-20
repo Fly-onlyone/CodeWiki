@@ -86,6 +86,74 @@ fn finds_dead_code_without_false_alarms() {
     );
 }
 
+/// Private items used in ways a name-based resolver can miss: methods on a
+/// receiver of unknown type whose name other methods share, a method called
+/// inside a macro, a constant read only by another constant.
+fn receivers_fixture() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+    write(r, "crates/kit/Cargo.toml", "[package]\nname = \"kit\"\n");
+    write(
+        r,
+        "crates/kit/src/lib.rs",
+        "//! Kit.\npub mod consts;\npub mod logs;\npub mod page;\npub mod tray;\npub mod units;\n",
+    );
+    write(
+        r,
+        "crates/kit/src/page.rs",
+        "//! Pages.\nstruct Page(u8);\n\nimpl Page {\n    fn id(&self) -> u8 { self.0 }\n    fn really_unused(&self) -> u8 { 0 }\n}\n\n/// The shown page.\npub fn shown() -> u8 {\n    let page = Page(1);\n    page.id()\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/tray.rs",
+        "//! Tray.\n/// A command.\npub struct Command(u8);\n\nimpl Command {\n    /// Its id.\n    pub fn id(&self) -> u8 { self.0 }\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/logs.rs",
+        "//! Logs.\nuse std::sync::atomic::{AtomicU8, Ordering};\n\nstruct Level(AtomicU8);\n\nimpl Level {\n    fn get(&self) -> u8 { self.0.load(Ordering::Relaxed) }\n}\n\n/// A logger.\npub struct Logger {\n    level: Level,\n}\n\nimpl Logger {\n    /// Whether it writes anything.\n    pub fn enabled(&self) -> bool { self.level.get() > 0 }\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/units.rs",
+        "//! Units.\nstruct Family;\n\nimpl Family {\n    fn suffix(&self) -> &'static str { \"s\" }\n}\n\n/// A unit's name.\npub fn name(family: Family) -> String {\n    format!(\"unit{}\", family.suffix())\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/consts.rs",
+        "//! Sizes.\nconst THUMB_PADDING: f32 = 2.0;\n\n/// The halo around a thumb.\npub const HALO: f32 = 20.0 + 2.0 * THUMB_PADDING;\n\nconst STRENGTH: f32 = 0.2;\nconst _: () = assert!(STRENGTH <= 0.3);\n",
+    );
+    dir
+}
+
+#[test]
+fn private_items_used_through_receivers_and_constants_are_alive() {
+    let dir = receivers_fixture();
+    let index = indexed(dir.path());
+    let dead = health::dead_code(&index).unwrap();
+    let find = |name: &str| dead.iter().find(|d| d.qualified.ends_with(name));
+
+    for alive in [
+        "::page::Page::id",        // `page.id()`, though `tray::Command::id` exists
+        "::logs::Level::get",      // `self.level.get()`, a common method name
+        "::units::Family::suffix", // `family.suffix()` inside `format!`
+        "::consts::THUMB_PADDING", // read by `HALO`
+        "::consts::STRENGTH",      // read by the anonymous assertion
+    ] {
+        assert!(find(alive).is_none(), "{alive} was reported dead: {dead:?}");
+    }
+    assert!(
+        !dead.iter().any(|d| d.qualified.ends_with("::_")),
+        "the anonymous constant is not an item: {dead:?}"
+    );
+    assert_eq!(
+        find("::page::Page::really_unused").map(|d| d.certainty),
+        Some(Certainty::Likely),
+        "{dead:?}"
+    );
+}
+
 #[test]
 fn reports_documentation_drift_and_coverage() {
     let dir = fixture();

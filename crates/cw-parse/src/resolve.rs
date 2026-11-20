@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use cw_core::{Confidence, Edge, EdgeKind, Language, Symbol, SymbolKind, file_node};
+use cw_core::{Confidence, Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility, file_node};
 
 use crate::rust::ParsedFile;
 
@@ -26,6 +26,54 @@ pub struct Resolved {
 const TOOLCHAIN_CRATES: [&str; 5] = ["std", "core", "alloc", "proc_macro", "test"];
 
 const MAX_REEXPORT_DEPTH: usize = 6;
+
+/// The module a Rust symbol is declared in: its qualified name without its
+/// own name, and without the type for a method (`module::Type::name`).
+fn home_module(symbol: &Symbol) -> &str {
+    let levels = if symbol.kind == SymbolKind::Method {
+        2
+    } else {
+        1
+    };
+    let mut end = symbol.qualified.len();
+    for _ in 0..levels {
+        end = symbol.qualified[..end].rfind("::").unwrap_or(0);
+    }
+    &symbol.qualified[..end]
+}
+
+/// `module` is `outer` or nested inside it.
+fn within(module: &str, outer: &str) -> bool {
+    module
+        .strip_prefix(outer)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with("::"))
+}
+
+/// A file of an integration test, a bench or an example: a crate of its
+/// own, whose items the library cannot name.
+fn is_separate_target(file: &str) -> bool {
+    let dirs: Vec<&str> = file.split('/').collect();
+    let dirs = &dirs[..dirs.len().saturating_sub(1)];
+    !dirs.contains(&"src")
+        && dirs
+            .iter()
+            .any(|d| matches!(*d, "tests" | "benches" | "examples"))
+}
+
+/// Whether Rust code in `module` can name `symbol`: a private item in its
+/// own module and the ones inside it, a `pub(crate)` item in its crate, and
+/// an item of a test, bench or example only from that file.
+fn visible_from(symbol: &Symbol, module: &str) -> bool {
+    let home = home_module(symbol);
+    if is_separate_target(&symbol.file) {
+        return within(module, home);
+    }
+    match symbol.visibility {
+        Visibility::Public => true,
+        Visibility::Crate => module.split("::").next() == home.split("::").next(),
+        Visibility::Private => within(module, home),
+    }
+}
 
 /// Method names so common in the standard library that a receiver of unknown
 /// type almost never means a repository method of the same name.
@@ -291,13 +339,25 @@ impl<'a> Resolver<'a> {
     }
 
     /// Fall back to matching by bare name when path resolution fails.
+    ///
+    /// A name that only one method has is taken to mean it, unless the caller
+    /// cannot see that method: a call such as `request.header(..)` on a type
+    /// from a dependency must not bind to a private `header` elsewhere. When
+    /// several methods share the name, a Rust caller gets the one declared in
+    /// its own module, if there is just one. With `private_here`, the name is
+    /// common enough that only a private method of the caller's own module is
+    /// taken.
     fn by_bare_name(
         &self,
         name: &str,
         module: &str,
         language: Language,
         accept: impl Fn(SymbolKind) -> bool,
+        private_here: bool,
     ) -> Option<(&'a Symbol, Confidence)> {
+        let rust = language == Language::Rust;
+        let visible = |s: &Symbol| !rust || visible_from(s, module);
+        let only = |found: Vec<&'a Symbol>| (found.len() == 1).then(|| found[0]);
         // A name never matches a symbol written in another language.
         let all: Vec<&Symbol> = self
             .by_name
@@ -306,8 +366,21 @@ impl<'a> Resolver<'a> {
             .copied()
             .filter(|s| accept(s.kind) && Language::from_path(&s.file) == language)
             .collect();
+        let here = |found: &[&'a Symbol], private: bool| {
+            only(
+                found
+                    .iter()
+                    .copied()
+                    .filter(|s| rust && home_module(s) == module && visible(s))
+                    .filter(|s| !private || s.visibility == Visibility::Private)
+                    .collect(),
+            )
+        };
+        if private_here {
+            return here(&all, true).map(|s| (s, Confidence::Low));
+        }
         if all.len() == 1 {
-            return Some((all[0], Confidence::Medium));
+            return visible(all[0]).then(|| (all[0], Confidence::Medium));
         }
         let krate = module.split("::").next().unwrap_or("");
         let prefix = format!("{krate}::");
@@ -315,7 +388,12 @@ impl<'a> Resolver<'a> {
             .into_iter()
             .filter(|s| s.qualified.starts_with(&prefix))
             .collect();
-        (same.len() == 1).then(|| (same[0], Confidence::Low))
+        if same.len() == 1 {
+            return visible(same[0]).then(|| (same[0], Confidence::Low));
+        }
+        // `page.id()` in `doc_view` means `doc_view::Page::id` sooner than a
+        // `tray::Command::id`.
+        here(&same, false).map(|s| (s, Confidence::Low))
     }
 
     /// Build every edge for the repository.
@@ -395,12 +473,16 @@ impl<'a> Resolver<'a> {
                         .and_then(|t| self.symbols.get(format!("{t}::{name}").as_str()))
                         .map(|s| (*s, Confidence::Medium))
                         .or_else(|| {
-                            if COMMON_METHODS.contains(&name) {
-                                return None;
-                            }
-                            self.by_bare_name(name, &c.module, language, |k| {
-                                k == SymbolKind::Method
-                            })
+                            // On a receiver of unknown type, a common name
+                            // nearly always means a standard library method.
+                            let common = COMMON_METHODS.contains(&name);
+                            self.by_bare_name(
+                                name,
+                                &c.module,
+                                language,
+                                |k| k == SymbolKind::Method,
+                                common,
+                            )
                             .map(|(s, _)| (s, Confidence::Low))
                         })
                 } else {

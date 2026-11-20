@@ -11,6 +11,7 @@
 mod autostart;
 mod backdrop;
 mod contrast;
+mod diagram_view;
 mod diagrams;
 mod doc;
 mod doc_view;
@@ -100,6 +101,8 @@ const PALETTE_ROWS: usize = 14;
 const THEME_MENU_WIDTH: f32 = 340.0;
 /// The mark of the theme in use, and the place kept for it in every row.
 const THEME_MARK: f32 = 18.0;
+/// Between the diagram viewer and the window's edges.
+const DIAGRAM_INSET: f32 = 24.0;
 /// Between the window's top right corner and a menu that hangs from it.
 const MENU_CORNER_GAP: f32 = 12.0;
 /// How often, and how long apart, the app looks again for what an update
@@ -185,6 +188,21 @@ struct Tab {
 }
 
 /// A note being edited.
+/// A diagram of the page, opened over the window to be enlarged.
+struct DiagramViewer {
+    /// What the diagram is known by: its palette and its Mermaid source.
+    key: diagrams::Key,
+    /// The diagram as the note shows it, one pixel per unit.
+    image: std::sync::Arc<Image>,
+    /// Its natural size, in design units.
+    size: (f32, f32),
+    /// Where the diagram sits in the stage; `None` until the stage has been
+    /// measured, which the first paint does.
+    camera: Option<graph::Camera>,
+    /// Where the pointer was when it last dragged the diagram.
+    drag_last: Option<(f32, f32)>,
+}
+
 struct Editing {
     path: String,
     /// The note's text when editing began, with its own line endings.
@@ -301,6 +319,21 @@ struct AppView {
     diagrams: Vec<std::sync::Arc<Image>>,
     /// Every diagram drawn so far, and those still to draw.
     diagram_store: diagrams::Diagrams,
+    /// The Mermaid source of each of `diagrams`, for the viewer to draw one
+    /// again with more pixels.
+    diagram_sources: Vec<String>,
+    /// The diagram in the viewer. It stays after the viewer has closed, which
+    /// is what fades out.
+    diagram_viewer: Option<DiagramViewer>,
+    /// Whether the diagram viewer is open.
+    diagram_open: bool,
+    /// Holds the focus while the diagram viewer is open.
+    diagram_focus: FocusHandle,
+    /// The viewer's stage from the last paint: x, y, width, height.
+    diagram_bounds: Rc<std::cell::Cell<[f32; 4]>>,
+    /// The diagram the viewer last showed, drawn with more pixels so that it
+    /// stays sharp when enlarged. One is kept: each is tens of megabytes.
+    sharp_diagram: Option<(diagrams::Key, std::sync::Arc<Image>)>,
     graph: Option<std::rc::Rc<graph::GraphData>>,
     /// Graph camera; `None` until the view has been fitted once.
     camera: Option<graph::Camera>,
@@ -439,6 +472,12 @@ impl AppView {
             rendered: String::new(),
             diagrams: Vec::new(),
             diagram_store: diagrams::Diagrams::default(),
+            diagram_sources: Vec::new(),
+            diagram_viewer: None,
+            diagram_open: false,
+            diagram_focus: cx.focus_handle(),
+            diagram_bounds: Default::default(),
+            sharp_diagram: None,
             graph: None,
             camera: None,
             graph_bounds: Default::default(),
@@ -1510,6 +1549,9 @@ impl AppView {
             _ => None,
         };
         self.show_figure = false;
+        // The diagram in the viewer belongs to the page that was left.
+        self.diagram_open = false;
+        self.diagram_viewer = None;
         self.prepare_page();
     }
 
@@ -1855,19 +1897,18 @@ impl AppView {
     /// yet leaves a line in its place until `draw_queued_diagrams` has it.
     fn prepare_page(&mut self) {
         self.diagrams.clear();
+        self.diagram_sources.clear();
         let palette = self.palette;
         self.rendered = match &self.page {
             Page::Note { text, .. } => {
                 let diagrams = &mut self.diagrams;
+                let sources = &mut self.diagram_sources;
                 let store = &mut self.diagram_store;
                 markdown::prepare_note_with(text, |source| match store.lookup(source, palette) {
                     diagrams::Lookup::Ready(Some(image)) => {
                         diagrams.push(image);
-                        markdown::Diagram::Image(format!(
-                            "{}{}",
-                            markdown::DIAGRAM_SCHEME,
-                            diagrams.len() - 1
-                        ))
+                        sources.push(source.to_string());
+                        markdown::Diagram::Image(diagrams.len() - 1)
                     }
                     diagrams::Lookup::Ready(None) => markdown::Diagram::Source,
                     diagrams::Lookup::Pending => markdown::Diagram::Drawing,
@@ -2216,12 +2257,122 @@ impl AppView {
     }
 
     /// Follow a link clicked in a note.
-    fn follow_link(&mut self, url: &str, cx: &mut Context<Self>) {
+    fn follow_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(target) = url.strip_prefix(NOTE_SCHEME) {
             self.run_action(&Action::Note(markdown::decode(target)), cx);
+        } else if let Some(index) = url.strip_prefix(markdown::OPEN_DIAGRAM_SCHEME) {
+            if let Ok(index) = index.parse() {
+                self.open_diagram(index, window, cx);
+            }
         } else if url.starts_with("https://") || url.starts_with("http://") {
             cx.open_url(url);
         }
+    }
+
+    /// Open a diagram of the page in the viewer, fitted into the window. A
+    /// note narrows a wide diagram to its column; here it can be enlarged.
+    fn open_diagram(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(image), Some(source)) = (
+            self.diagrams.get(index).cloned(),
+            self.diagram_sources.get(index).cloned(),
+        ) else {
+            return;
+        };
+        let Some((width, height)) = diagram_view::png_size(image.bytes()) else {
+            return;
+        };
+        self.close_theme_menu(false, window, cx);
+        if self.palette_open {
+            self.toggle_palette(window, cx);
+        }
+        let key = (self.palette, source);
+        self.diagram_viewer = Some(DiagramViewer {
+            key: key.clone(),
+            image,
+            size: (width as f32, height as f32),
+            camera: None,
+            drag_last: None,
+        });
+        self.diagram_open = true;
+        // The stage is measured anew: the window may have another size than
+        // when a diagram was last open.
+        self.diagram_bounds.set([0.0; 4]);
+        window.focus(&self.diagram_focus, cx);
+        self.sharpen_diagram(key, cx);
+        cx.notify();
+    }
+
+    /// Close the diagram viewer. The focus goes back to the app in the next
+    /// frame (`render`), since not every way here has the window.
+    fn close_diagram(&mut self, cx: &mut Context<Self>) {
+        if self.diagram_open {
+            self.diagram_open = false;
+            cx.notify();
+        }
+    }
+
+    /// Draw the viewer's diagram again with more pixels, off the UI thread,
+    /// and show that once it is there. The note's picture has one pixel per
+    /// unit, which blurs as soon as the viewer enlarges it.
+    fn sharpen_diagram(&mut self, key: diagrams::Key, cx: &mut Context<Self>) {
+        if self
+            .sharp_diagram
+            .as_ref()
+            .is_some_and(|(have, _)| *have == key)
+        {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            let (palette, source) = key.clone();
+            let image = cx
+                .background_executor()
+                .spawn(async move {
+                    cw_mermaid::render_png_scaled(&source, palette, diagram_view::SHARP_SCALE)
+                        .ok()
+                        .map(|png| std::sync::Arc::new(Image::from_bytes(ImageFormat::Png, png)))
+                })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                // Only for the diagram the viewer still shows: another was
+                // opened meanwhile, or none is open any more.
+                let wanted =
+                    this.diagram_open && this.diagram_viewer.as_ref().is_some_and(|v| v.key == key);
+                if let (true, Some(image)) = (wanted, image) {
+                    if let Some((_, old)) = this.sharp_diagram.replace((key, image)) {
+                        // GPUI keeps the decoded picture until it is told.
+                        old.remove_asset(cx);
+                    }
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Change the viewer's camera, when the stage has been measured, and keep
+    /// the diagram in view. `change` receives the camera, the diagram's size
+    /// and the stage's.
+    fn move_diagram(
+        &mut self,
+        cx: &mut Context<Self>,
+        change: impl FnOnce(&mut graph::Camera, (f32, f32), (f32, f32)),
+    ) {
+        let [_, _, width, height] = self.diagram_bounds.get();
+        let Some(viewer) = self.diagram_viewer.as_mut() else {
+            return;
+        };
+        if let Some(camera) = viewer.camera.as_mut() {
+            change(camera, viewer.size, (width, height));
+            diagram_view::clamp(camera, viewer.size, (width, height));
+            cx.notify();
+        }
+    }
+
+    /// Zoom the viewer's diagram by `factor` about the middle of the stage.
+    fn zoom_diagram(&mut self, factor: f32, cx: &mut Context<Self>) {
+        self.move_diagram(cx, |camera, _, stage| {
+            diagram_view::zoom_by(camera, stage.0 / 2.0, stage.1 / 2.0, factor, stage)
+        });
     }
 
     /// Do what a link, row or button of a generated page asks for.
@@ -2714,6 +2865,252 @@ impl AppView {
         .with_priority(1)
     }
 
+    /// The diagram viewer, drawn over everything else: a diagram of the note
+    /// at a size it can be read at. The wheel zooms about the pointer and a
+    /// drag moves the diagram. `shown` runs from 0 to 1 as for the palette.
+    /// `None` when no diagram was opened.
+    fn diagram_viewer_view(&mut self, shown: f32, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let open = self.diagram_open;
+        let [bx, by, width, height] = self.diagram_bounds.get();
+        let measured = width > 0.0 && height > 0.0;
+        let sharp = self.sharp_diagram.clone();
+        let viewer = self.diagram_viewer.as_mut()?;
+        let size = viewer.size;
+        if measured && viewer.camera.is_none() {
+            viewer.camera = Some(diagram_view::fit(size, (width, height)));
+        }
+        let camera = viewer.camera;
+        let image = match sharp {
+            Some((key, image)) if key == viewer.key => image,
+            _ => viewer.image.clone(),
+        };
+        let (muted, backdrop, stage_color) = {
+            let theme = cx.theme();
+            (
+                theme.muted_foreground,
+                theme.background.opacity(0.6),
+                theme.background,
+            )
+        };
+        let rel =
+            move |position: Point<Pixels>| (position.x / px(1.) - bx, position.y / px(1.) - by);
+
+        let header = h_flex()
+            .flex_none()
+            .items_center()
+            .gap_1()
+            .pl_4()
+            .pr_2()
+            .py_1()
+            .child(
+                surfaces::text(Variant::Caption, "Scroll to zoom, drag to move")
+                    .flex_1()
+                    .text_color(muted),
+            )
+            .child(
+                surfaces::text(
+                    Variant::Caption,
+                    camera.map_or(String::new(), |camera| {
+                        format!("{}%", diagram_view::percent(&camera))
+                    }),
+                )
+                .pr_1()
+                .text_color(muted),
+            )
+            .child(
+                IconButton::new("diagram-zoom-out", icons::ZOOM_OUT)
+                    .tooltip("Zoom out (-)")
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.zoom_diagram(1.0 / diagram_view::STEP, cx)
+                    })),
+            )
+            .child(
+                IconButton::new("diagram-zoom-in", icons::ZOOM_IN)
+                    .tooltip("Zoom in (+)")
+                    .small()
+                    .on_click(
+                        cx.listener(|this, _, _, cx| this.zoom_diagram(diagram_view::STEP, cx)),
+                    ),
+            )
+            .child(
+                IconButton::new("diagram-fit", icons::FIT)
+                    .tooltip("Fit to window (0)")
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.move_diagram(cx, |camera, size, stage| {
+                            *camera = diagram_view::fit(size, stage)
+                        })
+                    })),
+            )
+            .child(
+                Button::new("diagram-actual")
+                    .label("100%")
+                    .text()
+                    .small()
+                    .tooltip("Actual size (1)")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.move_diagram(cx, |camera, size, stage| {
+                            *camera = diagram_view::actual(size, stage)
+                        })
+                    })),
+            )
+            .child(
+                IconButton::new("diagram-close", icons::CLOSE)
+                    .tooltip("Close (Esc)")
+                    .small()
+                    .on_click(cx.listener(|this, _, _, cx| this.close_diagram(cx))),
+            );
+
+        let bounds_cell = self.diagram_bounds.clone();
+        let view = cx.entity_id();
+        let stage = div()
+            .id("diagram-stage")
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .w_full()
+            .overflow_hidden()
+            .bg(stage_color)
+            .when(open, |stage| {
+                stage
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |this, event: &MouseDownEvent, _, _| {
+                            if let Some(viewer) = this.diagram_viewer.as_mut() {
+                                viewer.drag_last = Some(rel(event.position));
+                            }
+                        }),
+                    )
+                    .on_mouse_move(cx.listener(move |this, event: &MouseMoveEvent, _, cx| {
+                        let (x, y) = rel(event.position);
+                        let Some(viewer) = this.diagram_viewer.as_mut() else {
+                            return;
+                        };
+                        if event.pressed_button != Some(MouseButton::Left) {
+                            viewer.drag_last = None;
+                        } else if let Some((lx, ly)) = viewer.drag_last.replace((x, y)) {
+                            this.move_diagram(cx, |camera, _, _| camera.pan(x - lx, y - ly));
+                        }
+                    }))
+                    .on_mouse_up(
+                        MouseButton::Left,
+                        cx.listener(|this, _: &MouseUpEvent, _, _| {
+                            if let Some(viewer) = this.diagram_viewer.as_mut() {
+                                viewer.drag_last = None;
+                            }
+                        }),
+                    )
+                    .on_scroll(cx.listener(move |this, event: &ScrollEvent, _, cx| {
+                        let delta = event.delta.pixel_delta(px(20.)).y / px(1.);
+                        let (x, y) = rel(event.position);
+                        this.move_diagram(cx, |camera, _, stage| {
+                            diagram_view::zoom_by(
+                                camera,
+                                x,
+                                y,
+                                diagram_view::WHEEL.powf(delta),
+                                stage,
+                            )
+                        });
+                    }))
+            })
+            // Reports where the stage is. The first paint is the first to
+            // know, and the diagram is placed in the frame after it.
+            .child(
+                canvas(
+                    move |bounds: Bounds<Pixels>, _, cx| {
+                        let found = [
+                            bounds.origin.x / px(1.),
+                            bounds.origin.y / px(1.),
+                            bounds.size.width / px(1.),
+                            bounds.size.height / px(1.),
+                        ];
+                        if bounds_cell.replace(found) != found {
+                            doc_view::notify_after_draw(view, cx);
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
+            .when_some(camera.filter(|_| measured), |stage, camera| {
+                let [x, y, w, h] = diagram_view::frame(&camera, size, (width, height));
+                stage.child(
+                    img(ImageSource::Image(image))
+                        .absolute()
+                        .left(px(x))
+                        .top(px(y))
+                        .w(px(w))
+                        .h(px(h))
+                        .object_fit(ObjectFit::Fill),
+                )
+            });
+
+        let paper = surfaces::paper(24, cx)
+            .id("diagram-viewer")
+            .size_full()
+            .overflow_hidden()
+            .when(open, |paper| {
+                paper
+                    .track_focus(&self.diagram_focus)
+                    .on_key_down(cx.listener(|this, event: &KeyDownEvent, _, cx| {
+                        if event.keystroke.modifiers.modified() {
+                            return;
+                        }
+                        match event.keystroke.key.as_str() {
+                            "escape" => this.close_diagram(cx),
+                            "+" | "=" => this.zoom_diagram(diagram_view::STEP, cx),
+                            "-" => this.zoom_diagram(1.0 / diagram_view::STEP, cx),
+                            "0" => this.move_diagram(cx, |camera, size, stage| {
+                                *camera = diagram_view::fit(size, stage)
+                            }),
+                            "1" => this.move_diagram(cx, |camera, size, stage| {
+                                *camera = diagram_view::actual(size, stage)
+                            }),
+                            _ => return,
+                        }
+                        cx.stop_propagation();
+                    }))
+                    // A press on the viewer is not a press outside it.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            })
+            .child(header)
+            .child(surfaces::divider(cx))
+            .child(stage)
+            .enter("diagram-in", Enter::DIALOG);
+
+        Some(
+            deferred(
+                div()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .opacity(shown.clamp(0.0, 1.0))
+                    .bg(backdrop)
+                    .when(open, |scrim| {
+                        scrim.occlude().on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|this, _, _, cx| this.close_diagram(cx)),
+                        )
+                    })
+                    .child(
+                        // Below the title bar, which stays in reach.
+                        div()
+                            .size_full()
+                            .pt(TITLE_BAR_HEIGHT + px(DIAGRAM_INSET))
+                            .px(px(DIAGRAM_INSET))
+                            .pb(px(DIAGRAM_INSET))
+                            .child(paper),
+                    ),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
     /// The theme menu, hung under the toolbar's theme button. `shown` runs
     /// from 0 to 1 as for the palette. `None` until the button has been
     /// drawn once, which tells where it is.
@@ -2921,9 +3318,9 @@ impl AppView {
                                     .map(ImageSource::Image)
                                     .unwrap_or_else(|| uri.clone().into())
                             })
-                            .on_link_click(move |url, _, _, cx| {
+                            .on_link_click(move |url, _, window, cx| {
                                 let url = url.to_string();
-                                _ = view.update(cx, |this, cx| this.follow_link(&url, cx));
+                                _ = view.update(cx, |this, cx| this.follow_link(&url, window, cx));
                             }),
                         self.pane_width,
                         measure,
@@ -3559,7 +3956,13 @@ impl Render for AppView {
         };
         if palette != self.palette {
             self.palette = palette;
+            // The viewer's diagram is drawn in the palette that was left.
+            self.close_diagram(cx);
             self.prepare_page();
+        }
+        // The viewer closed, in whichever way: the keys are the app's again.
+        if !self.diagram_open && self.diagram_focus.is_focused(window) {
+            window.focus(&self.focus, cx);
         }
         self.draw_queued_diagrams(cx);
         if let Some(query) = self.pending_palette.take() {
@@ -3612,6 +4015,13 @@ impl Render for AppView {
         let theme_menu = Presence::new("theme-menu-presence", self.theme_menu_open)
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
             .sample(window, cx);
+        let diagram = Presence::new("diagram-presence", self.diagram_open)
+            .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+            .sample(window, cx);
+        let diagram_viewer = diagram
+            .should_render()
+            .then(|| self.diagram_viewer_view(diagram.progress, cx))
+            .flatten();
         let root = v_flex()
             .id("root")
             .relative()
@@ -3664,6 +4074,7 @@ impl Render for AppView {
             })
             // The list of a select of the Settings page, while one is open.
             .children(self.settings_menu_view(cx))
+            .children(diagram_viewer)
             // The place of the title bar, which the shell draws.
             .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())
             .child(glass::hairline(cx))

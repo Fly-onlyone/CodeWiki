@@ -77,18 +77,23 @@ pub fn render_svg(source: &str) -> Result<String, String> {
     }
 }
 
-/// Render Mermaid source to PNG bytes.
+/// Render Mermaid source to PNG bytes, one pixel per unit of the diagram.
 pub fn render_png(source: &str, palette: Palette) -> Result<Vec<u8>, String> {
+    render_png_scaled(source, palette, 1.0)
+}
+
+/// [`render_png`] with `scale` pixels per unit of the diagram, for a view
+/// that enlarges it. The renderer holds an image to 4096 pixels a side, so a
+/// large diagram comes back smaller than `scale` asks for, in its ratio.
+pub fn render_png_scaled(source: &str, palette: Palette, scale: f32) -> Result<Vec<u8>, String> {
     let source = &themed(&lenient(source), palette);
+    let mut request = PngRequest {
+        svg: SvgRequest::default(),
+        options: Default::default(),
+    };
+    request.options.scale = scale;
     let output = Renderer::new()
-        .render(RenderRequest::png(
-            source,
-            OperationControl::new(),
-            PngRequest {
-                svg: SvgRequest::default(),
-                options: Default::default(),
-            },
-        ))
+        .render(RenderRequest::png(source, OperationControl::new(), request))
         .map_err(|e| e.to_string())?;
     match output {
         RenderOutput::Png(Some(png)) => Ok(png.bytes),
@@ -137,6 +142,22 @@ mod tests {
             let dark = render_png(source, Palette::Dark).unwrap();
             assert_ne!(png, dark, "the dark palette changes the image");
         }
+    }
+
+    /// Width and height a PNG states in its header.
+    fn size(png: &[u8]) -> (u32, u32) {
+        let field = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+        (field(16), field(20))
+    }
+
+    #[test]
+    fn a_scaled_diagram_has_that_many_times_the_pixels() {
+        let source = "flowchart LR\n    A --> B\n";
+        let (width, height) = size(&render_png(source, Palette::Light).unwrap());
+        let double = size(&render_png_scaled(source, Palette::Light, 2.0).unwrap());
+        // The renderer rounds a size up to whole pixels before it scales.
+        assert!(double.0.abs_diff(width * 2) <= 2, "{double:?} of {width}");
+        assert!(double.1.abs_diff(height * 2) <= 2, "{double:?} of {height}");
     }
 
     #[test]

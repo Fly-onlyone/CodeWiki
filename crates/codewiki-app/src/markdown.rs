@@ -4,6 +4,9 @@
 pub const NOTE_SCHEME: &str = "codewiki://note/";
 /// URL scheme for diagrams rendered from Mermaid blocks, followed by an index.
 pub const DIAGRAM_SCHEME: &str = "codewiki-diagram://";
+/// URL scheme of the link around a drawn diagram, followed by the same index.
+/// Following it opens the diagram in the viewer, where it can be enlarged.
+pub const OPEN_DIAGRAM_SCHEME: &str = "codewiki://diagram/";
 
 pub(crate) fn encode(value: &str) -> String {
     cw_client::encode(value)
@@ -39,8 +42,8 @@ pub fn prepare_note(text: &str) -> String {
 
 /// What the viewer shows in place of one Mermaid block.
 pub enum Diagram {
-    /// The drawn diagram, at this image URL.
-    Image(String),
+    /// The drawn diagram, by its index among the page's diagrams.
+    Image(usize),
     /// A line saying the diagram is being drawn.
     Drawing,
     /// The block as code (for example when it does not render).
@@ -76,7 +79,12 @@ pub fn prepare_note_with(text: &str, mut diagram: impl FnMut(&str) -> Diagram) -
         if let Some((fence, source)) = &mut mermaid {
             if line.trim_start().starts_with("```") {
                 match diagram(source) {
-                    Diagram::Image(url) => out.push_str(&format!("![diagram]({url})\n")),
+                    // A link, so that a click on the diagram opens the viewer:
+                    // a wide diagram is narrowed to the column and is too
+                    // small to read there.
+                    Diagram::Image(index) => out.push_str(&format!(
+                        "[![diagram]({DIAGRAM_SCHEME}{index})]({OPEN_DIAGRAM_SCHEME}{index})\n"
+                    )),
                     Diagram::Drawing => out.push_str(&format!("{DRAWING}\n")),
                     Diagram::Source => out.push_str(&format!("{fence}\n{source}{line}\n")),
                 }
@@ -182,13 +190,13 @@ mod tests {
         let out = prepare_note_with(note, |source| {
             seen.push(source.to_string());
             if source.starts_with("flowchart") {
-                Diagram::Image("codewiki-mermaid://0".to_string())
+                Diagram::Image(0)
             } else {
                 Diagram::Source
             }
         });
         assert_eq!(seen, ["flowchart LR\n    A --> B\n", "broken\n"]);
-        assert!(out.contains("![diagram](codewiki-mermaid://0)"));
+        assert!(out.contains("[![diagram](codewiki-diagram://0)](codewiki://diagram/0)\n"));
         assert!(!out.contains("flowchart LR"));
         assert!(out.contains("```mermaid\nbroken\n```"));
         assert!(out.contains("```rust\nlet x = 1;\n```"));

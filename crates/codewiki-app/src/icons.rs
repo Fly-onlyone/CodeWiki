@@ -75,6 +75,8 @@ app_icons! {
     MOTION = "animation",
     ZOOM_IN = "zoom-in",
     ZOOM_OUT = "zoom-out",
+    // The whole of a diagram in view.
+    FIT = "fit-screen",
     UPDATE = "system-update-alt",
     EXTERNAL = "open-in-new",
     SUCCESS = "check-circle-outline",

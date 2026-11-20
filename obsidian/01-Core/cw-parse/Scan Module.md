@@ -25,10 +25,10 @@ Main items:
 ## Depends on
 
 - [[Lang Module]] — uses `link_imports`, `python_module`, `resolve_ts_import`, `ts_module`
-- [[Workspace Module]] — uses `CrateInfo`, `module_path`, `parse_manifest`
+- [[Resolver]] — uses `new`, `resolve`, `with_crates`
 - [[Model Module]] — uses `Edge`, `FileRecord`
+- [[Workspace Module]] — uses `module_path`, `parse_manifest`
 - [[Error]] — uses `external`, `io`
-- [[Resolver]] — uses `new`, `resolve`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[Error Module]] — uses `Result`
 - [[Hash Module]] — uses `sha256_hex`

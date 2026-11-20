@@ -28,7 +28,6 @@ Main items:
 - [[Tone]] — uses `Tone`, `color`, `icon`
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Tokens Module]] — uses `easing`
-- [[Entry]] — uses `size`
 
 ## Used by
 

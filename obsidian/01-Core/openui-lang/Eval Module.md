@@ -35,7 +35,6 @@ Main items:
 - [[Library]] — from `Library`, `component`, `get`
 - [[codewiki-app]] — from `open_note`
 - [[cw-illustrate]] — from `check`
-- [[Generate Module]] — from `generate`
 
 ## See also
 

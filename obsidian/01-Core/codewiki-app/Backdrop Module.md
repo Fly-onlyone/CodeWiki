@@ -28,7 +28,6 @@ Main items:
 - [[Doc View Module]] — uses `DocPage`, `PageSlot`, `bounds`, `read_by`
 - [[Glass Module]] — uses `debug_backdrop`
 - [[Themes Module]] — uses `of`
-- [[Entry]] — uses `size`
 
 ## Used by
 

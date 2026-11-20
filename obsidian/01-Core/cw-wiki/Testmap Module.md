@@ -26,10 +26,11 @@ Main items:
 ## Depends on
 
 - [[Index]] — uses `Index`, `crates`, `files`, `symbols`
-- [[Workspace Module]] — uses `CrateInfo`, `module_path`, `owning_crate`
+- [[Workspace Module]] — uses `module_path`, `owning_crate`
 - [[Error Module]] — uses `Result`
 - [[Gitintel Module]] — uses `dependents_by_file`
 - [[Rustscan Module]] — uses `is_test_path`
+- [[CrateInfo]] — uses `CrateInfo`
 - [[Scanned]] — uses `new`
 
 ## Used by

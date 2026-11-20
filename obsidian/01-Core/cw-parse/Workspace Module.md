@@ -14,23 +14,24 @@ tags: [core, cw-parse, module]
 
 Main items:
 
-- `CrateInfo` — one Cargo package found in the repository.
+- [[CrateInfo]] — one Cargo package found in the repository.
 - `owning_crate` — the crate that owns `file`: the one with the longest matching directory.
 - `module_path` — qualified module path defined by a Rust source file.
 - `parse_manifest` — parse a `Cargo.toml`.
 - `segments_of` — function
+- `dependency_names` — the dependency names in one table, as used in paths.
+- `DEPENDENCY_TABLES` — the tables of a manifest, or of one of its `[target.*]` tables, that name dependencies.
 
 ## Depends on
 
 - [[Error Module]] — uses `Result`
 - [[Error]] — uses `external`
+- [[CrateInfo]] — uses `CrateInfo`
 
 ## Used by
 
-- [[Scan Module]] — from `RepoFacts`, `scan_repo`
-- [[Query Module]] — from `Overview`
+- [[Scan Module]] — from `scan_repo`
 - [[Testmap Module]] — from `command`
-- [[Index]] — from `crates`
 
 ## See also
 

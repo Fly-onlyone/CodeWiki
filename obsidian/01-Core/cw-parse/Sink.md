@@ -25,12 +25,11 @@ Public API:
 
 ## Depends on
 
-- [[Rust Module]] — uses `CallSite`, `ImplFact`, `TypeRef`, `ValueRef`
+- [[Rust Module]] — uses `CallSite`, `ImplFact`, `TypeRef`, `UseImport`
 - [[Lang Module]] — uses `is_generic_param`, `split_qualified`
 - [[Symbol]] — uses `Symbol`
 - [[SymbolKind]] — uses `SymbolKind`
 - [[ParsedFile]] — uses `ParsedFile`
-- [[UseImport]] — uses `UseImport`
 
 ## Used by
 

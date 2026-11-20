@@ -29,10 +29,9 @@ Public API:
 - [[Model Module (codewiki)]] — from `entry`, `install`, `list`, `recommend`
 - [[Models Module]] — from `describe`, `entry`, `run`, `switch`
 - [[Catalog Module]] — from `CATALOG`, `all`, `find`, `of_tier`
-- [[codewiki-app]] — from `details`, `theme_menu_item`, `title_bar`
-- [[Illustration Module]] — from `bar_chart`, `steps`
 - [[BuiltinEmbedder]] — from `BuiltinEmbedder`, `name`
-- [[Backdrop Module]] — from `shapes`
+- [[Recommend Module]] — from `recommend`
+- [[Engine]] — from `load`
 
 ## See also
 

@@ -24,7 +24,6 @@ Main items:
 ## Depends on
 
 - [[Release Module]] — uses `agent`, `user_agent`
-- [[Logs Module]] — uses `flush`
 - [[Release]] — uses `Release`
 
 ## Used by

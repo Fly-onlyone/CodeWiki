@@ -33,6 +33,8 @@ pub enum Action {
     AutoUpdate(bool),
     /// Start the app when the user signs in to Windows, or stop doing so.
     Autostart(bool),
+    /// Start the app on the wiki map of the repository it opens, or on Home.
+    OpenLast(bool),
     /// Open the registered repository with this id.
     OpenRepo(String),
     /// Take the repository with this id off the list. Its folder and the

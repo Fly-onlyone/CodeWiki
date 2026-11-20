@@ -798,6 +798,7 @@ impl AppView {
                     update: &self.update,
                     auto_update: update::auto_check(),
                     autostart: crate::autostart::enabled(),
+                    open_last: crate::startup::open_last(),
                     log_level: level,
                     log_level_locked: cw_core::logs::level_in_env().is_some(),
                     logs_dir: &logs_dir,

@@ -131,7 +131,7 @@ enum Landing {
     /// Stay on the current page.
     Stay,
     /// The app has just started: the view the second argument names, or
-    /// Home.
+    /// Home; the wiki map when "Open the last repository" is on.
     Startup,
     /// The user picked the repository: its wiki map.
     WikiMap,
@@ -1311,9 +1311,16 @@ impl AppView {
 
     /// Show the view the launch named (its second argument, or that of the
     /// last launch that handed over), so that other tools can open the app
-    /// on a note or a view; Home when there is none.
+    /// on a note or a view; Home when there is none, or the wiki map when
+    /// "Open the last repository" is on. `home:` is always Home.
     fn open_startup_view(&mut self, cx: &mut Context<Self>) {
         let first = self.requested_view.clone().unwrap_or_default();
+        if first.is_empty() && startup::open_last() {
+            // Back leads to Home, as after a pick there.
+            self.history.push(Page::Home);
+            self.open_note(WIKI_MAP.into(), false, cx);
+            return;
+        }
         if first.is_empty() || first == "home:" {
             self.set_page(Page::Home, false);
             return;
@@ -2227,6 +2234,14 @@ impl AppView {
                 }
                 // The page reads the setting back from where Windows keeps
                 // it, each time it is drawn.
+                cx.notify();
+            }
+            Action::OpenLast(on) => {
+                startup::set_open_last(*on);
+                log::info!(
+                    "open the last repository at start: {}",
+                    if *on { "on" } else { "off" }
+                );
                 cx.notify();
             }
             Action::OpenRepo(id) => self.open_repo(id, cx),

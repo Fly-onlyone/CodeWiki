@@ -70,6 +70,8 @@ pub struct Model<'a> {
     /// Whether Windows starts the app at sign-in; `None` for a copy that is
     /// not installed, which cannot be started that way.
     pub autostart: Option<bool>,
+    /// Whether the app starts on the wiki map of the repository it opens.
+    pub open_last: bool,
     /// The level of the app's log, by its name, and whether `CODEWIKI_LOG`
     /// fixes it.
     pub log_level: &'a str,
@@ -167,13 +169,20 @@ fn appearance(model: &Model) -> Vec<Block> {
     ]
 }
 
-/// Whether Windows starts the app at sign-in, and what closing the window
-/// does: the two belong together, since an app started that way is seen only
-/// as its tray icon.
+/// Where the app starts, whether Windows starts it at sign-in, and what
+/// closing the window does: the last two belong together, since an app
+/// started that way is seen only as its tray icon.
 fn startup(model: &Model) -> Block {
     card(
         "Startup",
         vec![
+            Block::Switch {
+                label: "Open the last repository".into(),
+                help: Some("At start, on its wiki map instead of Home".into()),
+                on: model.open_last,
+                action: Action::OpenLast(!model.open_last),
+                locked: None,
+            },
             Block::Switch {
                 label: "Start with Windows".into(),
                 help: Some("In the tray, with no window".into()),
@@ -744,6 +753,7 @@ mod tests {
         update: update::State,
         auto_update: bool,
         autostart: Option<bool>,
+        open_last: bool,
         log_level_locked: bool,
     }
 
@@ -766,6 +776,7 @@ mod tests {
                 update: update::State::UpToDate,
                 auto_update: true,
                 autostart: Some(false),
+                open_last: false,
                 log_level_locked: false,
             }
         }
@@ -793,6 +804,7 @@ mod tests {
                     update: &self.update,
                     auto_update: self.auto_update,
                     autostart: self.autostart,
+                    open_last: self.open_last,
                     log_level: "info",
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
@@ -853,6 +865,29 @@ mod tests {
                     .contains("Closing the window keeps CodeWiki running in the tray")
             );
         }
+    }
+
+    #[test]
+    fn the_last_repository_can_be_opened_at_start() {
+        let mut fixture = Fixture::new();
+        let off = fixture.page(Category::Appearance);
+        assert!(
+            off.words().contains("Open the last repository: off"),
+            "{}",
+            off.words()
+        );
+        assert!(
+            off.words()
+                .contains("At start, on its wiki map instead of Home")
+        );
+        assert!(off.actions().contains(&Action::OpenLast(true)));
+
+        // An app built from the sources can do it too.
+        fixture.open_last = true;
+        fixture.autostart = None;
+        let on = fixture.page(Category::Appearance);
+        assert!(on.words().contains("Open the last repository: on"));
+        assert!(on.actions().contains(&Action::OpenLast(false)));
     }
 
     #[test]

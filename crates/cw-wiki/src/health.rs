@@ -214,7 +214,7 @@ fn looks_like_path(span: &str) -> bool {
         && !span.contains("::")
         && !span.starts_with("http")
         && !span.starts_with('/')
-        && !span.contains(['(', '<', '{', '*', '$', '=', '|'])
+        && !span.contains(['(', '<', '{', '[', '*', '$', '=', '|', '"'])
 }
 
 /// Where the documentation no longer matches the code.
@@ -666,6 +666,8 @@ mod tests {
             "a / b",
             "Vec<a/b>",
             "x=a/b",
+            "Agent[/ws/agent]",
+            "\"a/b\"",
         ] {
             assert!(!looks_like_path(no), "{no}");
         }

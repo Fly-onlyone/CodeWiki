@@ -1681,6 +1681,18 @@ pub fn clean_inline(text: &str) -> String {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
+        // A code span stays as written: `Agent[/ws/agent]` and `#[derive]`
+        // are code, and Obsidian reads no link or tag inside one.
+        if chars[i] == '`'
+            && let Some(close) = chars[i + 1..]
+                .iter()
+                .position(|c| *c == '`')
+                .map(|p| p + i + 1)
+        {
+            out.extend(&chars[i..=close]);
+            i = close + 1;
+            continue;
+        }
         if chars[i] == '[' {
             if let Some(close) = chars[i + 1..]
                 .iter()
@@ -1806,6 +1818,11 @@ mod tests {
         assert_eq!(
             clean_inline("Issue #12 and #[derive]"),
             "Issue #12 and derive"
+        );
+        // Code spans keep their brackets and `#`.
+        assert_eq!(
+            clean_inline("A label that is a path, `Agent[/ws/agent]`, or `#[derive]`."),
+            "A label that is a path, `Agent[/ws/agent]`, or `#[derive]`."
         );
     }
 

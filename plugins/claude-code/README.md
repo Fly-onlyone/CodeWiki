@@ -47,7 +47,7 @@ claude plugin marketplace remove codewiki
 | `get_answer` | Best-matching note summaries for a question. |
 | `get_dependency_path` | Shortest dependency chain between two symbols. |
 | `get_architecture` | Architecture flow notes in full. |
-| `read_note` | One note in full. |
+| `read_note` | One note: what the thing is for, its items, its gotchas and what it depends on. `full: true` adds the walk-through of calls under `How it works`. |
 | `get_why` | Why a file or symbol is the way it is: decision records that cite it, rationale recorded in notes, and the latest commits that touched it. |
 | `list_decisions` | Decision records with their status, and which are stale because the code they cite changed. |
 | `get_risk` | Risk of changing one file, 0 to 100, with the reasons. |

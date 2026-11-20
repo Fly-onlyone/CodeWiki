@@ -21,7 +21,7 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 
 Symbols are extracted for Rust, Python, TypeScript, JavaScript and Java. Other files are indexed by path.
 
-No LLM is required. Without one, notes are built from the code's structure. With one, the prose, the answers and the illustrations are written by the model and checked against the house style before they are saved.
+No LLM is required. Without one, CodeWiki writes each note from the comments in your code and from which function calls which. With one, a model improves the text, writes the answers and draws the illustrations of packages and flows; what it returns is checked against the house style before it is saved. [How a note is written](#how-a-note-is-written) says who writes what.
 
 ## Parts
 
@@ -77,9 +77,44 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), the AI model, semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. A note opens with its illustration under the summary: a few figures and the steps of the note in short. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), the AI model, semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
 
 Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. For more in `app.log`, choose a level in Settings → Diagnostics; `CODEWIKI_LOG=debug` does the same for any of the programs and wins over that choice. Set `CODEWIKI_LOG_DIR` to write the logs elsewhere.
+
+### How a note is written
+
+Two writers can write a note.
+
+- **CodeWiki's own rules** always run. They read your code and never guess. They cost nothing and give the same note on every run. They copy what your comments say, and they list which function calls which.
+- **An AI model** runs only when you set one up (see [With an LLM](#with-an-llm)). It gets the note the rules wrote, with the source, and adds what rules cannot see: the condition a call stands under, a loop, what happens on an error, the reason for a design. It makes one call for each note.
+
+So a wiki made with no AI model is complete, and it is as good as the comments in your code. To get better notes, write comments. A `//!` comment at the top of a Rust module (a docstring in Python, a `/** */` comment in TypeScript or Java) says what the module is for. A `///` comment above a function says what it does. The wiki copies both whole.
+
+A note about a module, a package of your own or a type has these sections:
+
+| Section | What it holds | Where the text comes from |
+|---|---|---|
+| Summary, the line under the title | What the thing is for, in one sentence | The first sentence of its comment |
+| What it does | The purpose, and what a user of the program sees of it | The rest of the comment |
+| Source | The file | The index |
+| How it works | Numbered steps: who calls in, and what that call does next | Which function calls which |
+| Items | Each function, type and constant, with its signature | The item's comment. For an item with no comment: what the code says of it, such as "private function, returns `String`; called by `enabled`" |
+| Depends on, Used by | The notes on either side | The index |
+| Gotchas | What a maintainer could get wrong | An AI model, or you |
+
+Three things to know when you read one:
+
+- **"Calls are listed in the order of the source."** The steps under How it works name calls in the order they stand in the file. The rules do not see an `if` or a loop, so "`set` calls `write`, then `remove`" can mean "one or the other". An AI model says which; so does the code.
+- **Not every call is found.** A call through a value whose type the index cannot tell, such as a trait object or a callback, is left out and never guessed.
+- **A long list stops at 20 items** and says how many it leaves out. A private item with no comment that plays no part in the steps is left out first.
+
+A note about a package from outside the repository (an integration) says what the package is, which names each module takes from it, and which version and features each build file asks for. What the package is stands in no file of your repository. CodeWiki reads it from files a build left on the machine (cargo's download cache, `node_modules`), never from the network, and keeps it in `obsidian/.codewiki/packages.json`, so that the note reads the same on a machine that has not built the code. For a Python or Java package it knows the version only.
+
+**The illustration.** In the app, a note opens with a picture under its summary: a few figures, such as how many public items it has and how many notes use it, and the steps in short. For a module, a type or an outside package the picture is made from the same facts as the text, and no AI model draws it. A model may redraw the picture of a package of your own or of a flow.
+
+**What a coding agent gets.** The MCP tool `read_note` gives an agent the same note without How it works: the agent reads the calls in the code it is about to edit. The note keeps what the code does not say: the purpose, what each item does, the gotchas, who depends on what. `read_note` with `full: true` gives the whole note.
+
+**Your edits.** A note you change by hand is yours from then on. CodeWiki never writes over it; when its code changes, the new text waits as a proposal that you approve or reject. After a CodeWiki update that changes how notes are written, every note you did not edit is written again. With an AI model set, that is one call for each note.
 
 ### With an LLM
 
@@ -92,7 +127,7 @@ Closing the app also stops the local backend it used; one named by `CODEWIKI_URL
 | `CODEWIKI_CLIPROXY_URL` | Address of CLIProxyAPI; `http://127.0.0.1:8317` when not set |
 | `CODEWIKI_CLIPROXY_KEY` | A client key from its `access.api-keys` |
 
-A note whose LLM call fails keeps its structural draft, and the next update asks again. A reply that comes back unusable (it breaks the house style) is not asked for again until the note's code changes.
+A note whose LLM call fails keeps the text CodeWiki's own rules wrote, and the next update asks again. A reply that comes back unusable (it breaks the house style) is not asked for again until the note's code changes.
 
 ### CLIProxyAPI
 

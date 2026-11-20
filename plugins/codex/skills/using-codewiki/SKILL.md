@@ -14,7 +14,7 @@ Every tool except `list_repos` and `get_workspace` takes an optional `repo` path
 | Moment | Call |
 |---|---|
 | Start of work in a repository you do not know | `get_overview`: the home note, the architecture map and whether the index is current. `get_architecture` gives the flow notes in full. |
-| Looking for something | `search_codebase` for notes, symbols and files; `get_answer` for the notes that best answer a question; `read_note` for one note in full. |
+| Looking for something | `search_codebase` for notes, symbols and files; `get_answer` for the notes that best answer a question; `read_note` for one note. It leaves out `How it works`, the walk-through of calls, which you read in the code; pass `full: true` when you want it too. |
 | Before you edit a file or symbol | `get_context` on it. For a symbol, `get_symbol` gives its definition, members, dependencies and users. |
 | The code looks deliberate and you want to change it | `get_why`: decision records that cite it, recorded rationale and recent commits. `list_decisions` lists the records. |
 | Before you change a file others depend on | `get_risk` for one file, `get_blast_radius` for what a change in behaviour reaches, `get_dependency_path` for how two symbols connect. |

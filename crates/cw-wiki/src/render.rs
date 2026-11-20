@@ -439,9 +439,11 @@ impl<'a> RenderCtx<'a> {
                     .collect();
                 bars.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
                 bars.truncate(MAX_LISTED);
+                // The card stands under the note's title and summary, so
+                // it repeats neither.
                 Some(cw_illustrate::overview(
-                    &note.title,
-                    &self.summaries[&note.id],
+                    "",
+                    "",
                     &[
                         figure("Modules", modules),
                         figure("Public types", types),
@@ -469,11 +471,83 @@ impl<'a> RenderCtx<'a> {
                         )
                     })
                     .collect();
-                Some(cw_illustrate::steps(
-                    &note.title,
-                    &self.summaries[&note.id],
-                    &items,
-                ))
+                Some(cw_illustrate::steps("", "", &items))
+            }
+            Subject::Module(q) | Subject::Type(q) => {
+                let symbol = repo.symbols[q.as_str()];
+                let figure = |label: &str, value: usize| cw_illustrate::Figure {
+                    label: label.to_string(),
+                    value: value.to_string(),
+                    hint: None,
+                };
+                let public = repo
+                    .children_of(q)
+                    .iter()
+                    .filter(|s| s.kind != SymbolKind::Module && !repo.is_test(s))
+                    .filter(|s| s.visibility != Visibility::Private)
+                    .count();
+                let notes = |map: &NoteDeps| map.get(&note.id).map_or(0, BTreeMap::len);
+                let mut figures = vec![
+                    figure("Public items", public),
+                    figure("Used by notes", notes(&self.used_by)),
+                    figure("Depends on notes", notes(&self.depends_on)),
+                ];
+                if let Some(implementors) = repo.implementors.get(q.as_str()) {
+                    let label = if symbol.kind == SymbolKind::Class {
+                        "Extended by"
+                    } else {
+                        "Implemented by"
+                    };
+                    figures.push(figure(label, implementors.len()));
+                }
+                // A note with nothing to count and nothing to walk has no
+                // picture worth a look.
+                let walk = explain::walk(self, &note.id);
+                let steps = walk.outline(q);
+                if steps.is_empty() && figures.iter().all(|f| f.value == "0") {
+                    return None;
+                }
+                cw_illustrate::brief(&figures, &steps)
+            }
+            Subject::Integration(krate) => {
+                let uses: Vec<&cw_parse::ExternalUse> = repo
+                    .facts
+                    .external_uses
+                    .iter()
+                    .filter(|u| &u.krate == krate)
+                    .collect();
+                let names: BTreeSet<&str> = uses
+                    .iter()
+                    .flat_map(|u| u.names.iter().map(String::as_str))
+                    .collect();
+                let declared = manifests::declared(repo, krate);
+                let features: BTreeSet<&str> = declared
+                    .iter()
+                    .flat_map(|d| d.features.iter().map(String::as_str))
+                    .collect();
+                let figure = |label: &str, value: String| cw_illustrate::Figure {
+                    label: label.to_string(),
+                    value,
+                    hint: None,
+                };
+                let mut figures = Vec::new();
+                // The exact version when the lock file gives one.
+                let version = declared
+                    .iter()
+                    .map(|d| d.locked.as_str())
+                    .chain(declared.iter().map(|d| d.requirement.as_str()))
+                    .find(|v| !v.is_empty());
+                if let Some(version) = version {
+                    figures.push(figure("Version", version.to_string()));
+                }
+                figures.push(figure("Imported by files", uses.len().to_string()));
+                if !names.is_empty() {
+                    figures.push(figure("Names imported", names.len().to_string()));
+                }
+                if !features.is_empty() {
+                    figures.push(figure("Features", features.len().to_string()));
+                }
+                cw_illustrate::brief(&figures, &[])
             }
             _ => None,
         }

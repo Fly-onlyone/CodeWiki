@@ -109,8 +109,10 @@ fn crate_and_flow_notes_get_valid_illustrations() {
         report.illustrated
     );
     let source = read(&vault, "01-Core/engine/engine.openui");
+    // The card stands under the note's title and summary and repeats
+    // neither.
     assert!(
-        source.starts_with("root = Card([summary, figures, chart], \"engine\")\n"),
+        source.starts_with("root = Card([figures, chart])\n"),
         "{source}"
     );
     assert!(source.contains("Stat(\"Modules\", \"2\")"), "{source}");
@@ -1088,4 +1090,153 @@ fn an_integration_note_says_what_is_taken_and_at_which_version() {
     let report = generate(root, &facts, &metrics, commit, None).unwrap();
     assert!(report.written.is_empty(), "{report:?}");
     assert_eq!(read(&vault, path), described);
+}
+
+#[test]
+fn module_type_and_integration_notes_get_a_picture_of_facts() {
+    let dir = explained();
+    let report = run(dir.path());
+    let vault = dir.path().join("obsidian");
+
+    // A module: what there is to count, then its walk-through in short.
+    // The picture stands under the note's title, so it has none.
+    let module = read(&vault, "01-Core/store/Settings Module.openui");
+    assert!(
+        module.starts_with("root = Card([figures, flow])\n"),
+        "{module}"
+    );
+    for part in [
+        "Stat(\"Public items\", \"2\")",
+        "Stat(\"Used by notes\", \"1\")",
+        "s0 = Step(\"enabled\", \"Called by main. Calls parse, then read.\")",
+        "s1 = Step(\"set\", \"Called by main. Calls write, then remove.\")",
+    ] {
+        assert!(module.contains(part), "no {part} in\n{module}");
+    }
+    assert!(cw_illustrate::check(&module).errors.is_empty());
+
+    // An integration: the version asked for and what is taken.
+    let package = read(&vault, "03-Integrations/serde.openui");
+    assert!(package.starts_with("root = Card([figures])\n"), "{package}");
+    for part in [
+        "Stat(\"Version\", \"1\")",
+        "Stat(\"Imported by files\", \"2\")",
+        "Stat(\"Names imported\", \"2\")",
+        "Stat(\"Features\", \"1\")",
+    ] {
+        assert!(package.contains(part), "no {part} in\n{package}");
+    }
+    assert!(cw_illustrate::check(&package).errors.is_empty());
+
+    for path in [
+        "01-Core/store/Settings Module.openui",
+        "03-Integrations/serde.openui",
+    ] {
+        assert!(
+            report.illustrated.contains(&path.to_string()),
+            "{:?}",
+            report.illustrated
+        );
+    }
+    let meta = VaultMeta::load(&vault).unwrap();
+    assert_eq!(
+        meta.by_path("01-Core/store/Settings Module.md")
+            .unwrap()
+            .illustration
+            .as_deref(),
+        Some("01-Core/store/Settings Module.openui")
+    );
+    assert!(run(dir.path()).illustrated.is_empty());
+
+    // A type: its methods that other notes call.
+    let types = fixture();
+    run(types.path());
+    let book = read(
+        &types.path().join("obsidian"),
+        "01-Core/engine/OrderBook.openui",
+    );
+    assert!(book.contains("Stat(\"Public items\", \"3\")"), "{book}");
+    assert!(book.contains("= Step(\"new\", \"Called by main."), "{book}");
+    assert!(cw_illustrate::check(&book).errors.is_empty());
+}
+
+/// Writes each note as drafted and records which notes it is asked to draw.
+struct Draws {
+    asked: std::cell::RefCell<Vec<String>>,
+}
+
+impl ProseWriter for Draws {
+    fn name(&self) -> String {
+        "draws".into()
+    }
+
+    fn rewrite(&self, _note: &Planned, draft: &str, _context: &WriterContext) -> Rewrite {
+        Rewrite::Text(draft.to_string())
+    }
+
+    fn illustrate(
+        &self,
+        note: &Planned,
+        _text: &str,
+        _structural: Option<&str>,
+        _context: &WriterContext,
+    ) -> Option<String> {
+        self.asked.borrow_mut().push(note.id.clone());
+        None
+    }
+}
+
+#[test]
+fn a_writer_draws_overviews_and_flows_only() {
+    let dir = explained();
+    let root = dir.path();
+    let facts = scan_repo(root).unwrap();
+    let metrics = analyze(&facts);
+    let writer = Draws {
+        asked: std::cell::RefCell::new(Vec::new()),
+    };
+    generate(root, &facts, &metrics, None, Some(&writer)).unwrap();
+    let asked = writer.asked.borrow();
+    assert!(asked.contains(&"crate:store".to_string()), "{asked:?}");
+    assert!(asked.contains(&"flow:crates".to_string()), "{asked:?}");
+    // A module's picture is its walk-through and its counts. Those are
+    // facts; a call for each module would buy nothing.
+    assert!(
+        asked
+            .iter()
+            .all(|id| id.starts_with("crate:") || id.starts_with("flow:")),
+        "{asked:?}"
+    );
+    // The module still has its picture, drawn from the facts.
+    let vault = root.join("obsidian");
+    assert!(read(&vault, "01-Core/store/Settings Module.openui").contains("Step(\"enabled\""));
+}
+
+#[test]
+fn a_picture_goes_when_its_note_has_nothing_left_to_show() {
+    let dir = explained();
+    run(dir.path());
+    let vault = dir.path().join("obsidian");
+    let picture = vault.join("01-Core/store/Many Module.openui");
+    assert!(picture.exists());
+
+    // Nothing public, nothing used, nothing to walk.
+    write(
+        dir.path(),
+        "crates/store/src/many.rs",
+        "//! Many steps.\nconst A: u8 = 1;\nconst B: u8 = 2;\nconst C: u8 = 3;\n",
+    );
+    run(dir.path());
+    assert!(vault.join("01-Core/store/Many Module.md").exists());
+    assert!(
+        !picture.exists(),
+        "the app would still show the old picture"
+    );
+    let meta = VaultMeta::load(&vault).unwrap();
+    assert_eq!(
+        meta.by_path("01-Core/store/Many Module.md")
+            .unwrap()
+            .illustration,
+        None
+    );
 }

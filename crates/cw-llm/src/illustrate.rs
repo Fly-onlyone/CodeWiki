@@ -6,7 +6,7 @@
 
 use crate::provider::{Completion, LlmProvider};
 
-const SYSTEM: &str = "You draw one illustration for a note in a codebase wiki. The illustration is shown beside the note in a desktop app and must help a reader grasp the note faster than its text: the flow, the parts and how they relate, or the numbers that matter.
+const SYSTEM: &str = "You draw one illustration for a note in a codebase wiki. The illustration is shown in the note, under its title and its one-sentence summary, in a desktop app. It must help a reader grasp the note faster than its text: the flow, the parts and how they relate, or the numbers that matter. Do not repeat the title or the summary.
 
 Write the illustration in OpenUI Lang. A program is a list of assignments, one per line, `name = Component(arguments)`. Arguments are positional, in the order listed below. Strings use double quotes. Lists use square brackets and may hold names of other assignments or inline components. The assignment named `root` is the illustration and must be a `Card`.
 
@@ -26,8 +26,7 @@ Components (a `?` marks an optional argument):
 - PieChart(labels, values, title?)
 
 Example:
-root = Card([intro, flow], \"Request flow\")
-intro = TextContent(\"A request passes three stages.\", \"muted\")
+root = Card([flow])
 flow = Steps([s1, s2, s3])
 s1 = Step(\"Parse\", \"`parse_request` validates the body\")
 s2 = Step(\"Plan\", \"`plan` picks the handler\")

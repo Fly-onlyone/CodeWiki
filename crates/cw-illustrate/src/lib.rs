@@ -124,70 +124,44 @@ pub struct Figure {
     pub hint: Option<String>,
 }
 
-/// An overview card: a title, a one-line summary, headline figures and an
-/// optional bar chart. Built from structural facts only, so it needs no LLM.
-pub fn overview(
-    title: &str,
-    summary: &str,
-    figures: &[Figure],
-    bars: &[(String, f64)],
-    bars_title: &str,
-) -> String {
-    let mut body = vec!["summary".to_string()];
-    let mut out = String::new();
-    out.push_str(&format!(
-        "summary = TextContent({}, \"muted\")\n",
-        quote(summary)
-    ));
-    if !figures.is_empty() {
-        let names: Vec<String> = (0..figures.len()).map(|i| format!("f{i}")).collect();
-        out.push_str(&format!(
-            "figures = Grid([{}], {})\n",
-            names.join(", "),
-            figures.len().min(4)
-        ));
-        for (name, figure) in names.iter().zip(figures) {
-            let hint = figure
-                .hint
-                .as_deref()
-                .map(|h| format!(", {}", quote(h)))
-                .unwrap_or_default();
-            out.push_str(&format!(
-                "{name} = Stat({}, {}{hint})\n",
-                quote(&figure.label),
-                quote(&figure.value)
-            ));
-        }
-        body.push("figures".to_string());
+/// The frame of an illustration: a card around the parts named in `body`.
+/// An empty `title` gives a card without one, for an illustration that
+/// stands under its note's own title.
+fn card(body: &[&str], title: &str) -> String {
+    if title.is_empty() {
+        format!("root = Card([{}])\n", body.join(", "))
+    } else {
+        format!("root = Card([{}], {})\n", body.join(", "), quote(title))
     }
-    if bars.len() >= 2 {
-        let labels: Vec<String> = bars.iter().map(|(label, _)| quote(label)).collect();
-        let values: Vec<String> = bars.iter().map(|(_, value)| number(*value)).collect();
-        out.push_str(&format!(
-            "chart = BarChart([{}], [Series({}, [{}])], {})\n",
-            labels.join(", "),
-            quote(bars_title),
-            values.join(", "),
-            quote(bars_title)
-        ));
-        body.push("chart".to_string());
-    }
-    format!(
-        "root = Card([{}], {})\n{out}",
-        body.join(", "),
-        quote(title)
-    )
 }
 
-/// A numbered sequence of steps, for flows.
-pub fn steps(title: &str, summary: &str, items: &[(String, String)]) -> String {
-    let names: Vec<String> = (0..items.len()).map(|i| format!("s{i}")).collect();
+/// The assignments of a row of headline figures, named `figures`.
+fn figure_row(figures: &[Figure]) -> String {
+    let names: Vec<String> = (0..figures.len()).map(|i| format!("f{i}")).collect();
     let mut out = format!(
-        "root = Card([summary, flow], {})\nsummary = TextContent({}, \"muted\")\nflow = Steps([{}])\n",
-        quote(title),
-        quote(summary),
-        names.join(", ")
+        "figures = Grid([{}], {})\n",
+        names.join(", "),
+        figures.len().min(4)
     );
+    for (name, figure) in names.iter().zip(figures) {
+        let hint = figure
+            .hint
+            .as_deref()
+            .map(|h| format!(", {}", quote(h)))
+            .unwrap_or_default();
+        out.push_str(&format!(
+            "{name} = Stat({}, {}{hint})\n",
+            quote(&figure.label),
+            quote(&figure.value)
+        ));
+    }
+    out
+}
+
+/// The assignments of a numbered sequence, named `flow`.
+fn step_list(items: &[(String, String)]) -> String {
+    let names: Vec<String> = (0..items.len()).map(|i| format!("s{i}")).collect();
+    let mut out = format!("flow = Steps([{}])\n", names.join(", "));
     for (name, (step, detail)) in names.iter().zip(items) {
         if detail.is_empty() {
             out.push_str(&format!("{name} = Step({})\n", quote(step)));
@@ -200,6 +174,79 @@ pub fn steps(title: &str, summary: &str, items: &[(String, String)]) -> String {
         }
     }
     out
+}
+
+/// An overview card: headline figures and an optional bar chart, under an
+/// optional title and one-line summary. Built from structural facts only,
+/// so it needs no LLM. Leave `title` and `summary` empty for an illustration
+/// shown under its note's own.
+pub fn overview(
+    title: &str,
+    summary: &str,
+    figures: &[Figure],
+    bars: &[(String, f64)],
+    bars_title: &str,
+) -> String {
+    let mut body = Vec::new();
+    let mut out = String::new();
+    if !summary.is_empty() {
+        out.push_str(&format!(
+            "summary = TextContent({}, \"muted\")\n",
+            quote(summary)
+        ));
+        body.push("summary");
+    }
+    if !figures.is_empty() {
+        out.push_str(&figure_row(figures));
+        body.push("figures");
+    }
+    if bars.len() >= 2 {
+        let labels: Vec<String> = bars.iter().map(|(label, _)| quote(label)).collect();
+        let values: Vec<String> = bars.iter().map(|(_, value)| number(*value)).collect();
+        out.push_str(&format!(
+            "chart = BarChart([{}], [Series({}, [{}])], {})\n",
+            labels.join(", "),
+            quote(bars_title),
+            values.join(", "),
+            quote(bars_title)
+        ));
+        body.push("chart");
+    }
+    format!("{}{out}", card(&body, title))
+}
+
+/// A numbered sequence of steps, for flows, under an optional title and
+/// one-line summary.
+pub fn steps(title: &str, summary: &str, items: &[(String, String)]) -> String {
+    let mut body = Vec::new();
+    let mut out = String::new();
+    if !summary.is_empty() {
+        out.push_str(&format!(
+            "summary = TextContent({}, \"muted\")\n",
+            quote(summary)
+        ));
+        body.push("summary");
+    }
+    out.push_str(&step_list(items));
+    body.push("flow");
+    format!("{}{out}", card(&body, title))
+}
+
+/// What a note is about at a glance: headline figures, then the steps of
+/// its walk-through. It has no title and no summary, since it stands under
+/// the note's own. `None` when there is neither a figure nor a step.
+pub fn brief(figures: &[Figure], steps: &[(String, String)]) -> Option<String> {
+    let mut body = Vec::new();
+    let mut out = String::new();
+    if !figures.is_empty() {
+        out.push_str(&figure_row(figures));
+        body.push("figures");
+    }
+    if !steps.is_empty() {
+        out.push_str(&step_list(steps));
+        body.push("flow");
+    }
+    (!body.is_empty()).then(|| format!("{}{out}", card(&body, "")))
 }
 
 #[cfg(test)]
@@ -295,6 +342,48 @@ mod tests {
             Some("parses arguments")
         );
         assert!(!props(&flow[1]).contains_key("detail"));
+    }
+
+    #[test]
+    fn brief_stands_under_a_notes_own_title() {
+        let figure = |label: &str, value: &str| Figure {
+            label: label.into(),
+            value: value.into(),
+            hint: None,
+        };
+        let source = brief(
+            &[figure("Public items", "4"), figure("Used by notes", "1")],
+            &[
+                ("enabled".into(), "Calls installed_dir, then read".into()),
+                ("set".into(), String::new()),
+            ],
+        )
+        .unwrap();
+        assert!(
+            source.starts_with("root = Card([figures, flow])\n"),
+            "{source}"
+        );
+        let doc = check(&source);
+        assert!(doc.is_valid() && doc.errors.is_empty(), "{:?}", doc.errors);
+        let card = props(doc.root.as_ref().unwrap());
+        assert!(!card.contains_key("title"));
+        assert_eq!(card["children"].as_list().len(), 2);
+        // Either part alone, and nothing at all.
+        let only_steps = brief(&[], &[("run".into(), String::new())]).unwrap();
+        assert!(only_steps.starts_with("root = Card([flow])\n"));
+        assert!(check(&only_steps).is_valid());
+        assert!(check(&brief(&[figure("Version", "1")], &[]).unwrap()).is_valid());
+        assert_eq!(brief(&[], &[]), None);
+    }
+
+    #[test]
+    fn a_card_under_a_title_repeats_neither_title_nor_summary() {
+        let source = overview("", "", &[], &[("a".into(), 1.0), ("b".into(), 2.0)], "n");
+        assert!(source.starts_with("root = Card([chart])\n"), "{source}");
+        assert!(check(&source).is_valid());
+        let source = steps("", "", &[("main".into(), String::new())]);
+        assert!(source.starts_with("root = Card([flow])\n"), "{source}");
+        assert!(check(&source).is_valid());
     }
 
     #[test]

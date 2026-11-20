@@ -642,9 +642,6 @@ pub fn generate_with(
             .illustration(note)
             .filter(|source| cw_illustrate::check(source).is_valid());
         let drawable = structural.is_some() || note.kind == NoteKind::Flow;
-        if !drawable {
-            continue;
-        }
         let Some(entry) = meta.notes.get_mut(&note.id) else {
             continue;
         };
@@ -656,8 +653,27 @@ pub fn generate_with(
         };
         let relative = illustration_path(&entry.path);
         let full = vault.join(&relative);
+        if !drawable {
+            // The note may have had a picture once and has nothing to show
+            // now: a file left behind would still be served with the note.
+            // The manifest cannot say whether there is one, since a note
+            // written anew starts with a fresh entry.
+            entry.illustration = None;
+            match std::fs::remove_file(&full) {
+                Ok(()) => {}
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(Error::io(&full, e)),
+            }
+            continue;
+        }
         let existing = read_optional(&full)?;
-        let source = match writer {
+        // A writer draws a crate's overview and a flow, where the note's
+        // text says more than counts do. The picture of a module, a type or
+        // an integration is its walk-through and its counts, which are
+        // facts: asking for those would cost a call for each note and could
+        // only make them less exact.
+        let redrawn = matches!(note.subject, Subject::Crate(_)) || note.kind == NoteKind::Flow;
+        let source = match writer.filter(|_| redrawn) {
             // A writer draws only when the note changed in this run or has no
             // illustration yet; otherwise every sync would pay for a redraw.
             // After a stop it draws nothing more.

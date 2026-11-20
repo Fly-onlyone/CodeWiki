@@ -6,22 +6,36 @@ tags: [core, cw-core]
 
 > What `settings.json` holds.
 
+## What it does
+
+Parts it does not know are kept as they are, so an older program does not drop what a newer one wrote.
+
 ## Source
 
 - `crates/cw-core/src/settings.rs` — definition of `Settings`
 
 ## How it works
 
+What the functions of this type call:
+
+1. `value` calls `field`.
+2. `secret` calls `field`.
+3. `set` calls `clear`, then `protect`, then `hint` (both in [[Secret Module]]), then `put`.
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
 Declared as `pub struct Settings`.
 
-Parts it does not know are kept as they are, so an older program does not drop what a newer one wrote.
+Members:
 
-Public API:
-
+- `fn field(&self, key: Key) -> Option<&Value>` — private method, returns `Option<&Value>`; called by `Settings::secret`, `Settings::value`.
 - `pub fn value(&self, key: Key) -> Option<String>` — the saved value of a setting that is not a secret.
-- `pub fn clear(&mut self, key: Key)` — forget the saved value of a setting.
 - `pub fn secret(&self, key: Key) -> Option<SavedSecret>` — the saved form of a secret.
-- `pub fn set(&mut self, key: Key, value: &str) -> Result<()>` — save a value; a blank one clears the setting.
+- `fn put(&mut self, key: Key, value: Value)` — private method; called by `Settings::set`.
+- `pub fn set(&mut self, key: Key, value: &str) -> Result<()>` — save a value; a blank one clears the setting. A secret is encrypted first, which fails on a system that cannot protect one.
+- `pub fn clear(&mut self, key: Key)` — forget the saved value of a setting.
 
 ## Depends on
 

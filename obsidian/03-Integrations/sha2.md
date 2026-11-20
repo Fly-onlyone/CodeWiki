@@ -6,27 +6,22 @@ tags: [integration]
 
 > External crate `sha2`, imported by 4 source files.
 
+## What it does
+
+Pure Rust implementation of the SHA-2 hash function family including SHA-224, SHA-256, SHA-384, and SHA-512.
+
 ## Used for
 
 Imported by 4 source files. Main users:
 
-- [[Download Module]]
-- [[Hash Module]]
-- [[Store Module (cw-models)]]
-- [[Wire Tests Module]]
+- [[Download Module]] — imports `Digest`, `Sha256`
+- [[Hash Module]] — imports `Digest`, `Sha256`
+- [[Store Module (cw-models)]] — imports `Digest`, `Sha256`
+- [[Wire Tests Module]] — imports `Digest`, `Sha256`
 
 ## Configuration
 
-- `crates/cw-core/Cargo.toml` — declares the dependency
-- `crates/cw-models/Cargo.toml` — declares the dependency
-- `crates/cw-update/Cargo.toml` — declares the dependency
-
-## Wire-up
-
-- `crates/cw-core/src/hash.rs` — imports `sha2`
-- `crates/cw-models/src/store.rs` — imports `sha2`
-- `crates/cw-update/src/download.rs` — imports `sha2`
-- `crates/cw-update/src/wire_tests.rs` — imports `sha2`
+- `crates/cw-core/Cargo.toml`, `crates/cw-models/Cargo.toml`, `crates/cw-update/Cargo.toml` — declare the dependency: version `0.11.1`, locked `0.11.1`
 
 ## See also
 

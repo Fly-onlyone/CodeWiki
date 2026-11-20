@@ -12,14 +12,15 @@ tags: [core, cw-index, module]
 
 ## How it works
 
-Main items:
+1. `Index::documents` and `Index::replace_documents` in [[cw-index]], and 19 more, call `db`. `db` calls `Error::external` in [[Error]].
 
+## Items
+
+- `pub(crate) fn db(context: &'static str) -> impl Fn(rusqlite::Error) -> Error` — internal function, returns `impl Fn(rusqlite::Error) -> Error`; called by `Index::collect`, `Index::document_opening`, `Index::documents`, `Index::init` and 17 more.
+- `pub struct NodeMetrics` — public struct; used by `Index::metrics`, `Index::replace_metrics`, `Repo::at`, `Repo::build` and 5 more.
 - [[Index]] — struct
-- `NodeMetrics` — struct
-- `db` — function
-- `edge_from_row` — function
-- `SYMBOL_COLUMNS` — const
-- `symbol_from_row` — function
+
+And 3 more private items with no comment.
 
 ## Depends on
 
@@ -37,7 +38,7 @@ Main items:
 - [[Repo]] — from `at`, `build`, `new`
 - [[Vectors Module]] — from `delete`, `upsert`
 - [[Analyze Module]] — from `analyze`, `metrics_map`
-- [[Generate Module]] — from `generate`
+- [[Generate Module]] — from `generate`, `generate_with`
 
 ## See also
 

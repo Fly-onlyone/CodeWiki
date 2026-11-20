@@ -120,6 +120,21 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_llm::cliproxy::CliProxy",
+    "path": "01-Core/cw-llm/CliProxy.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_llm::cliproxy",
+    "path": "01-Core/cw-llm/Cliproxy Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::cliproxy",
+    "path": "01-Core/cw-server/Cliproxy Module (cw-server).md",
+    "kind": "concept"
+  },
+  {
     "id": "crate:codewiki",
     "path": "01-Core/codewiki/codewiki.md",
     "kind": "concept"
@@ -178,11 +193,6 @@
     "id": "flow:crates",
     "path": "00-Architecture/Crate Dependency Flow.md",
     "kind": "flow"
-  },
-  {
-    "id": "type:cw_parse::workspace::CrateInfo",
-    "path": "01-Core/cw-parse/CrateInfo.md",
-    "kind": "concept"
   },
   {
     "id": "mod:codewiki_app::mui::tokens::curve",
@@ -250,6 +260,11 @@
     "kind": "concept"
   },
   {
+    "id": "crate:cw_telemetry",
+    "path": "01-Core/cw-telemetry/cw-telemetry.md",
+    "kind": "concept"
+  },
+  {
     "id": "crate:cw_update",
     "path": "01-Core/cw-update/cw-update.md",
     "kind": "concept"
@@ -275,6 +290,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::diagram_view",
+    "path": "01-Core/codewiki-app/Diagram View Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::diagrams",
     "path": "01-Core/codewiki-app/Diagrams Module.md",
     "kind": "concept"
@@ -292,6 +312,11 @@
   {
     "id": "mod:codewiki_app::doc_view",
     "path": "01-Core/codewiki-app/Doc View Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::doctext",
+    "path": "01-Core/cw-wiki/Doctext Module.md",
     "kind": "concept"
   },
   {
@@ -352,6 +377,11 @@
   {
     "id": "mod:openui_lang::eval",
     "path": "01-Core/openui-lang/Eval Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::explain",
+    "path": "01-Core/cw-wiki/Explain Module.md",
     "kind": "concept"
   },
   {
@@ -475,6 +505,16 @@
     "kind": "pattern"
   },
   {
+    "id": "pattern:cw_wiki::manifests::PackageInfo",
+    "path": "04-Patterns/Implementing PackageInfo Pattern.md",
+    "kind": "pattern"
+  },
+  {
+    "id": "pattern:cw_wiki::generate::ProseWriter",
+    "path": "04-Patterns/Implementing ProseWriter Pattern.md",
+    "kind": "pattern"
+  },
+  {
     "id": "type:cw_index::store::Index",
     "path": "01-Core/cw-index/Index.md",
     "kind": "concept"
@@ -595,8 +635,18 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_wiki::manifests::Machine",
+    "path": "01-Core/cw-wiki/Machine.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_vault::manifest",
     "path": "01-Core/cw-vault/Manifest Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::manifests",
+    "path": "01-Core/cw-wiki/Manifests Module.md",
     "kind": "concept"
   },
   {
@@ -845,6 +895,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_telemetry::Reporting",
+    "path": "01-Core/cw-telemetry/Reporting.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_server::repos",
     "path": "01-Core/cw-server/Repos Module.md",
     "kind": "concept"
@@ -905,6 +960,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_telemetry::scrub",
+    "path": "01-Core/cw-telemetry/Scrub Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_index::search",
     "path": "01-Core/cw-index/Search Module.md",
     "kind": "concept"
@@ -932,6 +992,11 @@
   {
     "id": "integration:semver",
     "path": "03-Integrations/semver.md",
+    "kind": "integration"
+  },
+  {
+    "id": "integration:sentry",
+    "path": "03-Integrations/sentry.md",
     "kind": "integration"
   },
   {
@@ -1145,6 +1210,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_parse::rust::UseImport",
+    "path": "01-Core/cw-parse/UseImport.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_vault::manifest::VaultMeta",
     "path": "01-Core/cw-vault/VaultMeta.md",
     "kind": "concept"
@@ -1195,8 +1265,8 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_wiki::generate::WriterUsage",
-    "path": "01-Core/cw-wiki/WriterUsage.md",
+    "id": "mod:codewiki_app::zoom",
+    "path": "01-Core/codewiki-app/Zoom Module.md",
     "kind": "concept"
   },
   {
@@ -1307,6 +1377,11 @@
   {
     "id": "index:01-Core/cw-server",
     "path": "01-Core/cw-server/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-telemetry",
+    "path": "01-Core/cw-telemetry/_index.md",
     "kind": "index"
   },
   {

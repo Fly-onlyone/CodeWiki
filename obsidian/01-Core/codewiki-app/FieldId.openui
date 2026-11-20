@@ -1,0 +1,5 @@
+root = Card([figures])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "4")
+f1 = Stat("Used by notes", "7")
+f2 = Stat("Depends on notes", "0")

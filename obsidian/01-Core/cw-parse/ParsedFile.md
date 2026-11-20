@@ -10,7 +10,7 @@ tags: [core, cw-parse]
 
 - `crates/cw-parse/src/rust.rs` — definition of `ParsedFile`
 
-## How it works
+## Items
 
 Declared as `pub struct ParsedFile`.
 
@@ -18,6 +18,7 @@ Declared as `pub struct ParsedFile`.
 
 - [[Rust Module]] — uses `CallSite`, `ImplFact`, `ModDecl`, `TypeRef`
 - [[Symbol]] — uses `Symbol`
+- [[UseImport]] — uses `UseImport`
 
 ## Used by
 

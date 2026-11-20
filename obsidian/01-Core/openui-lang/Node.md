@@ -10,14 +10,17 @@ tags: [core, openui-lang]
 
 - `crates/openui-lang/src/eval.rs` — definition of `Node`
 
-## How it works
+## Items
 
 Declared as `pub enum Node`.
 
-Public API:
+Members:
 
-- `pub fn as_list(&self) -> &[Node]`
-- `pub fn as_text(&self) -> Option<&str>`
+- `pub fn as_text(&self) -> Option<&str>` — public method, returns `Option<&str>`.
+- `pub fn as_list(&self) -> &[Node]` — public method, returns `&[Node]`; called by `list_of`.
+- `fn display(&self) -> String` — text form used by string concatenation.
+
+And 1 more private item with no comment.
 
 ## Depends on
 

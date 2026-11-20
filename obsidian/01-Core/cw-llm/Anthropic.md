@@ -12,14 +12,20 @@ tags: [core, cw-llm]
 
 ## How it works
 
+1. `from_config` in [[Provider Module]] calls `new`.
+
+## Items
+
 Declared as `pub struct Anthropic`.
 
-Public API:
+Members:
 
+- `pub fn new(api_key: String, model: Option<String>) -> Self` — public method, returns `Self`; called by `from_config`.
+- `fn name(&self) -> String` — public method, returns `String`.
 - `fn probe(&self) -> Result<()>` — any answer proves the key and the model, one cut off at the small limit included.
-- `pub fn new(api_key: String, model: Option<String>) -> Self`
-- `fn name(&self) -> String`
-- `fn complete(&self, system: &str, user: &str) -> Result<Completion>`
+- `fn complete(&self, system: &str, user: &str) -> Result<Completion>` — public method, returns `Result<Completion>`.
+
+And 1 more private item with no comment.
 
 ## Depends on
 

@@ -6,19 +6,22 @@ tags: [core, codewiki-app]
 
 > What kind of news something is.
 
+## What it does
+
+MUI's `severity`, and the `color` of a chip.
+
 ## Source
 
 - `crates/codewiki-app/src/mui/feedback.rs` — definition of `Tone`
 
-## How it works
+## Items
 
 Declared as `pub enum Tone`.
 
-MUI's `severity`, and the `color` of a chip.
-
-Public API:
+Members:
 
 - `pub fn color(self, cx: &App) -> Hsla` — the color that stands for this tone.
+- `fn icon(self) -> Glyph` — private method, returns `Glyph`.
 
 ## Depends on
 

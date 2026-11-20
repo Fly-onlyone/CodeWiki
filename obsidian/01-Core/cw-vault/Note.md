@@ -12,12 +12,18 @@ tags: [core, cw-vault]
 
 ## How it works
 
+1. `link_resolution_rate` and `lint` in [[Lint Module]], and 8 more, call `parse`. `parse` calls `parse_tags`, then `push_line`, then `extract_links`, then `count_words` (all in [[Note Module]]).
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
 Declared as `pub struct Note`.
 
-Public API:
+Members:
 
-- `pub fn parse(text: &str) -> Self`
-- `pub fn section(&self, heading: &str) -> Option<&Section>`
+- `pub fn parse(text: &str) -> Self` — public method, returns `Self`; called by `adopt_existing`, `answer`, `build`, `doc_drift` and 6 more.
+- `pub fn section(&self, heading: &str) -> Option<&Section>` — public method, returns `Option<&Section>`.
 
 ## Depends on
 

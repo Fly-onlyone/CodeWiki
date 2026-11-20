@@ -10,13 +10,13 @@ tags: [core, codewiki-app]
 
 - `crates/codewiki-app/src/icons.rs` — definition of `Glyph`
 
-## How it works
+## Items
 
 Declared as `pub struct Glyph`.
 
-Public API:
+Members:
 
-- `fn path(self) -> SharedString`
+- `fn path(self) -> SharedString` — public method, returns `SharedString`.
 
 ## Used by
 

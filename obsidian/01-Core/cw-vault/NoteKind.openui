@@ -1,0 +1,7 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "2")
+f1 = Stat("Used by notes", "9")
+f2 = Stat("Depends on notes", "0")
+flow = Steps([s0])
+s0 = Step("from_file_name", "Called by adopt_existing, adopted_kind.")

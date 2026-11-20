@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "7")
+f1 = Stat("Used by notes", "4")
+f2 = Stat("Depends on notes", "1")
+flow = Steps([s0, s1])
+s0 = Step("from_edges", "Called by dependency_graph, dependency_path. Calls from_weighted.")
+s1 = Step("from_weighted", "Called by break_cycles. Calls len.")

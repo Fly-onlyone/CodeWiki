@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "4")
+f1 = Stat("Used by notes", "2")
+f2 = Stat("Depends on notes", "4")
+flow = Steps([s0, s1])
+s0 = Step("Tab::new", "Called by AppView::tab_bar, tabs.")
+s1 = Step("Tabs::new", "Called by AppView::tab_bar, tabs.")

@@ -1,6 +1,5 @@
-root = Card([summary, figures], "cw-client")
-summary = TextContent("Client for the CodeWiki backend: discovery, autostart and HTTP calls.", "muted")
-figures = Grid([f0, f1, f2, f3], 4)
+root = Card([figures])
+figures = Grid([f0, f1, f2, f3], 2)
 f0 = Stat("Modules", "1")
 f1 = Stat("Public types", "3")
 f2 = Stat("Functions", "42")

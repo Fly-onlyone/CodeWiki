@@ -1,0 +1,7 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "1")
+f1 = Stat("Used by notes", "1")
+f2 = Stat("Depends on notes", "6")
+flow = Steps([s0])
+s0 = Step("parse_typescript", "Called by scan_repo. Calls Error::external, then Error::invalid, then Sink::new, then named.")

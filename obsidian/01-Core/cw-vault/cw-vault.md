@@ -15,6 +15,12 @@ tags: [core, cw-vault]
 
 Builds a library.
 
+What the functions of this crate call:
+
+1. `T::pretty` calls `Error::external` in [[Error]].
+
+## Items
+
 Modules:
 
 - [[Lifecycle Module]] — note lifecycle: what may be done to a note given its state on disk.

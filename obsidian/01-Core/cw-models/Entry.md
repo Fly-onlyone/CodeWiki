@@ -10,14 +10,14 @@ tags: [core, cw-models]
 
 - `crates/cw-models/src/catalog.rs` — definition of `Entry`
 
-## How it works
+## Items
 
 Declared as `pub struct Entry`.
 
-Public API:
+Members:
 
-- `pub fn embedder_name(&self) -> String` — the name stored with each vector.
 - `pub fn size(&self) -> u64` — bytes to download.
+- `pub fn embedder_name(&self) -> String` — the name stored with each vector. It holds the revision, so that a release that moves a model to other weights embeds everything again.
 
 ## Depends on
 

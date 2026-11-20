@@ -12,22 +12,26 @@ tags: [core, cw-parse, module]
 
 ## How it works
 
-Main items:
+1. `reindex` in [[Service Module]] calls `scan_repo`. `scan_repo` calls `list_files`, then `Error::io` in [[Error]], then `parse_manifest` in [[Workspace Module]], then `Language::from_path` in [[Language]], then `sha256_hex` in [[Hash Module]], then `python_module` in [[Lang Module]], and 10 more. `list_files` calls `Error::external` in [[Error]], then `relative`.
 
-- `scan_repo` — scan the whole repository at `root`.
-- `RepoFacts` — struct
-- `list_files` — list indexable files under `root`, sorted, honoring `.gitignore`.
-- `relative` — Repo-relative path with forward slashes.
-- `inner_doc` — leading `//!` documentation of a file.
-- `SKIP_DIRS` — directories never worth indexing, on top of what `.gitignore` excludes.
-- `MAX_SOURCE_BYTES` — files larger than this are recorded but not read as source.
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
+- `const MAX_SOURCE_BYTES: u64` — files larger than this are recorded but not read as source.
+- `const SKIP_DIRS: [&str; 6]` — directories never worth indexing, on top of what `.gitignore` excludes.
+- `pub struct RepoFacts` — public struct; used by `Index::replace_facts`, `Repo`, `Repo::at`, `Repo::build` and 9 more.
+- `fn relative(root: &Path, path: &Path) -> Option<String>` — Repo-relative path with forward slashes.
+- `pub fn list_files(root: &Path) -> Result<Vec<String>>` — list indexable files under `root`, sorted, honoring `.gitignore`.
+- `fn inner_doc(source: &str) -> String` — leading `//!` documentation of a file.
+- `pub fn scan_repo(root: &Path) -> Result<RepoFacts>` — scan the whole repository at `root`.
 
 ## Depends on
 
 - [[Lang Module]] — uses `link_imports`, `python_module`, `resolve_ts_import`, `ts_module`
+- [[Workspace Module]] — uses `CrateInfo`, `module_path`, `parse_manifest`
 - [[Resolver]] — uses `new`, `resolve`, `with_crates`
 - [[Model Module]] — uses `Edge`, `FileRecord`
-- [[Workspace Module]] — uses `module_path`, `parse_manifest`
 - [[Error]] — uses `external`, `io`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[Error Module]] — uses `Result`
@@ -35,10 +39,10 @@ Main items:
 
 ## Used by
 
+- [[cw-wiki]] — from `a_writer_draws_overviews_and_flows_only`, `an_integration_note_says_what_is_taken_and_at_which_version`, `reports_documentation_drift_and_coverage`, `run`
 - [[Repo]] — from `Repo`, `at`, `build`, `new`
-- [[cw-wiki]] — from `reports_documentation_drift_and_coverage`, `run`
+- [[Generate Module]] — from `adopt_existing`, `generate`, `generate_with`
 - [[Analyze Module]] — from `analyze`, `dependency_graph`
-- [[Generate Module]] — from `adopt_existing`, `generate`
 - [[Service Module]] — from `reindex`
 - [[Units Module]] — from `discover`
 - [[Index]] — from `replace_facts`

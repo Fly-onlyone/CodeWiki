@@ -6,23 +6,29 @@ tags: [core, codewiki-app]
 
 > A group of settings, with a page of its own.
 
+## What it does
+
+The order is the order of the list.
+
 ## Source
 
 - `crates/codewiki-app/src/settings.rs` — definition of `Category`
 
 ## How it works
 
+1. `AppView::open_startup_view` in [[codewiki-app]] calls `from_slug`. `from_slug` calls `slug`.
+
+## Items
+
 Declared as `pub enum Category`.
 
-The order is the order of the list.
+Members:
 
-Public API:
-
+- `pub const ALL: [Self; 8]` — public constant; used by `AppView::settings_frame`, `Category::from_slug`, `actions`.
+- `pub fn label(self) -> &'static str` — public method, returns `&'static str`.
+- `pub fn icon(self) -> Glyph` — public method, returns `Glyph`.
 - `pub fn slug(self) -> &'static str` — the category's name in a startup argument: `settings:<slug>`.
-- `pub fn from_slug(slug: &str) -> Self` — the category a slug names.
-- `pub const ALL: [Self; 8] = [ Self::Appearance, Self::AiModel, Self::Search, Self::Backend, Self::Repositories, Self::Updates, Self::Keyboard, Self::Diagnostics, ]`
-- `pub fn label(self) -> &'static str`
-- `pub fn icon(self) -> Glyph`
+- `pub fn from_slug(slug: &str) -> Self` — the category a slug names. An empty or unknown one is the first.
 
 ## Depends on
 

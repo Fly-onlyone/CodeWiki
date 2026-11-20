@@ -12,16 +12,24 @@ tags: [core, cw-models]
 
 ## How it works
 
+1. `store` in [[Model Module (codewiki)]] and `store` in [[Models Module]], and 1 more, call `new`.
+
+## Items
+
 Declared as `pub struct Store`.
 
-Public API:
+Members:
 
-- `pub fn new(data_dir: &Path, base: Option<&str>) -> Self` — the store under `data_dir`.
-- `pub fn dir(&self, entry: &Entry) -> PathBuf` — the folder of an installed model.
-- `pub fn is_installed(&self, entry: &Entry) -> bool` — whether the model is on disk at the catalog's revision, every file with its size.
-- `pub fn install( &self, entry: &Entry, progress: &mut dyn FnMut(u64, u64), cancel: &AtomicBool, ) -> Result<Outcome>` — download, verify and install the model.
+- `pub fn new(data_dir: &Path, base: Option<&str>) -> Self` — the store under `data_dir`. `base` replaces the host the files come from; `None` is Hugging Face.
 - `pub fn root(&self) -> &Path` — the folder that holds the installed models.
+- `pub fn dir(&self, entry: &Entry) -> PathBuf` — the folder of an installed model.
+- `pub fn is_installed(&self, entry: &Entry) -> bool` — whether the model is on disk at the catalog's revision, every file with its size. The hashes were checked when it was installed.
 - `pub fn installed(&self) -> Vec<&'static Entry>` — the catalog's models that are installed.
+- `fn have(&self, entry: &Entry) -> u64` — bytes of the model that are already downloaded.
+- `install` — download, verify and install the model. `progress` hears the bytes there are and the bytes there will be, many times a second; `cancel` stops the download at the next chunk.
+- `pub fn remove(&self, entry: &Entry) -> Result<()>` — delete the model and whatever was downloaded of it. Not an error when there is nothing.
+
+And 1 more private item with no comment.
 
 ## Depends on
 
@@ -37,7 +45,6 @@ Public API:
 - [[Model Module (codewiki)]] — from `install`, `list`, `store`
 - [[codewiki]] — from `install_by_hand`
 - [[cw-server]] — from `install_model`
-- [[Settings Module (cw-server)]] — from `describe`
 - [[BuiltinEmbedder]] — from `new`
 
 ## See also

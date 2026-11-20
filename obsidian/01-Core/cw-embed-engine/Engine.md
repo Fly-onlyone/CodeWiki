@@ -12,13 +12,17 @@ tags: [core, cw-embed-engine]
 
 ## How it works
 
+1. `worker` in [[cw-embed-engine]] calls `load`. `load` calls `weights` in [[cw-embed-engine]].
+
+## Items
+
 Declared as `pub struct Engine`.
 
-Public API:
+Members:
 
 - `pub fn load(entry: &Entry, dir: &Path, device: &Device) -> Result<Self>` — load the model `entry` from `dir`, the folder an install made.
+- `pub fn dimensions(&self) -> usize` — public method, returns `usize`.
 - `pub fn embed(&self, kind: Kind, texts: &[String]) -> Result<Vec<Vec<f32>>>` — one unit vector per text, in order.
-- `pub fn dimensions(&self) -> usize`
 
 ## Depends on
 

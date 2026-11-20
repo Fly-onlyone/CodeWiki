@@ -1,0 +1,7 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "2")
+f1 = Stat("Used by notes", "7")
+f2 = Stat("Depends on notes", "1")
+flow = Steps([s0])
+s0 = Step("parse", "Called by link_resolution_rate, lint and 8 more. Calls parse_tags, then push_line, then extract_links, then count_words.")

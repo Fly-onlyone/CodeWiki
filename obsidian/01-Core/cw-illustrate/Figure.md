@@ -10,13 +10,13 @@ tags: [core, cw-illustrate]
 
 - `crates/cw-illustrate/src/lib.rs` — definition of `Figure`
 
-## How it works
+## Items
 
 Declared as `pub struct Figure`.
 
 ## Used by
 
-- [[cw-illustrate]] — from `overview`
+- [[cw-illustrate]] — from `brief`, `figure_row`, `overview`
 - [[RenderCtx]] — from `illustration`
 
 ## See also

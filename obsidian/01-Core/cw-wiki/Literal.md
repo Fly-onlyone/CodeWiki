@@ -6,15 +6,17 @@ tags: [core, cw-wiki]
 
 > One string literal.
 
+## What it does
+
+Offsets index into `Scanned::code`.
+
 ## Source
 
 - `crates/cw-wiki/src/rustscan.rs` — definition of `Literal`
 
-## How it works
+## Items
 
 Declared as `pub(crate) struct Literal`.
-
-Offsets index into `Scanned::code`.
 
 ## Used by
 

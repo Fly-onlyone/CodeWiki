@@ -4,7 +4,7 @@ tags: [moc, core, codewiki-app]
 
 # Core / codewiki-app — Map of Content
 
-> Notes for `codewiki-app`: 43 concepts.
+> Notes for `codewiki-app`: 45 concepts.
 
 ## Notes
 
@@ -16,6 +16,7 @@ tags: [moc, core, codewiki-app]
 - [[Category]] — A group of settings, with a page of its own.
 - [[codewiki-app]] — CodeWiki desktop app for Windows.
 - [[Contrast Module]] — WCAG contrast arithmetic for translucent surfaces.
+- [[Diagram View Module]] — where an enlarged diagram sits in the diagram viewer.
 - [[Diagrams Module]] — drawn Mermaid diagrams, kept so that a note opens without waiting.
 - [[Doc]] — A generated page.
 - [[Doc Module]] — what a generated page says, apart from how it is drawn.
@@ -51,6 +52,7 @@ tags: [moc, core, codewiki-app]
 - [[Tray Module]] — the app's icon in the notification area, with its tooltip and its menu.
 - [[Update Module]] — updating the app: when to look for a new release, and what the settings page says about it.
 - [[Win32 Module]] — the Win32 calls GPUI has no way to make.
+- [[Zoom Module]] — zoom: the whole app larger or smaller, as a browser zooms a page.
 
 ## Folders
 

@@ -10,7 +10,7 @@ tags: [core, cw-server]
 
 - `crates/cw-server/src/lib.rs` — definition of `AppState`
 
-## How it works
+## Items
 
 Declared as `pub(crate) struct AppState`.
 
@@ -24,6 +24,7 @@ Declared as `pub(crate) struct AppState`.
 - [[Models Module]] — from `after_update`, `chosen`, `describe`, `embed_all`
 - [[Settings Module (cw-server)]] — from `change`, `describe`, `resolved`, `test_embedder`
 - [[cw-server]] — from `state`
+- [[Cliproxy Module (cw-server)]] — from `describe`
 
 ## See also
 

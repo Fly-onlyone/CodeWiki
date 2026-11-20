@@ -10,11 +10,9 @@ tags: [core, codewiki-app, module]
 
 - `crates/codewiki-app/build.rs` — module `codewiki_app::build`
 
-## How it works
+## Items
 
-Main items:
-
-- `main` — function
+- `fn main()` — private function.
 
 ## See also
 

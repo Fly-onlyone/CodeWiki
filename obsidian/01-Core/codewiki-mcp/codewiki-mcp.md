@@ -6,6 +6,10 @@ tags: [core, codewiki-mcp]
 
 > MCP stdio bridge between coding agents and the CodeWiki backend.
 
+## What it does
+
+Standard output carries the MCP protocol, so nothing else may be printed there; diagnostics go to standard error.
+
 ## Source
 
 - `crates/codewiki-mcp/Cargo.toml` — package manifest
@@ -15,23 +19,28 @@ tags: [core, codewiki-mcp]
 
 Builds a binary.
 
+1. The program starts at `main`. `main` calls `init` in [[cw-telemetry]].
+
+## Items
+
 Defined at the crate root:
 
-- `Bridge` — struct
-- `text` — function
-- `connected` — the backend in `slot`, connecting on first use.
-- `pretty` — function
-- `rows` — function
-- `failed` — A tool call that failed: logged, and returned to the agent as an error.
-- `RepoParam` — struct
-- `field` — the string under `key`, or an empty string.
+- `fn connected(slot: &Mutex<Option<Backend>>) -> Result<Backend, String>` — the backend in `slot`, connecting on first use. Only a success is kept: after a failed start the next tool call tries again, where a kept error disabled the bridge until the agent restarted it. A kept backend that no longer answers is dropped and a new one found: the app stops the backend when it installs an update, and the bridge outlives that. The lock is held while connecting, so two calls at once never start two backends.
+- `fn failed(message: String) -> McpError` — A tool call that failed: logged, and returned to the agent as an error.
+- `fn field<'a>(value: &'a Value, key: &str) -> &'a str` — the string under `key`, or an empty string.
+- `fn repo_contracts_text(found: &Value) -> String` — text for the contracts of one repository.
+- `fn workspace_contracts_text(all: &Value) -> String` — text for contracts matched across the workspace.
+- `fn note_text(content: &Value) -> String` — the text of a note as the backend answered, with a last line that names what was left out and how to get it.
+- `async fn main() -> std::process::ExitCode` — private function, returns `std::process::ExitCode`.
+
+And 17 more private items with no comment.
 
 ## Depends on
 
 - [[Backend]] — uses `Backend`, `answers`, `connect`, `repo_id`
 - [[cw-client]] — uses `encode`
 - [[cw-core]] — uses `MCP_CLIENT`
-- [[Logs Module]] — uses `init`
+- [[cw-telemetry]] — uses `init`
 
 ## See also
 

@@ -6,20 +6,20 @@ tags: [core, codewiki-app, module]
 
 > The control points of MUI's easing curves.
 
+## What it does
+
+`createTransitions.js`, `easing`.
+
 ## Source
 
 - `crates/codewiki-app/src/mui/tokens.rs` — module `codewiki_app::mui::tokens::curve`
 
-## How it works
+## Items
 
-`createTransitions.js`, `easing`.
-
-Main items:
-
-- `EASE_IN_OUT` — const
-- `EASE_OUT` — const
-- `SHARP` — const
-- `EASE_IN` — const
+- `pub const EASE_IN_OUT: [f32; 4]` — public constant; used by `IconButton::render`, `ListFolder::render`, `ListItemButton::render`, `Switch::render` and 3 more.
+- `pub const EASE_OUT: [f32; 4]` — public constant; used by `Select::render`, `TextField::render`, `drawer`.
+- `pub const EASE_IN: [f32; 4]` — public constant.
+- `pub const SHARP: [f32; 4]` — public constant; used by `drawer`.
 
 ## Used by
 

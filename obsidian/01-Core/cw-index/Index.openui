@@ -1,0 +1,7 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "17")
+f1 = Stat("Used by notes", "20")
+f2 = Stat("Depends on notes", "10")
+flow = Steps([s0])
+s0 = Step("open", "Called by open_existing_index_in, open_index and 1 more. Calls Error::io, then db, then init.")

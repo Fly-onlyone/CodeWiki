@@ -4,13 +4,15 @@ tags: [moc, core, cw-llm]
 
 # Core / cw-llm — Map of Content
 
-> Notes for `cw-llm`: 11 concepts.
+> Notes for `cw-llm`: 13 concepts.
 
 ## Notes
 
 - [[AgentCli]] — an installed agent CLI run in non-interactive mode.
 - [[Answer Module]] — answers a question about the codebase with an LLM, grounded in the vault.
 - [[Anthropic]] — `Anthropic` struct defined in `cw_llm::provider` with 5 methods.
+- [[CliProxy]] — writes prose through a CLIProxyAPI server with chat completions.
+- [[Cliproxy Module]] — CLIProxyAPI: a server the user runs that holds many Claude and Codex subscription logins and serves them behind one OpenAI-compatible API, taking the next account for each request and resting one that reached its limit (github.com/router-for-me/CLIProxyAPI).
 - [[cw-llm]] — LLM providers and the prose writer for CodeWiki.
 - [[Illustrate Module]] — asks an LLM to draw a note as an OpenUI Lang illustration.
 - [[LlmProvider]] — `LlmProvider` trait defined in `cw_llm::provider` with 3 methods.

@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "8")
+f1 = Stat("Used by notes", "1")
+f2 = Stat("Depends on notes", "3")
+flow = Steps([s0, s1])
+s0 = Step("standardize", "Called by apply, init. Calls standard_colors, then hex, then editor_colors.")
+s1 = Step("readable_on", "Called by glyph_tint. Calls to_oklch, then ratio, then from_oklch.")

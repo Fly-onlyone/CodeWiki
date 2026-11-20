@@ -12,16 +12,22 @@ tags: [core, cw-graph]
 
 ## How it works
 
+1. `dependency_graph` in [[Analyze Module]] and `dependency_path` in [[Query Module]] call `from_edges`. `from_edges` calls `from_weighted`.
+2. `break_cycles` in [[Refactor Module]] calls `from_weighted`. `from_weighted` calls `len`.
+
+## Items
+
 Declared as `pub struct Graph`.
 
-Public API:
+Members:
 
-- `pub fn from_weighted<I, N>(nodes: N, edges: I) -> Self where N: IntoIterator<Item = String>, I: IntoIterator<Item = (String, String, f64)>,` — build from weighted pairs.
-- `pub fn from_edges( nodes: impl IntoIterator<Item = String>, edges: &[Edge], kinds: &[EdgeKind], ) -> Self` — build from resolved edges, keeping only `kinds` and weighting each edge by its confidence.
+- `from_weighted` — build from weighted pairs. Parallel edges are merged by summing weights; self loops are dropped. Nodes are sorted by name for determinism.
+- `from_edges` — build from resolved edges, keeping only `kinds` and weighting each edge by its confidence.
+- `pub fn len(&self) -> usize` — public method, returns `usize`; called by `Graph::from_weighted`, `Graph::undirected`.
+- `pub fn is_empty(&self) -> bool` — public method, returns `bool`.
+- `pub fn edge_count(&self) -> usize` — public method, returns `usize`.
+- `pub fn id(&self, name: &str) -> Option<usize>` — public method, returns `Option<usize>`.
 - `pub fn undirected(&self) -> Vec<Vec<(usize, f64)>>` — symmetric adjacency: weights of both directions summed per neighbor.
-- `pub fn len(&self) -> usize`
-- `pub fn is_empty(&self) -> bool`
-- `pub fn edge_count(&self) -> usize`
 
 ## Depends on
 

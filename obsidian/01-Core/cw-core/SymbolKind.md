@@ -12,13 +12,17 @@ tags: [core, cw-core]
 
 ## How it works
 
+1. `symbol_from_row` in [[Store Module]] calls `parse`.
+
+## Items
+
 Declared as `pub enum SymbolKind`.
 
-Public API:
+Members:
 
+- `pub fn as_str(self) -> &'static str` — public method, returns `&'static str`.
+- `pub fn parse(s: &str) -> Option<Self>` — public method, returns `Option<Self>`; called by `symbol_from_row`.
 - `pub fn is_type(self) -> bool` — types are the symbols that can earn their own concept note.
-- `pub fn parse(s: &str) -> Option<Self>`
-- `pub fn as_str(self) -> &'static str`
 
 ## Used by
 

@@ -6,24 +6,21 @@ tags: [integration]
 
 > External crate `semver`, imported by 3 source files.
 
+## What it does
+
+Parser and evaluator for Cargo's flavor of Semantic Versioning.
+
 ## Used for
 
 Imported by 3 source files. Main users:
 
-- [[Release Module]]
-- [[Stage Module]]
-- [[cw-update]]
+- [[Release Module]] — imports `Version`
+- [[Stage Module]] — imports `Version`
+- [[cw-update]] — imports `Version`
 
 ## Configuration
 
-- `crates/cw-client/Cargo.toml` — declares the dependency
-- `crates/cw-update/Cargo.toml` — declares the dependency
-
-## Wire-up
-
-- `crates/cw-update/src/lib.rs` — imports `semver`
-- `crates/cw-update/src/release.rs` — imports `semver`
-- `crates/cw-update/src/stage.rs` — imports `semver`
+- `crates/cw-client/Cargo.toml`, `crates/cw-update/Cargo.toml` — declare the dependency: version `1.0.28`, locked `1.0.28`
 
 ## See also
 

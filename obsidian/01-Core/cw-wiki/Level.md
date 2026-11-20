@@ -12,12 +12,16 @@ tags: [core, cw-wiki]
 
 ## How it works
 
+1. `run` in [[codewiki]] and `security` in [[Api Module]] call `parse`.
+
+## Items
+
 Declared as `pub enum Level`.
 
-Public API:
+Members:
 
-- `pub fn parse(text: &str) -> Option<Self>`
-- `pub fn as_str(self) -> &'static str`
+- `pub fn as_str(self) -> &'static str` — public method, returns `&'static str`.
+- `pub fn parse(text: &str) -> Option<Self>` — public method, returns `Option<Self>`; called by `run`, `security`.
 
 ## Used by
 

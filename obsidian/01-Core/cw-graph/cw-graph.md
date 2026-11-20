@@ -6,6 +6,10 @@ tags: [core, cw-graph]
 
 > Graph construction, metrics, community detection and layout for CodeWiki.
 
+## What it does
+
+Every algorithm here is deterministic: the same input always yields the same output, so generated notes and stored layouts do not churn.
+
 ## Source
 
 - `crates/cw-graph/Cargo.toml` — package manifest
@@ -14,6 +18,8 @@ tags: [core, cw-graph]
 ## How it works
 
 Builds a library.
+
+## Items
 
 Modules:
 

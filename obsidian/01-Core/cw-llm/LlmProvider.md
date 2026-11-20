@@ -12,15 +12,21 @@ tags: [core, cw-llm]
 
 ## How it works
 
+What the functions of this type call:
+
+1. `probe` calls `complete`.
+
+## Items
+
 Declared as `pub trait LlmProvider: Send + Sync`.
 
 Required and provided methods:
 
 - `fn name(&self) -> String` — identifier recorded with generated notes, for example `anthropic:claude-opus-5-5`.
-- `fn probe(&self) -> Result<()>` — check that the provider answers: one very small request.
-- `fn complete(&self, system: &str, user: &str) -> Result<Completion>`
+- `fn complete(&self, system: &str, user: &str) -> Result<Completion>` — public method, returns `Result<Completion>`; called by `LlmProvider::probe`.
+- `fn probe(&self) -> Result<()>` — check that the provider answers: one very small request. An error carries the provider's own explanation, such as a refused key or an unknown model.
 
-Implemented by [[AgentCli]], [[Anthropic]], `Logged`, [[Ollama]], and [[OpenAiCompatible]].
+Implemented by [[CliProxy]], [[AgentCli]], [[Anthropic]], `Logged`, [[Ollama]], and [[OpenAiCompatible]].
 
 ## Depends on
 
@@ -33,10 +39,10 @@ Implemented by [[AgentCli]], [[Anthropic]], `Logged`, [[Ollama]], and [[OpenAiCo
 - [[LlmWriter]] — from `LlmWriter`, `new`
 - [[Answer Module]] — from `answer`
 - [[Illustrate Module]] — from `draw`
+- [[CliProxy]] — from `CliProxy`
 - [[AgentCli]] — from `AgentCli`
 - [[Anthropic]] — from `Anthropic`
 - [[Ollama]] — from `Ollama`
-- [[OpenAiCompatible]] — from `OpenAiCompatible`
 
 ## See also
 

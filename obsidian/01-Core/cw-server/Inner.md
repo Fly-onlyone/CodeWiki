@@ -10,7 +10,7 @@ tags: [core, cw-server]
 
 - `crates/cw-server/src/lib.rs` — definition of `Inner`
 
-## How it works
+## Items
 
 Declared as `pub(crate) struct Inner`.
 

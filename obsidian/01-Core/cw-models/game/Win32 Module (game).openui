@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "2")
+f1 = Stat("Used by notes", "1")
+f2 = Stat("Depends on notes", "0")
+flow = Steps([s0, s1])
+s0 = Step("full_screen", "Called by busy.")
+s1 = Step("load_3d_of_others", "Called by busy.")

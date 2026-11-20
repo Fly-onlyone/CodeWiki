@@ -4,48 +4,29 @@ tags: [integration]
 
 # serde_json
 
-> External crate `serde_json`, imported by 28 source files.
+> External crate `serde_json`, imported by 31 source files.
+
+## What it does
+
+A JSON serialization file format.
 
 ## Used for
 
-Imported by 28 source files. Main users:
+Imported by 31 source files. Main users:
 
-- [[cw-embed]]
-- [[cw-server]]
-- [[Activity Module]]
-- [[Api Module]]
-- [[Ci Module]]
-- [[Graph Module (codewiki-app)]]
-- [[Instance Module]]
-- [[Live Module]]
+- [[cw-embed]] — imports `Value`, `json`
+- [[cw-llm]] — imports `Value`, `json`
+- [[cw-server]] — imports `Value`, `json`
+- [[Activity Module]] — imports `Value`, `json`
+- [[Api Module]] — imports `Value`, `json`
+- [[Ci Module]] — imports `Value`, `json`
+- [[Cliproxy Module (cw-server)]] — imports `Value`, `json`
+- [[Cliproxy Module]] — imports `Value`
 
 ## Configuration
 
-- `crates/codewiki-app/Cargo.toml` — declares the dependency
-- `crates/codewiki-mcp/Cargo.toml` — declares the dependency
-- `crates/codewiki/Cargo.toml` — declares the dependency
-- `crates/cw-client/Cargo.toml` — declares the dependency
-- `crates/cw-core/Cargo.toml` — declares the dependency
-- `crates/cw-embed-engine/Cargo.toml` — declares the dependency
-- `crates/cw-embed/Cargo.toml` — declares the dependency
-- `crates/cw-index/Cargo.toml` — declares the dependency
-- `crates/cw-llm/Cargo.toml` — declares the dependency
-- `crates/cw-models/Cargo.toml` — declares the dependency
-- `crates/cw-server/Cargo.toml` — declares the dependency
-- `crates/cw-update/Cargo.toml` — declares the dependency
-- `crates/cw-vault/Cargo.toml` — declares the dependency
-- `crates/cw-wiki/Cargo.toml` — declares the dependency
-
-## Wire-up
-
-- `crates/codewiki-app/src/graph.rs` — imports `serde_json`
-- `crates/codewiki-app/src/instance.rs` — imports `serde_json`
-- `crates/codewiki-app/src/live.rs` — imports `serde_json`
-- `crates/codewiki-app/src/main.rs` — imports `serde_json`
-- `crates/codewiki-app/src/pages.rs` — imports `serde_json`
-- `crates/codewiki-app/src/settings_pages.rs` — imports `serde_json`
-- `crates/codewiki-app/src/settings_view.rs` — imports `serde_json`
-- `crates/codewiki-app/src/standard.rs` — imports `serde_json`
+- `crates/codewiki-app/Cargo.toml`, `crates/codewiki-mcp/Cargo.toml`, `crates/codewiki/Cargo.toml`, and 10 more — declare the dependency: version `1`, locked `1.0.154`
+- `crates/cw-core/Cargo.toml` — declares the dependency: version `1.0.154`, locked `1.0.154`
 
 ## See also
 

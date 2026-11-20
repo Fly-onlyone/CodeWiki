@@ -6,19 +6,19 @@ tags: [core, codewiki-app, module]
 
 > What the Settings page is made of, apart from how it is drawn: its categories, the fields a user types into, and the news shown beside one.
 
+## What it does
+
+No UI here; `pages.rs` builds a category's page from these and `settings_view.rs` draws it.
+
 ## Source
 
 - `crates/codewiki-app/src/settings.rs` — module `codewiki_app::settings`
 
-## How it works
+## Items
 
-No UI here; `pages.rs` builds a category's page from these and `settings_view.rs` draws it.
-
-Main items:
-
-- [[FieldId]] — A setting the user types: each has one text input, which lives as long as the app does.
 - [[Category]] — A group of settings, with a page of its own.
-- `Note` — news about one setting, shown beside it.
+- [[FieldId]] — A setting the user types: each has one text input, which lives as long as the app does.
+- `pub enum Note` — news about one setting, shown beside it.
 
 ## Used by
 

@@ -1,0 +1,32 @@
+{
+  "axum": {
+    "description": "HTTP routing and request handling library that focuses on ergonomics and modularity"
+  },
+  "gpui_kit": {
+    "description": "GPUI Kit: one dependency for building desktop applications with GPUI, GPUI Base, GPUI Component and default assets."
+  },
+  "rusqlite": {
+    "description": "Ergonomic wrapper for SQLite"
+  },
+  "semver": {
+    "description": "Parser and evaluator for Cargo's flavor of Semantic Versioning"
+  },
+  "sentry": {
+    "description": "Sentry (sentry.io) client for Rust."
+  },
+  "serde": {
+    "description": "A generic serialization/deserialization framework"
+  },
+  "serde_json": {
+    "description": "A JSON serialization file format"
+  },
+  "sha2": {
+    "description": "Pure Rust implementation of the SHA-2 hash function family including SHA-224, SHA-256, SHA-384, and SHA-512."
+  },
+  "tree_sitter": {
+    "description": "Rust bindings to the Tree-sitter parsing library"
+  },
+  "windows_sys": {
+    "description": "Rust for Windows"
+  }
+}

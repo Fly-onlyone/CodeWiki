@@ -10,7 +10,7 @@ tags: [core, openui-lang]
 
 - `crates/openui-lang/src/eval.rs` — definition of `Kind`
 
-## How it works
+## Items
 
 Declared as `pub enum Kind`.
 

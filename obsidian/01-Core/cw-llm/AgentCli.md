@@ -6,22 +6,29 @@ tags: [core, cw-llm]
 
 > An installed agent CLI run in non-interactive mode.
 
+## What it does
+
+Uses the user's own subscription and login; no API key is involved.
+
 ## Source
 
 - `crates/cw-llm/src/provider.rs` — definition of `AgentCli`
 
 ## How it works
 
+1. `from_config` in [[Provider Module]] calls `claude`.
+2. `from_config` in [[Provider Module]] calls `codex`.
+
+## Items
+
 Declared as `pub struct AgentCli`.
 
-Uses the user's own subscription and login; no API key is involved.
-
-Public API:
+Members:
 
 - `pub fn claude() -> Self` — Claude Code in print mode.
 - `pub fn codex() -> Self` — Codex in non-interactive mode, reading the prompt from standard input.
-- `fn name(&self) -> String`
-- `fn complete(&self, system: &str, user: &str) -> Result<Completion>`
+- `fn name(&self) -> String` — public method, returns `String`.
+- `fn complete(&self, system: &str, user: &str) -> Result<Completion>` — public method, returns `Result<Completion>`.
 
 ## Depends on
 

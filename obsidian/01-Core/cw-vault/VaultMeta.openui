@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "6")
+f1 = Stat("Used by notes", "11")
+f2 = Stat("Depends on notes", "6")
+flow = Steps([s0, s1])
+s0 = Step("load", "Called by run, approve_proposal and 14 more. Calls dir, then Error::external, then Manifest::default, then Error::io.")
+s1 = Step("dir", "Called by proposals_dir.")

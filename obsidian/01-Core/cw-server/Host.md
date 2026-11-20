@@ -6,19 +6,25 @@ tags: [core, cw-server]
 
 > What the work on built-in models asks of the machine.
 
+## What it does
+
+A test replaces each with a stand-in, so that it starts no model, reads no hardware and waits for no game.
+
 ## Source
 
 - `crates/cw-server/src/lib.rs` — definition of `Host`
 
 ## How it works
 
+1. `run` in [[Serve Module]] calls `default`.
+
+## Items
+
 Declared as `pub struct Host`.
 
-A test replaces each with a stand-in, so that it starts no model, reads no hardware and waits for no game.
+Members:
 
-Public API:
-
-- `fn default() -> Self`
+- `fn default() -> Self` — public method, returns `Self`; called by `run`.
 
 ## Depends on
 

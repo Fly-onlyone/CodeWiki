@@ -10,19 +10,19 @@ tags: [core, cw-core]
 
 - `crates/cw-core/src/settings.rs` — definition of `Key`
 
-## How it works
+## Items
 
 Declared as `pub struct Key`.
 
-Public API:
+Members:
 
 - `pub fn path(&self) -> String` — the setting's name in the file and over HTTP, as `section.field`.
-- `pub fn section(&self) -> &'static str`
-- `pub fn field(&self) -> &'static str`
+- `pub fn section(&self) -> &'static str` — public method, returns `&'static str`.
+- `pub fn field(&self) -> &'static str` — public method, returns `&'static str`.
 
 ## Used by
 
-- [[Settings Module (cw-core)]] — from `ALL`, `ANTHROPIC_API_KEY`, `EMBED_DEVICE`, `EMBED_MODEL`
+- [[Settings Module (cw-core)]] — from `ALL`, `ANTHROPIC_API_KEY`, `CLIPROXY_API_KEY`, `CLIPROXY_URL`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
 - [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `apply`, `checked`, `describe`
 - [[Provider Module]] — from `from_config`, `missing`, `setting`

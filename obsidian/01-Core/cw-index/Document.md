@@ -6,15 +6,17 @@ tags: [core, cw-index]
 
 > One searchable unit.
 
+## What it does
+
+`kind` is `note`, `symbol` or `file`; `key` is the note path, qualified symbol name or file path.
+
 ## Source
 
 - `crates/cw-index/src/search.rs` — definition of `Document`
 
-## How it works
+## Items
 
 Declared as `pub struct Document`.
-
-`kind` is `note`, `symbol` or `file`; `key` is the note path, qualified symbol name or file path.
 
 ## Used by
 

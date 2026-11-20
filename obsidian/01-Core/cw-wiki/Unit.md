@@ -10,14 +10,14 @@ tags: [core, cw-wiki]
 
 - `crates/cw-wiki/src/units.rs` — definition of `Unit`
 
-## How it works
+## Items
 
 Declared as `pub struct Unit`.
 
-Public API:
+Members:
 
+- `pub fn is_rust(&self) -> bool` — public method, returns `bool`; called by `RenderCtx::render_crate`, `Units::all_rust`.
 - `pub fn declares(&self, package: &str) -> Vec<&str>` — true when a build file of the unit mentions `package` as a whole word.
-- `pub fn is_rust(&self) -> bool`
 
 ## Depends on
 
@@ -26,7 +26,8 @@ Public API:
 
 ## Used by
 
-- [[RenderCtx]] — from `illustration`, `render_crate`, `render_integration`, `render_operations`
+- [[RenderCtx]] — from `illustration`, `render_crate`, `render_operations`, `render_type`
+- [[Manifests Module]] — from `cargo`, `declared`, `other`
 - [[Repo]] — from `module_count`, `top_modules`, `unit_of`
 - [[Units]] — from `Units`, `all_rust`, `by_name`
 - [[Plan Module]] — from `module_dir`, `plan`

@@ -12,14 +12,20 @@ tags: [core, cw-embed]
 
 ## How it works
 
+1. `from_config_in` in [[cw-embed]] calls `default`.
+
+## Items
+
 Declared as `pub struct LocalEmbedder`.
 
-Public API:
+Members:
 
-- `fn default() -> Self`
-- `pub fn embed_one(&self, text: &str) -> Vec<f32>`
-- `fn name(&self) -> String`
-- `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>`
+- `fn default() -> Self` — public method, returns `Self`; called by `from_config_in`.
+- `pub fn embed_one(&self, text: &str) -> Vec<f32>` — public method, returns `Vec<f32>`; called by `LocalEmbedder::embed`.
+- `fn name(&self) -> String` — public method, returns `String`.
+- `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>` — public method, returns `Result<Vec<Vec<f32>>>`.
+
+And 1 more private item with no comment.
 
 ## Depends on
 

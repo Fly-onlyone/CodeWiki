@@ -8,7 +8,6 @@ tags: [moc, core, cw-parse]
 
 ## Notes
 
-- [[CrateInfo]] — one Cargo package found in the repository.
 - [[cw-parse]] — source parsing and symbol extraction for CodeWiki.
 - [[Java Module]] — Java symbol and fact extraction.
 - [[Lang Module]] — plumbing shared by the Python, TypeScript and Java extractors: the fact sink, text helpers, the file-to-module mapping and import classification.
@@ -20,6 +19,7 @@ tags: [moc, core, cw-parse]
 - [[Scan Module]] — walk a repository and produce every fact the index needs.
 - [[Sink]] — collects the facts of one file.
 - [[Typescript Module]] — TypeScript and TSX symbol and fact extraction.
+- [[UseImport]] — one name brought into scope by a `use` declaration.
 - [[Workspace Module]] — Cargo package discovery and the file-to-module mapping.
 
 ## See also

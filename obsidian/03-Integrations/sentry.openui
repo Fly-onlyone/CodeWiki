@@ -1,0 +1,6 @@
+root = Card([figures])
+figures = Grid([f0, f1, f2, f3], 2)
+f0 = Stat("Version", "0.49.6")
+f1 = Stat("Imported by files", "3")
+f2 = Stat("Names imported", "6")
+f3 = Stat("Features", "7")

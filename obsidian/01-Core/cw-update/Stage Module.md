@@ -12,12 +12,15 @@ tags: [core, cw-update, module]
 
 ## How it works
 
-Main items:
+1. `install` in [[cw-update]] calls `stage`. `stage` calls `program_version`.
+2. `install` in [[cw-update]] calls `program_version`. `program_version` calls `parse_version_line`.
 
-- `program_version` — the version `<exe> --version` prints.
-- `stage` — unpack `zip` into an empty `to` and check that it is a CodeWiki package of `version` whose `codewiki.exe` starts on this machine.
-- `parse_version_line` — the version in clap's `--version` line, `codewiki 0.2.0`.
-- `VERSION_TIMEOUT` — how long `codewiki --version` may take.
+## Items
+
+- `const VERSION_TIMEOUT: Duration` — how long `codewiki --version` may take. It prints at once; a virus scan of a program never run before can hold it for a few seconds.
+- `pub fn stage(zip: &Path, to: &Path, version: &Version) -> Result<(), String>` — unpack `zip` into an empty `to` and check that it is a CodeWiki package of `version` whose `codewiki.exe` starts on this machine.
+- `pub fn program_version(exe: &Path) -> Result<Version, String>` — the version `<exe> --version` prints. The program is started without a console window and stopped if it does not answer in time.
+- `fn parse_version_line(text: &str) -> Option<Version>` — the version in clap's `--version` line, `codewiki 0.2.0`.
 
 ## Depends on
 

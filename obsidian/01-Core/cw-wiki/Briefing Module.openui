@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "2")
+f1 = Stat("Used by notes", "2")
+f2 = Stat("Depends on notes", "5")
+flow = Steps([s0, s1])
+s0 = Step("vault_root", "Called by session_start_hook.")
+s1 = Step("session_start", "Called by session_start_hook. Calls VaultMeta::load, then head_commit, then vault_is_behind, then short and 1 more.")

@@ -10,7 +10,7 @@ tags: [core, codewiki-app]
 
 - `crates/codewiki-app/src/doc.rs` — definition of `Action`
 
-## How it works
+## Items
 
 Declared as `pub enum Action`.
 
@@ -26,6 +26,7 @@ Declared as `pub enum Action`.
 - [[Doc View Module]] — from `OnAction`, `choices_row`, `line`, `secret_control`
 - [[codewiki-app]] — from `run_action`, `run_settings_action`
 - [[Doc]] — from `actions`, `of_line`
+- [[Settings Pages Module]] — from `builtin_choice`
 - [[Block]] — from `Block`
 - [[Span]] — from `Span`
 

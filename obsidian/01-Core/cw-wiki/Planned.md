@@ -10,7 +10,7 @@ tags: [core, cw-wiki]
 
 - `crates/cw-wiki/src/plan.rs` — definition of `Planned`
 
-## How it works
+## Items
 
 Declared as `pub struct Planned`.
 
@@ -22,7 +22,8 @@ Declared as `pub struct Planned`.
 ## Used by
 
 - [[RenderCtx]] — from `illustration`, `render`, `render_crate`, `render_crate_flow`
-- [[Generate Module]] — from `generate`, `planned_path`
+- [[cw-wiki]] — from `illustrate`, `rewrite`
+- [[Generate Module]] — from `generate_with`, `planned_path`
 - [[Plan Module]] — from `Plan`, `plan`
 - [[LlmWriter]] — from `illustrate`, `rewrite`
 - [[ProseWriter]] — from `illustrate`, `rewrite`

@@ -15,6 +15,8 @@ tags: [core, cw-wiki]
 
 Builds a library.
 
+## Items
+
 Modules:
 
 - [[Agentdocs Module]] — keeps a compact project briefing inside `CLAUDE.md` and `AGENTS.md`.
@@ -24,11 +26,14 @@ Modules:
 - [[Contracts Module]] — HTTP contracts: the endpoints a repository provides and the ones it calls.
 - [[Coverage Module]] — test coverage imported from LCOV (`lcov.info`) and Cobertura XML reports.
 - [[Decisions Module]] — decision records and the "why" query.
+- [[Doctext Module]] — from a doc comment to text that may stand in a note.
+- [[Explain Module]] — what a note says beyond its subject's own comment: the walk-through of what happens when the code is used, and the list of its items.
 - [[Generate Module]] — the generation pipeline: scan, plan, freeze names, render, lint, write.
 - [[Git Module]] — minimal git access through the `git` command line.
 - [[Gitintel Module]] — Git intelligence: what history says about each file.
 - [[Health Module]] — code health: dead code, documentation drift and per-file health scores.
 - [[Level Module]] — severity of a finding, shared by the analyses and the CI report.
+- [[Manifests Module]] — what a repository's build files say about a package from outside it: the version asked for, the version locked, the features turned on, and what the package is.
 - [[Plan Module]] — concept selection: decide which notes a repository gets.
 - [[Query Module]] — Read-side queries served to the app and to agents.
 - [[Refactor Module]] — refactoring plan: suggestions derived from facts the index already holds.
@@ -46,10 +51,10 @@ Modules:
 - [[Gitintel Module]] — uses `blast_radius`, `change_risk`, `file_risk`, `hotspots`
 - [[Service Module]] — uses `DOCUMENT_KINDS`, `is_stale`, `open_existing_index_in`, `open_index_in`
 - [[Coverage Module]] — uses `import`, `import_text`, `load`, `report`
+- [[Generate Module]] — uses `Report`, `Rewrite`, `Stopped`, `WriterContext`
 - [[Security Module]] — uses `COMMAND_INJECTION`, `HARDCODED_SECRET`, `INSECURE_HTTP`, `SQL_FORMAT`
 - [[Health Module]] — uses `DriftKind`, `dead_code`, `doc_drift`, `file_health`
 - [[VaultMeta]] — uses `by_path`, `load`, `registry`, `save`
-- [[Proposal Module]] — uses `list`, `patch_text`, `reject`
 
 ## See also
 

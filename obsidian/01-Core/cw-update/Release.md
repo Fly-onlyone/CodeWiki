@@ -10,7 +10,7 @@ tags: [core, cw-update]
 
 - `crates/cw-update/src/release.rs` — definition of `Release`
 
-## How it works
+## Items
 
 Declared as `pub struct Release`.
 

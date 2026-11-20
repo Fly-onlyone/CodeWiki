@@ -12,16 +12,23 @@ tags: [core, cw-wiki]
 
 ## How it works
 
+1. `scan_source` in [[Contracts Module]] and `scan_source` in [[Security Module]], and 1 more, call `new`. `new` calls `mask`, then `find_tests` (both in [[Rustscan Module]]).
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
 Declared as `pub(crate) struct Scanned`.
 
-Public API:
+Members:
 
-- `pub fn matching(&self, open: usize) -> usize` — offset one past the bracket closing the one at `open`.
-- `pub fn literal_at(&self, open: usize) -> Option<&Literal>` — the literal whose opening quote is at `open`.
+- `pub fn new(source: &str) -> Self` — public method, returns `Self`; called by `gather`, `scan_source`.
 - `pub fn line_of(&self, offset: usize) -> u32` — 1-based line of a byte offset.
-- `pub fn statement_end(&self, from: usize) -> usize` — end of the statement containing `from`: the next `;` outside nested brackets, or the end of the enclosing block.
 - `pub fn in_test(&self, offset: usize) -> bool` — true when `offset` lies in an item compiled only for tests.
+- `pub fn literal_at(&self, open: usize) -> Option<&Literal>` — the literal whose opening quote is at `open`.
 - `pub fn find<'a>(&'a self, word: &'a str) -> impl Iterator<Item = usize> + 'a` — offsets where `word` occurs in code as a whole identifier or path.
+- `pub fn matching(&self, open: usize) -> usize` — offset one past the bracket closing the one at `open`.
+- `pub fn statement_end(&self, from: usize) -> usize` — end of the statement containing `from`: the next `;` outside nested brackets, or the end of the enclosing block.
 
 ## Depends on
 

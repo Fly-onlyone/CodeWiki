@@ -15,6 +15,8 @@ tags: [core, cw-core]
 
 Builds a library.
 
+## Items
+
 Modules:
 
 - [[Error Module]] — one error type shared by the engine crates.
@@ -27,11 +29,11 @@ Modules:
 
 Defined at the crate root:
 
-- `MANIFEST_DIR` — folder inside the vault that holds machine metadata.
-- `VAULT_DIR` — folder, relative to a repository root, that holds the generated vault.
-- `CLIENT_HEADER` — request header in which a client of the backend says what it is.
-- `VERSION` — crate version, exposed so binaries report one consistent version string.
-- `MCP_CLIENT` — what the MCP bridge sends in `CLIENT_HEADER`.
+- `pub const VERSION: &str` — crate version, exposed so binaries report one consistent version string.
+- `pub const VAULT_DIR: &str` — folder, relative to a repository root, that holds the generated vault.
+- `pub const MANIFEST_DIR: &str` — folder inside the vault that holds machine metadata. Never rendered as notes.
+- `pub const CLIENT_HEADER: &str` — request header in which a client of the backend says what it is. Only the MCP bridge sends it; the backend reports when a bridge last called.
+- `pub const MCP_CLIENT: &str` — what the MCP bridge sends in `CLIENT_HEADER`.
 
 ## Used by
 

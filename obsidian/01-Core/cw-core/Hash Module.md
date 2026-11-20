@@ -12,13 +12,18 @@ tags: [core, cw-core, module]
 
 ## How it works
 
-Main items:
+1. `repo_id` in [[Paths Module]] and `scan_repo` in [[Scan Module]], and 3 more, call `sha256_hex`.
+2. `webhook_signed` in [[Api Module]] calls `hmac_sha256`.
+3. `require_token` and `webhook_signed` in [[Api Module]] call `constant_time_eq`.
+4. `body_hash` in [[Manifest Module]] calls `normalize_text`.
 
-- `sha256_hex` — lowercase hex SHA-256 of `bytes`.
-- `hmac_sha256` — HMAC-SHA256 of `message` under `key` (RFC 2104), used to verify webhook signatures.
-- `normalize_text` — normalize text before hashing so that line-ending and trailing-whitespace differences (git autocrlf, editor settings) are not reported as edits.
-- `constant_time_eq` — compare without leaking how many leading bytes matched.
-- `BLOCK` — SHA-256 block size in bytes.
+## Items
+
+- `pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String` — lowercase hex SHA-256 of `bytes`.
+- `const BLOCK: usize` — SHA-256 block size in bytes.
+- `pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32]` — HMAC-SHA256 of `message` under `key` (RFC 2104), used to verify webhook signatures.
+- `pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool` — compare without leaking how many leading bytes matched.
+- `pub fn normalize_text(text: &str) -> String` — normalize text before hashing so that line-ending and trailing-whitespace differences (git autocrlf, editor settings) are not reported as edits.
 
 ## Used by
 
@@ -27,7 +32,7 @@ Main items:
 - [[Paths Module]] — from `repo_id`
 - [[Scan Module]] — from `scan_repo`
 - [[Manifest Module]] — from `body_hash`
-- [[Generate Module]] — from `generate`
+- [[Generate Module]] — from `generate_with`
 - [[Run]] — from `plan`
 
 ## See also

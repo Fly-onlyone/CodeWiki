@@ -10,7 +10,7 @@ tags: [core, codewiki]
 
 - `crates/codewiki/src/model.rs` — definition of `ModelAction`
 
-## How it works
+## Items
 
 Declared as `pub enum ModelAction`.
 

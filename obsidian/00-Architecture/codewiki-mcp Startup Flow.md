@@ -16,12 +16,13 @@ tags: [architecture, flow]
 sequenceDiagram
     autonumber
     participant p0 as codewiki-mcp
-    participant p1 as Logs Module
-    participant p2 as Paths Module
-    participant p3 as Resolved
+    participant p1 as cw-telemetry
+    participant p2 as Logs Module
+    participant p3 as Scrub Module
     p0->>p1: init()
-    p1->>p2: data_dir()
-    p1->>p3: load()
+    p1->>p2: init_with()
+    p1->>p3: event()
+    p1->>p3: breadcrumb()
 ```
 
 The sequence follows resolved calls outward from `main`, keeping only calls that cross from one documented part into another. Calls reached through trait objects or macros do not appear.
@@ -29,9 +30,9 @@ The sequence follows resolved calls outward from `main`, keeping only calls that
 ## Depends on
 
 - [[codewiki-mcp]]
+- [[cw-telemetry]]
 - [[Logs Module]]
-- [[Paths Module]]
-- [[Resolved]]
+- [[Scrub Module]]
 
 ## See also
 

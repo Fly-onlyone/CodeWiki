@@ -12,16 +12,27 @@ tags: [core, codewiki-app]
 
 ## How it works
 
+1. `column` and `draw_strip` in [[Doc View Module]] call `card`. `card` calls `rise`, then `after`, then `stagger_delay` in [[Motion Module (mui)]].
+2. `table_row` in [[Doc View Module]] calls `row`. `row` calls `slide`, then `after`, then `stagger_delay` in [[Motion Module (mui)]].
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
 Declared as `pub struct Enter`.
 
-Public API:
+Members:
 
+- `pub const PAGE: Self` — `pageEntrance`.
+- `pub const TAB: Self` — `tabSwitch`.
+- `pub const DIALOG: Self` — `scaleIn`, without the scale: a short drop on the bouncy spring.
+- `pub const MENU: Self` — A menu under its button. MUI grows a menu out of its anchor (`Grow/Grow.js`), which is a scale; this is the drop that is left.
 - `pub const fn rise(distance: f32, spring: Spring) -> Self` — comes up from `distance` pixels below.
-- `pub fn card(index: usize) -> Self` — item `index` of a `staggerCascade`.
 - `pub const fn slide(distance: f32, spring: Spring) -> Self` — comes in from `distance` pixels to the left.
-- `pub const PAGE: Self = Self::rise(PAGE_RISE, PAGE)` — `pageEntrance`.
+- `pub fn card(index: usize) -> Self` — item `index` of a `staggerCascade`.
 - `pub fn row(index: usize) -> Self` — item `index` of a `listStagger`.
-- `pub fn at(self, progress: f32) -> (f32, f32, f32)` — where the element is and how visible, `progress` of the way in.
+- `pub const fn after(mut self, delay: Duration) -> Self` — public method, returns `Self`; called by `Enter::card`, `Enter::row`.
+- `pub fn at(self, progress: f32) -> (f32, f32, f32)` — where the element is and how visible, `progress` of the way in. `progress` may pass 1 while the spring overshoots; the offset follows it and the opacity does not.
 
 ## Depends on
 
@@ -31,7 +42,7 @@ Public API:
 ## Used by
 
 - [[Doc View Module]] — from `column`, `draw_strip`, `render`, `table_row`
-- [[codewiki-app]] — from `palette_view`, `viewer`
+- [[codewiki-app]] — from `diagram_viewer_view`, `page_content`, `palette_view`
 - [[Illustration Module]] — from `tabs`
 - [[Menu Module]] — from `render`
 - [[Motion Module (mui)]] — from `enter`

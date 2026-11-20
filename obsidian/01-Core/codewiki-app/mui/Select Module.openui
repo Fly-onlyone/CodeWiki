@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "3")
+f1 = Stat("Used by notes", "2")
+f2 = Stat("Depends on notes", "9")
+flow = Steps([s0, s1])
+s0 = Step("menu", "Called by AppView::settings_menu_view. Calls Menu::new, then menu_width, then px.")
+s1 = Step("Select::new", "Called by select_control.")

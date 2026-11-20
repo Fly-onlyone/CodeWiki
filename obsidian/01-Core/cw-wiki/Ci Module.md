@@ -6,22 +6,34 @@ tags: [core, cw-wiki, module]
 
 > Findings for continuous integration, as text, SARIF or JUnit.
 
+## What it does
+
+`check` gathers what the other analyses report (dead code, file health, documentation drift, stale decisions, security patterns) into one list a CI system can gate on or annotate a pull request with.
+
 ## Source
 
 - `crates/cw-wiki/src/ci.rs` — module `cw_wiki::ci`
 
 ## How it works
 
-Main items:
+1. `run` in [[codewiki]] calls `check`. `check` calls `dead_code`, then `file_health`, then `doc_drift` (all in [[Health Module]]), then `list` in [[Decisions Module]], then `scan` in [[Security Module]].
+2. `run` in [[codewiki]] calls `fails`.
+3. `run` in [[codewiki]] calls `to_text`.
+4. `run` in [[codewiki]] calls `to_sarif`.
+5. `run` in [[codewiki]] calls `to_junit`. `to_junit` calls `xml_escape`.
 
-- `CheckFinding` — struct
-- `check` — run every analysis and return findings sorted by file, line and rule.
-- `to_junit` — JUnit XML: one test case per rule, failing when the rule has findings at or above `threshold`.
-- `to_sarif` — SARIF 2.1.0, the format code-scanning services ingest.
-- `to_text` — function
-- `fails` — true when any finding is at or above `threshold`.
-- `RULES` — what each rule means, shown by tools that list rules.
-- `xml_escape` — function
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
+- `pub struct CheckFinding` — public struct; used by `check`, `fails`, `to_junit`, `to_sarif` and 1 more.
+- `pub(crate) const RULES: [(&str, &str); 22]` — what each rule means, shown by tools that list rules.
+- `pub fn check(root: &Path, index: &Index) -> Result<Vec<CheckFinding>>` — run every analysis and return findings sorted by file, line and rule.
+- `pub fn fails(findings: &[CheckFinding], threshold: Level) -> bool` — true when any finding is at or above `threshold`.
+- `pub fn to_text(findings: &[CheckFinding]) -> String` — public function, returns `String`; called by `run`.
+- `pub fn to_sarif(findings: &[CheckFinding]) -> Value` — SARIF 2.1.0, the format code-scanning services ingest.
+- `fn xml_escape(text: &str) -> String` — private function, returns `String`; called by `to_junit`.
+- `pub fn to_junit(findings: &[CheckFinding], threshold: Level) -> String` — JUnit XML: one test case per rule, failing when the rule has findings at or above `threshold`. Rules with no findings pass, so the report shows what was checked.
 
 ## Depends on
 

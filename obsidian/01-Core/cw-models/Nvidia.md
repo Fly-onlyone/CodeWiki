@@ -10,7 +10,7 @@ tags: [core, cw-models]
 
 - `crates/cw-models/src/hardware.rs` — definition of `Nvidia`
 
-## How it works
+## Items
 
 Declared as `pub struct Nvidia`.
 

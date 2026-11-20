@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "5")
+f1 = Stat("Used by notes", "1")
+f2 = Stat("Depends on notes", "6")
+flow = Steps([s0, s1])
+s0 = Step("rewrite", "Calls kind_hint, then guidance, then read_sources, then record and 1 more.")
+s1 = Step("illustrate", "Calls draw, then record.")

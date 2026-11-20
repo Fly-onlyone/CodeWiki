@@ -1,6 +1,5 @@
-root = Card([summary, figures], "cw-embed-engine")
-summary = TextContent("Runs CodeWiki's built-in embedding models with candle, in the hidden worker process.", "muted")
-figures = Grid([f0, f1, f2, f3], 4)
+root = Card([figures])
+figures = Grid([f0, f1, f2, f3], 2)
 f0 = Stat("Modules", "0")
 f1 = Stat("Public types", "1")
 f2 = Stat("Functions", "7")

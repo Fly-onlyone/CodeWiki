@@ -12,13 +12,17 @@ tags: [core, cw-wiki, module]
 
 ## How it works
 
-Main items:
+1. `reindex` in [[Service Module]] calls `analyze`. `analyze` calls `dependency_graph`, then `pagerank`, then `betweenness`, then `strongly_connected_components` (all in [[Metrics Module]]), then `louvain` in [[Community Module]], then `force_layout` in [[Layout Module]], and 1 more. `dependency_graph` calls `Graph::from_edges` in [[Graph]].
 
-- `DEPENDENCY_KINDS` — edge kinds that express "depends on" between symbols.
-- `analyze` — compute every per-node metric and a layout, sorted by node name.
-- `dependency_graph` — build the symbol dependency graph.
-- `metrics_map` — function
-- `BETWEENNESS_PIVOTS` — sources sampled for betweenness on large graphs.
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
+- `pub const DEPENDENCY_KINDS: [EdgeKind; 3]` — edge kinds that express "depends on" between symbols.
+- `const BETWEENNESS_PIVOTS: usize` — sources sampled for betweenness on large graphs.
+- `pub fn dependency_graph(facts: &RepoFacts) -> Graph` — build the symbol dependency graph.
+- `pub fn analyze(facts: &RepoFacts) -> Vec<(String, NodeMetrics)>` — compute every per-node metric and a layout, sorted by node name.
+- `pub fn metrics_map(metrics: &[(String, NodeMetrics)]) -> HashMap<&str, &NodeMetrics>` — public function, returns `HashMap<&str, &NodeMetrics>`.
 
 ## Depends on
 

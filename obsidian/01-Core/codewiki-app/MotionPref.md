@@ -12,14 +12,19 @@ tags: [core, codewiki-app]
 
 ## How it works
 
+1. `init` in [[Motion Module]] calls `parse`. `parse` calls `key`.
+
+## Items
+
 Declared as `pub enum MotionPref`.
 
-Public API:
+Members:
 
+- `pub const ALL: [Self; 3]` — public constant; used by `MotionPref::parse`, `actions`, `appearance`.
 - `pub fn key(self) -> &'static str` — the word this choice is stored and linked under.
 - `pub fn parse(key: &str) -> Option<Self>` — the choice stored under `key`, if it is one.
 - `pub fn label(self) -> &'static str` — how the choice reads in the settings page and the palette.
-- `pub const ALL: [Self; 3] = [Self::System, Self::Reduced, Self::Full]`
+- `fn reduces(self, system_reduces: bool) -> bool` — whether animations are held still, given what Windows says.
 
 ## Used by
 

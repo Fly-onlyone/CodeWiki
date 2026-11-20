@@ -4,11 +4,11 @@ tags: [pattern]
 
 # Implementing LlmProvider Pattern
 
-> Add a new `LlmProvider` by implementing the trait; 5 types already follow this shape.
+> Add a new `LlmProvider` by implementing the trait; 6 types already follow this shape.
 
 ## When to apply
 
-When adding a type that must act as a `LlmProvider`. Existing implementations: [[AgentCli]], [[Anthropic]], `Logged`, [[Ollama]], and [[OpenAiCompatible]].
+When adding a type that must act as a `LlmProvider`. Existing implementations: [[CliProxy]], [[AgentCli]], [[Anthropic]], `Logged`, [[Ollama]], and [[OpenAiCompatible]].
 
 ## The pattern
 

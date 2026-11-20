@@ -10,7 +10,7 @@ tags: [core, codewiki-app]
 
 - `crates/codewiki-app/src/doc.rs` — definition of `Span`
 
-## How it works
+## Items
 
 Declared as `pub enum Span`.
 

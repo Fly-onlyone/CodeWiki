@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "6")
+f1 = Stat("Used by notes", "4")
+f2 = Stat("Depends on notes", "6")
+flow = Steps([s0, s1])
+s0 = Step("is_test_file", "Called by Repo::is_test, RenderCtx::unit_commands.")
+s1 = Step("discover", "Called by Repo::at, Repo::new. Calls join, then Family::of, then nearest_with, then parent_dir and 5 more.")

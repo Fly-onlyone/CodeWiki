@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "3")
+f1 = Stat("Used by notes", "2")
+f2 = Stat("Depends on notes", "2")
+flow = Steps([s0, s1])
+s0 = Step("download", "Called by install. Calls download_limited.")
+s1 = Step("download_limited", "Called by a_package_larger_than_the_limit_is_refused. Calls get, then parse_sha256, then fetch.")

@@ -10,9 +10,7 @@ tags: [core, cw-wiki, module]
 
 - `crates/cw-wiki/src/level.rs` — module `cw_wiki::level`
 
-## How it works
-
-Main items:
+## Items
 
 - [[Level]] — enum
 

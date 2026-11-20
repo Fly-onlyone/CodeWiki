@@ -2,17 +2,17 @@
 tags: [moc, home]
 ---
 
-# CodeWiki — Knowledge Vault
+# note-style — Knowledge Vault
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 19 crates and 320 source files. This vault maps its architecture, modules and conventions.
+> **note-style** is a Rust codebase of 20 crates and 339 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
-- [[Crate Dependency Flow]] — how the 19 workspace crates depend on each other, from entry points down to shared foundations.
-- [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 10 parts of the codebase.
-- [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 12 parts of the codebase.
+- [[Crate Dependency Flow]] — how the 20 workspace crates depend on each other, from entry points down to shared foundations.
+- [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 11 parts of the codebase.
+- [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 11 parts of the codebase.
 - [[codewiki-mcp Startup Flow]] — call sequence from the `main` entry point of `codewiki-mcp` across 4 parts of the codebase.
 
 → [[00-Architecture/_index|All architecture concepts]]
@@ -34,6 +34,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 - [[01-Core/cw-models/_index|cw-models/]] — Built-in embedding models of CodeWiki: the catalog, the machine's hardware, the recommendation and the model files on disk.
 - [[01-Core/cw-parse/_index|cw-parse/]] — source parsing and symbol extraction for CodeWiki.
 - [[01-Core/cw-server/_index|cw-server/]] — HTTP API of the CodeWiki backend.
+- [[01-Core/cw-telemetry/_index|cw-telemetry/]] — error reports of CodeWiki's programs to Sentry: opt-in, scrubbed of paths and request data.
 - [[01-Core/cw-update/_index|cw-update/]] — Self-update of an installed CodeWiki: release check, download, verification and file swap.
 - [[01-Core/cw-vault/_index|cw-vault/]] — Obsidian vault model for CodeWiki: notes, manifest, name registry, linter, lifecycle and proposals.
 - [[01-Core/cw-wiki/_index|cw-wiki/]] — concept selection and wiki generation pipeline for CodeWiki.
@@ -41,11 +42,11 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 
 ## 🔌 External Integrations
 
-→ [[03-Integrations/_index|All integrations]] — axum, gpui_kit, rusqlite, semver, serde, serde_json, sha2, tree_sitter, windows_sys.
+→ [[03-Integrations/_index|All integrations]] — axum, gpui_kit, rusqlite, semver, sentry, serde, serde_json, sha2, tree_sitter, windows_sys.
 
 ## 🧩 Patterns
 
-→ [[04-Patterns/_index|All patterns]] — Implementing Embedder Pattern, Implementing LlmProvider Pattern.
+→ [[04-Patterns/_index|All patterns]] — Implementing Embedder Pattern, Implementing LlmProvider Pattern, Implementing PackageInfo Pattern, Implementing ProseWriter Pattern.
 
 ## 🛠️ Operations
 

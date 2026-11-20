@@ -12,13 +12,23 @@ tags: [core, cw-embed]
 
 ## How it works
 
+What the functions of this type call:
+
+1. `embed` calls `embed_within`. `embed_within` calls `clip`, then `post_json`, then `checked`, then `parse_openai` (all in [[cw-embed]]).
+2. `probe` calls `embed_within`.
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
 Declared as `pub struct OpenAiEmbedder`.
 
-Public API:
+Members:
 
-- `fn name(&self) -> String`
-- `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>`
-- `fn probe(&self) -> Result<usize>`
+- `fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>>` — private method, returns `Result<Vec<Vec<f32>>>`; called by `OpenAiEmbedder::embed`, `OpenAiEmbedder::probe`.
+- `fn name(&self) -> String` — public method, returns `String`.
+- `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>` — public method, returns `Result<Vec<Vec<f32>>>`.
+- `fn probe(&self) -> Result<usize>` — public method, returns `Result<usize>`.
 
 ## Depends on
 

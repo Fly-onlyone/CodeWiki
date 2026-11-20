@@ -10,7 +10,7 @@ tags: [core, cw-models]
 
 - `crates/cw-models/src/recommend.rs` — definition of `Device`
 
-## How it works
+## Items
 
 Declared as `pub enum Device`.
 

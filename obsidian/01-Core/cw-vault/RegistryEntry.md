@@ -10,7 +10,7 @@ tags: [core, cw-vault]
 
 - `crates/cw-vault/src/registry.rs` — definition of `RegistryEntry`
 
-## How it works
+## Items
 
 Declared as `pub struct RegistryEntry`.
 
@@ -22,7 +22,7 @@ Declared as `pub struct RegistryEntry`.
 
 - [[Registry]] — from `Registry`, `by_id`, `by_name`, `entries`
 - [[VaultMeta]] — from `registry`, `save`
-- [[Generate Module]] — from `generate`
+- [[Generate Module]] — from `generate_with`
 
 ## See also
 

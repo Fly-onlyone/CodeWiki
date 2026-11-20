@@ -10,16 +10,16 @@ tags: [core, codewiki-app]
 
 - `crates/codewiki-app/src/settings.rs` — definition of `FieldId`
 
-## How it works
+## Items
 
 Declared as `pub enum FieldId`.
 
-Public API:
+Members:
 
-- `pub fn place(self) -> Option<(&'static str, &'static str)>` — where the backend keeps the setting: its section and field in `GET /v1/settings`.
+- `pub const ALL: [Self; 10]` — public constant; used by `AppView::commit_settings_fields`, `AppView::take_settings`, `State::new`.
+- `pub fn place(self) -> Option<(&'static str, &'static str)>` — where the backend keeps the setting: its section and field in `GET /v1/settings`. `None` for the two the app keeps itself, the address and token of a backend on another machine.
 - `pub fn secret(self) -> bool` — whether what is typed is hidden, and never shown again once saved.
 - `pub fn placeholder(self) -> &'static str` — what an empty input shows.
-- `pub const ALL: [Self; 8] = [ Self::LlmModel, Self::AnthropicKey, Self::OpenAiKey, Self::OpenAiBaseUrl, Self::OllamaHost, Self::EmbedModel, Self::RemoteUrl, Self::RemoteToken, ]`
 
 ## Used by
 

@@ -1,0 +1,8 @@
+root = Card([figures, flow])
+figures = Grid([f0, f1, f2], 3)
+f0 = Stat("Public items", "4")
+f1 = Stat("Used by notes", "4")
+f2 = Stat("Depends on notes", "2")
+flow = Steps([s0, s1])
+s0 = Step("probe", "Called by recommend. Calls nvidia_card, then disk_free.")
+s1 = Step("nvidia_card", "Called by cuda_usable.")

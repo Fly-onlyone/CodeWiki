@@ -12,11 +12,14 @@ tags: [core, cw-models, module]
 
 ## How it works
 
-Main items:
+1. `busy` in [[Game Module]] calls `full_screen`.
+2. `busy` in [[Game Module]] calls `load_3d_of_others`.
 
-- `full_screen` — function
-- `load_3d_of_others` — function
-- `Query` — closes the query when it goes out of scope, on every path.
+## Items
+
+- `pub fn full_screen() -> bool` — public function, returns `bool`; called by `busy`.
+- `pub fn load_3d_of_others() -> Option<f64>` — public function, returns `Option<f64>`; called by `busy`.
+- `struct Query` — closes the query when it goes out of scope, on every path.
 
 ## Used by
 

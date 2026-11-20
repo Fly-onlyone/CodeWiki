@@ -10,7 +10,7 @@ tags: [core, cw-models]
 
 - `crates/cw-models/src/hardware.rs` — definition of `Hardware`
 
-## How it works
+## Items
 
 Declared as `pub struct Hardware`.
 

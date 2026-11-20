@@ -6,21 +6,27 @@ tags: [core, cw-core]
 
 > How sure the resolver is that an edge is real.
 
+## What it does
+
+Name resolution runs without a compiler, so every edge carries its confidence and consumers weight by it.
+
 ## Source
 
 - `crates/cw-core/src/model.rs` — definition of `Confidence`
 
 ## How it works
 
+1. `edge_from_row` in [[Store Module]] calls `parse`.
+
+## Items
+
 Declared as `pub enum Confidence`.
 
-Name resolution runs without a compiler, so every edge carries its confidence and consumers weight by it.
+Members:
 
-Public API:
-
-- `pub fn parse(s: &str) -> Self`
-- `pub fn weight(self) -> f64`
-- `pub fn as_str(self) -> &'static str`
+- `pub fn weight(self) -> f64` — public method, returns `f64`.
+- `pub fn as_str(self) -> &'static str` — public method, returns `&'static str`.
+- `pub fn parse(s: &str) -> Self` — public method, returns `Self`; called by `edge_from_row`.
 
 ## Used by
 

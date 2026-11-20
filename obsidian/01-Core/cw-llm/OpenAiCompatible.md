@@ -12,13 +12,23 @@ tags: [core, cw-llm]
 
 ## How it works
 
+What the functions of this type call:
+
+1. `probe` calls `send`. `send` calls `chat_request`, then `post_json` (both in [[Provider Module]]).
+2. `complete` calls `send`, then `chat_completion` in [[Provider Module]].
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+
+## Items
+
 Declared as `pub struct OpenAiCompatible`.
 
-Public API:
+Members:
 
-- `fn probe(&self) -> Result<()>` — no output limit is sent: servers of this protocol do not agree on the name of that field.
-- `fn name(&self) -> String`
-- `fn complete(&self, system: &str, user: &str) -> Result<Completion>`
+- `fn send(&self, system: &str, user: &str, timeout: Duration) -> Result<Value>` — private method, returns `Result<Value>`; called by `OpenAiCompatible::complete`, `OpenAiCompatible::probe`.
+- `fn name(&self) -> String` — public method, returns `String`.
+- `fn probe(&self) -> Result<()>` — no output limit is sent: servers of this protocol do not agree on the name of that field. The question keeps the answer short.
+- `fn complete(&self, system: &str, user: &str) -> Result<Completion>` — public method, returns `Result<Completion>`.
 
 ## Depends on
 

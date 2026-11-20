@@ -12,11 +12,13 @@ tags: [core, cw-index, module]
 
 ## How it works
 
-Main items:
+1. `Index::search` in [[cw-index]] calls `fts_query`.
+
+## Items
 
 - [[Document]] — one searchable unit.
-- `Hit` — struct
-- `fts_query` — turn free text into an FTS5 query: each word becomes a quoted prefix term, joined with OR so partial matches still rank.
+- `pub struct Hit` — public struct; used by `Answer`, `Index::nearest`, `Index::search`, `nearest` and 2 more.
+- `fn fts_query(text: &str) -> Option<String>` — turn free text into an FTS5 query: each word becomes a quoted prefix term, joined with OR so partial matches still rank. Quoting keeps user input from being read as FTS5 syntax.
 
 ## Used by
 

@@ -61,7 +61,7 @@ const SECTION_GAP: f32 = 12.0;
 /// MUI's `TableCell`, `size: 'small'`: `padding: '6px 16px'`.
 const CELL_PADDING: (f32, f32) = (16.0, 6.0);
 /// The narrowest a stat tile or a theme card gets before the row wraps.
-const TILE_MIN: f32 = 180.0;
+pub(crate) const TILE_MIN: f32 = 180.0;
 /// TradingAgent, `MuiTableRow`: the primary color at 5% under the pointer.
 const ROW_HOVER: f32 = 0.05;
 /// TradingAgent, `MuiTableCell`: the muted color at 30% between rows, and

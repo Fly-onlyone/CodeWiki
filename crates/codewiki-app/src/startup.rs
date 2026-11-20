@@ -16,9 +16,9 @@
 //! The recent list holds the folders of the repositories opened in the app,
 //! newest first. Home orders the registered repositories by it.
 //!
-//! The command line is `codewiki-app [--tray] [<folder> [<view>]]
-//! [--illustration]`. Flags may stand anywhere; the folder and the view are
-//! the first and second argument that is not a flag.
+//! The command line is `codewiki-app [--tray] [<folder> [<view>]]`. Flags
+//! may stand anywhere; the folder and the view are the first and second
+//! argument that is not a flag.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -34,8 +34,6 @@ pub struct Launch {
     pub repo: Option<String>,
     /// The note or view to open on.
     pub view: Option<String>,
-    /// `--illustration`: open the first note on its illustration.
-    pub illustration: bool,
 }
 
 /// Read the arguments after the program's name. An argument that starts
@@ -47,7 +45,6 @@ fn parse_args(args: impl IntoIterator<Item = String>) -> Launch {
     for arg in args {
         match arg.as_str() {
             "--tray" => launch.tray = true,
-            "--illustration" => launch.illustration = true,
             flag if flag.starts_with("--") => log::warn!("unknown option {flag}; ignored"),
             _ => positional.push(arg),
         }
@@ -308,16 +305,17 @@ mod tests {
                 tray: true,
                 repo: Some(r"D:\code\app".into()),
                 view: Some("_HOME".into()),
-                illustration: false,
             }
         );
+        // `--illustration` once opened a note on its illustration. That is
+        // now drawn in every note; a shortcut that still carries the flag
+        // opens the same note, and the flag is never taken for the view.
         assert_eq!(
-            parse_args(strings(&[r"D:\code\app", "Overview", "--illustration"])),
+            parse_args(strings(&[r"D:\code\app", "--illustration", "Overview"])),
             Launch {
+                tray: false,
                 repo: Some(r"D:\code\app".into()),
                 view: Some("Overview".into()),
-                illustration: true,
-                ..Launch::default()
             }
         );
         // An empty folder is no folder; the view after it still counts.

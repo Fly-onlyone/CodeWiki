@@ -657,7 +657,6 @@ impl AppView {
         self.tabs = vec![Tab {
             page: Page::Message(String::new()),
             history: Vec::new(),
-            show_figure: false,
         }];
         self.active_tab = 0;
         self.settings.backend = None;

@@ -138,11 +138,13 @@ fn card(body: &[&str], title: &str) -> String {
 /// The assignments of a row of headline figures, named `figures`.
 fn figure_row(figures: &[Figure]) -> String {
     let names: Vec<String> = (0..figures.len()).map(|i| format!("f{i}")).collect();
-    let mut out = format!(
-        "figures = Grid([{}], {})\n",
-        names.join(", "),
-        figures.len().min(4)
-    );
+    // An illustration stands in a note's column, where four figures side
+    // by side are too narrow to read: four make two rows of two.
+    let columns = match figures.len() {
+        4 => 2,
+        n => n.min(3),
+    };
+    let mut out = format!("figures = Grid([{}], {columns})\n", names.join(", "));
     for (name, figure) in names.iter().zip(figures) {
         let hint = figure
             .hint
@@ -374,6 +376,30 @@ mod tests {
         assert!(check(&only_steps).is_valid());
         assert!(check(&brief(&[figure("Version", "1")], &[]).unwrap()).is_valid());
         assert_eq!(brief(&[], &[]), None);
+    }
+
+    #[test]
+    fn figures_keep_to_the_width_of_a_note() {
+        let figure = |n: usize| Figure {
+            label: format!("Figure {n}"),
+            value: n.to_string(),
+            hint: None,
+        };
+        let columns = |count: usize| {
+            let figures: Vec<Figure> = (0..count).map(figure).collect();
+            let source = brief(&figures, &[]).unwrap();
+            let grid = source.lines().nth(1).unwrap().to_string();
+            grid.rsplit(", ")
+                .next()
+                .unwrap()
+                .trim_end_matches(')')
+                .to_string()
+        };
+        assert_eq!(columns(1), "1");
+        assert_eq!(columns(3), "3");
+        // Never four in a row.
+        assert_eq!(columns(4), "2");
+        assert_eq!(columns(5), "3");
     }
 
     #[test]

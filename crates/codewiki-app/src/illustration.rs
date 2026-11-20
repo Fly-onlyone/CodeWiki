@@ -20,6 +20,9 @@ use crate::mui::tabs::{Tab, Tabs};
 use crate::mui::tokens::Variant;
 use crate::zoom::px;
 
+/// Space around each cell of a grid: Tailwind's `p-1`, as before.
+const CELL_GAP: f32 = 4.0;
+
 /// MUI's `StepIcon`: a 24 px disc with the step's number in 12 px text.
 const STEP_ICON: f32 = 24.0;
 
@@ -406,21 +409,37 @@ pub fn render(node: &Node, path: &str, window: &mut Window, cx: &mut App) -> Any
             .into_any_element()
         }
         "Grid" => {
-            let items = children(list_of(props, "children"), path, window, cx);
+            let nodes = list_of(props, "children");
+            let items = children(nodes, path, window, cx);
             let columns = match props.get("columns") {
                 Some(Node::Number(n)) if *n >= 1.0 => (*n as usize).min(6),
                 _ => items.len().clamp(1, 4),
             };
             let width = relative(1.0 / columns as f32);
+            // An illustration stands in the note's column, which is narrow.
+            // A stat tile has a width it does not go under, and four of
+            // them side by side are wider than the column: such a row then
+            // wraps instead of running out of its card.
+            let tiles = nodes
+                .iter()
+                .all(|node| matches!(node, Node::Element { name, .. } if name == "Stat"));
+            let narrowest = if tiles {
+                doc_view::TILE_MIN + 2.0 * CELL_GAP
+            } else {
+                0.0
+            };
             h_flex()
                 .w_full()
                 .flex_wrap()
                 .items_stretch()
-                .children(
-                    items
-                        .into_iter()
-                        .map(|item| div().w(width).p_1().child(item)),
-                )
+                .children(items.into_iter().map(|item| {
+                    div()
+                        .flex_basis(width)
+                        .flex_grow(1.)
+                        .min_w(px(narrowest))
+                        .p(px(CELL_GAP))
+                        .child(item)
+                }))
                 .into_any_element()
         }
         "Tabs" => tabs(props, path, window, cx),

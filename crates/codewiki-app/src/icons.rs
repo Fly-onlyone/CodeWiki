@@ -49,7 +49,6 @@ app_icons! {
     EDIT = "edit",
     SAVE = "save",
     CLOSE = "close",
-    FIGURE = "image",
     COMMANDS = "keyboard-command-key",
     GRAPH = "hub",
     HOTSPOTS = "local-fire-department",

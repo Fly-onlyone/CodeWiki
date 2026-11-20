@@ -48,8 +48,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use cw_client::{Backend, encode};
-use gpui_kit::base::TextView;
 use gpui_kit::base::motion::{Presence, Transition};
+use gpui_kit::base::{MarkdownNode, TextView, markdown_ast};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
@@ -184,7 +184,6 @@ struct Repo {
 struct Tab {
     page: Page,
     history: Vec<Page>,
-    show_figure: bool,
 }
 
 /// A note being edited.
@@ -344,10 +343,9 @@ struct AppView {
     last_frame: std::rc::Rc<std::cell::Cell<Option<std::time::Instant>>>,
     drag_last: Option<(f32, f32)>,
     drag_moved: bool,
-    /// Illustration of the current note, when it has a valid one.
+    /// Illustration of the current note, when it has a valid one. It is
+    /// drawn in the note, under the summary.
     figure: Option<openui_lang::Node>,
-    /// Whether the centre pane shows the illustration instead of the text.
-    show_figure: bool,
     /// Palette diagrams were last drawn with; redrawn when the theme flips.
     palette: cw_mermaid::Palette,
     /// How see-through the surfaces are; worked out again on every frame.
@@ -441,7 +439,6 @@ impl AppView {
             tabs: vec![Tab {
                 page: Page::Message(String::new()),
                 history: Vec::new(),
-                show_figure: false,
             }],
             active_tab: 0,
             palette_open: false,
@@ -487,7 +484,6 @@ impl AppView {
             drag_last: None,
             drag_moved: false,
             figure: None,
-            show_figure: false,
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
             zoom_seen: zoom::percent(cx),
@@ -1480,7 +1476,6 @@ impl AppView {
             cx.notify();
         });
         state.update(cx, |state, cx| state.focus(window, cx));
-        self.show_figure = false;
         self.editing = Some(Editing {
             path,
             original,
@@ -1548,7 +1543,6 @@ impl AppView {
             Page::Note { figure, .. } => figure.clone(),
             _ => None,
         };
-        self.show_figure = false;
         // The diagram in the viewer belongs to the page that was left.
         self.diagram_open = false;
         self.diagram_viewer = None;
@@ -1559,7 +1553,6 @@ impl AppView {
         self.tabs[self.active_tab] = Tab {
             page: self.page.clone(),
             history: std::mem::take(&mut self.history),
-            show_figure: self.show_figure,
         };
     }
 
@@ -1567,9 +1560,7 @@ impl AppView {
         let tab = &mut self.tabs[self.active_tab];
         self.page = tab.page.clone();
         self.history = std::mem::take(&mut tab.history);
-        let show_figure = tab.show_figure;
         self.show_page();
-        self.show_figure = show_figure && self.figure.is_some();
     }
 
     fn activate_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1597,7 +1588,6 @@ impl AppView {
         self.tabs.push(Tab {
             page: self.page.clone(),
             history: Vec::new(),
-            show_figure: false,
         });
         self.active_tab = self.tabs.len() - 1;
         self.load_tab();
@@ -1904,14 +1894,17 @@ impl AppView {
                 let diagrams = &mut self.diagrams;
                 let sources = &mut self.diagram_sources;
                 let store = &mut self.diagram_store;
-                markdown::prepare_note_with(text, |source| match store.lookup(source, palette) {
-                    diagrams::Lookup::Ready(Some(image)) => {
-                        diagrams.push(image);
-                        sources.push(source.to_string());
-                        markdown::Diagram::Image(diagrams.len() - 1)
+                let figure = self.figure.is_some();
+                markdown::prepare_note_with(text, figure, |source| {
+                    match store.lookup(source, palette) {
+                        diagrams::Lookup::Ready(Some(image)) => {
+                            diagrams.push(image);
+                            sources.push(source.to_string());
+                            markdown::Diagram::Image(diagrams.len() - 1)
+                        }
+                        diagrams::Lookup::Ready(None) => markdown::Diagram::Source,
+                        diagrams::Lookup::Pending => markdown::Diagram::Drawing,
                     }
-                    diagrams::Lookup::Ready(None) => markdown::Diagram::Source,
-                    diagrams::Lookup::Pending => markdown::Diagram::Drawing,
                 })
             }
             // Drawn from their own model, not from Markdown.
@@ -2017,10 +2010,6 @@ impl AppView {
                     },
                     remember,
                 );
-                // `--illustration` opens the first note on its illustration.
-                this.show_figure = this.figure.is_some()
-                    && this.history.is_empty()
-                    && startup::launch().illustration;
             },
         );
     }
@@ -2644,26 +2633,6 @@ impl AppView {
                         .on_click(cx.listener(|this, _, window, cx| this.discard_edit(window, cx))),
                 )
             })
-            .when(self.figure.is_some() && self.editing.is_none(), |this| {
-                this.child(
-                    Button::new("figure")
-                        .icon(if self.show_figure {
-                            icons::NOTE
-                        } else {
-                            icons::FIGURE
-                        })
-                        .label(if self.show_figure {
-                            "Text"
-                        } else {
-                            "Illustration"
-                        })
-                        .small()
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.show_figure = !this.show_figure;
-                            cx.notify();
-                        })),
-                )
-            })
             .when_some(
                 self.update.available().map(|r| r.version.to_string()),
                 |this, version| {
@@ -3194,7 +3163,7 @@ impl AppView {
         let closed = value
             .get(cursor..)
             .is_some_and(|rest| rest.starts_with("]]"));
-        let preview = markdown::prepare_note_with(&value, |_| markdown::Diagram::Source);
+        let preview = markdown::prepare_note_with(&value, false, |_| markdown::Diagram::Source);
         let (border, muted, mono, mono_size) = {
             let theme = cx.theme();
             (
@@ -3272,7 +3241,7 @@ impl AppView {
     }
 
     /// The centre pane for every page except the graph.
-    fn page_view(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+    fn page_view(&self, cx: &mut Context<Self>) -> AnyElement {
         match &self.editing {
             Some(editing) => v_flex()
                 .flex_1()
@@ -3283,69 +3252,12 @@ impl AppView {
                 })
                 .child(self.edit_view(editing, cx))
                 .into_any_element(),
-            None => self.viewer(window, cx).into_any_element(),
+            None => self.viewer(cx).into_any_element(),
         }
     }
 
-    fn viewer(&self, window: &mut Window, cx: &mut Context<Self>) -> Div {
-        let source = self.rendered.clone();
-        let diagrams = self.diagrams.clone();
-        let view = cx.entity().downgrade();
-        // Notes are prose; everything else is mostly tables and needs room.
-        let measure = match self.page {
-            Page::Note { .. } => reading::NOTE_MEASURE,
-            _ => reading::WIDE_MEASURE,
-        };
-        let showing_figure = self.show_figure && self.figure.is_some();
-        let figure = self
-            .figure
-            .as_ref()
-            .filter(|_| self.show_figure)
-            .map(|figure| illustration::render(figure, "figure", window, cx));
-        let page = (!showing_figure).then(|| {
-            let content = match &self.page {
-                Page::Note { .. } => div()
-                    .size_full()
-                    .py_4()
-                    .child(reading::frame(
-                        // A fresh id per page resets scroll position and selection.
-                        TextView::markdown(("page", self.page_serial), source)
-                            .scrollable(true)
-                            .image_source(move |uri| {
-                                uri.strip_prefix(markdown::DIAGRAM_SCHEME)
-                                    .and_then(|index| index.parse::<usize>().ok())
-                                    .and_then(|index| diagrams.get(index).cloned())
-                                    .map(ImageSource::Image)
-                                    .unwrap_or_else(|| uri.clone().into())
-                            })
-                            .on_link_click(move |url, _, window, cx| {
-                                let url = url.to_string();
-                                _ = view.update(cx, |this, cx| this.follow_link(&url, window, cx));
-                            }),
-                        self.pane_width,
-                        measure,
-                        cx,
-                    ))
-                    .into_any_element(),
-                Page::Generated { doc, .. } | Page::Proposal { doc, .. } | Page::Notice(doc) => {
-                    return self.doc_element(doc, cx);
-                }
-                Page::Message(message) => {
-                    return self.doc_element(&Rc::new(live::message_page(message)), cx);
-                }
-                Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
-                // Each has a view of its own (`graph_view`, `settings_frame`).
-                Page::Graph | Page::Settings(_) => div().into_any_element(),
-            };
-            // A new note rises into place. The id changes with the page, so
-            // this runs once per page and not on a redraw.
-            div()
-                .flex_1()
-                .min_h_0()
-                .child(content)
-                .enter(("page-in", self.page_serial), Enter::PAGE)
-                .into_any_element()
-        });
+    fn viewer(&self, cx: &mut Context<Self>) -> Div {
+        let page = self.page_content(cx);
         v_flex()
             .flex_1()
             .min_w_0()
@@ -3356,18 +3268,85 @@ impl AppView {
             .when_some(self.proposal_actions(cx), |this, actions| {
                 this.child(actions)
             })
-            .when_some(figure, |this, figure| {
-                this.child(
+            .child(page)
+    }
+
+    /// The page itself: a note as Markdown with its illustration in it, or
+    /// a generated page drawn from its own model.
+    fn page_content(&self, cx: &mut Context<Self>) -> AnyElement {
+        let source = self.rendered.clone();
+        let diagrams = self.diagrams.clone();
+        let view = cx.entity().downgrade();
+        // Notes are prose; everything else is mostly tables and needs room.
+        let measure = match self.page {
+            Page::Note { .. } => reading::NOTE_MEASURE,
+            _ => reading::WIDE_MEASURE,
+        };
+        let content = {
+            match &self.page {
+                Page::Note { .. } => {
+                    // A fresh id per page resets scroll position and selection.
+                    let mut note = TextView::markdown(("page", self.page_serial), source)
+                        .scrollable(true)
+                        .image_source(move |uri| {
+                            uri.strip_prefix(markdown::DIAGRAM_SCHEME)
+                                .and_then(|index| index.parse::<usize>().ok())
+                                .and_then(|index| diagrams.get(index).cloned())
+                                .map(ImageSource::Image)
+                                .unwrap_or_else(|| uri.clone().into())
+                        })
+                        .on_link_click(move |url, _, window, cx| {
+                            let url = url.to_string();
+                            _ = view.update(cx, |this, cx| this.follow_link(&url, window, cx));
+                        });
+                    // The illustration is a block of the note itself: it
+                    // keeps the note's column and scrolls with its text.
+                    // `prepare_page` put an empty code block where it goes.
+                    if let Some(figure) = self.figure.clone() {
+                        note = note
+                            .markdown_block_parser(|node, _| match node {
+                                markdown_ast::Node::Code(code)
+                                    if code.lang.as_deref() == Some(markdown::FIGURE_BLOCK) =>
+                                {
+                                    Some(MarkdownNode::new(markdown::FIGURE_BLOCK, ()))
+                                }
+                                _ => None,
+                            })
+                            .markdown_block_renderer(
+                                markdown::FIGURE_BLOCK,
+                                move |_, window, cx| {
+                                    div()
+                                        .w_full()
+                                        .py_2()
+                                        .child(illustration::render(&figure, "figure", window, cx))
+                                },
+                            );
+                    }
                     div()
-                        .id("figure")
-                        .flex_1()
-                        .min_h_0()
-                        .p_6()
-                        .overflow_y_scrollbar()
-                        .child(figure),
-                )
-            })
-            .when_some(page, |this, page| this.child(page))
+                        .size_full()
+                        .py_4()
+                        .child(reading::frame(note, self.pane_width, measure, cx))
+                        .into_any_element()
+                }
+                Page::Generated { doc, .. } | Page::Proposal { doc, .. } | Page::Notice(doc) => {
+                    return self.doc_element(doc, cx);
+                }
+                Page::Message(message) => {
+                    return self.doc_element(&Rc::new(live::message_page(message)), cx);
+                }
+                Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
+                // Each has a view of its own (`graph_view`, `settings_frame`).
+                Page::Graph | Page::Settings(_) => div().into_any_element(),
+            }
+        };
+        // A new note rises into place. The id changes with the page, so
+        // this runs once per page and not on a redraw.
+        div()
+            .flex_1()
+            .min_h_0()
+            .child(content)
+            .enter(("page-in", self.page_serial), Enter::PAGE)
+            .into_any_element()
     }
 
     /// Home, from the registered repositories and the open one.
@@ -4218,7 +4197,7 @@ impl AppView {
                         .flex_1()
                         .min_h_0()
                         .w_full()
-                        .child(self.page_view(window, cx)),
+                        .child(self.page_view(cx)),
                 )
                 .when(home, |column| {
                     column
@@ -4273,7 +4252,7 @@ impl AppView {
                                     .child(if matches!(self.page, Page::Graph) {
                                         self.graph_view(window, cx)
                                     } else {
-                                        self.page_view(window, cx)
+                                        self.page_view(cx)
                                     }),
                             )
                             .when(self.details_shown > 0.0, |row| {

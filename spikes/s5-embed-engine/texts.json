@@ -1,0 +1,12 @@
+{
+  "queries": [
+    " Who made the song My achy breaky heart? ",
+    "summit define",
+    "where is the embedder chosen at run time"
+  ],
+  "documents": [
+    "Achy Breaky Heart is a country song written by Don Von Tress. Originally titled Don't Tell My Heart and performed by The Marcy Brothers in 1991. ",
+    "Definition of summit for English Language Learners. : 1 the highest point of a mountain : the top of a mountain. : 2 the highest level. : 3 a meeting or series of meetings between the leaders of two or more governments.",
+    "pub fn configure(resolved: &Resolved) { EMBEDDER.configure(resolved); } // Use the embedder the settings in effect name. The programs call this at their start, and the backend again when the settings change, so no restart is needed."
+  ]
+}

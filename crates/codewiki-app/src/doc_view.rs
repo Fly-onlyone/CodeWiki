@@ -511,6 +511,31 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
                     .on_click(move |_, window, cx| on_action(&action, window, cx))
             }))
             .into_any_element(),
+        Block::Progress {
+            label,
+            share,
+            detail,
+            moving,
+        } => {
+            let theme = cx.theme();
+            let (color, muted) = (theme.primary, theme.muted_foreground);
+            // Work that waits keeps its bar, still and without its color.
+            let bar = match share {
+                Some(share) => feedback::progress(*share, if *moving { color } else { muted }, cx)
+                    .w_full()
+                    .into_any_element(),
+                None if *moving => feedback::linear_progress("model-job", cx).into_any_element(),
+                None => feedback::progress(0.0, muted, cx)
+                    .w_full()
+                    .into_any_element(),
+            };
+            v_flex()
+                .gap(px(8.))
+                .child(surfaces::text(Variant::Body2, label.clone()))
+                .child(bar)
+                .child(surfaces::text(Variant::Caption, detail.clone()).text_color(muted))
+                .into_any_element()
+        }
         Block::Logo => img(icons::LOGO)
             .size(px(LOGO_SIZE))
             .flex_none()

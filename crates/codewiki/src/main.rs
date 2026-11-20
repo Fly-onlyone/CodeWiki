@@ -1,5 +1,6 @@
 //! CodeWiki command line.
 
+mod model;
 mod serve;
 
 use std::path::PathBuf;
@@ -132,6 +133,23 @@ enum Command {
     Approve { id: String },
     /// Discard a proposal; the same change is not proposed again.
     Reject { id: String },
+    /// The built-in embedding models for semantic search: what there is,
+    /// what fits this machine, and what is installed.
+    Model {
+        #[command(subcommand)]
+        action: model::ModelAction,
+    },
+    /// The process that holds a built-in embedding model. CodeWiki starts it
+    /// by itself and speaks with it over its standard input and output.
+    #[command(hide = true)]
+    EmbedWorker {
+        /// Catalog id of the model.
+        #[arg(long)]
+        model: String,
+        /// The folder that holds the installed models.
+        #[arg(long)]
+        models_dir: PathBuf,
+    },
     /// Run the backend HTTP server used by the desktop app and agents.
     Serve {
         /// Address to listen on. Anything but loopback requires CODEWIKI_TOKEN.
@@ -212,6 +230,10 @@ fn print_json(encoded: serde_json::Result<String>) -> Result<()> {
 fn run(cli: Cli) -> Result<()> {
     if let Command::Serve { host, port } = cli.command {
         return serve::run(host, port);
+    }
+    // The models belong to the machine, not to a repository.
+    if let Command::Model { action } = &cli.command {
+        return model::run(action, cli.json);
     }
     let root = cli
         .repo
@@ -761,8 +783,21 @@ fn run(cli: Cli) -> Result<()> {
             println!("rejected {}", p.id);
             Ok(())
         }
-        Command::Serve { .. } => unreachable!("handled before the repository is resolved"),
+        Command::Serve { .. } | Command::Model { .. } | Command::EmbedWorker { .. } => {
+            unreachable!("handled before the repository is resolved")
+        }
     }
+}
+
+#[cfg(windows)]
+fn embed_worker(model: &str, models_dir: &std::path::Path) -> ExitCode {
+    cw_embed_engine::worker(model, models_dir)
+}
+
+#[cfg(not(windows))]
+fn embed_worker(_: &str, _: &std::path::Path) -> ExitCode {
+    eprintln!("error: this build cannot run a built-in model; it runs on Windows");
+    ExitCode::FAILURE
 }
 
 fn main() -> ExitCode {
@@ -783,6 +818,10 @@ fn main() -> ExitCode {
         std::panic::set_hook(Box::new(|_| {}));
         let _ = std::panic::catch_unwind(|| session_start_hook(&cli.repo));
         return ExitCode::SUCCESS;
+    }
+    if let Command::EmbedWorker { model, models_dir } = &cli.command {
+        // Its standard output carries the protocol; it keeps its own log.
+        return embed_worker(model, models_dir);
     }
     // The backend has no console when the app or an agent starts it: it keeps
     // `backend.log`, and prints the same lines when run from a terminal. A

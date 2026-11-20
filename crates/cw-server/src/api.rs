@@ -18,7 +18,7 @@ use cw_wiki::{query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, repos, settings, workspace};
+use crate::{AppState, models, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -163,6 +163,12 @@ pub fn routes(state: AppState) -> Router {
         .route("/settings", get(read_settings).put(write_settings))
         .route("/settings/test/llm", post(test_llm))
         .route("/settings/test/embed", post(test_embedder))
+        .route("/models", get(read_models))
+        .route("/models/cancel", post(cancel_model_job))
+        .route("/models/reembed", post(reembed))
+        .route("/models/{id}", axum::routing::delete(remove_model))
+        .route("/models/{id}/install", post(install_model))
+        .route("/models/{id}/use", post(use_model))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -185,7 +191,10 @@ async fn health() -> Json<Value> {
 /// started them, and when an agent's MCP bridge last called. The app shows it
 /// in its tray icon. Unlike `/v1/health` it needs the token.
 async fn backend_status(State(state): State<AppState>) -> Json<Value> {
-    Json(state.0.activity.report())
+    let mut report = state.0.activity.report();
+    // The job on a built-in model that runs, or null.
+    report["model_job"] = state.0.jobs.status();
+    Json(report)
 }
 
 /// Stop the backend once the requests already running are done. The app calls
@@ -229,6 +238,79 @@ async fn test_llm(State(state): State<AppState>) -> Api<Value> {
 /// The same for the embedder of semantic search.
 async fn test_embedder(State(state): State<AppState>) -> Api<Value> {
     blocking(move || Ok(settings::test_embedder(&state))).await
+}
+
+/// The answer of every model route on a backend that listens beyond this
+/// machine. A model is installed on the backend's machine and takes its
+/// disk, memory and graphics card; like the settings, that is decided there.
+fn models_closed(state: &AppState) -> Option<Response> {
+    (!state.0.config.settings_writable).then(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this backend's built-in models are managed on its own machine"
+            })),
+        )
+            .into_response()
+    })
+}
+
+/// The built-in models: the machine, the recommendation, the catalog with
+/// what is installed and in use, and the job that runs.
+async fn read_models(State(state): State<AppState>) -> Response {
+    if let Some(closed) = models_closed(&state) {
+        return closed;
+    }
+    blocking(move || Ok(models::describe(&state)))
+        .await
+        .into_response()
+}
+
+/// Start a job and answer 202 with it; its progress is in `GET /v1/models`.
+async fn start_model_job(state: AppState, kind: models::Kind, id: Option<String>) -> Response {
+    if let Some(closed) = models_closed(&state) {
+        return closed;
+    }
+    match blocking(move || models::start(&state, kind, id.as_deref())).await {
+        Ok(job) => (StatusCode::ACCEPTED, job).into_response(),
+        Err(error) => error.into_response(),
+    }
+}
+
+/// Download a model, make it the embedder, and embed every repository's
+/// documents again.
+async fn install_model(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    start_model_job(state, models::Kind::Install, Some(id)).await
+}
+
+/// Make an installed model the embedder, and embed again.
+async fn use_model(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    start_model_job(state, models::Kind::Use, Some(id)).await
+}
+
+/// Embed again what waits, with the embedder in use.
+async fn reembed(State(state): State<AppState>) -> Response {
+    start_model_job(state, models::Kind::Reembed, None).await
+}
+
+/// Stop the running job. What it downloaded and embedded stays, and the
+/// next job goes on from there.
+async fn cancel_model_job(State(state): State<AppState>) -> Response {
+    if let Some(closed) = models_closed(&state) {
+        return closed;
+    }
+    state.0.jobs.cancel();
+    Json(json!({ "job": state.0.jobs.snapshot() })).into_response()
+}
+
+/// Delete a model from the disk.
+async fn remove_model(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    if let Some(closed) = models_closed(&state) {
+        return closed;
+    }
+    blocking(move || models::remove(&state, &id))
+        .await
+        .into_response()
 }
 
 /// Resolved repository: its root folder and its index.
@@ -319,11 +401,15 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
     // The provider is read per request so a settings change needs no restart.
     let writer = cw_llm::writer_from(&settings::resolved(state))?;
-    service::update_in(
+    let report = service::update_in(
         &repo.data_dir,
         &repo.root,
         writer.as_ref().map(|w| w as &dyn cw_wiki::ProseWriter),
-    )
+    );
+    // Still under the lock: a background embedding that stores next sees
+    // that the documents changed.
+    models::after_update(state, &repo.root);
+    report
 }
 
 async fn update_repo(

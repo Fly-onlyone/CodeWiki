@@ -16,6 +16,7 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 - **Keeps it current.** After new commits it rewrites only the notes whose source changed.
 - **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them.
 - **Answers agents.** An MCP server gives Claude Code and other agents the wiki, symbol detail, search, risk and impact analysis.
+- **Searches by meaning.** Full-text search, joined on Windows by an embedding model that CodeWiki downloads and runs on your machine, on the processor or an NVIDIA card. No key, no other install, no text leaves the machine.
 - **Analyses the code.** Hotspots, ownership, change coupling, blast radius, dead code, documentation drift, file health, test impact, coverage gaps, security patterns, refactoring suggestions, decision records and API contracts.
 
 Symbols are extracted for Rust, Python, TypeScript, JavaScript and Java. Other files are indexed by path.
@@ -42,7 +43,7 @@ To build the same zip from source, with Rust 1.95 or newer and the MSVC toolchai
 pwsh scripts\package.ps1
 ```
 
-It writes `dist\CodeWiki-<version>-windows-x64.zip`.
+It writes `dist\CodeWiki-<version>-windows-x64.zip`. The zip is about 490 MB, of which some 460 MB is the folder `cuda`: the worker that runs an embedding model on an NVIDIA card, and three NVIDIA libraries it needs, passed on under NVIDIA's licence (`cuda\NVIDIA-CUDA-EULA.txt`). Building that worker also needs Visual Studio's C++ tools and NVIDIA's CUDA toolkit, which the script fetches by itself (0.9 GB, no installer). `pwsh scripts\package.ps1 -NoCuda` builds a package of about 30 MB without the folder; it runs the models on the processor.
 
 The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to run directly unless scripts have been allowed. From a terminal, `powershell -ExecutionPolicy Bypass -File install.ps1` does the same.
 
@@ -91,7 +92,32 @@ Closing the app also stops the local backend it used; one named by `CODEWIKI_URL
 
 ### Search
 
-Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default, built in, no model needed), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for the last two. After a change of embedder, search is full-text alone until the next `codewiki update` embeds the documents again.
+Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default: it matches word forms and needs no model), `builtin` (a model CodeWiki runs by itself, see below), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for `ollama` and `openai`, and for `builtin` the id of an installed model. After a change of embedder, search is full-text alone until the documents are embedded again: by the next `codewiki update`, or for a built-in model in the background.
+
+#### A built-in model
+
+On Windows, CodeWiki can download an embedding model and run it on your machine. Search then finds notes and code by what they mean, not only by the words in them: "is the user playing" finds a function named `busy` in a module about games. Nothing else is installed, no key is needed, and no text leaves the machine.
+
+In the app, Home offers the model recommended for your machine until one is installed, and Settings → Semantic search lists them all with Install, Use and Remove. Install downloads the model, makes it the embedder, and embeds every repository's documents again in the background, with a bar that shows how far it is. From the command line:
+
+```
+codewiki model list          # the models, and which are installed
+codewiki model recommend     # the one for this machine, and why
+codewiki model install gte-modernbert-base
+codewiki model remove gte-modernbert-base
+```
+
+| Model | Download | Languages | Recommended for |
+|---|---|---|---|
+| `granite-small-english-r2` | 94 MB | English | under 8 GB of memory, or fewer than 4 processor cores |
+| `gte-modernbert-base` | 288 MB | English | 8 GB of memory and 4 cores or more |
+| `qwen3-embedding-0.6b` | 1.1 GB | many | an NVIDIA card with 6 GB of video memory or more |
+
+All three are under the Apache License 2.0 and come from their publishers' repositories on Hugging Face; every file is checked against a SHA-256 that ships with CodeWiki. A download that is cut short goes on where it stopped. The command line only downloads and deletes: to search with a model it installed, choose it in the app, or set `CODEWIKI_EMBED=builtin` and `CODEWIKI_EMBED_MODEL` to its id.
+
+The model runs in a hidden process of its own, which starts with the first search or embedding and is put away after ten idle minutes, so that its memory comes back. On a processor the first embedding of a repository takes a while: about 15 short documents a second with `gte-modernbert-base` on a 12-core desktop, fewer for long notes. On an NVIDIA card it is some 25 times faster; the package brings what the card needs (the folder `cuda`, which is most of the download), and `CODEWIKI_EMBED_DEVICE` (`auto`, `cpu`, `cuda`) or the "Runs on" setting says which to use. While a game runs full-screen and keeps the graphics card busy, the model is put away at once and background embedding waits until the game ends.
+
+A backend that listens beyond its own machine does not let another machine install or remove its models, and the Docker image has no engine to run one.
 
 ### Saved settings
 

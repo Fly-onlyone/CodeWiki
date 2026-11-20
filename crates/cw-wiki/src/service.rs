@@ -26,6 +26,36 @@ pub fn open_index_in(data_dir: &Path, root: &Path) -> Result<Index> {
     built(root, Index::open(&index_path_in(data_dir, root))?)
 }
 
+/// Open the index of the repository at `root` under `data_dir` when it has
+/// been built; `None` when there is none yet. Unlike [`open_index_in`] this
+/// never scans the repository: work that only wants to add to an index, as
+/// embedding its documents again does, must not build one as a side effect.
+pub fn open_existing_index_in(data_dir: &Path, root: &Path) -> Result<Option<Index>> {
+    let path = index_path_in(data_dir, root);
+    if !path.is_file() {
+        return Ok(None);
+    }
+    let index = Index::open(&path)?;
+    Ok(index.meta(META_BUILT)?.is_some().then_some(index))
+}
+
+/// The kinds of search document an index holds: [`reindex`] writes symbols
+/// and files, [`index_notes`] the notes.
+pub const DOCUMENT_KINDS: [&str; 3] = ["symbol", "file", "note"];
+
+/// Bring the search vectors of an index in line with the documents it
+/// already holds, with `embedder`. Nothing is scanned, generated or written
+/// to the vault, and no LLM is called. `on_batch` hears how far the run is
+/// after each batch and may stop it; the next call goes on from there.
+pub fn reembed(
+    index: &mut Index,
+    embedder: &dyn cw_embed::Embedder,
+    on_batch: &mut dyn FnMut(crate::semantic::Progress) -> std::ops::ControlFlow<()>,
+) -> Result<crate::semantic::Progress> {
+    let documents = index.documents(&DOCUMENT_KINDS)?;
+    crate::semantic::embed_documents_with(index, embedder, &DOCUMENT_KINDS, &documents, on_batch)
+}
+
 /// Meta key set once the index has been filled from the repository.
 const META_BUILT: &str = "built";
 

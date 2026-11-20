@@ -6,7 +6,7 @@ use std::path::Path;
 use axum::Router;
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use cw_server::{ServerConfig, router};
+use cw_server::{Host, ServerConfig, router};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
@@ -72,6 +72,7 @@ impl Harness {
             webhook_secret: secret.map(str::to_string),
             settings_writable,
             env,
+            host: Host::default(),
         });
         Self { app, data, repo }
     }
@@ -489,6 +490,123 @@ async fn a_change_that_cannot_be_applied_changes_nothing() {
     assert_eq!(settings["embed"]["provider"]["value"], "local");
 }
 
+/// Put a model of the catalog under the data directory as an install leaves
+/// it, with empty files of the right sizes. Nothing runs it in these tests.
+#[cfg(windows)]
+fn install_model(data: &Path, id: &str) {
+    let entry = cw_models::catalog::find(id).unwrap();
+    let dir = cw_models::Store::new(data, None).dir(entry);
+    fs::create_dir_all(&dir).unwrap();
+    for file in &entry.files {
+        fs::File::create(dir.join(&file.path))
+            .unwrap()
+            .set_len(file.size)
+            .unwrap();
+    }
+    write(
+        &dir,
+        "manifest.json",
+        &json!({ "revision": entry.revision }).to_string(),
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn the_built_in_embedder_is_offered_and_taken_only_with_an_installed_model() {
+    let h = Harness::new();
+    let settings = h.get("/v1/settings").await;
+    // The graphics card is offered where a worker for it is installed, which
+    // a test program is not.
+    assert_eq!(
+        settings["embed"]["device"],
+        json!({
+            "value": "auto",
+            "source": "default",
+            "env": "CODEWIKI_EMBED_DEVICE",
+            "default": "auto",
+            "options": ["auto", "cpu"],
+        })
+    );
+    for (body, expected) in [
+        (
+            json!({ "embed": { "provider": "builtin" } }),
+            "needs a model",
+        ),
+        (
+            json!({ "embed": { "provider": "builtin", "model": "bert" } }),
+            "unknown built-in model 'bert'",
+        ),
+        (
+            json!({ "embed": { "provider": "builtin", "model": "granite-small-english-r2" } }),
+            "Granite Embedding Small English R2 is not installed",
+        ),
+        (
+            json!({ "embed": { "device": "quantum" } }),
+            "unknown device 'quantum'",
+        ),
+    ] {
+        let (status, error) = h.refused(body.clone()).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+        assert!(error.contains(expected), "{body}: {error}");
+    }
+    assert_eq!(
+        h.get("/v1/settings").await["embed"]["provider"]["value"],
+        "local"
+    );
+
+    install_model(h.data.path(), "granite-small-english-r2");
+    assert_eq!(
+        h.get("/v1/settings").await["embed"]["provider"]["options"],
+        json!(["local", "builtin", "ollama", "openai", "none"])
+    );
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": {
+                "provider": "builtin",
+                "model": "granite-small-english-r2",
+                "device": "cpu",
+            } }),
+        )
+        .await;
+    assert_eq!(
+        settings["embed"]["name"],
+        "builtin:granite-small-english-r2@2ab6fa8ea2d6"
+    );
+    assert_eq!(settings["embed"]["problem"], Value::Null);
+    // A device this installation cannot use is refused while the built-in
+    // embedder is chosen, and the device stays.
+    let (status, error) = h.refused(json!({ "embed": { "device": "cuda" } })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error.contains("no worker for the graphics card"), "{error}");
+    assert_eq!(
+        h.get("/v1/settings").await["embed"]["device"]["value"],
+        "cpu"
+    );
+
+    // Another provider does not inherit the catalog id as its model.
+    let settings = h
+        .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
+        .await;
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
+    // And the built-in one does not inherit a model name as its catalog id.
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "model": "nomic-embed-text" } }),
+    )
+    .await;
+    let (_, error) = h
+        .refused(json!({ "embed": { "provider": "builtin" } }))
+        .await;
+    assert!(error.contains("needs a model"), "{error}");
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "provider": "local", "model": null } }),
+    )
+    .await;
+}
+
 /// An environment in which only the model is set.
 fn model_from_env(name: &str) -> Option<String> {
     (name == "CODEWIKI_MODEL").then(|| "env-model".to_string())
@@ -677,6 +795,7 @@ async fn shutdown_route_ends_serve() {
         webhook_secret: None,
         settings_writable: true,
         env: no_env,
+        host: Host::default(),
     };
     let (bound_tx, bound_rx) = std::sync::mpsc::channel();
     let server = tokio::spawn(cw_server::serve(

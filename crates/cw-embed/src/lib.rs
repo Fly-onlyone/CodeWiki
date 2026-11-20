@@ -1,18 +1,21 @@
 //! Text embeddings for semantic search.
 //!
-//! Three embedders sit behind one trait:
+//! Four embedders sit behind one trait:
 //!
 //! - [`LocalEmbedder`] runs in-process with no model file and no network. It
 //!   hashes words, word pairs and character trigrams into a fixed-size
 //!   vector, so texts that share vocabulary, word stems or identifier parts
 //!   land close together. It does not know that two unrelated words mean the
 //!   same thing; a neural model does.
+//! - [`BuiltinEmbedder`] has a neural model of CodeWiki's own catalog embed,
+//!   in a hidden child process that CodeWiki starts by itself.
 //! - [`OllamaEmbedder`] calls a model served by a local Ollama.
 //! - [`OpenAiEmbedder`] calls any OpenAI-compatible embeddings endpoint.
 //!
-//! `CODEWIKI_EMBED` selects one: `local` (default), `ollama`, `openai` or
-//! `none`.
+//! `CODEWIKI_EMBED` selects one: `local` (default), `builtin`, `ollama`,
+//! `openai` or `none`.
 
+use std::path::Path;
 use std::time::Duration;
 
 use cw_core::{Error, Result};
@@ -22,8 +25,12 @@ use serde_json::{Value, json};
 pub const EMBED_ENV: &str = "CODEWIKI_EMBED";
 /// Model name for the HTTP embedders.
 pub const EMBED_MODEL_ENV: &str = "CODEWIKI_EMBED_MODEL";
+/// What runs a built-in model.
+pub const EMBED_DEVICE_ENV: &str = "CODEWIKI_EMBED_DEVICE";
 /// The embedders a user can choose, in the order a page lists them.
-pub const PROVIDERS: [&str; 4] = ["local", "ollama", "openai", "none"];
+pub const PROVIDERS: [&str; 5] = ["local", "builtin", "ollama", "openai", "none"];
+/// The values of [`EMBED_DEVICE_ENV`].
+pub const DEVICES: [&str; 3] = ["auto", "cpu", "cuda"];
 
 /// Texts sent to an HTTP embedder in one request.
 const BATCH: usize = 64;
@@ -42,6 +49,27 @@ pub trait Embedder: Send + Sync {
     fn name(&self) -> String;
     /// One vector per text, in order. Every vector has the same length.
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>;
+    /// The vector of what a user searches for. Some models put an
+    /// instruction before a query and none before a document; the others
+    /// embed both alike, which is the default.
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        self.embed(&[text.to_string()])?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid(format!("{} returned no vector", self.name())))
+    }
+    /// How many documents to hand to one [`Embedder::embed`] call when many
+    /// wait. Between two calls a long run reports how far it is and can be
+    /// stopped, so a slow embedder names a small number.
+    fn batch_size(&self) -> usize {
+        BATCH
+    }
+    /// Whether a repository's documents take it minutes. A caller that holds
+    /// a lock, and someone's patience, while it embeds then leaves the work
+    /// to the background.
+    fn slow(&self) -> bool {
+        false
+    }
     /// Check that the embedder answers: embed one word and return the length
     /// of its vector. An error carries the provider's own explanation.
     fn probe(&self) -> Result<usize> {
@@ -388,18 +416,151 @@ impl Embedder for OpenAiEmbedder {
     }
 }
 
+/// Video memory from which `auto` puts a built-in model on the graphics
+/// card. The largest model of the catalog takes about 2.5 GB there.
+const CUDA_VRAM: u64 = 4 * 1024 * 1024 * 1024;
+
+/// A neural model of CodeWiki's catalog, installed under the data directory
+/// and run by a hidden child process that CodeWiki starts on the first
+/// request and stops when it is idle.
+///
+/// An embedder of this kind is only a name and an address: making one starts
+/// nothing, so the many places that build an embedder to ask its name cost
+/// nothing. All of them reach the one child of this process through
+/// [`cw_models::worker::global`].
+pub struct BuiltinEmbedder {
+    entry: &'static cw_models::Entry,
+    spec: cw_models::worker::Spec,
+}
+
+impl BuiltinEmbedder {
+    /// The embedder for the catalog model `id`, installed under `data_dir`,
+    /// on `device` (one of [`DEVICES`]).
+    pub fn new(id: &str, device: &str, data_dir: &Path) -> Result<Self> {
+        use cw_models::{Device, catalog, hardware, worker};
+
+        if !cw_models::ENGINE {
+            return Err(Error::invalid(
+                "this build cannot run a built-in model; it runs on Windows",
+            ));
+        }
+        let entry = catalog::find(id).ok_or_else(|| {
+            let known: Vec<&str> = catalog::all().iter().map(|e| e.id.as_str()).collect();
+            Error::invalid(format!(
+                "unknown built-in model '{id}'; use {}",
+                known.join(", ")
+            ))
+        })?;
+        let store = cw_models::Store::new(data_dir, None);
+        if !store.is_installed(entry) {
+            return Err(Error::invalid(format!(
+                "the built-in model {} is not installed",
+                entry.name
+            )));
+        }
+        let card = hardware::nvidia_card;
+        let device = match device {
+            "cpu" => Device::Cpu,
+            "cuda" if worker::cuda_program().is_none() => {
+                return Err(Error::invalid(
+                    "this installation has no worker for the graphics card",
+                ));
+            }
+            "cuda" if card().is_none() => {
+                return Err(Error::invalid("no NVIDIA graphics card was found"));
+            }
+            "cuda" => Device::Cuda,
+            "auto" => {
+                let fits = worker::cuda_program().is_some()
+                    && card().is_some_and(|card| card.vram_total >= CUDA_VRAM);
+                if fits { Device::Cuda } else { Device::Cpu }
+            }
+            other => {
+                return Err(Error::invalid(format!(
+                    "unknown device '{other}'; use {}",
+                    DEVICES.join(", ")
+                )));
+            }
+        };
+        Ok(Self {
+            entry,
+            spec: worker::Spec {
+                model: entry.id.clone(),
+                models_dir: store.root().to_path_buf(),
+                device,
+            },
+        })
+    }
+
+    /// The device this embedder asks for. The child may still run on the
+    /// processor, once the graphics card failed too often.
+    pub fn device(&self) -> cw_models::Device {
+        self.spec.device
+    }
+}
+
+impl Embedder for BuiltinEmbedder {
+    fn name(&self) -> String {
+        // The same on the processor and on the card: their vectors are equal.
+        self.entry.embedder_name()
+    }
+
+    fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        cw_models::worker::global().embed(&self.spec, cw_models::worker::Kind::Document, texts)
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        cw_models::worker::global()
+            .embed(
+                &self.spec,
+                cw_models::worker::Kind::Query,
+                &[text.to_string()],
+            )?
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid(format!("{} returned no vector", self.name())))
+    }
+
+    fn batch_size(&self) -> usize {
+        self.entry.batch
+    }
+
+    fn slow(&self) -> bool {
+        true
+    }
+}
+
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
 
 /// The embedder for a provider name. `lookup` reads configuration values;
-/// production code passes the process environment.
+/// production code passes the process environment. A built-in model is
+/// looked for under the default data directory.
 pub fn from_config(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Box<dyn Embedder>>> {
+    from_config_in(lookup, &cw_core::paths::data_dir())
+}
+
+/// [`from_config`] with the data directory that holds the built-in models.
+pub fn from_config_in(
+    lookup: impl Fn(&str) -> Option<String>,
+    data_dir: &Path,
+) -> Result<Option<Box<dyn Embedder>>> {
     let model = |default: &str| lookup(EMBED_MODEL_ENV).unwrap_or_else(|| default.to_string());
     let chosen = lookup(EMBED_ENV).map(|v| v.to_lowercase());
     Ok(match chosen.as_deref() {
         None | Some("local") => Some(Box::new(LocalEmbedder::default())),
         Some("none") => None,
+        Some("builtin") => {
+            let id = lookup(EMBED_MODEL_ENV).ok_or_else(|| {
+                Error::invalid(format!(
+                    "the built-in embedder needs a model; set {EMBED_MODEL_ENV}"
+                ))
+            })?;
+            let device = lookup(EMBED_DEVICE_ENV)
+                .map_or_else(|| "auto".to_string(), |device| device.to_lowercase());
+            Some(Box::new(BuiltinEmbedder::new(&id, &device, data_dir)?))
+        }
         Some("ollama") => Some(Box::new(OllamaEmbedder {
             model: model("embeddinggemma"),
             base_url: lookup("OLLAMA_HOST").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
@@ -429,6 +590,15 @@ pub fn from_env() -> Result<Option<Box<dyn Embedder>>> {
 /// settings file.
 pub fn from_settings(resolved: &cw_core::settings::Resolved) -> Result<Option<Box<dyn Embedder>>> {
     from_config(|name| resolved.get(name))
+}
+
+/// [`from_settings`] with the data directory that holds the built-in models.
+/// A backend passes its own, which need not be the default one.
+pub fn from_settings_in(
+    resolved: &cw_core::settings::Resolved,
+    data_dir: &Path,
+) -> Result<Option<Box<dyn Embedder>>> {
+    from_config_in(|name| resolved.get(name), data_dir)
 }
 
 #[cfg(test)]
@@ -540,6 +710,96 @@ mod tests {
         );
         assert!(from_config(with(&[("CODEWIKI_EMBED", "openai")])).is_err());
         assert!(from_config(with(&[("CODEWIKI_EMBED", "magic")])).is_err());
+    }
+
+    /// Put a model of the catalog under `data_dir` as an install leaves it,
+    /// with empty files of the right sizes.
+    fn installed(data_dir: &Path, id: &str) {
+        let entry = cw_models::catalog::find(id).unwrap();
+        let dir = cw_models::Store::new(data_dir, None).dir(entry);
+        std::fs::create_dir_all(&dir).unwrap();
+        for file in &entry.files {
+            std::fs::File::create(dir.join(&file.path))
+                .unwrap()
+                .set_len(file.size)
+                .unwrap();
+        }
+        std::fs::write(
+            dir.join("manifest.json"),
+            json!({ "revision": entry.revision }).to_string(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_built_in_model_is_chosen_by_its_catalog_id() {
+        if !cw_models::ENGINE {
+            return;
+        }
+        let data = tempfile::tempdir().unwrap();
+        let configured = |pairs: &'static [(&'static str, &'static str)]| {
+            from_config_in(
+                |name: &str| {
+                    pairs
+                        .iter()
+                        .find(|(key, _)| *key == name)
+                        .map(|(_, value)| value.to_string())
+                },
+                data.path(),
+            )
+        };
+        let problem = |pairs| match configured(pairs) {
+            Ok(_) => panic!("{pairs:?} was accepted"),
+            Err(error) => error.to_string(),
+        };
+
+        // No model named, a model the catalog does not have, one not on disk.
+        let error = problem(&[("CODEWIKI_EMBED", "builtin")]);
+        assert!(error.contains("CODEWIKI_EMBED_MODEL"), "{error}");
+        let error = problem(&[
+            ("CODEWIKI_EMBED", "builtin"),
+            ("CODEWIKI_EMBED_MODEL", "embeddinggemma"),
+        ]);
+        assert!(
+            error.contains("unknown built-in model 'embeddinggemma'")
+                && error.contains("gte-modernbert-base"),
+            "{error}"
+        );
+        let small: &[(&str, &str)] = &[
+            ("CODEWIKI_EMBED", "builtin"),
+            ("CODEWIKI_EMBED_MODEL", "granite-small-english-r2"),
+            ("CODEWIKI_EMBED_DEVICE", "cpu"),
+        ];
+        let error = problem(small);
+        assert!(error.contains("is not installed"), "{error}");
+
+        installed(data.path(), "granite-small-english-r2");
+        let embedder = configured(small).unwrap().unwrap();
+        // Its name holds the revision, so other weights embed again.
+        assert_eq!(
+            embedder.name(),
+            "builtin:granite-small-english-r2@2ab6fa8ea2d6"
+        );
+        assert_eq!(embedder.batch_size(), 16);
+        // Making it started no child process.
+        assert_eq!(cw_models::worker::global().status().running, None);
+
+        let error = problem(&[
+            ("CODEWIKI_EMBED", "builtin"),
+            ("CODEWIKI_EMBED_MODEL", "granite-small-english-r2"),
+            ("CODEWIKI_EMBED_DEVICE", "quantum"),
+        ]);
+        assert!(error.contains("unknown device 'quantum'"), "{error}");
+        // A test program has no worker for the graphics card beside it.
+        let error = problem(&[
+            ("CODEWIKI_EMBED", "builtin"),
+            ("CODEWIKI_EMBED_MODEL", "granite-small-english-r2"),
+            ("CODEWIKI_EMBED_DEVICE", "cuda"),
+        ]);
+        assert!(error.contains("no worker for the graphics card"), "{error}");
+        // `auto` then means the processor.
+        let auto = BuiltinEmbedder::new("granite-small-english-r2", "auto", data.path()).unwrap();
+        assert_eq!(auto.device(), cw_models::Device::Cpu);
     }
 
     #[test]

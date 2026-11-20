@@ -9,11 +9,25 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+# Builds `codewiki-embed-cuda`, the worker for NVIDIA cards. Needs the CUDA
+# toolkit; build that program alone (`--bin codewiki-embed-cuda`), or
+# `codewiki` itself would not start where NVIDIA's libraries are missing.
+cuda = ["cw-embed-engine/cuda"]
+
+# The worker that runs a built-in embedding model on an NVIDIA card. The
+# same code as `codewiki embed-worker`, in a program of its own.
+[[bin]]
+name = "codewiki-embed-cuda"
+path = "src/bin/embed_cuda.rs"
+required-features = ["cuda"]
+
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 cw-core = { path = "../cw-core" }
 cw-index = { path = "../cw-index" }
 cw-llm = { version = "0.2.0", path = "../cw-llm" }
+cw-models = { version = "0.2.0", path = "../cw-models" }
 cw-server = { version = "0.2.0", path = "../cw-server" }
 cw-vault = { path = "../cw-vault" }
 cw-wiki = { path = "../cw-wiki" }
@@ -21,6 +35,12 @@ getrandom = "0.4.3"
 log = "0.4"
 serde_json = "1"
 tokio = { version = "1.54.1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+
+# The engine of the built-in embedding models, for the hidden worker
+# (`codewiki embed-worker`). Windows only: the Linux build, and with it the
+# Docker image, holds no engine.
+[target.'cfg(windows)'.dependencies]
+cw-embed-engine = { version = "0.2.0", path = "../cw-embed-engine" }
 
 [dev-dependencies]
 tempfile = "3"

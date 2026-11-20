@@ -3,12 +3,14 @@
 #
 # Removes the programs, the PATH entry, the Start Menu shortcut, the start
 # with Windows and the name Windows shows the app's notification under. Wikis live
-# inside each repository and are not touched. The index cache and logs in
-# %LOCALAPPDATA%\CodeWiki (or CODEWIKI_DATA_DIR) and the settings in
-# %APPDATA%\CodeWiki are kept unless -PurgeData is given.
+# inside each repository and are not touched. The index cache, the installed
+# embedding models and the logs in %LOCALAPPDATA%\CodeWiki (or
+# CODEWIKI_DATA_DIR) and the settings in %APPDATA%\CodeWiki are kept unless
+# -PurgeData is given.
 param(
     [string]$Target = $PSScriptRoot,
-    # Also delete the index cache, the logs and the settings.
+    # Also delete the index cache, the embedding models, the logs and the
+    # settings.
     [switch]$PurgeData
 )
 $ErrorActionPreference = "Stop"
@@ -34,7 +36,7 @@ function Remove-Patiently([string]$Path) {
 
 # Stop-Process returns before Windows lets go of the program file, so wait for
 # each process to end before deleting anything.
-foreach ($process in "codewiki-app", "codewiki-mcp", "codewiki") {
+foreach ($process in "codewiki-app", "codewiki-mcp", "codewiki", "codewiki-embed-cuda") {
     Get-Process $process -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($Target, [StringComparison]::OrdinalIgnoreCase) } |
         Stop-Process -Force -PassThru |
@@ -43,7 +45,7 @@ foreach ($process in "codewiki-app", "codewiki-mcp", "codewiki") {
 
 # The programs go first. If one cannot be deleted, the script stops here and
 # the PATH entry and the shortcut still lead to a working installation.
-foreach ($item in "codewiki-app.exe", "codewiki-mcp.exe", "codewiki.exe", "plugins", "LICENSE", "NOTICE") {
+foreach ($item in "codewiki-app.exe", "codewiki-mcp.exe", "codewiki.exe", "cuda", "plugins", "LICENSE", "NOTICE") {
     $file = Join-Path $Target $item
     if (Test-Path $file) { Remove-Patiently $file }
 }

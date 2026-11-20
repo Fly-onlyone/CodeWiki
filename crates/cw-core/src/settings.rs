@@ -80,6 +80,15 @@ pub const EMBED_MODEL: Key = Key {
     secret: false,
     default: None,
 };
+/// What runs a built-in embedding model: `auto` (the graphics card when it
+/// can, else the processor), `cpu` or `cuda`.
+pub const EMBED_DEVICE: Key = Key {
+    env: "CODEWIKI_EMBED_DEVICE",
+    section: "embed",
+    field: "device",
+    secret: false,
+    default: Some("auto"),
+};
 pub const ANTHROPIC_API_KEY: Key = Key {
     env: "ANTHROPIC_API_KEY",
     section: "anthropic",
@@ -110,7 +119,7 @@ pub const OLLAMA_HOST: Key = Key {
 };
 
 /// Every setting, in the order a page shows them.
-pub const ALL: [Key; 8] = [
+pub const ALL: [Key; 9] = [
     LLM_PROVIDER,
     LLM_MODEL,
     ANTHROPIC_API_KEY,
@@ -119,6 +128,7 @@ pub const ALL: [Key; 8] = [
     OLLAMA_HOST,
     EMBED_PROVIDER,
     EMBED_MODEL,
+    EMBED_DEVICE,
 ];
 
 /// The setting an environment variable names.

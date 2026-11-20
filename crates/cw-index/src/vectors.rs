@@ -35,6 +35,38 @@ fn from_blob(blob: &[u8]) -> Vec<f32> {
         .collect()
 }
 
+fn delete(tx: &rusqlite::Transaction<'_>, ids: &[(String, String)]) -> Result<()> {
+    let err = db("writing vectors");
+    let mut stmt = tx
+        .prepare("DELETE FROM vectors WHERE kind = ?1 AND key = ?2")
+        .map_err(&err)?;
+    for (kind, key) in ids {
+        stmt.execute(params![kind, key]).map_err(&err)?;
+    }
+    Ok(())
+}
+
+fn upsert(tx: &rusqlite::Transaction<'_>, rows: &[VectorRow]) -> Result<()> {
+    let err = db("writing vectors");
+    let mut stmt = tx
+        .prepare(
+            "INSERT OR REPLACE INTO vectors (kind, key, title, hash, data) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+        )
+        .map_err(&err)?;
+    for row in rows {
+        stmt.execute(params![
+            row.kind,
+            row.key,
+            row.title,
+            row.hash,
+            to_blob(&row.vector)
+        ])
+        .map_err(&err)?;
+    }
+    Ok(())
+}
+
 impl Index {
     /// The stored hash of every vector of the given kinds, by `(kind, key)`.
     pub fn vector_hashes(&self, kinds: &[&str]) -> Result<HashMap<(String, String), String>> {
@@ -75,42 +107,57 @@ impl Index {
     }
 
     /// Insert or replace vectors, and delete every vector of `kinds` whose
-    /// `(kind, key)` is not in `keep`.
+    /// `(kind, key)` is not in `keep`, in one step.
     pub fn store_vectors(
         &mut self,
         kinds: &[&str],
         keep: &HashSet<(String, String)>,
         rows: &[VectorRow],
     ) -> Result<()> {
-        let existing: Vec<(String, String)> = self.vector_hashes(kinds)?.into_keys().collect();
+        let stale = self.stale_vectors(kinds, keep)?;
         let err = db("writing vectors");
         let tx = self.conn.transaction().map_err(&err)?;
-        for id in existing.iter().filter(|id| !keep.contains(*id)) {
-            tx.execute(
-                "DELETE FROM vectors WHERE kind = ?1 AND key = ?2",
-                params![id.0, id.1],
-            )
-            .map_err(&err)?;
-        }
-        {
-            let mut stmt = tx
-                .prepare(
-                    "INSERT OR REPLACE INTO vectors (kind, key, title, hash, data) \
-                     VALUES (?1, ?2, ?3, ?4, ?5)",
-                )
-                .map_err(&err)?;
-            for row in rows {
-                stmt.execute(params![
-                    row.kind,
-                    row.key,
-                    row.title,
-                    row.hash,
-                    to_blob(&row.vector)
-                ])
-                .map_err(&err)?;
-            }
-        }
+        delete(&tx, &stale)?;
+        upsert(&tx, rows)?;
         tx.commit().map_err(&err)
+    }
+
+    /// Insert or replace vectors and touch no other. An embedding that runs
+    /// batch by batch stores each batch with this, so that a run cut short
+    /// keeps what it has done.
+    pub fn upsert_vectors(&mut self, rows: &[VectorRow]) -> Result<()> {
+        let err = db("writing vectors");
+        let tx = self.conn.transaction().map_err(&err)?;
+        upsert(&tx, rows)?;
+        tx.commit().map_err(&err)
+    }
+
+    /// Delete every vector of `kinds` whose `(kind, key)` is not in `keep`.
+    /// Returns how many were deleted.
+    pub fn prune_vectors(
+        &mut self,
+        kinds: &[&str],
+        keep: &HashSet<(String, String)>,
+    ) -> Result<usize> {
+        let stale = self.stale_vectors(kinds, keep)?;
+        let err = db("writing vectors");
+        let tx = self.conn.transaction().map_err(&err)?;
+        delete(&tx, &stale)?;
+        tx.commit().map_err(&err)?;
+        Ok(stale.len())
+    }
+
+    /// The vectors of `kinds` that `keep` does not name.
+    fn stale_vectors(
+        &self,
+        kinds: &[&str],
+        keep: &HashSet<(String, String)>,
+    ) -> Result<Vec<(String, String)>> {
+        Ok(self
+            .vector_hashes(kinds)?
+            .into_keys()
+            .filter(|id| !keep.contains(id))
+            .collect())
     }
 
     /// The stored vectors closest to `query`, best first. Scores are dot
@@ -230,6 +277,51 @@ mod tests {
         assert_eq!(hashes[&id("note", "a")], "h1");
         assert!(hashes.contains_key(&id("symbol", "s")));
         assert_eq!(index.vector_hashes(&["note"]).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_batch_is_stored_without_touching_the_other_vectors() {
+        let mut index = Index::open_in_memory().unwrap();
+        index
+            .upsert_vectors(&[row("note", "a", "h1", &[1.0, 0.0])])
+            .unwrap();
+        // A second batch leaves the first alone, though it does not name it.
+        index
+            .upsert_vectors(&[
+                row("note", "b", "h2", &[0.0, 1.0]),
+                row("symbol", "s", "h3", &[0.6, 0.8]),
+            ])
+            .unwrap();
+        assert_eq!(index.vector_hashes(&["note", "symbol"]).unwrap().len(), 3);
+        // The same key again replaces its vector.
+        index
+            .upsert_vectors(&[row("note", "a", "h4", &[0.0, 1.0])])
+            .unwrap();
+        assert_eq!(
+            index.vector_hashes(&["note"]).unwrap()[&id("note", "a")],
+            "h4"
+        );
+        assert_eq!(index.vector_hashes(&["note", "symbol"]).unwrap().len(), 3);
+    }
+
+    #[test]
+    fn pruning_deletes_only_what_is_not_kept_of_the_named_kinds() {
+        let mut index = Index::open_in_memory().unwrap();
+        index
+            .upsert_vectors(&[
+                row("note", "a", "h1", &[1.0, 0.0]),
+                row("note", "b", "h2", &[0.0, 1.0]),
+                row("symbol", "s", "h3", &[0.6, 0.8]),
+            ])
+            .unwrap();
+        let keep: HashSet<_> = [id("note", "a")].into();
+        // `s` is not kept either, but symbols were not named.
+        assert_eq!(index.prune_vectors(&["note"], &keep).unwrap(), 1);
+        let hashes = index.vector_hashes(&["note", "symbol"]).unwrap();
+        assert_eq!(hashes.len(), 2);
+        assert!(hashes.contains_key(&id("note", "a")));
+        assert!(hashes.contains_key(&id("symbol", "s")));
+        assert_eq!(index.prune_vectors(&["note"], &keep).unwrap(), 0);
     }
 
     #[test]

@@ -22,6 +22,9 @@ pub struct Backend {
     pub updating: Vec<String>,
     /// When an agent's MCP bridge last called.
     pub bridge: Bridge,
+    /// What the backend is doing with a built-in embedding model, in a few
+    /// words, while it is doing something.
+    pub model_job: Option<String>,
 }
 
 /// When an agent's MCP bridge last called the backend.
@@ -53,7 +56,36 @@ pub fn parse(body: &Value) -> Backend {
         Some(at) => Bridge::Called(now.saturating_sub(at)),
         None => Bridge::Never,
     };
-    Backend { updating, bridge }
+    Backend {
+        updating,
+        bridge,
+        model_job: model_job_text(&body["model_job"]),
+    }
+}
+
+/// What a job on a built-in embedding model is doing, in a few words; `None`
+/// when none runs. An older backend says nothing of it.
+fn model_job_text(job: &Value) -> Option<String> {
+    let repo = job["repo"].as_str();
+    match job["phase"].as_str()? {
+        "downloading" => Some("Downloading a search model".to_string()),
+        "switching" => Some("Setting up a search model".to_string()),
+        "embedding" => Some(match repo {
+            Some(repo) => format!("Embedding {repo} for search"),
+            None => "Embedding for search".to_string(),
+        }),
+        "paused" => Some("Embedding paused for a game".to_string()),
+        _ => None,
+    }
+}
+
+/// The state the tray shows: what [`state_text`] says, except that a backend
+/// that would be idle but for its work on a model says that work.
+pub fn state_with_job(state: String, model_job: Option<&str>) -> String {
+    match model_job {
+        Some(job) if state == "Idle" => job.to_string(),
+        _ => state,
+    }
 }
 
 /// An age in the largest unit that fits: "just now", "12 min ago", "3 h ago",
@@ -166,6 +198,7 @@ mod tests {
             Backend {
                 updating: names(&["alpha"]),
                 bridge: Bridge::Called(120),
+                model_job: None,
             }
         );
         // No bridge yet, nothing running.
@@ -175,6 +208,7 @@ mod tests {
             Backend {
                 updating: vec![],
                 bridge: Bridge::Never,
+                model_job: None,
             }
         );
         // A call the backend's clock puts in the future is "just now".
@@ -186,8 +220,41 @@ mod tests {
             Backend {
                 updating: vec![],
                 bridge: Bridge::Never,
+                model_job: None,
             }
         );
+    }
+
+    #[test]
+    fn work_on_a_model_is_said_when_nothing_else_is_going_on() {
+        let job = |job: Value| parse(&json!({ "now": 5, "model_job": job })).model_job;
+        assert_eq!(
+            job(json!({ "phase": "downloading", "model": "gte-modernbert-base" })).as_deref(),
+            Some("Downloading a search model")
+        );
+        assert_eq!(
+            job(json!({ "phase": "embedding", "repo": "alpha" })).as_deref(),
+            Some("Embedding alpha for search")
+        );
+        assert_eq!(
+            job(json!({ "phase": "paused", "repo": "alpha" })).as_deref(),
+            Some("Embedding paused for a game")
+        );
+        // No job, and a backend from before it had any.
+        assert_eq!(job(Value::Null), None);
+        assert_eq!(parse(&json!({ "now": 5 })).model_job, None);
+
+        // An idle backend says the job; anything else comes first.
+        let embedding = Some("Embedding alpha for search");
+        assert_eq!(
+            state_with_job("Idle".into(), embedding),
+            "Embedding alpha for search"
+        );
+        assert_eq!(
+            state_with_job("Updating wiki".into(), embedding),
+            "Updating wiki"
+        );
+        assert_eq!(state_with_job("Idle".into(), None), "Idle");
     }
 
     #[test]

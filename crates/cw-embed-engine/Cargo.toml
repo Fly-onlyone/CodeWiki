@@ -1,0 +1,27 @@
+[package]
+name = "cw-embed-engine"
+description = "Runs CodeWiki's built-in embedding models with candle, in the hidden worker process"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+[features]
+# The graphics card, for NVIDIA cards. Needs the CUDA toolkit to build, and a
+# program built with it does not start where NVIDIA's libraries are missing
+# (spike S5), so it goes into a program of its own, never into `codewiki`.
+cuda = ["candle-core/cuda", "candle-nn/cuda", "candle-transformers/cuda"]
+
+[dependencies]
+candle-core = "0.11.1"
+candle-nn = "0.11.1"
+candle-transformers = "0.11.1"
+cw-core = { version = "0.2.0", path = "../cw-core" }
+cw-models = { version = "0.2.0", path = "../cw-models" }
+log = "0.4"
+serde_json = "1"
+# The defaults build C (onig) and C++ (esaxx); these features are pure Rust.
+tokenizers = { version = "0.23.2", default-features = false, features = ["fancy-regex"] }

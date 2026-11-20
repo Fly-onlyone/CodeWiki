@@ -9,6 +9,10 @@
 //! the recent list that is still registered, or none: Home then lists the
 //! registered ones and offers to open a folder.
 //!
+//! The app starts on Home, unless "Open the last repository" is on in the
+//! settings: it then starts on the wiki map of the repository it opens, and
+//! on Home still when that repository has no wiki yet.
+//!
 //! The recent list holds the folders of the repositories opened in the app,
 //! newest first. Home orders the registered repositories by it.
 //!
@@ -82,6 +86,19 @@ const LAST_REPO: &str = "last_repo";
 const RECENT_REPOS: &str = "recent_repos";
 /// How many folders the recent list keeps.
 const RECENT_CAP: usize = 50;
+/// The setting that says whether the app starts on the wiki map of the
+/// repository it opens, rather than on Home.
+const OPEN_LAST: &str = "open_last";
+
+/// Whether the app starts on the wiki map of the repository it opens. Off
+/// until the user turns it on.
+pub fn open_last() -> bool {
+    prefs::read(OPEN_LAST).as_deref() == Some("on")
+}
+
+pub fn set_open_last(on: bool) {
+    prefs::write(OPEN_LAST, if on { "on" } else { "off" });
+}
 
 /// Whether `dir` looks like a repository: it holds `.git` (a folder, or a
 /// file in a git worktree or submodule) or a CodeWiki vault.

@@ -294,7 +294,13 @@ pub fn doc_drift(root: &Path, index: &Index) -> Result<DocReport> {
             }
             for span in line.split('`').skip(1).step_by(2) {
                 let path = span.trim().trim_end_matches('/');
+                // Only a path that starts at a folder or file of the
+                // repository or the vault claims to be one of ours. A file of
+                // another project (MUI's `Tab/Tab.js`) or an API route
+                // (`releases/latest`) starts nowhere here.
+                let first = path.split('/').next().unwrap_or(path);
                 if looks_like_path(span)
+                    && (root.join(first).exists() || vault.join(first).exists())
                     && !hashes.contains_key(path)
                     && !dirs.contains(path)
                     // Ignored paths (the vault, build output) are not indexed

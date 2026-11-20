@@ -225,7 +225,7 @@ fn reports_documentation_drift_and_coverage() {
     write(
         &vault,
         "04-Patterns/Area Pattern.md",
-        "---\ntags: [pattern]\n---\n\n# Area Pattern\n\n> Mine.\n\n## Source\n\n- `crates/lib/src/lib.rs` — the trait\n- `crates/lib/src/gone.rs` — removed long ago\n\n## See also\n\n- [[_index]]\n- [[No Such Note]]\n",
+        "---\ntags: [pattern]\n---\n\n# Area Pattern\n\n> Mine.\n\n## Source\n\n- `crates/lib/src/lib.rs` — the trait\n- `crates/lib/src/gone.rs` — removed long ago\n- `styles/createTransitions.js` — another project's file\n\n## See also\n\n- [[_index]]\n- [[No Such Note]]\n",
     );
     let facts = cw_parse::scan_repo(dir.path()).unwrap();
     generate(dir.path(), &facts, &analyze(&facts), None, None).unwrap();
@@ -248,6 +248,11 @@ fn reports_documentation_drift_and_coverage() {
         kinds
             .iter()
             .any(|(k, d)| *k == DriftKind::DeadPath && d.contains("gone.rs")),
+        "{kinds:?}"
+    );
+    // A path that starts at no folder of the repository is not one of ours.
+    assert!(
+        !kinds.iter().any(|(_, d)| d.contains("createTransitions")),
         "{kinds:?}"
     );
     assert!(

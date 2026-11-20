@@ -12,6 +12,7 @@ use cw_index::NodeMetrics;
 use cw_parse::RepoFacts;
 use cw_vault::NoteKind;
 
+use crate::manifests::Packages;
 use crate::units::{self, Unit, Units, is_test_file};
 
 pub const ZONE_ARCHITECTURE: &str = "00-Architecture";
@@ -95,6 +96,8 @@ pub struct Repo<'a> {
     pub implementors: BTreeMap<&'a str, Vec<&'a str>>,
     pub outgoing: HashMap<&'a str, Vec<&'a Edge>>,
     pub incoming: HashMap<&'a str, Vec<&'a Edge>>,
+    /// What the repository's files say about packages from outside it.
+    pub packages: Packages,
 }
 
 impl<'a> Repo<'a> {
@@ -105,6 +108,7 @@ impl<'a> Repo<'a> {
             facts,
             metrics,
             units::discover(facts, "repository", &|_| None),
+            Packages::default(),
         )
     }
 
@@ -115,10 +119,20 @@ impl<'a> Repo<'a> {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "repository".into());
         let read = |path: &str| std::fs::read_to_string(root.join(path)).ok();
-        Self::build(facts, metrics, units::discover(facts, &name, &read))
+        Self::build(
+            facts,
+            metrics,
+            units::discover(facts, &name, &read),
+            Packages::read(&read),
+        )
     }
 
-    fn build(facts: &'a RepoFacts, metrics: &'a [(String, NodeMetrics)], units: Units) -> Self {
+    fn build(
+        facts: &'a RepoFacts,
+        metrics: &'a [(String, NodeMetrics)],
+        units: Units,
+        packages: Packages,
+    ) -> Self {
         let mut symbols = HashMap::new();
         let mut children: HashMap<&str, Vec<&Symbol>> = HashMap::new();
         for s in &facts.symbols {
@@ -152,6 +166,7 @@ impl<'a> Repo<'a> {
             implementors,
             outgoing,
             incoming,
+            packages,
         }
     }
 

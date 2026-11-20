@@ -361,9 +361,12 @@ pub fn discover(
             has_lib: krate.has_lib,
             has_bin: krate.has_bin,
             language: Language::Rust,
-            manifests: vec![Manifest {
-                path: join(&krate.dir, "Cargo.toml"),
-                text: String::new(),
+            manifests: vec![{
+                let path = join(&krate.dir, "Cargo.toml");
+                Manifest {
+                    text: read(&path).unwrap_or_default(),
+                    path,
+                }
             }],
             root: symbols
                 .contains_key(krate.name.as_str())

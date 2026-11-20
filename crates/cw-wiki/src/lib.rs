@@ -12,6 +12,7 @@ pub mod git;
 pub mod gitintel;
 pub mod health;
 mod level;
+pub mod manifests;
 pub mod plan;
 pub mod query;
 pub mod refactor;
@@ -26,5 +27,6 @@ pub mod units;
 pub use analyze::{analyze, dependency_graph};
 pub use generate::{
     ProseWriter, Report, Rewrite, Stopped, TEMPLATE_VERSION, WriterContext, WriterUsage, generate,
+    generate_with,
 };
 pub use plan::{Plan, Planned, Repo, Subject};

@@ -18,7 +18,8 @@ use cw_vault::{
 };
 use serde::{Deserialize, Serialize};
 
-use crate::plan::{Plan, Planned, Repo, plan};
+use crate::manifests::{self, NoPackageInfo, PackageInfo};
+use crate::plan::{Plan, Planned, Repo, Subject, plan};
 use crate::render::RenderCtx;
 
 /// Bump when rendering changes in a way that should refresh every note.
@@ -277,13 +278,28 @@ fn planned_path(note: &Planned) -> String {
     }
 }
 
-/// Generate or update the vault of the repository at `root`.
+/// Generate or update the vault of the repository at `root`, reading
+/// nothing but the repository: a package from outside it is described only
+/// by what an earlier run kept in the vault.
 pub fn generate(
     root: &Path,
     facts: &RepoFacts,
     metrics: &[(String, NodeMetrics)],
     commit: Option<String>,
     writer: Option<&dyn ProseWriter>,
+) -> Result<Report> {
+    generate_with(root, facts, metrics, commit, writer, &NoPackageInfo)
+}
+
+/// [`generate`], with `packages` to say what a package from outside the
+/// repository is.
+pub fn generate_with(
+    root: &Path,
+    facts: &RepoFacts,
+    metrics: &[(String, NodeMetrics)],
+    commit: Option<String>,
+    writer: Option<&dyn ProseWriter>,
+    packages: &dyn PackageInfo,
 ) -> Result<Report> {
     let vault = root.join(VAULT_DIR);
     std::fs::create_dir_all(&vault).map_err(|e| Error::io(&vault, e))?;
@@ -304,8 +320,16 @@ pub fn generate(
         }
     }
 
-    let repo = Repo::at(root, facts, metrics);
+    let mut repo = Repo::at(root, facts, metrics);
     let Plan { mut notes, owner } = plan(&repo, &covered);
+    let integrations: Vec<&str> = notes
+        .iter()
+        .filter_map(|note| match &note.subject {
+            Subject::Integration(package) => Some(package.as_str()),
+            _ => None,
+        })
+        .collect();
+    repo.packages.descriptions = manifests::describe(&repo, &vault, &integrations, packages)?;
 
     // Freeze names. Existing notes keep their paths; a planned note that
     // collides with an adopted note by path or name takes over its entry.

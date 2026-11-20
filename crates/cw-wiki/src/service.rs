@@ -10,8 +10,9 @@ use cw_parse::{RepoFacts, scan_repo};
 use cw_vault::{Note, VaultMeta};
 
 use crate::analyze::analyze;
-use crate::generate::{ProseWriter, Report, generate};
+use crate::generate::{ProseWriter, Report, generate_with};
 use crate::git::head_commit;
+use crate::manifests::Machine;
 
 /// Meta key holding the commit the index was last built from.
 pub const META_COMMIT: &str = "indexed_commit";
@@ -199,7 +200,8 @@ fn run_update(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>) ->
     let facts = reindex(root, &mut index)?;
     let metrics = index.metrics()?;
     let started = Instant::now();
-    let report = generate(root, &facts, &metrics, head_commit(root), writer)?;
+    let packages = Machine::new(root);
+    let report = generate_with(root, &facts, &metrics, head_commit(root), writer, &packages)?;
     log::info!(
         "generated the notes of {} in {} ms",
         root.display(),

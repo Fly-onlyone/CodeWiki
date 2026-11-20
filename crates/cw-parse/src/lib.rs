@@ -16,4 +16,4 @@ pub use resolve::{ExternalUse, Resolver};
 pub use rust::{CallSite, ImplFact, ModDecl, ParsedFile, TypeRef, UseImport, ValueRef, parse_rust};
 pub use scan::{RepoFacts, list_files, scan_repo};
 pub use typescript::parse_typescript;
-pub use workspace::{CrateInfo, module_path, owning_crate};
+pub use workspace::{CrateInfo, DepSpec, Locked, module_path, owning_crate};

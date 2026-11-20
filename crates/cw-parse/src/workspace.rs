@@ -1,5 +1,7 @@
 //! Cargo package discovery and the file-to-module mapping.
 
+use std::collections::BTreeMap;
+
 use cw_core::{Error, Result};
 use serde::{Deserialize, Serialize};
 
@@ -84,6 +86,153 @@ pub fn parse_manifest(dir: &str, text: &str, files: &[String]) -> Result<Option<
         has_lib: has("src/lib.rs"),
         has_bin: has("src/main.rs") || has_bin_dir || table.contains_key("bin"),
     }))
+}
+
+/// What a manifest asks of one dependency.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DepSpec {
+    /// Name as used in paths (`-` replaced by `_`).
+    pub name: String,
+    /// Name the package is published under: the key, or `package = "..."`
+    /// when the dependency is renamed.
+    pub package: String,
+    /// Version requirement as written; empty for a path or git dependency
+    /// that names none.
+    pub req: String,
+    /// Features the manifest turns on, in name order.
+    pub features: Vec<String>,
+    /// False when the manifest says `default-features = false`.
+    pub default_features: bool,
+}
+
+/// One entry of a dependency table, with what `[workspace.dependencies]`
+/// says when the entry is `workspace = true`.
+fn dep_spec(key: &str, value: &toml::Value, workspace: Option<&toml::Table>) -> DepSpec {
+    let mut spec = DepSpec {
+        name: key.replace('-', "_"),
+        package: key.to_string(),
+        req: String::new(),
+        features: Vec::new(),
+        default_features: true,
+    };
+    let mut read = |value: &toml::Value| match value {
+        toml::Value::String(req) => spec.req = req.clone(),
+        toml::Value::Table(table) => {
+            if let Some(req) = table.get("version").and_then(|v| v.as_str()) {
+                spec.req = req.to_string();
+            }
+            if let Some(package) = table.get("package").and_then(|v| v.as_str()) {
+                spec.package = package.to_string();
+            }
+            if let Some(on) = table.get("default-features").and_then(|v| v.as_bool()) {
+                spec.default_features = on;
+            }
+            let features = table.get("features").and_then(|v| v.as_array());
+            for feature in features.into_iter().flatten().filter_map(|f| f.as_str()) {
+                spec.features.push(feature.to_string());
+            }
+        }
+        _ => {}
+    };
+    let inherits = value
+        .as_table()
+        .and_then(|t| t.get("workspace"))
+        .and_then(|w| w.as_bool())
+        .unwrap_or(false);
+    // The workspace's entry first: the member adds features to it.
+    if inherits && let Some(shared) = workspace.and_then(|w| w.get(key)) {
+        read(shared);
+    }
+    read(value);
+    spec.features.sort();
+    spec.features.dedup();
+    spec
+}
+
+/// Every dependency a `Cargo.toml` names, in name order: its normal, dev
+/// and build dependencies, those of `[target.*]` tables too. A dependency
+/// named in several tables is one entry. `workspace_manifest` is the text of
+/// the workspace's root manifest, which `workspace = true` refers to. A
+/// manifest that does not parse names none.
+pub fn dependency_specs(manifest: &str, workspace_manifest: Option<&str>) -> Vec<DepSpec> {
+    let Ok(table) = manifest.parse::<toml::Table>() else {
+        return Vec::new();
+    };
+    let root: Option<toml::Table> = workspace_manifest.and_then(|text| text.parse().ok());
+    // A workspace root that is also a package refers to itself.
+    let shared = root
+        .as_ref()
+        .or(Some(&table))
+        .and_then(|t| t.get("workspace"))
+        .and_then(|w| w.get("dependencies"))
+        .and_then(|d| d.as_table());
+    let targets = table
+        .get("target")
+        .and_then(|t| t.as_table())
+        .into_iter()
+        .flat_map(|t| t.values())
+        .filter_map(|t| t.as_table());
+    let mut specs: BTreeMap<String, DepSpec> = BTreeMap::new();
+    for owner in std::iter::once(&table).chain(targets) {
+        for name in DEPENDENCY_TABLES {
+            let entries = owner.get(name).and_then(|d| d.as_table());
+            for (key, value) in entries.into_iter().flatten() {
+                let spec = dep_spec(key, value, shared);
+                match specs.get_mut(&spec.name) {
+                    Some(known) => {
+                        if known.req.is_empty() {
+                            known.req = spec.req;
+                        }
+                        known.features.extend(spec.features);
+                        known.features.sort();
+                        known.features.dedup();
+                        known.default_features &= spec.default_features;
+                    }
+                    None => {
+                        specs.insert(spec.name.clone(), spec);
+                    }
+                }
+            }
+        }
+    }
+    specs.into_values().collect()
+}
+
+/// The versions a `Cargo.lock` holds of one package.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Locked {
+    /// Name the package is published under.
+    pub package: String,
+    /// Exact versions, in the order of the lock file (lowest first).
+    pub versions: Vec<String>,
+}
+
+/// The packages of a `Cargo.lock`, by name as used in paths. A lock file
+/// that does not parse holds none.
+pub fn locked_versions(lock: &str) -> BTreeMap<String, Locked> {
+    let mut locked: BTreeMap<String, Locked> = BTreeMap::new();
+    let Ok(table) = lock.parse::<toml::Table>() else {
+        return locked;
+    };
+    let packages = table.get("package").and_then(|p| p.as_array());
+    for package in packages.into_iter().flatten() {
+        let name = package.get("name").and_then(|n| n.as_str());
+        let version = package.get("version").and_then(|v| v.as_str());
+        if let (Some(name), Some(version)) = (name, version) {
+            let entry = locked.entry(name.replace('-', "_")).or_default();
+            entry.package = name.to_string();
+            entry.versions.push(version.to_string());
+        }
+    }
+    locked
+}
+
+/// The `description` of the package a `Cargo.toml` defines, on one line.
+pub fn package_description(manifest: &str) -> Option<String> {
+    let table: toml::Table = manifest.parse().ok()?;
+    let text = table.get("package")?.get("description")?.as_str()?;
+    let line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    (!line.is_empty()).then_some(line)
 }
 
 /// The crate that owns `file`: the one with the longest matching directory.
@@ -172,6 +321,54 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+    }
+
+    #[test]
+    fn reads_what_a_manifest_asks_of_its_dependencies() {
+        let root = "[workspace]\nmembers = [\"crates/*\"]\n[workspace.dependencies]\nserde = { version = \"1.0.200\", features = [\"derive\"] }\ntokio = \"1\"\n";
+        let member = "[package]\nname = \"app\"\n[dependencies]\nserde = { workspace = true, features = [\"rc\"] }\ntokio.workspace = true\naxum = { version = \"0.8\", default-features = false, features = [\"macros\", \"json\"] }\njson = { package = \"serde-json\", version = \"1\" }\nlocal = { path = \"../local\" }\n[dev-dependencies]\ntempfile = \"3\"\n[target.'cfg(windows)'.dependencies]\naxum = { version = \"0.8\", features = [\"ws\"] }\n";
+        let specs = dependency_specs(member, Some(root));
+        let spec = |name: &str| {
+            specs
+                .iter()
+                .find(|s| s.name == name)
+                .unwrap_or_else(|| panic!("no {name}"))
+        };
+        let names: Vec<&str> = specs.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            ["axum", "json", "local", "serde", "tempfile", "tokio"]
+        );
+        // The workspace's entry, with the member's features added.
+        assert_eq!(spec("serde").req, "1.0.200");
+        assert_eq!(spec("serde").features, ["derive", "rc"]);
+        assert_eq!(spec("tokio").req, "1");
+        // One entry for a dependency two tables name.
+        assert_eq!(spec("axum").features, ["json", "macros", "ws"]);
+        assert!(!spec("axum").default_features);
+        assert!(spec("serde").default_features);
+        assert_eq!(spec("json").package, "serde-json");
+        assert_eq!(spec("local").req, "");
+        // Without the workspace's manifest the shared entry is not known.
+        assert_eq!(dependency_specs(member, None)[3].req, "");
+        assert!(dependency_specs("not toml [", None).is_empty());
+    }
+
+    #[test]
+    fn reads_a_lock_file_and_a_description() {
+        let lock = "version = 4\n\n[[package]]\nname = \"windows-sys\"\nversion = \"0.52.0\"\n\n[[package]]\nname = \"windows-sys\"\nversion = \"0.61.2\"\n\n[[package]]\nname = \"axum\"\nversion = \"0.8.9\"\n";
+        let locked = locked_versions(lock);
+        assert_eq!(locked["windows_sys"].package, "windows-sys");
+        assert_eq!(locked["windows_sys"].versions, ["0.52.0", "0.61.2"]);
+        assert_eq!(locked["axum"].versions, ["0.8.9"]);
+        assert!(locked_versions("not toml [").is_empty());
+
+        assert_eq!(
+            package_description("[package]\nname = \"x\"\ndescription = \"Web framework\\nthat focuses on ergonomics\"\n")
+                .as_deref(),
+            Some("Web framework that focuses on ergonomics")
+        );
+        assert_eq!(package_description("[package]\nname = \"x\"\n"), None);
     }
 
     #[test]

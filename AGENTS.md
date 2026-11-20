@@ -86,9 +86,10 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
   - `Stop`: the provider has nothing left (`cw_core::Error::Exhausted`). The run calls the writer no more. Notes it did not reach go in `Report::waiting` with no manifest change. `last_indexed_commit` keeps its old value, so the wiki still reads as behind.
 - **CLIProxyAPI.** `CODEWIKI_LLM=cliproxy` writes through a CLIProxyAPI server the user runs (`crates/cw-llm/src/cliproxy.rs`), which rotates many Claude and Codex subscription logins behind one OpenAI-compatible address. CodeWiki never installs, starts or stops it. Two answers mean no account can take a request, and both become `Exhausted`, with the proxy's `Retry-After`:
   - a 429;
-  - a 503 whose error code is `auth_unavailable` or `auth_not_found`.
+  - a 503 whose error code is `auth_unavailable` or `auth_not_found`;
+  - a 400 `model_not_found`. The proxy knows a model only through an account that serves it, so this is its answer once that account is removed or disabled.
 
-  The management client speaks the proxy's v8 management API. `crates/cw-server/src/cliproxy.rs` has the routes:
+  The management client speaks the proxy's v8 management API. A sign-in starts with `is_webui=true`: without it the proxy does not listen on the vendor's callback port (54545 for Claude, 1455 for Codex), and the browser ends on "Unable to connect". `crates/cw-server/src/cliproxy.rs` has the routes:
   - `GET /v1/cliproxy`;
   - `POST` and `DELETE /v1/cliproxy/accounts`;
   - `GET` and `DELETE /v1/cliproxy/login?state=`. The sign-in's state is in the query, which the request log leaves out.

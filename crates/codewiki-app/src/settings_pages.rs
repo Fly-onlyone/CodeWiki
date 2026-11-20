@@ -663,7 +663,11 @@ fn ai_model(model: &Model) -> Vec<Block> {
                 settings,
                 FieldId::LlmModel,
                 "Model",
-                "Anthropic has a default; the others need a name",
+                if through_proxy {
+                    "The proxy lists its models once it holds an account"
+                } else {
+                    "Anthropic has a default; the others need a name"
+                },
             )
         });
     let mut provider_card = vec![
@@ -1728,6 +1732,10 @@ mod tests {
         assert!(doc.fields().contains(&FieldId::LlmModel));
         let words = doc.words();
         assert!(words.contains("No account yet"), "{words}");
+        assert!(
+            words.contains("The proxy lists its models once it holds an account"),
+            "{words}"
+        );
     }
 
     #[test]

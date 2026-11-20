@@ -40,20 +40,30 @@ fn base(base_url: &str) -> &str {
     base_url.trim().trim_end_matches('/')
 }
 
-/// Whether the proxy's answer means no account can answer now: a 429 after
-/// it has tried its accounts, or a 503 naming an empty pool.
+/// Whether the proxy's answer means no account can answer now:
+/// - a 429 after it has tried its accounts;
+/// - a 503 naming an empty pool;
+/// - a 400 `model_not_found`. The proxy knows a model only through an
+///   account that serves it, so this is what it says once that account is
+///   removed or disabled (seen on CLIProxyAPI 8.0.79).
 fn exhausted(reply: &Reply) -> Option<Error> {
     let code = reply.body["error"]["code"].as_str().unwrap_or("");
     let empty_pool = reply.status == 503 && NO_ACCOUNT.contains(&code);
-    if reply.status != 429 && !empty_pool {
+    let unserved = reply.status == 400 && code == "model_not_found";
+    if reply.status != 429 && !empty_pool && !unserved {
         return None;
     }
     let message = reply.body["error"]["message"]
         .as_str()
         .or_else(|| reply.body["error"].as_str())
         .unwrap_or("every account is at its limit");
+    let message = if unserved {
+        format!("{NAME}: {message}; no account in the proxy serves this model")
+    } else {
+        format!("{NAME}: {message}")
+    };
     Some(Error::Exhausted {
-        message: format!("{NAME}: {message}"),
+        message,
         retry_after: reply.retry_after,
     })
 }
@@ -281,8 +291,17 @@ impl Management {
     }
 
     /// Start signing in to `provider` (`claude` or `codex`).
+    ///
+    /// `is_webui` makes the proxy listen on the vendor's callback port (54545
+    /// for Claude, 1455 for Codex) and pass the browser's return on to
+    /// itself, as it does for its own web panel. Without it nothing listens
+    /// there, and the browser lands on a page that cannot be reached.
     pub fn start_login(&self, provider: &str) -> Result<Login> {
-        let body = self.call(Method::Get, "/oauth/auth-url", &[("provider", provider)])?;
+        let body = self.call(
+            Method::Get,
+            "/oauth/auth-url",
+            &[("provider", provider), ("is_webui", "true")],
+        )?;
         let field = |key: &str| body[key].as_str().unwrap_or("").to_string();
         let login = Login {
             url: field("url"),
@@ -357,8 +376,10 @@ mod tests {
         assert!(exhausted(&reply(503, "auth_unavailable")).is_some());
         assert!(exhausted(&reply(503, "auth_not_found")).is_some());
         assert!(exhausted(&reply(429, "")).is_some());
+        assert!(exhausted(&reply(400, "model_not_found")).is_some());
         assert!(exhausted(&reply(503, "thread_auth_unavailable")).is_none());
         assert!(exhausted(&reply(500, "auth_unavailable")).is_none());
+        assert!(exhausted(&reply(400, "invalid_request_error")).is_none());
         let Some(Error::Exhausted {
             message,
             retry_after,

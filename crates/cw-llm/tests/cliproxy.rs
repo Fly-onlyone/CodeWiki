@@ -217,13 +217,40 @@ fn other_failures_stay_ordinary_errors() {
         ),
         json_answer(
             400,
-            json!({ "error": { "message": "unknown provider for model x", "code": "model_not_found" } }),
+            json!({ "error": { "message": "messages: too long", "code": "invalid_request_error" } }),
         ),
     ]);
-    for expected in ["HTTP 500", "HTTP 503", "unknown provider for model x"] {
+    for expected in ["HTTP 500", "HTTP 503", "messages: too long"] {
         let error = proxy(&url).complete("s", "u").unwrap_err();
         assert!(!matches!(error, Error::Exhausted { .. }), "{error:?}");
         assert!(error.to_string().contains(expected), "{error}");
+    }
+    server.join().unwrap();
+}
+
+#[test]
+fn a_model_no_account_serves_is_exhausted() {
+    // What CLIProxyAPI 8.0.79 answers once the account behind a model is
+    // removed or disabled.
+    let (url, server) = serve(vec![json_answer(
+        400,
+        json!({ "error": {
+            "message": "unknown provider for model claude-sonnet-x",
+            "type": "invalid_request_error",
+            "code": "model_not_found",
+            "param": "model",
+        }}),
+    )]);
+    match proxy(&url).complete("s", "u") {
+        Err(Error::Exhausted {
+            message,
+            retry_after: None,
+        }) => assert!(
+            message.contains("unknown provider for model claude-sonnet-x")
+                && message.contains("no account in the proxy serves this model"),
+            "{message}"
+        ),
+        other => panic!("expected Exhausted, got {other:?}"),
     }
     server.join().unwrap();
 }
@@ -344,7 +371,7 @@ fn a_login_is_started_watched_and_cancelled() {
     let got = server.join().unwrap();
     assert_eq!(
         got[0].target,
-        "/v8/management/oauth/auth-url?provider=codex"
+        "/v8/management/oauth/auth-url?provider=codex&is_webui=true"
     );
     assert_eq!(got[1].target, "/v8/management/oauth/status?state=s-1");
     assert_eq!(

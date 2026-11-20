@@ -853,7 +853,7 @@ async fn an_account_is_added_watched_and_removed_through_the_proxy() {
     let asked = proxy.join().unwrap();
     assert_eq!(
         asked[0],
-        "GET /v8/management/oauth/auth-url?provider=claude"
+        "GET /v8/management/oauth/auth-url?provider=claude&is_webui=true"
     );
     assert_eq!(asked[3], "DELETE /v8/management/oauth/session?state=s-1");
     assert_eq!(

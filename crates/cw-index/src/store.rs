@@ -378,6 +378,7 @@ mod tests {
                 dir: String::new(),
                 description: "A demo".into(),
                 deps: vec!["serde".into()],
+                code_deps: vec!["serde".into()],
                 has_lib: true,
                 has_bin: false,
             }],

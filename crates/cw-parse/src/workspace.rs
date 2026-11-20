@@ -15,8 +15,24 @@ pub struct CrateInfo {
     pub description: String,
     /// Dependency names as used in paths, from `[dependencies]` only.
     pub deps: Vec<String>,
+    /// Every crate the package's own code can name, as used in paths: its
+    /// normal, dev and build dependencies, those of `[target.*]` tables too.
+    #[serde(default)]
+    pub code_deps: Vec<String>,
     pub has_lib: bool,
     pub has_bin: bool,
+}
+
+/// The tables of a manifest, or of one of its `[target.*]` tables, that
+/// name dependencies.
+const DEPENDENCY_TABLES: [&str; 3] = ["dependencies", "dev-dependencies", "build-dependencies"];
+
+/// The dependency names in one table, as used in paths.
+fn dependency_names(table: Option<&toml::Value>) -> Vec<String> {
+    table
+        .and_then(|d| d.as_table())
+        .map(|t| t.keys().map(|k| k.replace('-', "_")).collect())
+        .unwrap_or_default()
 }
 
 /// Parse a `Cargo.toml`. Returns `None` for a virtual workspace manifest.
@@ -35,12 +51,20 @@ pub fn parse_manifest(dir: &str, text: &str, files: &[String]) -> Result<Option<
         .and_then(|d| d.as_str())
         .unwrap_or("")
         .to_string();
-    let mut deps: Vec<String> = table
-        .get("dependencies")
-        .and_then(|d| d.as_table())
-        .map(|t| t.keys().map(|k| k.replace('-', "_")).collect())
-        .unwrap_or_default();
+    let mut deps = dependency_names(table.get("dependencies"));
     deps.sort();
+    let targets = table
+        .get("target")
+        .and_then(|t| t.as_table())
+        .into_iter()
+        .flat_map(|t| t.values());
+    let mut code_deps: Vec<String> = std::iter::once(&table)
+        .chain(targets.filter_map(|t| t.as_table()))
+        .flat_map(|t| DEPENDENCY_TABLES.iter().map(|name| t.get(*name)))
+        .flat_map(dependency_names)
+        .collect();
+    code_deps.sort();
+    code_deps.dedup();
     let prefix = if dir.is_empty() {
         String::new()
     } else {
@@ -56,6 +80,7 @@ pub fn parse_manifest(dir: &str, text: &str, files: &[String]) -> Result<Option<
         dir: dir.to_string(),
         description,
         deps,
+        code_deps,
         has_lib: has("src/lib.rs"),
         has_bin: has("src/main.rs") || has_bin_dir || table.contains_key("bin"),
     }))
@@ -121,6 +146,7 @@ mod tests {
             dir: dir.into(),
             description: String::new(),
             deps: vec![],
+            code_deps: vec![],
             has_lib,
             has_bin: !has_lib,
         }
@@ -128,7 +154,7 @@ mod tests {
 
     #[test]
     fn parses_package_manifest() {
-        let text = "[package]\nname = \"cw-core\"\ndescription = \"Core\"\n[dependencies]\nserde-json = \"1\"\nhex = \"0.4\"\n";
+        let text = "[package]\nname = \"cw-core\"\ndescription = \"Core\"\n[dependencies]\nserde-json = \"1\"\nhex = \"0.4\"\n[dev-dependencies]\ntempfile = \"3\"\n[target.'cfg(windows)'.dependencies]\nwindows-sys = \"0.61\"\nhex = \"0.4\"\n";
         let files = vec!["crates/cw-core/src/lib.rs".to_string()];
         let c = parse_manifest("crates/cw-core", text, &files)
             .unwrap()
@@ -136,6 +162,10 @@ mod tests {
         assert_eq!(c.name, "cw_core");
         assert_eq!(c.package, "cw-core");
         assert_eq!(c.deps, ["hex", "serde_json"]);
+        assert_eq!(
+            c.code_deps,
+            ["hex", "serde_json", "tempfile", "windows_sys"]
+        );
         assert!(c.has_lib && !c.has_bin);
         assert!(
             parse_manifest("", "[workspace]\nmembers = []\n", &[])

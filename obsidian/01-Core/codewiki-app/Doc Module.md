@@ -33,10 +33,10 @@ Main items:
 
 ## Used by
 
+- [[Settings Pages Module]] — from `ai_model`, `appearance`, `backend`, `built_in`
 - [[Live Module]] — from `file_page`, `file_row`, `home_page`, `hotspots_page`
 - [[Doc View Module]] — from `SelectRequest`, `choice_tint`, `choices_row`, `draw_cell`
 - [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
-- [[Settings Pages Module]] — from `ai_model`, `appearance`, `backend`, `diagnostics`
 - [[Doc]] — from `tables`, `text`, `words`
 - [[Illustration Module]] — from `render`, `table`
 - [[Settings View Module]] — from `OpenMenu`, `lists_themes`

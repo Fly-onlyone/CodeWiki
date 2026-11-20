@@ -24,13 +24,13 @@ Public API:
 ## Used by
 
 - [[Proposal Module]] — from `approve`, `check_id`, `create`, `get`
+- [[Models Module]] — from `Failure`, `entry`, `from`, `remove`
 - [[Settings Module (cw-server)]] — from `apply`, `change`, `checked`, `message`
 - [[Generate Module]] — from `adopt_existing`, `generate`, `read_optional`, `walk`
 - [[Api Module]] — from `ApiError`, `blocking`, `git_hook`, `import_coverage`
 - [[Repos Module]] — from `add`, `get`, `load`, `remove`
 - [[Query Module]] — from `check_vault_path`, `dependency_path`, `read_note`, `symbol_detail`
 - [[Coverage Module]] — from `import`, `parse_cobertura`, `parse_lcov`, `save`
-- [[cw-embed]] — from `checked`, `from_config`, `post_json`
 
 ## See also
 

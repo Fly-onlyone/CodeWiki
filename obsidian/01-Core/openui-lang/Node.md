@@ -27,8 +27,7 @@ Public API:
 
 - [[Eval Module]] — from `Document`, `binary`, `component`, `eval`
 - [[Illustration Module]] — from `Props`, `children`, `label`, `list_of`
-- [[codewiki-app]] — from `AppView`, `Page`, `connect`, `settings_frame`
-- [[codewiki]] — from `run`
+- [[codewiki-app]] — from `AppView`, `Page`
 
 ## See also
 

@@ -19,32 +19,33 @@ Defined at the crate root:
 
 - [[Embedder]] — trait
 - [[LocalEmbedder]] — the built-in embedder: signed feature hashing, no model and no network.
+- [[BuiltinEmbedder]] — A neural model of CodeWiki's catalog, installed under the data directory and run by a hidden child process that CodeWiki starts on the first request and stops when it is idle.
 - [[OpenAiEmbedder]] — any endpoint that speaks the OpenAI embeddings API.
 - [[OllamaEmbedder]] — A model served by Ollama on this machine or another.
 - `normalize` — scale `vector` to unit length.
-- `from_config` — the embedder for a provider name.
-- `from_settings` — the embedder chosen by the settings in effect: the environment over the settings file.
-- `PROVIDERS` — the embedders a user can choose, in the order a page lists them.
+- `from_config_in` — `from_config` with the data directory that holds the built-in models.
+- `from_settings_in` — `from_settings` with the data directory that holds the built-in models.
 
 ## Depends on
 
 - [[Error]] — uses `external`, `invalid`
-- [[cw-llm]] — uses `header`
+- [[LocalEmbedder]] — uses `default`, `embed_one`
 - [[Error Module]] — uses `Result`
 - [[Logs Module]] — uses `flush`
-- [[Backend]] — uses `status`
+- [[Paths Module]] — uses `data_dir`
 - [[Resolved]] — uses `Resolved`
+- [[BuiltinEmbedder]] — uses `new`
 - [[Embedder]] — uses `Embedder`
-- [[LocalEmbedder]] — uses `default`
 
 ## Used by
 
-- [[Settings Module (cw-server)]] — from `checked`, `describe`, `test_embedder`
+- [[Settings Module (cw-server)]] — from `change`, `checked`, `describe`, `test_embedder`
 - [[OllamaEmbedder]] — from `embed`, `embed_within`, `probe`
 - [[OpenAiEmbedder]] — from `embed`, `embed_within`, `probe`
+- [[Embedder]] — from `batch_size`, `probe`
 - [[LocalEmbedder]] — from `add`, `embed_one`
-- [[Slot]] — from `configure`, `get`
-- [[Embedder]] — from `probe`
+- [[Slot]] — from `configure_in`, `get`
+- [[BuiltinEmbedder]] — from `new`
 
 ## See also
 

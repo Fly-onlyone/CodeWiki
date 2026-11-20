@@ -28,8 +28,6 @@ Main items:
 - [[codewiki-app]] — from `AppView`, `draw_queued_diagrams`, `prepare_page`
 - [[Instance Module]] — from `release`
 - [[Win32 Module]] — from `keep_open`
-- [[Logs Module]] — from `set`
-- [[Activity]] — from `bridge_called`
 
 ## See also
 

@@ -15,13 +15,13 @@ tags: [core, codewiki-app, module]
 Main items:
 
 - `Rgb` — an sRGB color, each channel in `0.0..=1.0`.
-- `parse_hex` — parse `RRGGBB`.
+- `parse_hex` — parse `#RRGGBB`.
 - `fit_alpha` — the lowest opacity, from `floor` up, at which every color in `texts` stays readable on `surface` over any backdrop between the two given colors.
 - `ratio` — WCAG contrast ratio between two opaque colors, from 1 to 21.
 - `over` — `top` at `alpha` painted over an opaque `under`.
-- `worst_ratio` — the lowest contrast `text` can have on `surface` painted at `alpha` over a backdrop that lies between the two given colors.
 - `BLACK` — const
 - `WHITE` — const
+- `worst_ratio` — the lowest contrast `text` can have on `surface` painted at `alpha` over a backdrop that lies between the two given colors.
 
 ## Used by
 

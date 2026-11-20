@@ -28,11 +28,11 @@ Main items:
 - [[Settings Module (cw-core)]] — uses `ANTHROPIC_API_KEY`, `LLM_MODEL`, `LLM_PROVIDER`, `OLLAMA_HOST`
 - [[Error]] — uses `Error`, `external`, `invalid`
 - [[AgentCli]] — uses `claude`, `codex`
-- [[cw-llm]] — uses `header`
 - [[Error Module]] — uses `Result`
-- [[Backend]] — uses `status`
 - [[Key]] — uses `Key`
 - [[Resolved]] — uses `Resolved`
+- [[Anthropic]] — uses `new`
+- [[LlmProvider]] — uses `LlmProvider`
 
 ## Used by
 

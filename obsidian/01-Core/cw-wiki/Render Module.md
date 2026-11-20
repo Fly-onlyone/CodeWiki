@@ -20,8 +20,8 @@ Main items:
 - `Doc` — accumulates a note's sections; empty ones are dropped.
 - `zone_label` — `01-Core` -> `Core`; other folder names are kept.
 - `PROPER_NOUNS` — product and technology names that keep their capital at the start of a list item.
-- `ensure_period` — function
 - `front` — function
+- `ensure_period` — function
 
 ## Depends on
 
@@ -33,8 +33,6 @@ Main items:
 ## Used by
 
 - [[RenderCtx]] — from `RenderCtx`, `composition`, `dep_bullets`, `illustration`
-- [[Decisions Module]] — from `status_of`, `why`
-- [[Generate Module]] — from `cited_sources`
 
 ## See also
 

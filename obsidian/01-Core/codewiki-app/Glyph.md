@@ -21,13 +21,13 @@ Public API:
 ## Used by
 
 - [[Icons Module]] — from `for_command`, `for_theme`, `hue`, `tint`
+- [[Button Module]] — from `Button`, `IconButton`, `icon`, `new`
 - [[Doc Module]] — from `Choice`, `Row`, `new`
-- [[Button Module]] — from `IconButton`, `new`
 - [[List Module]] — from `ListFolder`, `new`
 - [[Menu Module]] — from `MenuItem`, `icon`
 - [[Select Module]] — from `Select`, `icon`
 - [[Text Field Module]] — from `TextField`, `icon`
-- [[Button]] — from `Button`, `icon`
+- [[ListItemButton]] — from `ListItemButton`, `icon`
 
 ## See also
 

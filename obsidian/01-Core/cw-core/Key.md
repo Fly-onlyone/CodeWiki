@@ -22,10 +22,10 @@ Public API:
 
 ## Used by
 
-- [[Settings Module (cw-core)]] — from `ALL`, `ANTHROPIC_API_KEY`, `EMBED_MODEL`, `EMBED_PROVIDER`
+- [[Settings Module (cw-core)]] — from `ALL`, `ANTHROPIC_API_KEY`, `EMBED_DEVICE`, `EMBED_MODEL`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
+- [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `apply`, `checked`, `describe`
 - [[Provider Module]] — from `from_config`, `missing`, `setting`
-- [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `apply`, `checked`
 - [[Resolved]] — from `saved_secret`, `secret_state`, `source`
 
 ## See also

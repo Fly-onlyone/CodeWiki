@@ -16,7 +16,7 @@ Main items:
 
 - `restore_line_endings` — give `edited` the line endings `original` used.
 - `completions` — note names to offer for `query`, at most `limit`: names starting with the query first, then names containing it, each group in the given order.
-- `wikilink_query` — the partly typed wikilink target before the cursor, if the cursor is inside an open `((`.
+- `wikilink_query` — the partly typed wikilink target before the cursor, if the cursor is inside an open `[[`.
 
 ## Used by
 

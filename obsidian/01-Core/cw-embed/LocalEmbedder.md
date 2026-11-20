@@ -29,7 +29,9 @@ Public API:
 
 ## Used by
 
-- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config`
+- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config_in`
+- [[cw-server]] — from `StandIn`, `stand_in`
+- [[cw-wiki]] — from `Other`, `the_documents_of_an_index_are_embedded_again_in_steps`
 
 ## See also
 

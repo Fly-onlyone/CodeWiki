@@ -15,13 +15,20 @@ tags: [core, cw-index, module]
 Main items:
 
 - `VectorRow` — one stored vector.
+- `delete` — function
+- `upsert` — function
 - `from_blob` — function
 - `to_blob` — function
 
+## Depends on
+
+- [[Error Module]] — uses `Result`
+- [[Store Module]] — uses `db`
+
 ## Used by
 
-- [[cw-index]] — from `nearest`, `store_vectors`
-- [[Semantic Module]] — from `embed_documents`
+- [[cw-index]] — from `nearest`, `prune_vectors`, `store_vectors`, `upsert_vectors`
+- [[Run]] — from `store`
 
 ## See also
 

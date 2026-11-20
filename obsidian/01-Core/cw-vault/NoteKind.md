@@ -23,6 +23,7 @@ Public API:
 
 ## Used by
 
+- [[codewiki]] — from `has_template`, `note_style_skill_follows_the_lint`
 - [[Lint Module]] — from `lint`, `lint_lines`
 - [[Generate Module]] — from `adopt_existing`, `adopted_kind`
 - [[Writer Module]] — from `kind_hint`
@@ -30,7 +31,6 @@ Public API:
 - [[Query Module]] — from `NoteInfo`
 - [[Registry]] — from `reserve`
 - [[RegistryEntry]] — from `RegistryEntry`
-- [[Planned]] — from `Planned`
 
 ## See also
 

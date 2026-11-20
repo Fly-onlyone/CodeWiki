@@ -18,7 +18,7 @@ Builds a library.
 Defined at the crate root:
 
 - [[Palette]] — diagram palette.
-- `lenient` — repair a mistake common in hand-written flowcharts: a node label that is a URL path, `Agent/ws/agent`.
+- `lenient` — repair a mistake common in hand-written flowcharts: a node label that is a URL path, `Agent[/ws/agent]`.
 - `render_png` — render Mermaid source to PNG bytes.
 - `render_svg` — render Mermaid source to an SVG document.
 - `themed` — apply a palette with Mermaid's own `init` directive, unless the diagram already carries one.

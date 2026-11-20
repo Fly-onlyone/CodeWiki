@@ -20,8 +20,8 @@ Main items:
 - `HEIGHT` — const
 - `WIDTH` — const
 - `INSET` — how far the track is from the switch's left edge.
+- `PADDING` — `Switch.js`, `SwitchRoot`: `padding: 12` around the track.
 - `TRAVEL` — `Switch.js`, `SwitchSwitchBase`, checked: `translateX(20px)`.
-- `OnChange` — what a change of the switch does; it is given the new value.
 
 ## Depends on
 
@@ -30,6 +30,7 @@ Main items:
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`
+- [[Entry]] — uses `size`
 
 ## Used by
 

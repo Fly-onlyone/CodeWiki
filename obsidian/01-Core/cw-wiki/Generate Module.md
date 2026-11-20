@@ -25,8 +25,8 @@ Main items:
 
 ## Depends on
 
+- [[ProseWriter]] — uses `ProseWriter`, `illustrate`, `name`, `rewrite`
 - [[VaultMeta]] — uses `VaultMeta`, `load`, `registry`, `save`
-- [[ProseWriter]] — uses `ProseWriter`, `illustrate`, `rewrite`, `usage`
 - [[Manifest Module]] — uses `NoteEntry`, `SourceRef`, `body_hash`
 - [[Registry]] — uses `entries`, `new`, `reserve`
 - [[RenderCtx]] — uses `illustration`, `new`, `render`

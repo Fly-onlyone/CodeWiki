@@ -17,18 +17,19 @@ Builds a binary.
 
 Modules:
 
+- [[Model Module (codewiki)]] — `codewiki model`: the built-in embedding models from the command line.
 - [[Serve Module]] — `codewiki serve`: run the backend HTTP server.
 
 Defined at the crate root:
 
-- `HookEvent` — enum
 - `Command` — enum
+- `HookEvent` — enum
+- `embed_worker` — function
 - `run` — function
 - `session_start_hook` — print the session-start briefing for the repository at `repo`.
 - `print_json` — print a result encoded with `serde_json::to_string_pretty`.
 - `print_report` — function
 - `Cli` — struct
-- `main` — function
 
 ## Depends on
 

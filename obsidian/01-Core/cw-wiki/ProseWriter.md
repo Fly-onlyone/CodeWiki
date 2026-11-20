@@ -18,9 +18,9 @@ Returning `None` keeps the structural draft.
 
 Required and provided methods:
 
+- `fn name(&self) -> String` — identifier recorded in the manifest, for example a model name.
 - `fn illustrate( &self, _note: &Planned, _text: &str, _structural: Option<&str>, _context: &WriterContext, ) -> Option<String>` — an illustration for the finished note, as OpenUI Lang source, or `None` to keep the structural one.
 - `fn usage(&self) -> WriterUsage` — calls and tokens spent so far; reported after each run.
-- `fn name(&self) -> String` — identifier recorded in the manifest, for example a model name.
 - `fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Option<String>`
 
 Implemented by [[LlmWriter]].

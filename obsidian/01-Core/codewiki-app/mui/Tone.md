@@ -31,6 +31,7 @@ Public API:
 - [[Feedback Module]] — from `alert`, `chip`
 - [[Text Field Module]] — from `TextField`, `helper`
 - [[Illustration Module]] — from `tone_of`
+- [[Settings Pages Module]] — from `job`
 - [[Block]] — from `Block`
 
 ## See also

@@ -17,8 +17,8 @@ Main items:
 - `parse_python` — parse one Python source file.
 - `MAIN_GUARD_ATTR` — attribute recorded on the module symbol of a file that runs as a script: it has a top-level `if __name__ == "__main__":` block.
 - `Extractor` — struct
-- `text` — function
 - `Ctx` — struct
+- `text` — function
 - `pattern_names` — names bound by an assignment target, loop variable or `as` clause.
 - `visibility` — function
 - `param_names` — function

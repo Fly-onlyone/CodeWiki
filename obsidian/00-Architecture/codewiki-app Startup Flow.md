@@ -23,10 +23,10 @@ sequenceDiagram
     participant p5 as Prefs Module
     participant p6 as Startup Module
     participant p7 as Themes Module
-    participant p8 as Backend
-    participant p9 as Logs Module
-    participant p10 as Update Module
-    participant p11 as cw-client
+    participant p8 as Win32 Module
+    participant p9 as Backend
+    participant p10 as Logs Module
+    participant p11 as Update Module
     p0->>p1: new()
     p0->>p2: register()
     p0->>p3: acquire()
@@ -36,11 +36,11 @@ sequenceDiagram
     p0->>p5: read()
     p0->>p6: launch()
     p0->>p7: init()
-    p0->>p8: shutdown()
-    p0->>p9: init()
-    p0->>p9: level_named()
-    p0->>p10: installing()
-    p0->>p11: uses_remote()
+    p0->>p8: on_console_stop()
+    p0->>p9: shutdown()
+    p0->>p10: init()
+    p0->>p10: level_named()
+    p0->>p11: installing()
 ```
 
 The sequence follows resolved calls outward from `main`, keeping only calls that cross from one documented part into another. Calls reached through trait objects or macros do not appear.
@@ -55,10 +55,10 @@ The sequence follows resolved calls outward from `main`, keeping only calls that
 - [[Prefs Module]]
 - [[Startup Module]]
 - [[Themes Module]]
+- [[Win32 Module]]
 - [[Backend]]
 - [[Logs Module]]
 - [[Update Module]]
-- [[cw-client]]
 
 ## See also
 

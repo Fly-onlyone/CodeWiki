@@ -15,7 +15,7 @@ tags: [core, cw-index, module]
 Main items:
 
 - [[Index]] — struct
-- [[NodeMetrics]] — struct
+- `NodeMetrics` — struct
 - `db` — function
 - `edge_from_row` — function
 - `SYMBOL_COLUMNS` — const
@@ -28,11 +28,16 @@ Main items:
 - [[Confidence]] — uses `parse`
 - [[Symbol]] — uses `Symbol`
 - [[SymbolKind]] — uses `parse`
+- [[Index]] — uses `collect`
 
 ## Used by
 
 - [[Index]] — from `collect`, `edges`, `edges_from`, `edges_to`
-- [[cw-index]] — from `document_opening`, `nearest`, `replace_documents`, `search`
+- [[cw-index]] — from `document_opening`, `documents`, `nearest`, `prune_vectors`
+- [[Repo]] — from `at`, `build`, `new`
+- [[Vectors Module]] — from `delete`, `upsert`
+- [[Analyze Module]] — from `analyze`, `metrics_map`
+- [[Generate Module]] — from `generate`
 
 ## See also
 

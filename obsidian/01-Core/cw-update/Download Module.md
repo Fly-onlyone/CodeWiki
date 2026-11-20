@@ -24,7 +24,6 @@ Main items:
 ## Depends on
 
 - [[Release Module]] — uses `agent`, `user_agent`
-- [[cw-llm]] — uses `header`
 - [[Logs Module]] — uses `flush`
 - [[Release]] — uses `Release`
 

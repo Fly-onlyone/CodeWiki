@@ -4,20 +4,20 @@ tags: [integration]
 
 # serde_json
 
-> External crate `serde_json`, imported by 23 source files.
+> External crate `serde_json`, imported by 28 source files.
 
 ## Used for
 
-Imported by 23 source files. Main users:
+Imported by 28 source files. Main users:
 
 - [[cw-embed]]
+- [[cw-server]]
 - [[Activity Module]]
 - [[Api Module]]
 - [[Ci Module]]
 - [[Graph Module (codewiki-app)]]
 - [[Instance Module]]
 - [[Live Module]]
-- [[Pages Module]]
 
 ## Configuration
 
@@ -26,9 +26,11 @@ Imported by 23 source files. Main users:
 - `crates/codewiki/Cargo.toml` — declares the dependency
 - `crates/cw-client/Cargo.toml` — declares the dependency
 - `crates/cw-core/Cargo.toml` — declares the dependency
+- `crates/cw-embed-engine/Cargo.toml` — declares the dependency
 - `crates/cw-embed/Cargo.toml` — declares the dependency
 - `crates/cw-index/Cargo.toml` — declares the dependency
 - `crates/cw-llm/Cargo.toml` — declares the dependency
+- `crates/cw-models/Cargo.toml` — declares the dependency
 - `crates/cw-server/Cargo.toml` — declares the dependency
 - `crates/cw-update/Cargo.toml` — declares the dependency
 - `crates/cw-vault/Cargo.toml` — declares the dependency

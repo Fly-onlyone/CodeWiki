@@ -27,9 +27,8 @@ Main items:
 
 ## Used by
 
-- [[Button Module]] — from `IconButton`, `render`
+- [[Button Module]] — from `Button`, `IconButton`, `render`
 - [[Select Module]] — from `Select`, `render`
-- [[Button]] — from `Button`, `render`
 - [[ListItemButton]] — from `ListItemButton`, `render`
 - [[Doc View Module]] — from `table_row`
 - [[Switch Module]] — from `render`

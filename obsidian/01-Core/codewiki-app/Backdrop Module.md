@@ -15,8 +15,8 @@ tags: [core, codewiki-app, module]
 Main items:
 
 - `Shell` — the window's outermost view: the drifting shapes, and `content` over them.
-- `TitleBarFn` — draws the window's title bar.
 - `STRENGTH` — how strongly a shape colors the backdrop at its middle.
+- `TitleBarFn` — draws the window's title bar.
 - `RINGS` — discs in one shape.
 - `Blob` — one shape: where it rests, how far it wanders, and how fast.
 - `MICROSOFT_VENDOR` — how GPUI names an adapter from Microsoft's vendor ID, 0x1414.
@@ -28,6 +28,7 @@ Main items:
 - [[Doc View Module]] — uses `DocPage`, `PageSlot`, `bounds`, `read_by`
 - [[Glass Module]] — uses `debug_backdrop`
 - [[Themes Module]] — uses `of`
+- [[Entry]] — uses `size`
 
 ## Used by
 

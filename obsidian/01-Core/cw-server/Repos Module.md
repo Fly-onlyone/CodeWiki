@@ -32,6 +32,7 @@ Main items:
 
 - [[Api Module]] — from `ListedRepo`, `add_repo`, `get_repo`, `git_hook`
 - [[Workspace Module (cw-server)]] — from `open`, `repo_contracts`, `summarize`, `workspace`
+- [[Models Module]] — from `embed_all`, `embed_repo`, `resume`
 
 ## See also
 

@@ -19,7 +19,7 @@ Main items:
 - `WIDE_MEASURE` — measure for generated pages.
 - `NOTE_MEASURE` — widest a line of prose may run, in pixels.
 - `MIN_GUTTER` — space kept on each side of the text however narrow the pane gets.
-- `style` — the text view's whole style: what gpui-component 0.9.1 derives from its theme (`text/mod.rs`, `base_text_view_style`), with this pane's spacing folded in as its `text/compat.rs` folds it, and the theme's hues on top.
+- `style` — the text view's whole style: what gpui-component 0.9.1 derives from its theme (`base_text_view_style` in its `text` module), with this pane's spacing folded in as its `text::compat` folds it, and the theme's hues on top.
 - `heading_hue` — the hue of a heading.
 - `heading_scale` — heading size as a multiple of the body size, by level.
 

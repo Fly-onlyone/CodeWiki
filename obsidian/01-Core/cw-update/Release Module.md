@@ -21,12 +21,11 @@ Main items:
 - `user_agent` — function
 - `ApiAsset` — struct
 - `from_repository` — A release that GitHub described must have its files among this repository's release downloads at GitHub.
-- `parse` — read a `releases/latest` answer.
+- `parse` — read GitHub's answer to `GET /repos/{owner}/{repo}/releases/latest`.
 
 ## Depends on
 
 - [[cw-update]] — uses `GITHUB_API`, `REPOSITORY`
-- [[cw-llm]] — uses `header`
 - [[Release]] — uses `Release`
 
 ## Used by

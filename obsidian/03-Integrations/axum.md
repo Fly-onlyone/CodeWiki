@@ -4,11 +4,11 @@ tags: [integration]
 
 # axum
 
-> External crate `axum`, imported by 3 source files.
+> External crate `axum`, imported by 4 source files.
 
 ## Used for
 
-Imported by 3 source files. Main users:
+Imported by 4 source files. Main users:
 
 - [[cw-server]]
 - [[Api Module]]
@@ -22,6 +22,7 @@ Imported by 3 source files. Main users:
 - `crates/cw-server/src/api.rs` — imports `axum`
 - `crates/cw-server/src/lib.rs` — imports `axum`
 - `crates/cw-server/tests/api.rs` — imports `axum`
+- `crates/cw-server/tests/models.rs` — imports `axum`
 
 ## See also
 

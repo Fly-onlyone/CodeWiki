@@ -474,14 +474,24 @@ fn search(model: &Model) -> Vec<Block> {
         return without_settings(model);
     };
     let built_in_chosen = settings["embed"]["provider"]["value"] == "builtin";
-    let mut embedder = vec![provider(
+    // Chosen with no model, the built-in embedder waits for one.
+    let waiting = built_in_chosen && settings["embed"]["model"]["value"].is_null();
+    let mut chooser = provider(
         model,
         settings,
         "embed",
         "Embedder",
         "Finds notes and symbols by meaning",
         embedder_name,
-    )];
+    );
+    if let Block::Select { options, .. } = &mut chooser {
+        for option in options.iter_mut().filter(|option| {
+            matches!(&option.action, Action::SetSetting { value: Some(value), .. } if value == "builtin")
+        }) {
+            option.action = builtin_choice(model.models);
+        }
+    }
+    let mut embedder = vec![chooser];
     // A built-in model is chosen below, by its Use button, not typed.
     if !built_in_chosen {
         embedder.push(field(
@@ -493,7 +503,15 @@ fn search(model: &Model) -> Vec<Block> {
         ));
     }
     embedder.extend([
-        in_use(settings, "embed", "Semantic search is off."),
+        if waiting {
+            Block::Alert {
+                tone: Tone::Info,
+                text: "Choose a model below. Install downloads it and makes it the embedder; until then search is full-text alone.".into(),
+                button: None,
+            }
+        } else {
+            in_use(settings, "embed", "Semantic search is off.")
+        },
         Block::Text(vec![text(
             "A new embedder serves the next search. The stored vectors are rebuilt at the next Sync; until then search is full-text alone.",
         )]),
@@ -516,6 +534,36 @@ fn search(model: &Model) -> Vec<Block> {
         text("."),
     ]));
     blocks
+}
+
+/// What choosing the built-in embedder does. An installed model is used at
+/// once, the recommended one first, and one in use is left as it is. With
+/// none installed the choice is saved, and waits for Install or Use to name
+/// a model.
+fn builtin_choice(models: Option<&Value>) -> Action {
+    let entries: Vec<&Value> = models
+        .and_then(|models| models["models"].as_array())
+        .into_iter()
+        .flatten()
+        .collect();
+    let installed: Vec<&str> = entries
+        .iter()
+        .filter(|entry| entry["installed"] == true && entry["active"] != true)
+        .filter_map(|entry| entry["id"].as_str())
+        .collect();
+    let recommended = models.and_then(|models| models["recommended"]["model"].as_str());
+    let in_use = entries.iter().any(|entry| entry["active"] == true);
+    match recommended
+        .filter(|id| installed.contains(id))
+        .or(installed.first().copied())
+    {
+        Some(id) if !in_use => Action::UseModel(id.to_string()),
+        _ => Action::SetSetting {
+            section: "embed".into(),
+            field: "provider".into(),
+            value: Some("builtin".into()),
+        },
+    }
 }
 
 fn device_name(device: &str) -> &str {
@@ -1519,6 +1567,98 @@ mod tests {
         let doc = fixture.page(Category::Search);
         assert!(doc.words().contains("Testing…"));
         assert!(!doc.actions().contains(&Action::TestEmbedder));
+    }
+
+    /// The fixture as a backend that can run a built-in model describes it:
+    /// the built-in embedder among the choices.
+    fn offering_built_in() -> Fixture {
+        let mut fixture = Fixture::new();
+        fixture.settings.as_mut().unwrap()["embed"]["provider"]["options"] =
+            json!(["local", "builtin", "ollama", "openai", "none"]);
+        fixture
+    }
+
+    /// What choosing "Built-in model" in the Embedder select does.
+    fn built_in_entry(doc: &Doc) -> Action {
+        doc.flat()
+            .into_iter()
+            .find_map(|block| match block {
+                Block::Select { label, options, .. } if label == "Embedder" => options
+                    .iter()
+                    .find(|option| option.label == "Built-in model")
+                    .map(|option| option.action.clone()),
+                _ => None,
+            })
+            .expect("the Embedder select lists the built-in model")
+    }
+
+    #[test]
+    fn the_built_in_entry_waits_for_a_model_when_none_is_installed() {
+        let mut fixture = offering_built_in();
+        let doc = fixture.page(Category::Search);
+        assert!(
+            doc.words().contains(
+                "Embedder: Word forms: no model needed (Word forms: no model needed / Built-in model / Ollama / OpenAI-compatible / Off: full-text search only)"
+            ),
+            "{}",
+            doc.words()
+        );
+        assert_eq!(built_in_entry(&doc), set("embed", "builtin"));
+        // Before the models are read, it can only wait too.
+        fixture.models = None;
+        assert_eq!(
+            built_in_entry(&fixture.page(Category::Search)),
+            set("embed", "builtin")
+        );
+    }
+
+    #[test]
+    fn the_built_in_entry_uses_an_installed_model() {
+        let mut fixture = offering_built_in();
+        fixture.models.as_mut().unwrap()["models"][0]["installed"] = json!(true);
+        assert_eq!(
+            built_in_entry(&fixture.page(Category::Search)),
+            Action::UseModel("granite-small-english-r2".into())
+        );
+        // The recommended one, when it is installed too.
+        fixture.models.as_mut().unwrap()["models"][1]["installed"] = json!(true);
+        assert_eq!(
+            built_in_entry(&fixture.page(Category::Search)),
+            Action::UseModel(BALANCED.into())
+        );
+        // A model in use stays: choosing the entry again switches nothing.
+        fixture.models.as_mut().unwrap()["models"][1]["active"] = json!(true);
+        assert_eq!(
+            built_in_entry(&fixture.page(Category::Search)),
+            set("embed", "builtin")
+        );
+    }
+
+    const WAITING: &str = "Choose a model below. Install downloads it and makes it the embedder; until then search is full-text alone.";
+
+    #[test]
+    fn pending_note_shows_for_builtin_without_model() {
+        let mut fixture = offering_built_in();
+        let embed = &mut fixture.settings.as_mut().unwrap()["embed"];
+        embed["provider"]["value"] = json!("builtin");
+        embed["name"] = Value::Null;
+        embed["problem"] = json!("the built-in embedder needs a model; set CODEWIKI_EMBED_MODEL");
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(words.contains("Embedder: Built-in model ("), "{words}");
+        assert!(words.contains(WAITING), "{words}");
+        assert!(!words.contains("needs a model"), "{words}");
+        // A built-in model is chosen by its button: no model is typed.
+        assert!(doc.fields().is_empty(), "{:?}", doc.fields());
+
+        // Set by the environment, it waits the same way, and the choice is
+        // locked.
+        fixture.settings.as_mut().unwrap()["embed"]["provider"]["source"] = json!("env");
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(words.contains(WAITING), "{words}");
+        assert!(words.contains("Set by CODEWIKI_EMBED"), "{words}");
+        assert!(!doc.actions().contains(&set("embed", "local")));
     }
 
     const BALANCED: &str = "gte-modernbert-base";

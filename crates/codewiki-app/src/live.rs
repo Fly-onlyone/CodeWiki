@@ -412,7 +412,12 @@ pub struct ModelOffer {
 /// turned the offer down. Once a model is installed the offer is gone: the
 /// settings are then where its models are.
 pub fn model_offer(models: &Value, dismissed: bool) -> Option<ModelOffer> {
-    if dismissed || models["available"] != true || models["embedder"] != "local" {
+    // Offered over the embedder that needs no model, and to a built-in one
+    // that still waits for its model.
+    if dismissed
+        || models["available"] != true
+        || !matches!(models["embedder"].as_str(), Some("local" | "builtin"))
+    {
         return None;
     }
     let listed = models["models"].as_array()?;
@@ -866,6 +871,17 @@ mod tests {
         // And Home without an offer has no such card.
         let page = home_page(&home(&[ALPHA], &[]));
         assert!(!page.headings().contains(&"Search by meaning"));
+    }
+
+    #[test]
+    fn home_offers_a_model_while_the_built_in_embedder_waits_for_one() {
+        let mut waiting = models();
+        waiting["embedder"] = json!("builtin");
+        let offer = model_offer(&waiting, false).expect("an offer");
+        assert_eq!(offer.id, "gte-modernbert-base");
+        // Once one is installed, the page that chooses it is in Settings.
+        waiting["models"][0]["installed"] = json!(true);
+        assert_eq!(model_offer(&waiting, false), None);
     }
 
     #[test]

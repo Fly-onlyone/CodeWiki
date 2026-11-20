@@ -155,6 +155,61 @@ fn private_items_used_through_receivers_and_constants_are_alive() {
 }
 
 #[test]
+fn a_cycle_is_two_sibling_files_not_a_module_and_its_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+    write(r, "crates/srv/Cargo.toml", "[package]\nname = \"srv\"\n");
+    // `lib.rs` calls into `api.rs`, which uses `lib.rs`'s `State`.
+    write(
+        r,
+        "crates/srv/src/lib.rs",
+        "//! Server.\npub mod a;\npub mod api;\npub mod b;\npub mod net;\n\n/// Shared state.\npub struct State;\n\n/// Serve.\npub fn serve() -> State { api::route() }\n",
+    );
+    write(
+        r,
+        "crates/srv/src/api.rs",
+        "//! Routes.\nuse crate::State;\n\n/// The one route.\npub fn route() -> State { State }\n",
+    );
+    // Two siblings that call each other.
+    write(
+        r,
+        "crates/srv/src/a.rs",
+        "//! A.\n/// Ping.\npub fn ping(n: u8) -> u8 { if n == 0 { 0 } else { crate::b::pong(n - 1) } }\n",
+    );
+    write(
+        r,
+        "crates/srv/src/b.rs",
+        "//! B.\n/// Pong.\npub fn pong(n: u8) -> u8 { if n == 0 { 0 } else { crate::a::ping(n - 1) } }\n",
+    );
+    // The library calls `.header(..)` on a type from elsewhere; the test's
+    // private `Received::header` is not that method.
+    write(
+        r,
+        "crates/srv/src/net.rs",
+        "//! Network.\n/// Send a request.\npub fn send(request: http::Request<()>) -> bool {\n    request.headers().contains_key(\"a\")\n}\n\n/// Build a request.\npub fn build() -> http::request::Builder {\n    http::Request::builder().header(\"a\", \"b\")\n}\n",
+    );
+    write(
+        r,
+        "crates/srv/tests/wire.rs",
+        "struct Received;\n\nimpl Received {\n    fn header(&self) -> u8 { 0 }\n}\n\n#[test]\nfn sends() {\n    let _ = srv::net::build();\n    assert_eq!(Received.header(), 0);\n}\n",
+    );
+
+    let health = health::file_health(&indexed(r)).unwrap();
+    let mut cyclic: Vec<&str> = health
+        .iter()
+        .filter(|h| h.findings.iter().any(|f| f.detector == "mutual-dependency"))
+        .map(|h| h.path.as_str())
+        .collect();
+    cyclic.sort_unstable();
+    assert_eq!(
+        cyclic,
+        ["crates/srv/src/a.rs", "crates/srv/src/b.rs"],
+        "{health:?}"
+    );
+}
+
+#[test]
 fn reports_documentation_drift_and_coverage() {
     let dir = fixture();
     let facts = cw_parse::scan_repo(dir.path()).unwrap();

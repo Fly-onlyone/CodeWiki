@@ -654,12 +654,35 @@ struct NoteQuery {
     path: String,
 }
 
+/// What a read of a note asks for. A write names the note alone.
+#[derive(Deserialize)]
+struct NoteReadQuery {
+    path: String,
+    /// `agent` for the view a coding agent gets; the whole note without it.
+    /// The app saves what it read, so it must never be given less than the
+    /// whole.
+    #[serde(default)]
+    view: Option<String>,
+}
+
 async fn read_note(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<NoteQuery>,
+    Query(q): Query<NoteReadQuery>,
 ) -> Api<query::NoteContent> {
-    blocking(move || query::read_note(&Repo::open(&state, &id)?.root, &q.path)).await
+    blocking(move || {
+        let view = match q.view.as_deref() {
+            None => query::View::Whole,
+            Some("agent") => query::View::Agent,
+            Some(other) => {
+                return Err(cw_core::Error::invalid(format!(
+                    "unknown view '{other}'; the only one is 'agent'"
+                )));
+            }
+        };
+        query::read_note_as(&Repo::open(&state, &id)?.root, &q.path, view)
+    })
+    .await
 }
 
 #[derive(Deserialize)]

@@ -1156,6 +1156,32 @@ async fn full_repository_flow() {
             .contains("> Arithmetic helpers.")
     );
     assert_eq!(note["info"]["state"], "generated");
+    // The whole note is the default: the app saves what it reads.
+    assert!(note.get("left_out").is_none(), "{note}");
+    // A coding agent asks for the note without its walk-through of calls.
+    let cut = h
+        .get(&format!(
+            "/v1/repos/{id}/note?path=01-Core/demo/Math%20Module.md&view=agent"
+        ))
+        .await;
+    let whole = note["text"].as_str().unwrap();
+    let agent = cut["text"].as_str().unwrap();
+    assert!(agent.contains("> Arithmetic helpers.") && agent.contains("## See also"));
+    assert!(!agent.contains("## How it works"), "{agent}");
+    if whole.contains("## How it works") {
+        assert_eq!(cut["left_out"], json!(["How it works"]));
+    } else {
+        assert_eq!(agent, whole);
+    }
+    let (status, _) = h
+        .call(
+            "GET",
+            &format!("/v1/repos/{id}/note?path=math%20module&view=short"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
     // Notes can also be fetched by name.
     assert_eq!(
         h.get(&format!("/v1/repos/{id}/note?path=math%20module"))

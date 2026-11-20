@@ -33,6 +33,59 @@ pub struct NoteContent {
     /// OpenUI Lang source of the note's illustration, when it has one.
     #[serde(default)]
     pub illustration: Option<String>,
+    /// Headings of the sections `text` leaves out, in a view that is not
+    /// the whole note.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_out: Vec<String>,
+}
+
+/// How much of a note a reader gets.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum View {
+    /// The note as it is in the vault, with its illustration.
+    #[default]
+    Whole,
+    /// What a coding agent needs: see [`agent_view`].
+    Agent,
+}
+
+/// Sections a coding agent can do without.
+///
+/// `How it works` walks through which function calls which. An agent reads
+/// that from the code it is about to edit, and reads it more exactly there.
+/// What the code does not say stays in: what the thing is for, where it is,
+/// what each item does, what can go wrong, who depends on it.
+const AGENT_OMITS: [&str; 1] = ["How it works"];
+
+/// The text of a note for a coding agent: the note without the sections in
+/// [`AGENT_OMITS`], and the headings that were left out. Only a note about a
+/// module, a crate or a type is cut. In a flow note `How it works` is the
+/// diagram, which is the note.
+pub fn agent_view(text: &str, kind: NoteKind) -> (String, Vec<String>) {
+    if kind != NoteKind::Concept {
+        return (text.to_string(), Vec::new());
+    }
+    let mut kept = String::with_capacity(text.len());
+    let mut left_out = Vec::new();
+    let mut in_fence = false;
+    let mut skipping = false;
+    for line in text.split_inclusive('\n') {
+        let trimmed = line.trim_end();
+        if trimmed.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+        } else if !in_fence && let Some(heading) = trimmed.strip_prefix("## ") {
+            // A `## ` line inside a code block is code, not a heading.
+            let heading = heading.trim();
+            skipping = AGENT_OMITS.contains(&heading);
+            if skipping {
+                left_out.push(heading.to_string());
+            }
+        }
+        if !skipping {
+            kept.push_str(line);
+        }
+    }
+    (kept, left_out)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,8 +197,13 @@ fn check_vault_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Read a note by vault path or by name.
+/// Read a whole note by vault path or by name.
 pub fn read_note(root: &Path, path_or_name: &str) -> Result<NoteContent> {
+    read_note_as(root, path_or_name, View::Whole)
+}
+
+/// Read a note by vault path or by name, as much of it as `view` says.
+pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteContent> {
     let vault = root.join(VAULT_DIR);
     let meta = VaultMeta::load(&vault)?;
     let entry = meta
@@ -160,12 +218,23 @@ pub fn read_note(root: &Path, path_or_name: &str) -> Result<NoteContent> {
     check_vault_path(&entry.path)?;
     let full = vault.join(&entry.path);
     let text = std::fs::read_to_string(&full).map_err(|e| Error::io(full, e))?;
+    if view == View::Agent {
+        let (text, left_out) = agent_view(&text, entry.kind);
+        return Ok(NoteContent {
+            info: info(entry, &vault),
+            text,
+            // A picture is for the eye.
+            illustration: None,
+            left_out,
+        });
+    }
     let illustration =
         std::fs::read_to_string(vault.join(crate::generate::illustration_path(&entry.path))).ok();
     Ok(NoteContent {
         info: info(entry, &vault),
         text,
         illustration,
+        left_out: Vec::new(),
     })
 }
 
@@ -394,5 +463,38 @@ mod tests {
         }
         assert!(check_vault_path("01-Core/engine/Price.md").is_ok());
         assert!(check_vault_path("_HOME.md").is_ok());
+    }
+
+    #[test]
+    fn an_agent_gets_a_note_without_its_walk_through() {
+        let note = "---\ntags: [core]\n---\n\n# Settings Module\n\n> Keeps the one setting.\n\n## What it does\n\nIt is a file.\n\n```text\n## How it works\nnot a heading\n```\n\n## Source\n\n- `src/settings.rs` — module\n\n## How it works\n\n1. `main` calls `enabled`.\n\n```rust\n## Items\n```\n\nCalls are listed in the order of the source.\n\n## Items\n\n- `pub fn enabled() -> bool` — whether it is on.\n\n## See also\n\n- [[_index]]\n";
+        let (text, left_out) = agent_view(note, NoteKind::Concept);
+        assert_eq!(left_out, ["How it works"]);
+        // The section goes whole, up to the next heading that is one: a
+        // `## ` line in a code block is code.
+        assert_eq!(
+            text,
+            "---\ntags: [core]\n---\n\n# Settings Module\n\n> Keeps the one setting.\n\n## What it does\n\nIt is a file.\n\n```text\n## How it works\nnot a heading\n```\n\n## Source\n\n- `src/settings.rs` — module\n\n## Items\n\n- `pub fn enabled() -> bool` — whether it is on.\n\n## See also\n\n- [[_index]]\n"
+        );
+
+        // A flow's `How it works` is its diagram: the note stays whole.
+        let (flow, left_out) = agent_view(note, NoteKind::Flow);
+        assert_eq!(flow, note);
+        assert!(left_out.is_empty());
+
+        // Nothing to leave out, and the section as the last one.
+        let plain = "# T\n\n> S.\n\n## Items\n\n- `a`\n";
+        assert_eq!(
+            agent_view(plain, NoteKind::Concept),
+            (plain.to_string(), Vec::new())
+        );
+        let last = "# T\n\n> S.\n\n## How it works\n\n1. Step.";
+        assert_eq!(
+            agent_view(last, NoteKind::Concept),
+            (
+                "# T\n\n> S.\n\n".to_string(),
+                vec!["How it works".to_string()]
+            )
+        );
     }
 }

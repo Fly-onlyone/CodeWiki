@@ -109,6 +109,10 @@ struct PathParams {
 struct NoteParams {
     /// Note name (`Scan Module`) or vault path (`01-Core/cw-parse/Scan Module.md`).
     note: String,
+    /// Also return `How it works`, the step-by-step walk-through of which
+    /// function calls which. Left out by default: the code shows it.
+    #[serde(default)]
+    full: Option<bool>,
     /// Repository root path. Defaults to the directory the agent runs in.
     #[serde(default)]
     repo: Option<String>,
@@ -1124,18 +1128,26 @@ impl Bridge {
         text(body)
     }
 
-    #[tool(description = "Read one wiki note in full, by note name or vault path.")]
+    #[tool(
+        description = "Read one wiki note, by note name or vault path: what the thing is for, where its source is, what each of its items does, its gotchas and what it depends on. The walk-through of calls under `How it works` is left out, since the code shows it; pass `full: true` to get it too."
+    )]
     async fn read_note(
         &self,
         Parameters(p): Parameters<NoteParams>,
     ) -> Result<CallToolResult, McpError> {
         let note = p.note;
+        // The backend cuts the note: one rule for every client that asks.
+        let view = if p.full.unwrap_or(false) {
+            ""
+        } else {
+            "&view=agent"
+        };
         let content = self
             .call(p.repo, move |b, id| {
-                b.get(&format!("/v1/repos/{id}/note?path={}", encode(&note)))
+                b.get(&format!("/v1/repos/{id}/note?path={}{view}", encode(&note)))
             })
             .await?;
-        text(content["text"].as_str().unwrap_or("").to_string())
+        text(note_text(&content))
     }
 
     #[tool(
@@ -1170,9 +1182,32 @@ impl Bridge {
     }
 }
 
+/// The text of a note as the backend answered, with a last line that names
+/// what was left out and how to get it.
+fn note_text(content: &Value) -> String {
+    let mut body = content["text"].as_str().unwrap_or("").to_string();
+    let left_out: Vec<String> = content["left_out"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|heading| heading.as_str())
+        .map(|heading| format!("`{heading}`"))
+        .collect();
+    if !left_out.is_empty() {
+        if !body.ends_with('\n') {
+            body.push('\n');
+        }
+        body.push_str(&format!(
+            "\n(Left out: {}. Call read_note with `full: true` to read it.)\n",
+            left_out.join(", ")
+        ));
+    }
+    body
+}
+
 #[tool_handler(
     name = "codewiki",
-    instructions = "CodeWiki serves a maintained wiki and a structural index of the repository. Call get_overview first in an unfamiliar codebase. Before editing a file or symbol, call get_context on it. Use search_codebase to locate things and read_note for full notes. After editing, call get_impacted_tests to learn which tests to run. Call sync_wiki after substantial code changes."
+    instructions = "CodeWiki serves a maintained wiki and a structural index of the repository. Call get_overview first in an unfamiliar codebase. Before editing a file or symbol, call get_context on it. Use search_codebase to locate things and read_note for a note; read_note leaves out the walk-through of calls unless you pass full: true. After editing, call get_impacted_tests to learn which tests to run. Call sync_wiki after substantial code changes."
 )]
 impl ServerHandler for Bridge {}
 
@@ -1220,6 +1255,22 @@ mod tests {
             body.contains("  /v1/repos/{id}/notes  src/main.rs:12\n"),
             "{body}"
         );
+    }
+
+    #[test]
+    fn a_cut_note_says_what_was_left_out() {
+        let cut = note_text(&json!({
+            "text": "# Scan Module\n\n## Items\n\n- `scan`\n",
+            "left_out": ["How it works"],
+        }));
+        assert_eq!(
+            cut,
+            "# Scan Module\n\n## Items\n\n- `scan`\n\n(Left out: `How it works`. Call read_note with `full: true` to read it.)\n"
+        );
+        // A whole note is given as it is.
+        let whole = note_text(&json!({ "text": "# Crate Dependency Flow\n" }));
+        assert_eq!(whole, "# Crate Dependency Flow\n");
+        assert_eq!(note_text(&json!({})), "");
     }
 
     #[test]

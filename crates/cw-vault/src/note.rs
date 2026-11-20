@@ -27,7 +27,19 @@ impl NoteKind {
     /// writer, so every heading is optional but order is fixed.
     pub fn sections(self) -> &'static [&'static str] {
         match self {
-            Self::Flow | Self::Concept | Self::Operations => &[
+            // What the thing is for comes before where it is and how it
+            // runs: a reader new to the code starts at the purpose.
+            Self::Concept => &[
+                "What it does",
+                "Source",
+                "How it works",
+                "Items",
+                "Depends on",
+                "Used by",
+                "Gotchas",
+                "See also",
+            ],
+            Self::Flow | Self::Operations => &[
                 "Source",
                 "How it works",
                 "Depends on",
@@ -37,6 +49,7 @@ impl NoteKind {
             ],
             Self::Pattern => &["When to apply", "The pattern", "Why", "Don't", "See also"],
             Self::Integration => &[
+                "What it does",
                 "Used for",
                 "Configuration",
                 "Wire-up",
@@ -343,6 +356,22 @@ mod tests {
         assert_eq!(n.title, None);
         assert_eq!(n.summary.as_deref(), Some("First line second line."));
         assert_eq!(n.preamble, "Body.");
+    }
+
+    #[test]
+    fn a_concept_and_an_integration_open_with_their_purpose() {
+        for kind in [NoteKind::Concept, NoteKind::Integration] {
+            assert_eq!(kind.sections()[0], "What it does", "{kind:?}");
+        }
+        let concept = NoteKind::Concept.sections();
+        let at = |heading: &str| concept.iter().position(|h| *h == heading).unwrap();
+        // The walk-through, then the reference list it names.
+        assert!(at("Source") < at("How it works"));
+        assert!(at("How it works") < at("Items"));
+        assert!(at("Items") < at("Depends on"));
+        // A flow's `How it works` is its diagram; it has no items.
+        assert!(!NoteKind::Flow.sections().contains(&"Items"));
+        assert_eq!(NoteKind::Flow.sections(), NoteKind::Operations.sections());
     }
 
     #[test]

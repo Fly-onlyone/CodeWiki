@@ -28,21 +28,31 @@ Every heading is optional, but the order is fixed. Recognise a note's kind by th
 
 | Kind of note | Sections, in order |
 |---|---|
-| Architecture flow, module or concept, operations | Source, How it works, Depends on, Used by, Gotchas, See also |
+| Module, crate or type | What it does, Source, How it works, Items, Depends on, Used by, Gotchas, See also |
+| Architecture flow, operations | Source, How it works, Depends on, Used by, Gotchas, See also |
 | Pattern | When to apply, The pattern, Why, Don't, See also |
-| Integration | Used for, Configuration, Wire-up, Auth mode, Gotchas, See also |
+| Integration | What it does, Used for, Configuration, Wire-up, Auth mode, Gotchas, See also |
 | Glossary entry | Definition, See also |
 | Decision record | Status, Context, Decision, Consequences, See also |
 
 The home note `_HOME.md` and the folder maps `_index.md` have no template.
 
+What the sections of a module, crate or type note hold:
+
+- **What it does**: what the thing is for and what a user of the program sees of it, in plain words. CodeWiki copies it from the module's own comment.
+- **How it works**: what happens when the thing is used, as numbered steps: who calls in, and what that call does next. CodeWiki lists the calls in the order they stand in the source. It cannot see a condition or a loop, so add those from the code: "when `on` is true, `set` calls `write`; otherwise `remove`".
+- **Items**: one bullet for each function, type and constant, with its signature and what it does. Keep the bullets and the code span each one starts with.
+- **Gotchas**: what a maintainer could get wrong.
+
+In an integration note, **What it does** says what the package is, **Used for** which module takes which names from it, **Configuration** where it is declared and at which version, and **Wire-up** how this project uses it: the wrapper to call and what not to call directly.
+
 ## Writing
 
-- Dense technical prose in English, 50 to 200 words in the whole note (maps excepted). Explain why, not only what.
+- Clear technical prose in English, 50 to 200 words in the whole note (maps excepted). A module, crate or type note explains more and may run to 1200 words, an integration note to 400 words. Explain why, not only what. Write for a developer who is new to the code: say what a thing is for before you name its parts.
 - Put every identifier, file name and command in backticks.
 - Refer to code by its repo-relative path in backticks, such as `crates/cw-wiki/src/briefing.rs`. Never add a line number.
 - Use `**bold**` only for a constraint the reader must not break.
-- Keep the bullets under `## Source` as they are; CodeWiki writes them from the index.
+- Keep the bullets under `## Source` and `## Items` as they are; CodeWiki writes them from the index.
 - Add `## Gotchas` only when the code shows something a maintainer could get wrong: an ordering constraint, a hidden side effect, an invariant that is not obvious, a failure mode.
 - Put Mermaid diagrams only in architecture flow notes.
 

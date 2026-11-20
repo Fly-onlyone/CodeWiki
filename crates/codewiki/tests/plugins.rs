@@ -208,4 +208,14 @@ fn note_style_skill_follows_the_lint() {
         cw_vault::lint::MAX_WORDS
     );
     assert!(skill.contains(&length), "the skill lacks `{length}`");
+    // The kinds with a limit of their own.
+    for (kind, limit) in [
+        (Concept, cw_vault::lint::CONCEPT_MAX_WORDS),
+        (Integration, cw_vault::lint::INTEGRATION_MAX_WORDS),
+    ] {
+        assert_eq!(cw_vault::lint::max_words(kind), limit);
+        let length = format!("{limit} words");
+        assert!(skill.contains(&length), "the skill lacks `{length}`");
+    }
+    assert_eq!(cw_vault::lint::max_words(Flow), cw_vault::lint::MAX_WORDS);
 }

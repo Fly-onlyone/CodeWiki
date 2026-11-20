@@ -32,7 +32,24 @@ pub enum Mode {
 }
 
 pub const MIN_WORDS: usize = 50;
+/// The most words a note should hold, for every kind without a limit of
+/// its own.
 pub const MAX_WORDS: usize = 200;
+/// For a module, crate or type note, which explains its subject and lists
+/// every item with its whole comment.
+pub const CONCEPT_MAX_WORDS: usize = 1200;
+/// For an integration note, which says what the package is and what each
+/// module takes from it.
+pub const INTEGRATION_MAX_WORDS: usize = 400;
+
+/// The most words a note of `kind` should hold. More is a warning.
+pub fn max_words(kind: NoteKind) -> usize {
+    match kind {
+        NoteKind::Concept => CONCEPT_MAX_WORDS,
+        NoteKind::Integration => INTEGRATION_MAX_WORDS,
+        _ => MAX_WORDS,
+    }
+}
 
 /// Sections hand-written vaults use in addition to the standard templates.
 const TOLERATED_EXTRA_SECTIONS: [&str; 7] = [
@@ -180,11 +197,15 @@ pub fn lint(text: &str, path: &str, kind: NoteKind, registry: &Registry, mode: M
                 Severity::Warning,
                 format!("{} words; aim for at least {MIN_WORDS}", note.word_count),
             );
-        } else if note.word_count > MAX_WORDS {
+        } else if note.word_count > max_words(kind) {
             push(
                 "length",
                 Severity::Warning,
-                format!("{} words; aim for at most {MAX_WORDS}", note.word_count),
+                format!(
+                    "{} words; aim for at most {}",
+                    note.word_count,
+                    max_words(kind)
+                ),
             );
         }
     }
@@ -331,14 +352,20 @@ fn has_markdown_link(prose: &str) -> bool {
 
 /// A code span such as `` `src/lib.rs:42` `` or `` `run.py:25-30` ``.
 fn has_line_number_ref(line: &str) -> bool {
-    line.split('`').skip(1).step_by(2).any(|span| {
-        span.rsplit_once(':').is_some_and(|(path, tail)| {
-            path.contains('.')
-                && !path.contains(' ')
-                && !tail.is_empty()
-                && tail.chars().all(|c| c.is_ascii_digit() || c == '-')
-                && tail.chars().next().is_some_and(|c| c.is_ascii_digit())
-        })
+    line.split('`').skip(1).step_by(2).any(is_line_ref)
+}
+
+/// Whether the text of a code span reads as a file with a line number:
+/// `src/lib.rs:42`, `run.py:25-30`. An address such as `127.0.0.1:8080`
+/// reads the same, so text copied from a comment into a note must be
+/// checked with this before it is put in backticks.
+pub fn is_line_ref(span: &str) -> bool {
+    span.rsplit_once(':').is_some_and(|(path, tail)| {
+        path.contains('.')
+            && !path.contains(' ')
+            && !tail.is_empty()
+            && tail.chars().all(|c| c.is_ascii_digit() || c == '-')
+            && tail.chars().next().is_some_and(|c| c.is_ascii_digit())
     })
 }
 
@@ -410,6 +437,72 @@ mod tests {
             Mode::Strict,
         );
         assert!(issues.is_empty(), "{issues:?}");
+    }
+
+    #[test]
+    fn a_concept_note_explains_before_it_lists() {
+        let filler = "Windows runs what the values under the key say, so the value is the whole setting \
+                      and nothing beside it can disagree. Only an installed copy offers the switch, \
+                      because a build from the sources would leave a value that names a program the \
+                      next build replaces.";
+        let text = format!(
+            "---\ntags: [core]\n---\n\n# Widget\n\n> Starts the app at sign-in.\n\n## What it does\n\n{filler}\n\n## Source\n\n- `src/widget.rs` — implementation\n\n## How it works\n\n1. `run` in [[Gadget]] calls `set`.\n\n## Items\n\n- `set(on: bool)` — turn the start on or off.\n\n## Used by\n\n- [[Gadget]] — from `run`\n\n## Gotchas\n\nThe value is quoted.\n\n## See also\n\n- [[_index]]\n"
+        );
+        let check = |text: &str| {
+            lint(
+                text,
+                "01-Core/Widget.md",
+                NoteKind::Concept,
+                &registry(),
+                Mode::Strict,
+            )
+        };
+        assert!(check(&text).is_empty(), "{:?}", check(&text));
+        // The reference list never comes before the walk-through.
+        let swapped = text
+            .replace("## How it works", "## Later")
+            .replace("## Items", "## How it works")
+            .replace("## Later", "## Items");
+        assert_eq!(rules(&check(&swapped)), ["section-order"]);
+        // A flow has neither of the new sections.
+        let flow = lint(
+            &text,
+            "01-Core/Widget.md",
+            NoteKind::Flow,
+            &registry(),
+            Mode::Strict,
+        );
+        assert_eq!(rules(&flow), ["section-unknown", "section-unknown"]);
+    }
+
+    #[test]
+    fn a_note_that_explains_may_be_longer() {
+        let long = good().replace(
+            "## Depends on",
+            &format!("{}\n\n## Depends on", "word ".repeat(300)),
+        );
+        let lengths = |kind| {
+            lint(&long, "01-Core/Widget.md", kind, &registry(), Mode::Strict)
+                .iter()
+                .filter(|i| i.rule == "length")
+                .count()
+        };
+        assert_eq!(lengths(NoteKind::Concept), 0);
+        assert_eq!(lengths(NoteKind::Flow), 1);
+        assert_eq!(max_words(NoteKind::Concept), CONCEPT_MAX_WORDS);
+        assert_eq!(max_words(NoteKind::Integration), INTEGRATION_MAX_WORDS);
+        assert_eq!(max_words(NoteKind::Pattern), MAX_WORDS);
+    }
+
+    #[test]
+    fn tells_a_line_reference_from_other_code() {
+        assert!(is_line_ref("src/lib.rs:42"));
+        assert!(is_line_ref("run.py:25-30"));
+        // An address reads the same; whoever quotes one must know.
+        assert!(is_line_ref("127.0.0.1:8080"));
+        assert!(!is_line_ref("fn read(key: &str) -> Option<String>"));
+        assert!(!is_line_ref("std::fs::read"));
+        assert!(!is_line_ref("src/lib.rs"));
     }
 
     #[test]

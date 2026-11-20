@@ -178,6 +178,19 @@ pub fn update_in(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>)
         ),
         Err(e) => log::warn!("update of {} failed after {ms} ms: {e}", root.display()),
     }
+    if let Ok(Report {
+        stopped: Some(stopped),
+        waiting,
+        ..
+    }) = &result
+    {
+        log::warn!(
+            "update of {} stopped writing prose; {} notes wait for the next run: {}",
+            root.display(),
+            waiting.len(),
+            stopped.message
+        );
+    }
     result
 }
 

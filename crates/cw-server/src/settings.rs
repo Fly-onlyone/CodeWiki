@@ -186,7 +186,10 @@ fn checked(key: Key, value: &str) -> Result<String> {
         one_of(&cw_embed::PROVIDERS, "embedder")
     } else if key == settings::EMBED_DEVICE {
         one_of(&cw_embed::DEVICES, "device")
-    } else if key == settings::OPENAI_BASE_URL || key == settings::OLLAMA_HOST {
+    } else if key == settings::OPENAI_BASE_URL
+        || key == settings::OLLAMA_HOST
+        || key == settings::CLIPROXY_URL
+    {
         if value.starts_with("http://") || value.starts_with("https://") {
             Ok(value.trim_end_matches('/').to_string())
         } else {

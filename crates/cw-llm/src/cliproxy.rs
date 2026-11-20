@@ -25,6 +25,8 @@ const NAME: &str = "CLIProxyAPI";
 const MANAGEMENT: &str = "/v8/management";
 /// How long a management or model-list request waits: they are small.
 const MANAGEMENT_TIMEOUT: Duration = Duration::from_secs(15);
+/// How long [`reachable`] waits: a local server answers at once.
+const REACH_TIMEOUT: Duration = Duration::from_secs(3);
 /// Error codes with which the proxy says no account can take a request
 /// (`isAuthSelectionUnavailable` in its `sdk/api/handlers/handlers_errors.go`).
 const NO_ACCOUNT: [&str; 2] = ["auth_unavailable", "auth_not_found"];
@@ -102,6 +104,22 @@ impl LlmProvider for CliProxy {
         let value = self.send(system, user, REQUEST_TIMEOUT)?;
         Ok(chat_completion(&value))
     }
+}
+
+/// Whether anything answers at `base_url`: any HTTP answer will do, a
+/// refused key included.
+pub fn reachable(base_url: &str) -> bool {
+    exchange(&Call {
+        provider: NAME,
+        unreachable: &unreachable(base_url),
+        method: Method::Get,
+        url: &format!("{}/v1/models", base(base_url)),
+        query: &[],
+        headers: &[],
+        body: None,
+        timeout: REACH_TIMEOUT,
+    })
+    .is_ok()
 }
 
 /// The models the proxy can serve with the accounts it holds, sorted.

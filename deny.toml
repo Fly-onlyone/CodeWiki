@@ -1,5 +1,8 @@
-# License, advisory and source policy for dependencies.
-# CodeWiki is Apache-2.0 and must stay free of copyleft code.
+# Advisory, ban and source policy for dependencies.
+# The licenses of dependencies are not checked, since 2026-11-20 by the owner's
+# decision: run `cargo deny check advisories bans sources`. A bare
+# `cargo deny check` runs the license check too, and with no list of allowed
+# licenses here it refuses every crate.
 
 [graph]
 targets = ["x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"]
@@ -23,43 +26,10 @@ ignore = [
     { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, transitive through gpui-kit, rmcp and schemars, no safe upgrade" },
 ]
 
-[licenses]
-# Permissive licenses only. Anything not listed here fails the check, which is
-# how AGPL, GPL, LGPL and EPL dependencies are kept out. Do not add a copyleft
-# license here without a recorded maintainer decision.
-allow = [
-    "Apache-2.0",
-    "Apache-2.0 WITH LLVM-exception",
-    "MIT",
-    "MIT-0",
-    "BSD-2-Clause",
-    "BSD-3-Clause",
-    "ISC",
-    "Zlib",
-    "Unicode-3.0",
-    "Unicode-DFS-2016",
-    "CC0-1.0",
-    "0BSD",
-    "BSL-1.0",
-    "CDLA-Permissive-2.0",
-    "OpenSSL",
-    # File-level copyleft: it covers changes to the MPL files themselves, not
-    # code that links them. Used unmodified by the Mermaid renderer's CSS parser.
-    "MPL-2.0",
-]
-confidence-threshold = 0.9
-
-[licenses.private]
-# Workspace crates are not published yet; they carry the workspace license.
-ignore = true
-
 [bans]
 multiple-versions = "allow"
 wildcards = "allow"
-deny = [
-    # AGPL-3.0-only. A ForceAtlas2 layout is implemented in cw-graph instead.
-    { crate = "forceatlas2", reason = "AGPL-3.0-only" },
-]
+deny = []
 
 [sources]
 unknown-registry = "deny"

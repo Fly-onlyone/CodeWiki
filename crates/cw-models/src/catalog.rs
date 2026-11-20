@@ -161,8 +161,8 @@ mod tests {
 
     #[test]
     fn every_license_is_one_the_project_allows() {
-        // deny.toml allows these for code; a model's weights are held to the
-        // same list, and none may be gated or non-commercial.
+        // A model's weights are shipped to users by the app's download, so
+        // none may be gated or non-commercial.
         for entry in all() {
             assert!(
                 ["Apache-2.0", "MIT"].contains(&entry.license.as_str()),

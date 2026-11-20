@@ -4,7 +4,7 @@ Status as of 2026-11-20. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 20 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (729 tests) and `cargo deny check` all pass. One more test downloads a model from Hugging Face and is run by hand (`cargo test -p cw-models -- --ignored`); it passed on 2026-11-19.
+- 20 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (729 tests) and `cargo deny check advisories bans sources` all pass. The licenses of dependencies are no longer checked, by the owner's decision of 2026-11-20. One more test downloads a model from Hugging Face and is run by hand (`cargo test -p cw-models -- --ignored`); it passed on 2026-11-19.
 - Not released yet: error reports to Sentry, opt-in (P6 Error reports below). And the built-in embedding model (M7 below). CodeWiki downloads one of three embedding models and runs it by itself, in a hidden worker process, on the processor or on an NVIDIA card, so that search finds notes and code by meaning with no key and no other install.
 - Version 0.2.0 is the second release: a Windows zip on GitHub Releases and a backend image on GHCR, both built by CI from the tag `v0.2.0`. It adds the Settings page with the settings the backend keeps, the app in the tray with one app per program and a start with Windows, a log for every program, side panes that hide, and a plugin that installs from the package without git. 0.1.0 was the first, on 2026-11-15.
 - CodeWiki documents its own repository: 243 notes, 100% of wikilinks resolve, a second sync writes nothing.
@@ -14,7 +14,7 @@ Status as of 2026-11-20. "Verified" means covered by automated tests or by a liv
 
 | Item | Status | Notes |
 |---|---|---|
-| M0 Scaffold, license policy, CI workflow | Verified | Published at https://github.com/Fly-onlyone/CodeWiki. CI passes on GitHub: format, lint and all tests on Windows; licenses, bans, sources and advisories. 7 "unmaintained" advisories for crates the UI kit depends on are ignored by ID in `deny.toml`; any other advisory fails the build |
+| M0 Scaffold, license policy, CI workflow | Verified | Published at https://github.com/Fly-onlyone/CodeWiki. CI passes on GitHub: format, lint and all tests on Windows; bans, sources and advisories (licenses too, until 2026-11-20). 7 "unmaintained" advisories for crates the UI kit depends on are ignored by ID in `deny.toml`; any other advisory fails the build |
 | M1 Rust parser and name resolver | Verified | |
 | M2 Graph metrics and layout | Verified | PageRank, betweenness, SCC, Louvain, ForceAtlas2 |
 | M3 Vault model, registry, linter, manifest | Verified | |
@@ -86,7 +86,6 @@ Status as of 2026-11-20. "Verified" means covered by automated tests or by a liv
 - Community detection is Louvain, not Leiden.
 - Git access uses the `git` command line, not `gix`.
 - Notes are rendered by Rust code in `crates/cw-wiki/src/render.rs`. There is no template pack and no `restyle` command.
-- `deny.toml` allows MPL-2.0, used unmodified by the Mermaid renderer's CSS parser.
 - Line charts in illustrations are drawn as bars; pie charts as proportional shares.
 - Inheritance in Python, TypeScript and Java is stored as an `implements` edge; there is no separate `extends` kind.
 

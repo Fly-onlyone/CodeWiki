@@ -4,7 +4,6 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
 
 ## Hard rules
 
-- **Licenses.** No AGPL, GPL, LGPL or EPL dependencies. `cargo deny check` must pass. `merman` is used with `default-features = false`; the `forceatlas2` crate is banned.
 - **No WebView.** The UI is native Rust on GPUI (`gpui-kit`). Do not add a browser, WebView2 or Electron dependency.
 - **The app talks HTTP only.** `codewiki-app` gets all data from the backend through `cw-client`. It may link `cw-illustrate`, `cw-mermaid` and `openui-lang` to draw, never the index, parser or wiki crates. Two exceptions concern the app itself: it links `cw-update` to ask GitHub for a newer release and to replace its programs, and `cw-telemetry` to send its own error reports.
 - **Error reports are opt-in and scrubbed.** Nothing goes to Sentry unless `SENTRY_DSN` is set or the user turned on "Send error reports" in a build that carries a DSN. Never add a field to a report that the logs may not hold, and never weaken `cw_telemetry::scrub`.
@@ -127,7 +126,7 @@ A backend feature usually touches four places: the logic in `crates/cw-wiki/src/
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo deny check
+cargo deny check advisories bans sources
 ```
 
 Run all four before reporting work as complete.
@@ -170,7 +169,7 @@ The DLLs there are hard links into the toolkit when both are on one drive, so th
 
 `.github/workflows/` holds four workflows:
 
-- `ci.yml` runs the four commands above, with `--locked`: format, clippy and the tests on Windows, and `cargo deny` on Linux in two legs. The advisories leg can fail with no change in this repository, when a new advisory is published: fix the dependency, or add the advisory's ID to `ignore` in `deny.toml` with a reason. It also runs `codewiki check` on this repository and uploads the findings to code scanning; that job never fails the build. It runs `cargo run -p codewiki`, which picks `codewiki` only because the package sets `default-run`: the package has a second program, `codewiki-embed-cuda`.
+- `ci.yml` runs the four commands above, with `--locked`: format, clippy and the tests on Windows, and `cargo deny` on Linux in two legs (advisories; bans and sources). The licenses of dependencies are not checked, by the owner's decision of 2026-11-20: `deny.toml` has no list of allowed licenses, so a bare `cargo deny check` fails on every crate. The advisories leg can fail with no change in this repository, when a new advisory is published: fix the dependency, or add the advisory's ID to `ignore` in `deny.toml` with a reason. It also runs `codewiki check` on this repository and uploads the findings to code scanning; that job never fails the build. It runs `cargo run -p codewiki`, which picks `codewiki` only because the package sets `default-run`: the package has a second program, `codewiki-embed-cuda`.
 - `security.yml` runs gitleaks over new commits. Never commit a secret, not even a test value that looks real. A confirmed false positive goes in `.gitleaksignore` by its fingerprint.
 - `release.yml` and `docker.yml` run on a `v*` tag. The tag must equal `v` plus the workspace `version` in the root `Cargo.toml`. A tag publishes the Windows zip as a GitHub Release and pushes the image to GHCR. Do not push a tag unless asked. The package carries the DSN of the repository variable `SENTRY_DSN`; after the release, the programs' debug files (`dist\symbols-<version>\`, written by `package.ps1` and never put in the zip) go to the Sentry project `fly-theonlyone/codewiki` with `sentry-cli`, when the secret `SENTRY_AUTH_TOKEN` is set. The token is given to that step alone, never to the build.
 

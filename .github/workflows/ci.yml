@@ -34,7 +34,7 @@ jobs:
   # Both legs gate the build. The advisories leg can fail without any change
   # here, when a new advisory is published: fix the dependency, or add the ID
   # to `ignore` in deny.toml with a reason. fail-fast is off so that such a
-  # failure does not cancel the licenses leg.
+  # failure does not cancel the other leg.
   deny:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -43,7 +43,7 @@ jobs:
       matrix:
         checks:
           - advisories
-          - licenses bans sources
+          - bans sources
     steps:
       - uses: actions/checkout@v7
       - uses: EmbarkStudios/cargo-deny-action@v2

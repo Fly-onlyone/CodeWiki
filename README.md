@@ -263,7 +263,7 @@ Each released version is also pushed as `ghcr.io/fly-onlyone/codewiki:<version>`
 cargo fmt --all
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
-cargo deny check
+cargo deny check advisories bans sources
 ```
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.

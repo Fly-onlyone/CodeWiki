@@ -10,7 +10,8 @@
 #   pwsh scripts\package.ps1
 #
 # The CUDA worker needs NVIDIA's toolkit and Visual Studio's C++ tools to
-# build. scripts\cuda-toolkit.ps1 fetches the toolkit (0.9 GB, once).
+# build. scripts\cuda-toolkit.ps1 fetches the toolkit (0.9 GB, once), and
+# scripts\cuda-worker.ps1 builds the worker into target\release\cuda.
 param(
     # Skip `cargo build` and package what is already in target\release.
     [switch]$NoBuild,
@@ -25,17 +26,7 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
-# The NVIDIA libraries the CUDA worker loads: the two it imports, and
-# cublasLt, which cublas imports. They are named for CUDA 13.4.
-$cudaLibraries = "curand64_10.dll", "cublas64_13.dll", "cublasLt64_13.dll"
-
-# Names of the NVIDIA libraries a program asks Windows for when it starts,
-# read from the file itself.
-function Get-CudaImports([string]$Program) {
-    $text = [System.Text.Encoding]::ASCII.GetString([System.IO.File]::ReadAllBytes($Program))
-    @([regex]::Matches($text, '(?i)\b(cu[a-z]+64_\d+|nvcuda|nvrtc[\w-]*)\.dll') |
-        ForEach-Object { $_.Value.ToLower() } | Sort-Object -Unique)
-}
+. (Join-Path $PSScriptRoot "cuda-common.ps1")
 
 if (-not $NoBuild) {
     cargo build --release --locked -p codewiki -p codewiki-mcp -p codewiki-app
@@ -46,33 +37,12 @@ if (-not $NoCuda) {
     if (-not $CudaToolkit) {
         $CudaToolkit = & (Join-Path $PSScriptRoot "cuda-toolkit.ps1") | Select-Object -Last 1
     }
-    if (-not (Test-Path (Join-Path $CudaToolkit "bin\nvcc.exe"))) { throw "no CUDA toolkit in $CudaToolkit" }
-    if (-not $NoBuild) {
-        # nvcc starts cl.exe, so this build runs inside Visual Studio's
-        # developer environment. It comes after the build above, which needs
-        # nothing of it.
-        $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
-        $vs = & $vswhere -latest -products * -property installationPath
-        if (-not $vs) { throw "no Visual Studio with the C++ tools found; the CUDA worker needs cl.exe" }
-        $env:PATH = "$(Split-Path $vswhere);$env:PATH"
-        & (Join-Path $vs "Common7\Tools\Launch-VsDevShell.ps1") -Arch amd64 -HostArch amd64 -SkipAutomaticLocation | Out-Null
-        Set-Location $root
-        # The headers of CUDA 13.2 and later refuse MSVC's traditional
-        # preprocessor (candle issue 3686). cl.exe reads options from CL.
-        $env:CL = "/Zc:preprocessor"
-        $env:CUDA_PATH = $CudaToolkit
-        $env:PATH = "$CudaToolkit\bin;$CudaToolkit\bin\x64;$env:PATH"
-        # The kernels are compiled for a generation of cards and run on that
-        # one and every later one. Left alone, the build takes the card of
-        # the machine it runs on, and a package built beside a new card would
-        # not run on an older one. 75 is the oldest CUDA 13 supports: GeForce
-        # GTX 16 and RTX 20.
-        if (-not $env:CUDA_COMPUTE_CAP) { $env:CUDA_COMPUTE_CAP = "75" }
-        # Only this program: `codewiki` built with the feature would not
-        # start where NVIDIA's libraries are missing.
-        cargo build --release --locked -p codewiki --features cuda --bin codewiki-embed-cuda
-        if ($LASTEXITCODE -ne 0) { throw "cargo build of the CUDA worker failed" }
-    }
+    # The worker and its libraries, in target\release\cuda. Its build runs
+    # inside Visual Studio's developer environment, so it comes after the
+    # build above, which needs nothing of it.
+    $cudaDir = & (Join-Path $PSScriptRoot "cuda-worker.ps1") -Release -CudaToolkit $CudaToolkit -NoBuild:$NoBuild |
+        Select-Object -Last 1
+    Set-Location $root
 }
 
 $manifest = Get-Content (Join-Path $root "Cargo.toml") -Raw
@@ -97,20 +67,9 @@ if ($stray) { throw "codewiki.exe imports $($stray -join ', '); it was built wit
 if (-not $NoCuda) {
     $cuda = Join-Path $stage "cuda"
     New-Item -ItemType Directory -Force $cuda | Out-Null
-    $worker = Join-Path $root "target\release\codewiki-embed-cuda.exe"
-    if (-not (Test-Path $worker)) { throw "missing $worker; build first" }
-    Copy-Item $worker $cuda
-    foreach ($library in $cudaLibraries) {
-        $source = Join-Path $CudaToolkit "bin\x64\$library"
-        if (-not (Test-Path $source)) { throw "missing $source; the toolkit is not CUDA 13.4" }
-        Copy-Item $source $cuda
-    }
-    # A library the worker asks for and the package does not hold would stop
-    # it before its first line. nvcuda.dll is not one of them: it is the
-    # graphics driver's, and is on every machine the worker is started on.
-    $shipped = @($cudaLibraries | ForEach-Object { $_.ToLower() }) + "nvcuda.dll"
-    $unmet = @(Get-CudaImports $worker | Where-Object { $shipped -notcontains $_ })
-    if ($unmet) { throw "codewiki-embed-cuda.exe imports $($unmet -join ', '), which the package does not hold" }
+    # cuda-worker.ps1 checked that the worker needs no other library. The
+    # libraries there may be hard links; copies of them are whole files.
+    Copy-Item (Join-Path $cudaDir "*") $cuda
     # NVIDIA's licence lets these libraries be passed on with a program that
     # uses them (Attachment A), and its text goes with them.
     Copy-Item (Join-Path $CudaToolkit "licenses\libcublas.txt") (Join-Path $cuda "NVIDIA-CUDA-EULA.txt")

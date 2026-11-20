@@ -90,7 +90,15 @@ pub struct Model<'a> {
     /// user turned them on.
     pub error_reports: Reporting,
     pub error_reports_on: bool,
+    /// What the backend says of the CLIProxyAPI the settings name
+    /// (`GET /v1/cliproxy`), once it has arrived.
+    pub cliproxy: Option<&'a Value>,
+    /// Why that could not be read.
+    pub cliproxy_error: Option<&'a str>,
 }
+
+/// Where CodeWiki's README says how to set up CLIProxyAPI.
+pub const PROXY_SETUP: &str = "https://github.com/Fly-onlyone/CodeWiki#cliproxyapi";
 
 impl Model<'_> {
     /// Whether the backend runs somewhere else than on this machine.
@@ -351,8 +359,133 @@ fn llm_name(provider: &str) -> &str {
         "ollama" => "Ollama",
         "claude-cli" => "Claude Code (your own login)",
         "codex-cli" => "Codex (your own login)",
+        "cliproxy" => "CLIProxyAPI (Claude and Codex subscriptions)",
         other => other,
     }
+}
+
+/// The model of a run through CLIProxyAPI, picked from the models its
+/// accounts serve. `None` while the proxy has listed none, so that one can
+/// still be typed.
+fn proxy_model(model: &Model, settings: &Value) -> Option<Block> {
+    let mut models: Vec<&str> = model.cliproxy?["models"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    if models.is_empty() {
+        return None;
+    }
+    let entry = &settings["llm"]["model"];
+    let chosen = entry["value"].as_str().unwrap_or("");
+    // A model no account serves now stays visible as the one in effect.
+    if !chosen.is_empty() && !models.contains(&chosen) {
+        models.push(chosen);
+    }
+    Some(Block::Select {
+        label: "Model".into(),
+        help: Some("The models your accounts can serve".into()),
+        options: models
+            .into_iter()
+            .map(|name| Choice {
+                label: name.to_string(),
+                action: Action::SetSetting {
+                    section: "llm".into(),
+                    field: "model".into(),
+                    value: Some(name.to_string()),
+                },
+                selected: name == chosen,
+                icon: None,
+            })
+            .collect(),
+        locked: lock(model, settings, entry),
+        note: model.notes.get(&FieldId::LlmModel).cloned(),
+    })
+}
+
+/// The CLIProxyAPI the settings name: where it is, its client key, and
+/// whether it answers. Its accounts are added and removed in the proxy
+/// itself, so the page only says where.
+fn proxy_section(model: &Model, settings: &Value) -> Vec<Block> {
+    let mut body = vec![
+        field(
+            model,
+            settings,
+            FieldId::CliproxyUrl,
+            "Address",
+            "Where your CLIProxyAPI listens. You start it; CodeWiki only connects",
+        ),
+        secret(
+            model,
+            settings,
+            FieldId::CliproxyKey,
+            "Client key",
+            "One of access.api-keys in its config.yaml",
+        ),
+    ];
+    // A backend elsewhere keeps its proxy to itself; the notice at the top
+    // of the page already says where these settings are changed.
+    if model.remote() {
+        return vec![card("CLIProxyAPI", body)];
+    }
+    let Some(proxy) = model.cliproxy else {
+        body.push(match model.cliproxy_error {
+            Some(error) => Block::Alert {
+                tone: Tone::Error,
+                text: format!("The proxy could not be asked: {error}"),
+                button: Some(("Try again".into(), Action::ReloadProxy)),
+            },
+            None => Block::Empty("Asking the proxy…".into()),
+        });
+        return vec![card("CLIProxyAPI", body)];
+    };
+    if proxy["reachable"] != true {
+        body.push(Block::Alert {
+            tone: Tone::Warning,
+            text: proxy["error"]
+                .as_str()
+                .unwrap_or("CLIProxyAPI does not answer")
+                .to_string(),
+            button: Some(("Try again".into(), Action::ReloadProxy)),
+        });
+        body.push(Block::Text(vec![
+            text("CodeWiki does not start the proxy. "),
+            Span::Link {
+                label: "How to set up CLIProxyAPI".into(),
+                code: false,
+                action: Action::OpenUrl(PROXY_SETUP.into()),
+            },
+        ]));
+        return vec![card("CLIProxyAPI", body)];
+    }
+    if let Some(error) = proxy["models_error"].as_str() {
+        body.push(Block::Alert {
+            tone: Tone::Warning,
+            text: error.to_string(),
+            button: None,
+        });
+    }
+    let mut accounts = vec![text(
+        "Accounts are added and removed in CLIProxyAPI itself: ",
+    )];
+    if let Some(panel) = proxy["panel"].as_str() {
+        accounts.push(Span::Link {
+            label: "open its panel".into(),
+            code: false,
+            action: Action::OpenUrl(panel.to_string()),
+        });
+        accounts.push(text(", or run "));
+    } else {
+        accounts.push(text("run "));
+    }
+    accounts.extend([
+        code("cli-proxy-api -claude-login"),
+        text(" or "),
+        code("-codex-login"),
+        text(". It takes the next ready account for each request and rests one that reached its limit. When none is ready, a sync stops, and the next one goes on."),
+    ]);
+    body.push(Block::Text(accounts));
+    vec![card("CLIProxyAPI", body)]
 }
 
 fn embedder_name(provider: &str) -> &str {
@@ -411,6 +544,23 @@ fn ai_model(model: &Model) -> Vec<Block> {
     let Some(settings) = model.settings else {
         return without_settings(model);
     };
+    let through_proxy = settings["llm"]["provider"]["value"] == "cliproxy";
+    let model_choice = through_proxy
+        .then(|| proxy_model(model, settings))
+        .flatten()
+        .unwrap_or_else(|| {
+            field(
+                model,
+                settings,
+                FieldId::LlmModel,
+                "Model",
+                if through_proxy {
+                    "Add an account in CLIProxyAPI; its models then show here"
+                } else {
+                    "Anthropic has a default; the others need a name"
+                },
+            )
+        });
     let mut provider_card = vec![
         provider(
             model,
@@ -420,13 +570,7 @@ fn ai_model(model: &Model) -> Vec<Block> {
             "Writes the prose of notes and answers questions",
             llm_name,
         ),
-        field(
-            model,
-            settings,
-            FieldId::LlmModel,
-            "Model",
-            "Anthropic has a default; the others need a name",
-        ),
+        model_choice,
         in_use(settings, "llm", "No provider is chosen."),
         Block::Buttons(vec![
             Press::new("Test", Action::TestLlm).disabled(*model.llm_test == Tested::Running),
@@ -435,6 +579,9 @@ fn ai_model(model: &Model) -> Vec<Block> {
     provider_card.extend(tested(model.llm_test));
     let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
     blocks.push(card("Provider", provider_card));
+    if through_proxy {
+        blocks.extend(proxy_section(model, settings));
+    }
     blocks.push(card(
         "Keys and addresses",
         vec![
@@ -1106,7 +1253,7 @@ mod tests {
             "writable": true,
             "llm": {
                 "provider": { "value": "none", "source": "default", "env": "CODEWIKI_LLM",
-                    "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli"] },
+                    "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli", "cliproxy"] },
                 "model": { "value": null, "source": "default", "env": "CODEWIKI_MODEL" },
                 "name": null, "problem": null,
             },
@@ -1124,6 +1271,33 @@ mod tests {
                 "base_url": { "value": "https://api.openai.com/v1", "source": "default", "env": "OPENAI_BASE_URL" },
             },
             "ollama": { "host": { "value": "http://127.0.0.1:11434", "source": "default", "env": "OLLAMA_HOST" } },
+            "cliproxy": {
+                "url": { "value": "http://127.0.0.1:8317", "source": "default", "env": "CODEWIKI_CLIPROXY_URL" },
+                "api_key": { "state": "unset", "hint": "", "env": "CODEWIKI_CLIPROXY_KEY" },
+            },
+        })
+    }
+
+    /// The settings with CLIProxyAPI chosen and both of its keys saved.
+    fn proxy_settings() -> Value {
+        let mut settings = defaults();
+        settings["llm"]["provider"]["value"] = json!("cliproxy");
+        settings["llm"]["model"]["value"] = json!("claude-sonnet-x");
+        settings["llm"]["name"] = json!("cliproxy:claude-sonnet-x");
+        settings["cliproxy"]["api_key"]["state"] = json!("saved");
+        settings["cliproxy"]["api_key"]["hint"] = json!("abcd");
+        settings
+    }
+
+    /// What `GET /v1/cliproxy` says of a proxy on this machine whose
+    /// accounts serve two models.
+    fn proxy() -> Value {
+        json!({
+            "url": "http://127.0.0.1:8317",
+            "panel": "http://127.0.0.1:8317/management.html",
+            "reachable": true,
+            "models": ["claude-sonnet-x", "gpt-5-codex"],
+            "error": null, "models_error": null,
         })
     }
 
@@ -1183,6 +1357,8 @@ mod tests {
         log_level_locked: bool,
         error_reports: Reporting,
         error_reports_on: bool,
+        cliproxy: Option<Value>,
+        cliproxy_error: Option<String>,
     }
 
     impl Fixture {
@@ -1211,7 +1387,17 @@ mod tests {
                 log_level_locked: false,
                 error_reports: Reporting::Switch,
                 error_reports_on: false,
+                cliproxy: None,
+                cliproxy_error: None,
             }
+        }
+
+        /// With CLIProxyAPI chosen, and the proxy as [`proxy`] describes it.
+        fn with_proxy() -> Self {
+            let mut fixture = Self::new();
+            fixture.settings = Some(proxy_settings());
+            fixture.cliproxy = Some(proxy());
+            fixture
         }
 
         fn page(&self, category: Category) -> Doc {
@@ -1247,6 +1433,8 @@ mod tests {
                     data_dir: "C:/data",
                     error_reports: self.error_reports,
                     error_reports_on: self.error_reports_on,
+                    cliproxy: self.cliproxy.as_ref(),
+                    cliproxy_error: self.cliproxy_error.as_deref(),
                 },
             )
         }
@@ -1365,9 +1553,11 @@ mod tests {
         let doc = fixture.page(Category::AiModel);
         let words = doc.words();
         assert!(
-            words.contains("Provider: None: notes keep their structural draft (None: notes keep their structural draft / Anthropic / OpenAI-compatible / Ollama / Claude Code (your own login) / Codex (your own login))"),
+            words.contains("Provider: None: notes keep their structural draft (None: notes keep their structural draft / Anthropic / OpenAI-compatible / Ollama / Claude Code (your own login) / Codex (your own login) / CLIProxyAPI (Claude and Codex subscriptions))"),
             "{words}"
         );
+        // The proxy's own settings show only once it is chosen.
+        assert!(!words.contains("Management key"), "{words}");
         assert!(words.contains("No provider is chosen."));
         assert!(words.contains("Anthropic API key: <typed, hidden>"));
         assert!(words.contains("Test"));
@@ -1379,6 +1569,7 @@ mod tests {
             "ollama",
             "claude-cli",
             "codex-cli",
+            "cliproxy",
         ] {
             assert!(actions.contains(&set("llm", name)), "{name}");
         }
@@ -1395,6 +1586,88 @@ mod tests {
         );
     }
 
+    fn model_choice(model: &str) -> Action {
+        Action::SetSetting {
+            section: "llm".into(),
+            field: "model".into(),
+            value: Some(model.into()),
+        }
+    }
+
+    #[test]
+    fn a_chosen_proxy_offers_its_models_and_points_to_its_panel() {
+        let doc = Fixture::with_proxy().page(Category::AiModel);
+        let words = doc.words();
+        assert!(
+            words.contains("Model: claude-sonnet-x (claude-sonnet-x / gpt-5-codex)"),
+            "{words}"
+        );
+        assert!(words.contains("Client key: Saved, ends in abcd"), "{words}");
+        assert!(
+            words.contains("Accounts are added and removed in CLIProxyAPI itself"),
+            "{words}"
+        );
+        assert!(words.contains("cli-proxy-api -claude-login"), "{words}");
+        let actions = doc.actions();
+        assert!(actions.contains(&model_choice("gpt-5-codex")));
+        assert!(actions.contains(&Action::OpenUrl(
+            "http://127.0.0.1:8317/management.html".into()
+        )));
+        // The model is picked from the list, not typed.
+        let fields = doc.fields();
+        assert!(!fields.contains(&FieldId::LlmModel), "{fields:?}");
+        assert!(fields.contains(&FieldId::CliproxyUrl), "{fields:?}");
+        // Only the client key: the proxy's management key stays with it.
+        assert!(!words.contains("Management key"), "{words}");
+    }
+
+    #[test]
+    fn a_proxy_without_models_takes_a_typed_model_name() {
+        let mut fixture = Fixture::with_proxy();
+        let mut proxy = proxy();
+        proxy["models"] = json!([]);
+        fixture.cliproxy = Some(proxy);
+        let doc = fixture.page(Category::AiModel);
+        assert!(doc.fields().contains(&FieldId::LlmModel));
+        let words = doc.words();
+        assert!(
+            words.contains("Add an account in CLIProxyAPI; its models then show here"),
+            "{words}"
+        );
+    }
+
+    #[test]
+    fn a_proxy_that_does_not_answer_says_where_to_look() {
+        let mut fixture = Fixture::with_proxy();
+        fixture.cliproxy = Some(json!({
+            "url": "http://127.0.0.1:8317", "reachable": false, "models": [],
+            "panel": "http://127.0.0.1:8317/management.html",
+            "error": "CLIProxyAPI not reachable at http://127.0.0.1:8317: start it, or check the address",
+        }));
+        let doc = fixture.page(Category::AiModel);
+        let words = doc.words();
+        assert!(words.contains("CLIProxyAPI not reachable at"), "{words}");
+        let actions = doc.actions();
+        assert!(actions.contains(&Action::ReloadProxy));
+        assert!(actions.contains(&Action::OpenUrl(PROXY_SETUP.into())));
+        // A panel that does not answer is not offered.
+        assert!(!actions.contains(&Action::OpenUrl(
+            "http://127.0.0.1:8317/management.html".into()
+        )));
+    }
+
+    #[test]
+    fn a_proxy_the_backend_could_not_ask_offers_to_try_again() {
+        let mut fixture = Fixture::with_proxy();
+        fixture.cliproxy = None;
+        fixture.cliproxy_error = Some("backend returned 500".into());
+        let doc = fixture.page(Category::AiModel);
+        assert!(
+            doc.words()
+                .contains("The proxy could not be asked: backend returned 500")
+        );
+        assert!(doc.actions().contains(&Action::ReloadProxy));
+    }
     #[test]
     fn a_saved_key_shows_its_end_and_can_be_replaced_or_removed() {
         let mut fixture = Fixture::new();

@@ -19,7 +19,7 @@ use cw_wiki::{query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, models, repos, settings, workspace};
+use crate::{AppState, cliproxy, models, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -215,6 +215,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/models/{id}", axum::routing::delete(remove_model))
         .route("/models/{id}/install", post(install_model))
         .route("/models/{id}/use", post(use_model))
+        .route("/cliproxy", get(read_cliproxy))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -357,6 +358,31 @@ async fn remove_model(State(state): State<AppState>, Path(id): Path<String>) -> 
         return closed;
     }
     blocking(move || models::remove(&state, &id))
+        .await
+        .into_response()
+}
+
+/// The answer of the CLIProxyAPI route on a backend that listens beyond
+/// this machine: its proxy is set up where the backend runs.
+fn proxy_closed(state: &AppState) -> Option<Response> {
+    (!state.0.config.settings_writable).then(|| {
+        (
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "this backend's CLIProxyAPI is set up on its own machine"
+            })),
+        )
+            .into_response()
+    })
+}
+
+/// The proxy the settings name: whether it answers, the models its
+/// accounts serve, its panel. Always 200; a part that cannot be read says why.
+async fn read_cliproxy(State(state): State<AppState>) -> Response {
+    if let Some(closed) = proxy_closed(&state) {
+        return closed;
+    }
+    blocking(move || Ok(cliproxy::describe(&state)))
         .await
         .into_response()
 }

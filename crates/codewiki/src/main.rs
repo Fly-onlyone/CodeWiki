@@ -226,6 +226,16 @@ fn print_report(report: &cw_wiki::Report, json: bool) -> Result<()> {
     for path in &report.proposed {
         println!("  proposal queued for {path}");
     }
+    if let Some(stopped) = &report.stopped {
+        println!(
+            "stopped: {} notes wait for the next run: {}",
+            report.waiting.len(),
+            stopped.message
+        );
+        if let Some(seconds) = stopped.retry_after_secs {
+            println!("  the provider expects to answer again in {seconds} s");
+        }
+    }
     Ok(())
 }
 

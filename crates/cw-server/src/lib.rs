@@ -14,6 +14,7 @@
 
 mod activity;
 mod api;
+mod cliproxy;
 mod models;
 mod repos;
 mod settings;

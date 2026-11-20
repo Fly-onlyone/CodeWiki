@@ -321,7 +321,33 @@ pub fn proposal_page(detail: &Value) -> Doc {
 /// What a sync did.
 pub fn sync_page(report: &Value) -> Doc {
     let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
-    let mut doc = Doc::new("Sync complete");
+    let stopped = &report["stopped"];
+    let mut doc = Doc::new(if stopped.is_object() {
+        "Sync stopped"
+    } else {
+        "Sync complete"
+    });
+    if let Some(message) = stopped["message"].as_str() {
+        // The writer had nothing left to answer with, for example every
+        // account behind a proxy was at its limit. What it did not reach
+        // waits for the next sync.
+        let mut text = format!(
+            "The AI model stopped part way: {message}. {} notes wait for the next sync",
+            count("waiting")
+        );
+        match stopped["retry_after_secs"].as_u64() {
+            Some(seconds) => text.push_str(&format!(
+                "; an account is free again in about {} min.",
+                seconds.div_ceil(60).max(1)
+            )),
+            None => text.push('.'),
+        }
+        doc.push(Block::Alert {
+            tone: Tone::Warning,
+            text,
+            button: Some(("Sync again".into(), Action::Sync)),
+        });
+    }
     doc.push(Block::Alert {
         tone: Tone::Success,
         text: format!(
@@ -331,7 +357,7 @@ pub fn sync_page(report: &Value) -> Doc {
         ),
         button: None,
     });
-    doc.push(Block::Stats(vec![
+    let mut first = vec![
         Stat::new("Written", count("written")),
         Stat::new("Unchanged", number(&report["kept"])),
         Stat::new("Queued for review", count("proposed")).tone(if count("proposed") > 0 {
@@ -339,7 +365,11 @@ pub fn sync_page(report: &Value) -> Doc {
         } else {
             Tone::Neutral
         }),
-    ]));
+    ];
+    if stopped.is_object() {
+        first.push(Stat::new("Waiting", count("waiting")).tone(Tone::Warning));
+    }
+    doc.push(Block::Stats(first));
     doc.push(Block::Stats(vec![
         Stat::new("Removed", count("removed")),
         Stat::new("Adopted", count("adopted")),
@@ -1003,6 +1033,33 @@ mod tests {
         assert!(words.contains("Queued for review: 1"));
         assert!(words.contains("Notes in all: 8"));
         assert!(words.contains("Links that resolve: 97.5%"));
+        assert!(!words.contains("Waiting"));
+    }
+
+    #[test]
+    fn a_stopped_sync_says_why_and_what_waits() {
+        let page = sync_page(&json!({
+            "written": ["a"], "kept": 2, "proposed": [], "removed": [],
+            "adopted": [], "notes_total": 3, "link_rate": 1.0,
+            "waiting": ["b", "c", "d"],
+            "stopped": { "message": "CLIProxyAPI: no auth available", "retry_after_secs": 1500 },
+        }));
+        assert_eq!(page.title, "Sync stopped");
+        let words = page.words();
+        assert!(words.contains("CLIProxyAPI: no auth available"), "{words}");
+        assert!(words.contains("in about 25 min"), "{words}");
+        assert!(words.contains("Waiting: 3"), "{words}");
+        assert!(page.blocks.iter().any(|block| matches!(
+            block,
+            Block::Alert { button: Some((label, Action::Sync)), .. } if label == "Sync again"
+        )));
+
+        // Without a time, none is promised.
+        let page = sync_page(&json!({
+            "written": [], "kept": 0, "waiting": ["b"],
+            "stopped": { "message": "no auth available" },
+        }));
+        assert!(!page.words().contains("in about"));
     }
 
     #[test]

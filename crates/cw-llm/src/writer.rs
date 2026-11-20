@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use cw_vault::NoteKind;
 use cw_wiki::plan::Planned;
-use cw_wiki::{ProseWriter, WriterContext, WriterUsage};
+use cw_wiki::{ProseWriter, Rewrite, Stopped, WriterContext, WriterUsage};
 
 use crate::provider::LlmProvider;
 
@@ -114,7 +114,7 @@ impl ProseWriter for LlmWriter {
         format!("{}/p{PROMPT_VERSION}", self.provider.name())
     }
 
-    fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Option<String> {
+    fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Rewrite {
         let user = format!(
             "This is {}.\n\n<allowed_links>\n{}\n</allowed_links>\n\n{}<draft>\n{draft}</draft>\n\nReturn the finished note.",
             kind_hint(note.kind),
@@ -128,21 +128,37 @@ impl ProseWriter for LlmWriter {
                     u.input_tokens += completion.input_tokens;
                     u.output_tokens += completion.output_tokens;
                 });
-                let note_text = extract_note(&completion.text);
-                if note_text.is_none() {
-                    self.record(|u| u.fallbacks += 1);
+                match extract_note(&completion.text) {
+                    Some(text) => Rewrite::Text(text),
+                    None => {
+                        self.record(|u| u.fallbacks += 1);
+                        Rewrite::Rejected
+                    }
                 }
-                note_text
+            }
+            Err(cw_core::Error::Exhausted {
+                message,
+                retry_after,
+            }) => {
+                // Nothing will answer for a while: asking for every other
+                // note would only collect the same refusal.
+                log::warn!("writer stopped at '{}': {message}", note.title);
+                self.record(|u| u.calls += 1);
+                Rewrite::Stop(Stopped {
+                    message,
+                    retry_after_secs: retry_after,
+                })
             }
             Err(error) => {
                 // One failed note must not abort a whole run; the structural
-                // draft is used and the failure is counted and shown.
+                // draft is used, the failure is counted and shown, and the
+                // next run asks again.
                 log::warn!("writer failed for '{}': {error}", note.title);
                 self.record(|u| {
                     u.calls += 1;
                     u.fallbacks += 1;
                 });
-                None
+                Rewrite::Failed
             }
         }
     }
@@ -244,7 +260,9 @@ mod tests {
         let writer = LlmWriter::new(Box::new(Canned(
             "---\ntags: [core]\n---\n\n# Math Module\n",
         )));
-        let out = writer.rewrite(&planned(), "draft", &context()).unwrap();
+        let Rewrite::Text(out) = writer.rewrite(&planned(), "draft", &context()) else {
+            panic!("expected the note back");
+        };
         assert!(out.starts_with("---\ntags: [core]"));
         let usage = writer.usage();
         assert_eq!(
@@ -262,10 +280,44 @@ mod tests {
     #[test]
     fn provider_failure_falls_back_instead_of_aborting() {
         let writer = LlmWriter::new(Box::new(Canned("")));
-        assert!(writer.rewrite(&planned(), "draft", &context()).is_none());
+        assert_eq!(
+            writer.rewrite(&planned(), "draft", &context()),
+            Rewrite::Failed
+        );
         assert_eq!(writer.usage().fallbacks, 1);
         let junk = LlmWriter::new(Box::new(Canned("I cannot help with that.")));
-        assert!(junk.rewrite(&planned(), "draft", &context()).is_none());
+        assert_eq!(
+            junk.rewrite(&planned(), "draft", &context()),
+            Rewrite::Rejected
+        );
         assert_eq!(junk.usage().fallbacks, 1);
+    }
+
+    struct Spent;
+
+    impl LlmProvider for Spent {
+        fn name(&self) -> String {
+            "spent".into()
+        }
+        fn complete(&self, _system: &str, _user: &str) -> Result<Completion> {
+            Err(cw_core::Error::Exhausted {
+                message: "no auth available".into(),
+                retry_after: Some(30),
+            })
+        }
+    }
+
+    #[test]
+    fn a_provider_with_nothing_left_stops_the_run() {
+        let writer = LlmWriter::new(Box::new(Spent));
+        assert_eq!(
+            writer.rewrite(&planned(), "draft", &context()),
+            Rewrite::Stop(Stopped {
+                message: "no auth available".into(),
+                retry_after_secs: Some(30),
+            })
+        );
+        let usage = writer.usage();
+        assert_eq!((usage.calls, usage.fallbacks), (1, 0));
     }
 }

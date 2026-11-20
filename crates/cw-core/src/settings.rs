@@ -118,14 +118,34 @@ pub const OLLAMA_HOST: Key = Key {
     default: Some("http://127.0.0.1:11434"),
 };
 
+/// Where a CLIProxyAPI server listens. The user runs it; CodeWiki only
+/// connects. Its default port is 8317.
+pub const CLIPROXY_URL: Key = Key {
+    env: "CODEWIKI_CLIPROXY_URL",
+    section: "cliproxy",
+    field: "url",
+    secret: false,
+    default: Some("http://127.0.0.1:8317"),
+};
+/// A client key from the `access.api-keys` list of the proxy's `config.yaml`.
+pub const CLIPROXY_API_KEY: Key = Key {
+    env: "CODEWIKI_CLIPROXY_KEY",
+    section: "cliproxy",
+    field: "api_key",
+    secret: true,
+    default: None,
+};
+
 /// Every setting, in the order a page shows them.
-pub const ALL: [Key; 9] = [
+pub const ALL: [Key; 11] = [
     LLM_PROVIDER,
     LLM_MODEL,
     ANTHROPIC_API_KEY,
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OLLAMA_HOST,
+    CLIPROXY_URL,
+    CLIPROXY_API_KEY,
     EMBED_PROVIDER,
     EMBED_MODEL,
     EMBED_DEVICE,
@@ -484,6 +504,22 @@ mod tests {
         }
         assert_eq!(super::key("PATH"), None);
         assert_eq!(LLM_PROVIDER.path(), "llm.provider");
+    }
+
+    #[test]
+    fn the_proxy_keys_are_secret_and_its_address_is_local() {
+        let secrets: Vec<&str> = ALL
+            .iter()
+            .filter(|key| key.section() == "cliproxy" && key.secret)
+            .map(|key| key.field())
+            .collect();
+        assert_eq!(secrets, ["api_key"]);
+        let resolved = Resolved::from_parts(&Settings::default(), no_env);
+        assert_eq!(
+            resolved.get("CODEWIKI_CLIPROXY_URL").as_deref(),
+            Some("http://127.0.0.1:8317")
+        );
+        assert_eq!(resolved.get("CODEWIKI_CLIPROXY_KEY"), None);
     }
 
     #[test]

@@ -24,12 +24,38 @@ use crate::render::RenderCtx;
 /// Bump when rendering changes in a way that should refresh every note.
 pub const TEMPLATE_VERSION: u32 = 1;
 
-/// Replaces the structural prose of a note, typically with an LLM. Returning
-/// `None` keeps the structural draft.
+/// What a [`ProseWriter`] made of one note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Rewrite {
+    /// The finished note. It must still pass the linter, or the draft is kept.
+    Text(String),
+    /// The writer answered with nothing usable. The draft is kept until the
+    /// note's inputs change, so the same answer is not paid for again.
+    Rejected,
+    /// The call failed. The draft is kept, and the next run asks again.
+    Failed,
+    /// Nothing can answer for now, for example every account of a provider
+    /// is at its limit. The run writes no more prose; the notes it did not
+    /// reach are left for the next run.
+    Stop(Stopped),
+}
+
+/// Why a run stopped writing prose.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Stopped {
+    /// The provider's own words.
+    pub message: String,
+    /// Seconds until the provider expects to answer again, when it said.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_secs: Option<u64>,
+}
+
+/// Replaces the structural prose of a note, typically with an LLM. Anything
+/// but [`Rewrite::Text`] keeps the structural draft.
 pub trait ProseWriter {
     /// Identifier recorded in the manifest, for example a model name.
     fn name(&self) -> String;
-    fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Option<String>;
+    fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Rewrite;
     /// An illustration for the finished note, as OpenUI Lang source, or
     /// `None` to keep the structural one. `structural` is the illustration
     /// built from facts alone, when the note has one. The result is checked
@@ -87,6 +113,12 @@ pub struct Report {
     #[serde(default)]
     pub llm: WriterUsage,
     pub commit: Option<String>,
+    /// Set when the writer stopped the run part way.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped: Option<Stopped>,
+    /// Notes left for the next run because the run stopped before them.
+    #[serde(default)]
+    pub waiting: Vec<String>,
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -223,6 +255,7 @@ fn adopt_existing(
             commit: None,
             model: None,
             illustration: None,
+            owed: false,
         };
         report.adopted.push(path);
         meta.notes.insert(entry.id.clone(), entry);
@@ -410,21 +443,36 @@ pub fn generate(
     let writer_name = writer.map(|w| w.name());
     let is_map = |note: &Planned| matches!(note.kind, NoteKind::Home | NoteKind::Index);
     // Called only for notes that are about to be written or proposed, so an
-    // unchanged repository costs no LLM calls.
-    let finalize = |note: &Planned, path: &str, draft: &str| -> (String, Option<String>) {
-        if let Some(writer) = writer
-            && !is_map(note)
-            && let Some(candidate) = writer.rewrite(note, draft, &writer_context)
-        {
-            // Prose that breaks the house style is discarded, not repaired by hand.
-            let clean = lint(&candidate, path, note.kind, &registry, Mode::Strict)
-                .iter()
-                .all(|i| i.severity != Severity::Error);
-            if clean {
-                return (candidate, writer_name.clone());
+    // unchanged repository costs no LLM calls. Gives the text, the writer
+    // that wrote it, and whether a failed call leaves the note owed to the
+    // next run; or why the writer stopped the run.
+    let finalize = |note: &Planned,
+                    path: &str,
+                    draft: &str|
+     -> std::result::Result<(String, Option<String>, bool), Stopped> {
+        let Some(writer) = writer.filter(|_| !is_map(note)) else {
+            return Ok((draft.to_string(), None, false));
+        };
+        match writer.rewrite(note, draft, &writer_context) {
+            Rewrite::Text(candidate) => {
+                // Prose that breaks the house style is discarded, not repaired by hand.
+                let clean = lint(&candidate, path, note.kind, &registry, Mode::Strict)
+                    .iter()
+                    .all(|i| i.severity != Severity::Error);
+                if clean {
+                    Ok((candidate, writer_name.clone(), false))
+                } else {
+                    Ok((draft.to_string(), None, false))
+                }
             }
+            Rewrite::Rejected => Ok((draft.to_string(), None, false)),
+            Rewrite::Failed => Ok((draft.to_string(), None, true)),
+            Rewrite::Stop(stopped) => Err(stopped),
         }
-        (draft.to_string(), None)
+    };
+    // After a stop, a note that needs prose waits for the next run.
+    let waits = |note: &Planned, report: &Report| {
+        report.stopped.is_some() && writer.is_some() && !is_map(note)
     };
 
     for note in &plan.notes {
@@ -457,7 +505,7 @@ pub fn generate(
             }
         }
         let input_hash = sha256_hex(hash_input);
-        let fresh_entry = |text: &str, model: Option<String>| NoteEntry {
+        let fresh_entry = |text: &str, model: Option<String>, owed: bool| NoteEntry {
             id: note.id.clone(),
             path: path.clone(),
             kind: note.kind,
@@ -469,14 +517,26 @@ pub fn generate(
             commit: commit.clone(),
             model,
             illustration: None,
+            owed,
         };
 
         let Some(entry) = meta.notes.get_mut(&note.id) else {
-            let (text, model) = finalize(note, path, draft);
+            if waits(note, &report) {
+                report.waiting.push(path.clone());
+                continue;
+            }
+            let (text, model, owed) = match finalize(note, path, draft) {
+                Ok(done) => done,
+                Err(stopped) => {
+                    report.stopped = Some(stopped);
+                    report.waiting.push(path.clone());
+                    continue;
+                }
+            };
             write_note(&full, &text)?;
             report.written.push(path.clone());
             meta.notes
-                .insert(note.id.clone(), fresh_entry(&text, model));
+                .insert(note.id.clone(), fresh_entry(&text, model, owed));
             continue;
         };
         // First contact with an adopted note: record what a regeneration
@@ -491,14 +551,32 @@ pub fn generate(
         }
         let changed = entry.input_hash != input_hash;
         let state = lifecycle::state(entry, disk.as_deref(), changed);
-        match lifecycle::action(entry, state, &input_hash) {
+        // A note whose writer call failed is asked for again, as long as
+        // nobody has edited the draft it fell back to.
+        let owed = entry.owed && writer.is_some() && !is_map(note);
+        let action = match state {
+            NoteState::Generated | NoteState::Stale if owed => Action::Regenerate,
+            _ => lifecycle::action(entry, state, &input_hash),
+        };
+        if action != Action::Keep && waits(note, &report) {
+            report.waiting.push(path.clone());
+            continue;
+        }
+        match action {
             Action::Keep => report.kept += 1,
             Action::Regenerate => {
-                let (text, model) = finalize(note, path, draft);
+                let (text, model, owed) = match finalize(note, path, draft) {
+                    Ok(done) => done,
+                    Err(stopped) => {
+                        report.stopped = Some(stopped);
+                        report.waiting.push(path.clone());
+                        continue;
+                    }
+                };
                 write_note(&full, &text)?;
                 report.written.push(path.clone());
                 let rejected = std::mem::take(&mut entry.rejected_inputs);
-                *entry = fresh_entry(&text, model);
+                *entry = fresh_entry(&text, model, owed);
                 entry.rejected_inputs = rejected;
             }
             Action::Propose => {
@@ -510,7 +588,14 @@ pub fn generate(
                         && p.status == proposal::ProposalStatus::Pending
                 });
                 if !pending_same {
-                    let (text, _) = finalize(note, path, draft);
+                    let text = match finalize(note, path, draft) {
+                        Ok((text, _, _)) => text,
+                        Err(stopped) => {
+                            report.stopped = Some(stopped);
+                            report.waiting.push(path.clone());
+                            continue;
+                        }
+                    };
                     proposal::create(
                         &vault,
                         &note.id,
@@ -551,10 +636,16 @@ pub fn generate(
         let source = match writer {
             // A writer draws only when the note changed in this run or has no
             // illustration yet; otherwise every sync would pay for a redraw.
-            Some(writer) if report.written.contains(&entry.path) || existing.is_none() => writer
-                .illustrate(note, &note_text, structural.as_deref(), &writer_context)
-                .filter(|source| cw_illustrate::check(source).is_valid())
-                .or(structural),
+            // After a stop it draws nothing more.
+            Some(writer)
+                if report.stopped.is_none()
+                    && (report.written.contains(&entry.path) || existing.is_none()) =>
+            {
+                writer
+                    .illustrate(note, &note_text, structural.as_deref(), &writer_context)
+                    .filter(|source| cw_illustrate::check(source).is_valid())
+                    .or(structural)
+            }
             // Keep what an earlier run with a writer drew.
             Some(_) => existing
                 .clone()
@@ -602,8 +693,12 @@ pub fn generate(
     }
 
     write_readme(&vault, &repo_name)?;
-    meta.manifest.template_version = TEMPLATE_VERSION;
-    meta.manifest.last_indexed_commit = commit;
+    // A stopped run leaves notes behind, so the wiki is not yet current with
+    // the commit: keep the old one and the wiki still reads as behind.
+    if report.stopped.is_none() {
+        meta.manifest.template_version = TEMPLATE_VERSION;
+        meta.manifest.last_indexed_commit = commit;
+    }
     meta.save(&vault)?;
 
     let final_registry = meta.registry()?;

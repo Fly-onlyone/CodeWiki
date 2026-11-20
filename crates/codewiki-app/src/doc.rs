@@ -89,6 +89,10 @@ pub enum Action {
     CancelModelJob,
     /// Take the offer of a built-in model off Home for good.
     DismissModelHint,
+    /// Ask the CLIProxyAPI the settings name about itself again.
+    ReloadProxy,
+    /// Open a web page in the browser.
+    OpenUrl(String),
 }
 
 /// A stretch of text within a line.

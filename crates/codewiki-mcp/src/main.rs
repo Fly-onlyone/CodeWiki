@@ -1151,7 +1151,7 @@ impl Bridge {
             })
             .await?;
         let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
-        text(format!(
+        let mut summary = format!(
             "Wiki updated: {} notes written, {} unchanged, {} proposals queued for human review, {} removed, {} adopted. Total notes: {}.",
             count("written"),
             report["kept"],
@@ -1159,7 +1159,14 @@ impl Bridge {
             count("removed"),
             count("adopted"),
             report["notes_total"]
-        ))
+        );
+        if let Some(message) = report["stopped"]["message"].as_str() {
+            summary.push_str(&format!(
+                " The LLM stopped part way ({message}); {} notes wait for the next sync_wiki.",
+                count("waiting")
+            ));
+        }
+        text(summary)
     }
 }
 

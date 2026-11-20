@@ -24,5 +24,7 @@ pub mod testmap;
 pub mod units;
 
 pub use analyze::{analyze, dependency_graph};
-pub use generate::{ProseWriter, Report, TEMPLATE_VERSION, WriterContext, WriterUsage, generate};
+pub use generate::{
+    ProseWriter, Report, Rewrite, Stopped, TEMPLATE_VERSION, WriterContext, WriterUsage, generate,
+};
 pub use plan::{Plan, Planned, Repo, Subject};

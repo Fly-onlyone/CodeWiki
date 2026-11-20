@@ -318,7 +318,7 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
             "source": "default",
             "env": "CODEWIKI_LLM",
             "default": "none",
-            "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli"],
+            "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli", "cliproxy"],
         })
     );
     assert_eq!(
@@ -680,6 +680,176 @@ fn stand_in(status: u16, reply: Value) -> String {
         stream.flush().unwrap();
     });
     url
+}
+
+/// One answer of [`stand_in_many`]: status, extra headers, JSON body.
+type Answer = (u16, Vec<(&'static str, &'static str)>, Value);
+
+/// Answer one request per connection with `answers`, in order, as a
+/// CLIProxyAPI would. Returns the address, and the method and target
+/// (path with query) of each request once all are answered.
+fn stand_in_many(answers: Vec<Answer>) -> (String, std::thread::JoinHandle<Vec<String>>) {
+    use std::io::{BufRead, BufReader, Read, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let handle = std::thread::spawn(move || {
+        let mut asked = Vec::new();
+        for (status, headers, reply) in answers {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            reader.read_line(&mut request_line).unwrap();
+            let mut parts = request_line.split_whitespace();
+            asked.push(format!(
+                "{} {}",
+                parts.next().unwrap_or(""),
+                parts.next().unwrap_or("")
+            ));
+            let mut length = 0usize;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let line = line.trim_end();
+                if line.is_empty() {
+                    break;
+                }
+                if let Some((key, value)) = line.split_once(':')
+                    && key.eq_ignore_ascii_case("content-length")
+                {
+                    length = value.trim().parse().unwrap_or(0);
+                }
+            }
+            let mut body = vec![0; length];
+            reader.read_exact(&mut body).unwrap();
+            let text = reply.to_string();
+            let mut head = format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n");
+            for (key, value) in headers {
+                head.push_str(&format!("{key}: {value}\r\n"));
+            }
+            let mut stream = reader.into_inner();
+            write!(
+                stream,
+                "{head}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                text.len()
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        }
+        asked
+    });
+    (url, handle)
+}
+
+/// Point the settings at a CLIProxyAPI at `url`, with its client key.
+/// Made-up key: not a real one.
+async fn use_proxy(h: &Harness, url: &str) {
+    h.put(
+        "/v1/settings",
+        json!({ "cliproxy": {
+            "url": url,
+            "api_key": { "set": "client-key-for-tests" },
+        }}),
+    )
+    .await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn the_proxy_page_lists_its_models_and_its_panel() {
+    let h = Harness::new();
+    let (url, proxy) = stand_in_many(vec![
+        // Is anything there: any answer will do.
+        (401, vec![], json!({ "error": "missing api key" })),
+        (
+            200,
+            vec![],
+            json!({ "data": [{ "id": "gpt-5-codex" }, { "id": "claude-sonnet-x" }] }),
+        ),
+    ]);
+    use_proxy(&h, &url).await;
+    let page = h.get("/v1/cliproxy").await;
+    assert_eq!(page["url"], url.as_str());
+    assert_eq!(page["reachable"], true);
+    assert_eq!(page["models"], json!(["claude-sonnet-x", "gpt-5-codex"]));
+    assert_eq!(page["panel"], format!("{url}/management.html"));
+    assert_eq!(page["error"], Value::Null);
+    assert_eq!(page["models_error"], Value::Null);
+    // The accounts are the proxy's business: nothing else is asked of it.
+    let asked = proxy.join().unwrap();
+    assert_eq!(asked, ["GET /v1/models", "GET /v1/models"]);
+}
+
+#[tokio::test]
+async fn a_proxy_that_is_away_or_misnamed_is_reported() {
+    let h = Harness::new();
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    h.put("/v1/settings", json!({ "cliproxy": { "url": closed } }))
+        .await;
+    let page = h.get("/v1/cliproxy").await;
+    assert_eq!(page["reachable"], false);
+    let error = page["error"].as_str().unwrap();
+    assert!(error.contains("not reachable"), "{error}");
+
+    // An address that is not one is refused when saved.
+    let (status, error) = h
+        .refused(json!({ "cliproxy": { "url": "127.0.0.1:8317" } }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error.contains("http://"), "{error}");
+}
+
+#[tokio::test]
+async fn a_backend_that_listens_beyond_this_machine_keeps_the_proxy_to_itself() {
+    let h = Harness::with_config(Some(SECRET), false, no_env);
+    let (status, _) = h.call("GET", "/v1/cliproxy", Some(TOKEN), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn an_update_stops_when_the_proxy_has_no_account_left() {
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    let (url, proxy) = stand_in_many(vec![
+        (
+            200,
+            vec![],
+            json!({ "choices": [{ "message": { "content": "not a note" } }] }),
+        ),
+        (
+            503,
+            vec![("Retry-After", "60")],
+            json!({ "error": {
+                "message": "no auth available (providers=claude, model=claude-x)",
+                "code": "auth_unavailable",
+            }}),
+        ),
+    ]);
+    use_proxy(&h, &url).await;
+    h.put(
+        "/v1/settings",
+        json!({ "llm": { "provider": "cliproxy", "model": "claude-x" } }),
+    )
+    .await;
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let stopped = &report["stopped"];
+    assert!(
+        stopped["message"]
+            .as_str()
+            .unwrap()
+            .contains("no auth available"),
+        "{report}"
+    );
+    assert_eq!(stopped["retry_after_secs"], 60);
+    assert!(
+        !report["waiting"].as_array().unwrap().is_empty(),
+        "{report}"
+    );
+    assert_eq!(proxy.join().unwrap().len(), 2, "no request after the stop");
 }
 
 #[tokio::test]

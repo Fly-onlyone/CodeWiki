@@ -89,6 +89,7 @@ mod tests {
             commit: None,
             model: None,
             illustration: None,
+            owed: false,
         }
     }
 

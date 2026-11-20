@@ -90,18 +90,22 @@ pub enum FieldId {
     OpenAiKey,
     OpenAiBaseUrl,
     OllamaHost,
+    CliproxyUrl,
+    CliproxyKey,
     EmbedModel,
     RemoteUrl,
     RemoteToken,
 }
 
 impl FieldId {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 10] = [
         Self::LlmModel,
         Self::AnthropicKey,
         Self::OpenAiKey,
         Self::OpenAiBaseUrl,
         Self::OllamaHost,
+        Self::CliproxyUrl,
+        Self::CliproxyKey,
         Self::EmbedModel,
         Self::RemoteUrl,
         Self::RemoteToken,
@@ -117,6 +121,8 @@ impl FieldId {
             Self::OpenAiKey => Some(("openai", "api_key")),
             Self::OpenAiBaseUrl => Some(("openai", "base_url")),
             Self::OllamaHost => Some(("ollama", "host")),
+            Self::CliproxyUrl => Some(("cliproxy", "url")),
+            Self::CliproxyKey => Some(("cliproxy", "api_key")),
             Self::EmbedModel => Some(("embed", "model")),
             Self::RemoteUrl | Self::RemoteToken => None,
         }
@@ -126,7 +132,7 @@ impl FieldId {
     pub fn secret(self) -> bool {
         matches!(
             self,
-            Self::AnthropicKey | Self::OpenAiKey | Self::RemoteToken
+            Self::AnthropicKey | Self::OpenAiKey | Self::CliproxyKey | Self::RemoteToken
         )
     }
 
@@ -137,6 +143,8 @@ impl FieldId {
             Self::AnthropicKey | Self::OpenAiKey => "Paste the key",
             Self::OpenAiBaseUrl => "https://api.openai.com/v1",
             Self::OllamaHost => "http://127.0.0.1:11434",
+            Self::CliproxyUrl => "http://127.0.0.1:8317",
+            Self::CliproxyKey => "One of access.api-keys",
             Self::EmbedModel => "The provider's default",
             Self::RemoteUrl => "http://host:7411",
             Self::RemoteToken => "The backend's token",
@@ -212,13 +220,14 @@ mod tests {
                 None => assert!(matches!(field, FieldId::RemoteUrl | FieldId::RemoteToken)),
             }
         }
-        // The two keys and the token are the secrets.
+        // The keys and the token are the secrets.
         let secrets: Vec<FieldId> = FieldId::ALL.into_iter().filter(|f| f.secret()).collect();
         assert_eq!(
             secrets,
             [
                 FieldId::AnthropicKey,
                 FieldId::OpenAiKey,
+                FieldId::CliproxyKey,
                 FieldId::RemoteToken
             ]
         );

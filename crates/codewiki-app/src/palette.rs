@@ -36,6 +36,12 @@ pub enum Command {
     Settings(Option<Category>),
     /// Choose whether the app animates.
     Motion(MotionPref),
+    /// Make the whole app one level larger.
+    ZoomIn,
+    /// Make the whole app one level smaller.
+    ZoomOut,
+    /// Bring the app back to 100%.
+    ZoomReset,
     NewTab,
     CloseTab,
     /// Hide the sidebar, or show it again.
@@ -103,6 +109,9 @@ pub fn actions() -> Vec<Entry> {
         ("Close tab", Command::CloseTab),
         ("Toggle sidebar", Command::ToggleSidebar),
         ("Toggle details pane", Command::ToggleDetails),
+        ("Zoom in", Command::ZoomIn),
+        ("Zoom out", Command::ZoomOut),
+        ("Reset zoom", Command::ZoomReset),
         ("Open note in Obsidian", Command::OpenInObsidian),
         ("Open folder…", Command::OpenFolder),
         ("Check for updates", Command::CheckUpdates),
@@ -226,6 +235,17 @@ mod tests {
         let found = filter(&actions(), "logs", 5);
         assert_eq!(found[0].label, "Open logs folder");
         assert_eq!(found[0].command, Command::OpenLogs);
+    }
+
+    #[test]
+    fn zoom_is_in_the_palette() {
+        let all = actions();
+        assert_eq!(filter(&all, "zoom in", 5)[0].command, Command::ZoomIn);
+        assert_eq!(filter(&all, "zoom out", 5)[0].command, Command::ZoomOut);
+        assert_eq!(filter(&all, "reset zoom", 5)[0].command, Command::ZoomReset);
+        let labels: std::collections::HashSet<&str> =
+            all.iter().map(|entry| entry.label.as_str()).collect();
+        assert_eq!(labels.len(), all.len(), "labels must be unique");
     }
 
     #[test]

@@ -14,11 +14,12 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div, px,
+    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
 use super::motion::SNAPPY;
+use crate::zoom::px;
 
 /// `MuiTab`: `minHeight: 44`.
 pub const HEIGHT: f32 = 44.0;

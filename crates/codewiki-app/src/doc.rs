@@ -21,6 +21,8 @@ pub enum Action {
     File(String),
     /// Choose how animations behave.
     Motion(MotionPref),
+    /// Zoom the app to this level, in percent.
+    Zoom(u16),
     /// Try to reach the backend again.
     Reconnect,
     /// Ask for a folder and open it as a repository.

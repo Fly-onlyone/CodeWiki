@@ -41,6 +41,7 @@ mod themes;
 mod tray;
 mod update;
 mod win32;
+mod zoom;
 
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -71,6 +72,7 @@ use mui::text_field::TextField;
 use mui::tokens::Variant;
 use palette::Command;
 use panes::Pane;
+use zoom::px;
 
 actions!(
     codewiki,
@@ -83,7 +85,10 @@ actions!(
         SaveNote,
         ToggleSidebar,
         ToggleDetails,
-        OpenSettings
+        OpenSettings,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset
     ]
 );
 
@@ -314,6 +319,9 @@ struct AppView {
     palette: cw_mermaid::Palette,
     /// How see-through the surfaces are; worked out again on every frame.
     glass: glass::Levels,
+    /// The zoom level the open menus were placed at. A menu hangs from where
+    /// its button was when it opened, which a new level moves.
+    zoom_seen: u16,
     /// Width of the centre pane in pixels, from the window size of this frame.
     pane_width: f32,
     /// Whether the sidebar and the details pane are shown; the user hides
@@ -443,6 +451,7 @@ impl AppView {
             show_figure: false,
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
+            zoom_seen: zoom::percent(cx),
             pane_width: 0.0,
             sidebar_open,
             details_open,
@@ -1734,6 +1743,9 @@ impl AppView {
                 motion::set(pref, cx);
                 cx.notify();
             }
+            Command::ZoomIn => zoom::step_by(1, cx),
+            Command::ZoomOut => zoom::step_by(-1, cx),
+            Command::ZoomReset => zoom::reset(cx),
             Command::NewTab => self.new_tab(cx),
             Command::CloseTab => self.close_tab(self.active_tab, cx),
             Command::ToggleSidebar => self.toggle_pane(Pane::Sidebar, cx),
@@ -2222,6 +2234,7 @@ impl AppView {
                 motion::set(*pref, cx);
                 cx.notify();
             }
+            Action::Zoom(percent) => zoom::set(*percent, cx),
             Action::Reconnect => self.reconnect(cx),
             Action::OpenFolder => self.open_folder(cx),
             Action::CheckUpdates => self.check_for_update(cx),
@@ -3564,6 +3577,14 @@ impl Render for AppView {
         // The inputs of the settings take the values that arrived since the
         // last frame; that needs the window.
         self.sync_settings_fields(window, cx);
+        // A menu hangs from where its button was when it opened; a new zoom
+        // level moved the button.
+        let zoom = zoom::percent(cx);
+        if zoom != self.zoom_seen {
+            self.zoom_seen = zoom;
+            self.close_theme_menu(true, window, cx);
+            self.close_settings_menu(window, cx);
+        }
         // Read once so unused-field lints stay honest about what the UI shows.
         let _ = self.notes.iter().filter(|n| n.state == "stale").count();
         self.page_placed.set(false);
@@ -3661,7 +3682,7 @@ impl Render for AppView {
 /// bottom of the window lay under the taskbar.
 fn window_options(cx: &App) -> WindowOptions {
     let mut options = TitleBar::window_options();
-    options.window_min_size = Some(size(px(MIN_WINDOW.0), px(MIN_WINDOW.1)));
+    options.window_min_size = Some(min_window_size());
     // Started for the tray (`--tray`, as Windows starts the app at sign-in):
     // the window is made, so that the app is whole, but not shown. A click
     // on the tray icon shows it.
@@ -3676,12 +3697,21 @@ fn window_options(cx: &App) -> WindowOptions {
     options
 }
 
+/// The smallest the window may be made. The window's own measures are the
+/// screen's pixels, whatever the zoom.
+#[allow(clippy::disallowed_methods)]
+fn min_window_size() -> Size<Pixels> {
+    size(gpui_kit::px(MIN_WINDOW.0), gpui_kit::px(MIN_WINDOW.1))
+}
+
 /// The first window's place on a screen whose free area is `free`: GPUI's
 /// default size, or what the free area holds with a margin around it.
+// The screen's pixels, whatever the zoom.
+#[allow(clippy::disallowed_methods)]
 fn first_bounds(free: Bounds<Pixels>) -> Bounds<Pixels> {
     let room = size(
-        (free.size.width - px(2.0 * SCREEN_MARGIN)).max(px(MIN_WINDOW.0)),
-        (free.size.height - px(2.0 * SCREEN_MARGIN)).max(px(MIN_WINDOW.1)),
+        (free.size.width - gpui_kit::px(2.0 * SCREEN_MARGIN)).max(gpui_kit::px(MIN_WINDOW.0)),
+        (free.size.height - gpui_kit::px(2.0 * SCREEN_MARGIN)).max(gpui_kit::px(MIN_WINDOW.1)),
     );
     let fitted = DEFAULT_WINDOW_SIZE.min(&room);
     let centre = free.center();
@@ -3710,6 +3740,11 @@ fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyEle
         None => "CodeWiki".to_string(),
     };
     let levels = glass::Levels::for_window(window, cx);
+    // The zoom level, for a moment after it changes. Only shown: the bar
+    // drags the window, so a click on it would never arrive.
+    let zoom_chip = Presence::new("zoom-indicator", zoom::indicator_shown(cx))
+        .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+        .sample(window, cx);
     TitleBar::new()
         .bg(levels.chrome(glass::tinted(cx.theme().title_bar, cx)))
         .child(
@@ -3722,7 +3757,13 @@ fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyEle
                         .text_sm()
                         .text_color(cx.theme().muted_foreground)
                         .child(title),
-                ),
+                )
+                .when(zoom_chip.should_render(), |row| {
+                    row.child(
+                        feedback::chip(zoom::label(zoom::percent(cx)), Tone::Neutral, true, cx)
+                            .opacity(zoom_chip.progress),
+                    )
+                }),
         )
         .into_any_element()
 }
@@ -3876,6 +3917,15 @@ fn main() {
         motion::init(cx);
         fonts::register(cx);
         themes::init(cx);
+        // After the themes: zoom takes the theme's sizes as they are now as
+        // its sizes at 100%.
+        zoom::init(cx);
+        // Bound to the app, not to a view: the generated page is drawn beside
+        // the app's view, and a focused button in it would not reach the
+        // view's handlers.
+        cx.on_action(|_: &ZoomIn, cx| zoom::step_by(1, cx));
+        cx.on_action(|_: &ZoomOut, cx| zoom::step_by(-1, cx));
+        cx.on_action(|_: &ZoomReset, cx| zoom::reset(cx));
         cx.bind_keys([
             KeyBinding::new("ctrl-k", TogglePalette, None),
             KeyBinding::new("ctrl-t", NewTab, None),
@@ -3886,6 +3936,11 @@ fn main() {
             KeyBinding::new("ctrl-b", ToggleSidebar, None),
             KeyBinding::new("ctrl-alt-b", ToggleDetails, None),
             KeyBinding::new("ctrl-,", OpenSettings, None),
+            KeyBinding::new("ctrl-=", ZoomIn, None),
+            // Ctrl+Shift+= and the keypad's plus arrive as "+".
+            KeyBinding::new("ctrl-+", ZoomIn, None),
+            KeyBinding::new("ctrl--", ZoomOut, None),
+            KeyBinding::new("ctrl-0", ZoomReset, None),
         ]);
         let (window, _) = gpui_kit::open_window(window_options(cx), cx, |window, cx| {
             window.set_window_title("CodeWiki");
@@ -3973,15 +4028,44 @@ fn main() {
     });
 }
 
+// The window's measures are in the screen's pixels.
 #[cfg(test)]
+#[allow(clippy::disallowed_methods)]
 mod tests {
     // Not `super::*`: that brings in GPUI's `test` attribute in place of the
     // standard one.
     use serde_json::json;
 
-    use gpui_kit::{Bounds, DEFAULT_WINDOW_SIZE, point, px, size};
+    use gpui_kit::{Bounds, DEFAULT_WINDOW_SIZE, Keystroke, point, px, size};
 
-    use super::{Repo, first_bounds, parse_repos, stops_backend_on_quit};
+    use super::{Repo, first_bounds, min_window_size, parse_repos, stops_backend_on_quit, zoom};
+
+    #[test]
+    fn the_window_keeps_its_measures_at_every_zoom() {
+        let free = Bounds::new(point(px(0.), px(0.)), size(px(1600.), px(852.)));
+        let small = Bounds::new(point(px(0.), px(0.)), size(px(800.), px(500.)));
+        for factor in [0.5, 2.0] {
+            zoom::at_factor(factor, || {
+                assert_eq!(min_window_size(), size(px(960.), px(600.)));
+                assert_eq!(first_bounds(free).size.height, px(820.));
+                assert_eq!(first_bounds(small).size, size(px(960.), px(600.)));
+            });
+        }
+    }
+
+    #[test]
+    fn the_zoom_keys_parse() {
+        for (binding, key) in [
+            ("ctrl-=", "="),
+            ("ctrl-+", "+"),
+            ("ctrl--", "-"),
+            ("ctrl-0", "0"),
+        ] {
+            let keystroke = Keystroke::parse(binding).expect(binding);
+            assert!(keystroke.modifiers.control, "{binding}");
+            assert_eq!(keystroke.key, key, "{binding}");
+        }
+    }
 
     #[test]
     fn the_first_window_stays_inside_the_free_part_of_the_screen() {

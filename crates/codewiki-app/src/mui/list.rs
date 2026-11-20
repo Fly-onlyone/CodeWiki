@@ -17,7 +17,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Hsla,
     InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, SharedString,
-    Styled as _, Transformation, Window, div, point, px, radians, size,
+    Styled as _, Transformation, Window, div, point, radians, size,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
@@ -25,6 +25,7 @@ use super::motion::{SNAPPY, scaled};
 use super::tokens::{curve, duration, easing};
 use crate::icons::Glyph;
 use crate::themes;
+use crate::zoom::px;
 
 /// A dense `ListItemButton`: 4 px above and below a 14 px label with MUI's
 /// 4 px text margins.

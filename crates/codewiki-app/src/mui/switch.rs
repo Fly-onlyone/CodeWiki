@@ -17,12 +17,13 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     RenderOnce, Rgba, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    hsla, px,
+    hsla,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
 use super::motion::scaled;
 use super::tokens::{self, curve, duration, easing};
+use crate::zoom::px;
 
 /// `Switch.js`, `SwitchRoot`: `padding: 12` around the track.
 const PADDING: f32 = 12.0;

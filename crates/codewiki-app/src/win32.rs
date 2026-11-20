@@ -18,8 +18,8 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetSystemMetrics,
-    IsWindowVisible, SM_CXSMICON, SW_HIDE, SW_SHOW, SetWindowLongPtrW, ShowWindow, WM_CLOSE,
-    WNDPROC,
+    IsWindowVisible, SM_CXSMICON, SPI_GETWHEELSCROLLLINES, SW_HIDE, SW_SHOW, SetWindowLongPtrW,
+    ShowWindow, SystemParametersInfoW, WM_CLOSE, WNDPROC,
 };
 
 /// A window of this process, as Windows names it. Only [`hwnd`] makes one,
@@ -136,6 +136,19 @@ pub fn small_icon_size() -> u32 {
         .ok()
         .filter(|side| *side > 0)
         .unwrap_or(16)
+}
+
+/// How many lines one notch of the mouse wheel scrolls, as set in Windows.
+/// GPUI reports a notch as that many lines; zoom counts notches.
+pub fn wheel_scroll_lines() -> u32 {
+    // Windows' default, kept should the call fail.
+    let mut lines: u32 = 3;
+    // SAFETY: for SPI_GETWHEELSCROLLLINES Windows writes one u32 through the
+    // pointer, which points at `lines`, alive and writable for the call. The
+    // last argument is 0: nothing is written to the user's profile.
+    let read =
+        unsafe { SystemParametersInfoW(SPI_GETWHEELSCROLLLINES, 0, (&raw mut lines).cast(), 0) };
+    if read == 0 { 3 } else { lines }
 }
 
 /// Let the process `pid` bring one of its windows to the front.

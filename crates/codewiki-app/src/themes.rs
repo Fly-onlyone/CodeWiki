@@ -118,6 +118,8 @@ fn user_theme_dir() -> Option<std::path::PathBuf> {
 /// A theme file sets these only when it names them, and the values then stay
 /// for every later theme. Without a reset, a theme that names none of them
 /// would inherit the fonts and radius of whichever theme was active before.
+///
+/// Captured before `zoom` starts, so the sizes are those at 100%.
 #[derive(Clone)]
 struct Baseline {
     font_family: SharedString,
@@ -169,6 +171,8 @@ fn apply(name: &str, cx: &mut App) -> bool {
         }
         theme.apply_config(&config);
     });
+    // The theme now holds its sizes at 100%; zoom scales them again.
+    crate::zoom::rebase_theme(cx);
     cx.refresh_windows();
     true
 }

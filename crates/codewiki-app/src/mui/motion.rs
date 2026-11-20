@@ -17,10 +17,11 @@ use std::time::Duration;
 use gpui_kit::base::motion as kit;
 use gpui_kit::{
     Animation, AnimationElement, AnimationExt as _, App, ElementId, IntoElement, SpringConfig,
-    Styled, Window, px, sampled_easing,
+    Styled, Window, sampled_easing,
 };
 
 use super::tokens::{curve, duration, easing};
+use crate::zoom::px;
 
 /// A spring as Framer Motion describes one.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -62,6 +63,11 @@ pub const EXIT: Duration = Duration::from_millis(120);
 /// How long the word "Saved" stays beside a setting. Not a motion of MUI or
 /// of TradingAgent: long enough to be read, and gone before the next change.
 pub const NOTE_HOLD: Duration = Duration::from_millis(2500);
+
+/// How long the zoom level stays in the title bar after a change. Not a
+/// motion of MUI or of TradingAgent: long enough to read the figure while the
+/// wheel turns, and gone soon after it stops.
+pub const LEVEL_HOLD: Duration = Duration::from_millis(1500);
 
 /// Springs settle to within this share of their travel.
 const EPSILON: f32 = 0.001;

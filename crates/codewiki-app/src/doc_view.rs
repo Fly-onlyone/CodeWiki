@@ -28,7 +28,7 @@ use gpui_kit::{
     AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, Entity, EntityId,
     FontWeight, HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement,
     ListAlignment, ListState, ParentElement as _, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, img, list, px, relative,
+    StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, img, list, relative,
 };
 
 use crate::doc::{Action, Block, Cell, Choice, Doc, Row, SecretState, Span, Stat, Table};
@@ -47,7 +47,8 @@ use crate::mui::tokens::{Variant, curve, duration, easing};
 use crate::reading;
 use crate::settings::{FieldId, Note};
 use crate::settings_layout as layout;
-use crate::themes;
+use crate::zoom::px;
+use crate::{themes, zoom};
 
 /// What a link, row or button of a page does when used.
 pub type OnAction = Rc<dyn Fn(&Action, &mut Window, &mut App)>;
@@ -203,19 +204,27 @@ pub struct DocPage {
     on_action: OnAction,
     strips: Rc<Vec<Strip>>,
     list: ListState,
+    /// The zoom the strips were measured at. The list keeps the height of
+    /// each strip it has measured, and a strip off screen is not measured
+    /// again by itself.
+    zoom_seen: f32,
 }
 
 impl DocPage {
+    // The room the list builds past its edges is set once, in the screen's
+    // pixels.
+    #[allow(clippy::disallowed_methods)]
     pub fn new(on_action: OnAction) -> Self {
         let doc = Rc::new(Doc::default());
         let strips = Rc::new(strips(&doc));
         Self {
-            list: ListState::new(strips.len(), ListAlignment::Top, px(OVERDRAW)),
+            list: ListState::new(strips.len(), ListAlignment::Top, gpui_kit::px(OVERDRAW)),
             doc,
             serial: 0,
             width: 0.0,
             on_action,
             strips,
+            zoom_seen: zoom::factor(),
         }
     }
 
@@ -241,6 +250,10 @@ impl DocPage {
 
 impl Render for DocPage {
     fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+        if self.zoom_seen != zoom::factor() {
+            self.zoom_seen = zoom::factor();
+            self.list.remeasure();
+        }
         let page = Rc::new(Page {
             serial: self.serial,
             on_action: self.on_action.clone(),

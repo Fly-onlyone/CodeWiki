@@ -14,10 +14,11 @@ use std::time::Instant;
 use gpui_kit::{
     App, BoxShadow, ClickEvent, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement as _,
     MouseButton, ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _,
-    Window, canvas, point, px,
+    Window, canvas, point,
 };
 
 use super::ripple::{self, Wave};
+use crate::zoom::px;
 
 /// What a click does.
 pub type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;

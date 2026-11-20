@@ -14,10 +14,11 @@
 use std::f32::consts::{FRAC_PI_2, TAU};
 use std::time::{Duration, Instant};
 
-use gpui_kit::{Bounds, Hsla, PathBuilder, Pixels, Window, fill, point, px};
+use gpui_kit::{Bounds, Hsla, PathBuilder, Pixels, Window, fill, point};
 
 use super::motion::scaled;
 use super::tokens::{curve, easing};
+use crate::zoom::px;
 
 /// `TouchRipple.js`, `DURATION`: the time a ripple takes to grow, and to fade.
 pub const DURATION: Duration = Duration::from_millis(550);

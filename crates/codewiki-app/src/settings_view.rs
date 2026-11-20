@@ -36,7 +36,8 @@ use crate::mui::{select, surfaces};
 use crate::settings::{Category, FieldId, Note};
 use crate::settings_layout as layout;
 use crate::settings_pages::{self, Model, Tested};
-use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update};
+use crate::zoom::px;
+use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update, zoom};
 
 /// The name the app's log level is saved under (`prefs.rs`).
 pub const LOG_LEVEL_PREF: &str = "log_level";
@@ -863,7 +864,7 @@ impl AppView {
         cx.notify();
     }
 
-    fn close_settings_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub(crate) fn close_settings_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.settings.menu.take().is_some() {
             window.focus(&self.focus, cx);
             cx.notify();
@@ -997,6 +998,7 @@ impl AppView {
                     themes: &themes,
                     motion: motion::current(cx),
                     animations_on: !cx.reduce_motion(),
+                    zoom: zoom::percent(cx),
                     settings: self.settings.backend.as_ref(),
                     settings_error: self.settings.error.as_deref(),
                     notes: &self.settings.notes,

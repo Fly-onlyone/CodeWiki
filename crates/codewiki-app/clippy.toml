@@ -1,0 +1,7 @@
+# The app's sizes go through `crate::zoom::px`, which applies the zoom. GPUI's
+# own `px` is for what must keep the screen's pixels whatever the zoom: the
+# window's measures, the title bar, a hairline. Each such use says why, under
+# `#[allow(clippy::disallowed_methods)]`.
+disallowed-methods = [
+    { path = "gpui::px", reason = "sizes go through crate::zoom::px, which applies the zoom" },
+]

@@ -14,10 +14,11 @@
 use gpui_kit::base::{TextView, TextViewStyle};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
-    App, FontWeight, HighlightStyle, Overflow, StyleRefinement, Styled as _, px, relative, rems,
+    App, FontWeight, HighlightStyle, Overflow, StyleRefinement, Styled as _, relative, rems,
 };
 
 use crate::icons::Hue;
+use crate::zoom::px;
 use crate::{glass, themes};
 
 /// Widest a line of prose may run, in pixels. About 95 characters of the

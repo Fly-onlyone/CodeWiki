@@ -25,13 +25,14 @@ use gpui_kit::{
     Anchor, AnyElement, App, Bounds, Div, ElementId, FocusHandle, Hsla, InteractiveElement as _,
     IntoElement, KeyDownEvent, MouseButton, ParentElement as _, Pixels, RenderOnce, ScrollHandle,
     SharedString, StatefulInteractiveElement as _, Styled as _, Window, anchored, deferred, div,
-    point, px,
+    point,
 };
 
 use super::list::{self, ListItemButton};
 use super::motion::{Enter, EnterExt as _};
 use super::surfaces;
 use crate::icons::Glyph;
+use crate::zoom::px;
 
 /// `Popover.js`: `elevation = 8`.
 const ELEVATION: usize = 8;

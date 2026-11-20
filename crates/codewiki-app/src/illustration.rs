@@ -18,6 +18,7 @@ use crate::mui::motion::{Enter, EnterExt as _};
 use crate::mui::surfaces::{self, card, card_content};
 use crate::mui::tabs::{Tab, Tabs};
 use crate::mui::tokens::Variant;
+use crate::zoom::px;
 
 /// MUI's `StepIcon`: a 24 px disc with the step's number in 12 px text.
 const STEP_ICON: f32 = 24.0;

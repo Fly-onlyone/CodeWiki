@@ -165,7 +165,9 @@ pub fn tinted_border(cx: &App) -> Hsla {
 }
 
 /// A one-pixel strip across the top of a surface that starts in the primary
-/// color and fades out to the right.
+/// color and fades out to the right. One pixel of the screen at every zoom,
+/// as a border is.
+#[allow(clippy::disallowed_methods)]
 pub fn hairline(cx: &App) -> Div {
     let primary = cx.theme().primary;
     div().h(px(1.)).w_full().flex_shrink_0().bg(linear_gradient(

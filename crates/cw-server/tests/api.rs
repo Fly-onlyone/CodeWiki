@@ -329,9 +329,15 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
     assert_eq!(settings["llm"]["name"], Value::Null);
     assert_eq!(settings["llm"]["problem"], Value::Null);
     assert_eq!(settings["embed"]["provider"]["value"], "local");
+    // The built-in embedder is listed wherever the build can run a model,
+    // before any model is installed.
     assert_eq!(
         settings["embed"]["provider"]["options"],
-        json!(["local", "ollama", "openai", "none"])
+        if cfg!(windows) {
+            json!(["local", "builtin", "ollama", "openai", "none"])
+        } else {
+            json!(["local", "ollama", "openai", "none"])
+        }
     );
     assert!(
         settings["embed"]["name"]
@@ -512,9 +518,14 @@ fn install_model(data: &Path, id: &str) {
 
 #[cfg(windows)]
 #[tokio::test]
-async fn the_built_in_embedder_is_offered_and_taken_only_with_an_installed_model() {
+async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
     let h = Harness::new();
     let settings = h.get("/v1/settings").await;
+    // Offered before any model is installed.
+    assert_eq!(
+        settings["embed"]["provider"]["options"],
+        json!(["local", "builtin", "ollama", "openai", "none"])
+    );
     // The graphics card is offered where a worker for it is installed, which
     // a test program is not.
     assert_eq!(
@@ -528,10 +539,6 @@ async fn the_built_in_embedder_is_offered_and_taken_only_with_an_installed_model
         })
     );
     for (body, expected) in [
-        (
-            json!({ "embed": { "provider": "builtin" } }),
-            "needs a model",
-        ),
         (
             json!({ "embed": { "provider": "builtin", "model": "bert" } }),
             "unknown built-in model 'bert'",
@@ -553,6 +560,21 @@ async fn the_built_in_embedder_is_offered_and_taken_only_with_an_installed_model
         h.get("/v1/settings").await["embed"]["provider"]["value"],
         "local"
     );
+
+    // Chosen with no model, it waits for one: saved, but nothing embeds,
+    // and the description says what is missing.
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "builtin" } }),
+        )
+        .await;
+    assert_eq!(settings["embed"]["provider"]["value"], "builtin");
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    assert_eq!(settings["embed"]["name"], Value::Null);
+    let problem = settings["embed"]["problem"].as_str().unwrap();
+    assert!(problem.contains("needs a model"), "{problem}");
+    assert_eq!(h.get("/v1/models").await["embedder"], "builtin");
 
     install_model(h.data.path(), "granite-small-english-r2");
     assert_eq!(
@@ -590,21 +612,61 @@ async fn the_built_in_embedder_is_offered_and_taken_only_with_an_installed_model
         .await;
     assert_eq!(settings["embed"]["model"]["value"], Value::Null);
     assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
-    // And the built-in one does not inherit a model name as its catalog id.
+    // And the built-in one does not inherit a model name as its catalog id:
+    // it waits for a model instead.
     h.put(
         "/v1/settings",
         json!({ "embed": { "model": "nomic-embed-text" } }),
     )
     .await;
-    let (_, error) = h
-        .refused(json!({ "embed": { "provider": "builtin" } }))
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "builtin" } }),
+        )
         .await;
-    assert!(error.contains("needs a model"), "{error}");
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    let problem = settings["embed"]["problem"].as_str().unwrap();
+    assert!(problem.contains("needs a model"), "{problem}");
+    // Leaving a waiting built-in embedder leaves nothing of it behind.
+    let settings = h
+        .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
+        .await;
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
+    assert_eq!(settings["embed"]["problem"], Value::Null);
     h.put(
         "/v1/settings",
         json!({ "embed": { "provider": "local", "model": null } }),
     )
     .await;
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn pending_builtin_does_not_check_the_device() {
+    let h = Harness::new();
+    // Nothing runs while no model is named, so a device this installation
+    // cannot use is kept, as it is for any other embedder.
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "builtin", "device": "cuda" } }),
+        )
+        .await;
+    assert_eq!(settings["embed"]["provider"]["value"], "builtin");
+    assert_eq!(settings["embed"]["device"]["value"], "cuda");
+    // Naming a model checks it: a test program has no worker for the card.
+    install_model(h.data.path(), "granite-small-english-r2");
+    let (status, error) = h
+        .refused(json!({ "embed": { "model": "granite-small-english-r2" } }))
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error.contains("no worker for the graphics card"), "{error}");
+    assert_eq!(
+        h.get("/v1/settings").await["embed"]["model"]["value"],
+        Value::Null
+    );
 }
 
 /// An environment in which only the model is set.

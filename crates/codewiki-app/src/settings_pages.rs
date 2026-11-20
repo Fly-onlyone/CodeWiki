@@ -1087,7 +1087,7 @@ fn error_reports(model: &Model) -> Block {
                 locked,
             },
             Block::Text(vec![text(
-                "A crash or an error of the app, the backend, the agents' bridge or the embedding worker goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key.",
+                "A crash or an error of the app, the backend, the agents' bridge or the embedding worker goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key. Sentry keeps the city and country of the network a report comes from, not its address.",
             )]),
         ],
     )

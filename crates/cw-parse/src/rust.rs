@@ -32,6 +32,10 @@ pub struct CallSite {
     pub path: Vec<String>,
     /// True for `receiver.name(...)`.
     pub method: bool,
+    /// Byte offset of the callee's name in the file. A caller's calls sorted
+    /// by it stand in source order, which the order of recording is not:
+    /// `x.first().second()` is recorded as `second`, then `first`.
+    pub at: u32,
 }
 
 /// `impl Trait for Type` or an inherent `impl Type`.
@@ -67,6 +71,9 @@ pub struct ValueRef {
     pub path: Vec<String>,
     /// True when the name is followed by an argument list.
     pub call: bool,
+    /// Byte offset of the name in the file, as in [`CallSite::at`]; 0 where
+    /// the parser does not record it.
+    pub at: u32,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -322,7 +329,8 @@ impl<'a> Extractor<'a> {
             // constant, a static. Locals are recorded too and simply fail
             // to resolve.
             "identifier" | "scoped_identifier" => {
-                self.record_value(split_path(self.text(node)), false, owner, ctx);
+                let at = node.start_byte();
+                self.record_value(split_path(self.text(node)), false, at, owner, ctx);
                 return;
             }
             "macro_invocation" => {
@@ -345,7 +353,9 @@ impl<'a> Extractor<'a> {
         }
     }
 
-    fn record_value(&mut self, path: Vec<String>, call: bool, owner: &str, ctx: &Ctx) {
+    /// Record a name used as a value at byte offset `at`. Only the first use
+    /// of a name by `owner` is kept, and the walk meets uses in source order.
+    fn record_value(&mut self, path: Vec<String>, call: bool, at: usize, owner: &str, ctx: &Ctx) {
         if path.is_empty()
             || !self
                 .value_seen
@@ -359,6 +369,7 @@ impl<'a> Extractor<'a> {
             self_type: ctx.self_type.clone(),
             path,
             call,
+            at: at as u32,
         });
     }
 
@@ -370,15 +381,17 @@ impl<'a> Extractor<'a> {
         let mut cursor = tree.walk();
         let tokens: Vec<Node> = tree.children(&mut cursor).collect();
         let mut path: Vec<String> = Vec::new();
+        // Where the first token of `path` stands.
+        let mut start = 0;
         let mut joining = false;
         // The last token was `.`, and then: `path` is a method or field name.
         let mut after_dot = false;
         let mut member = false;
         // A name after `.` is a method when an argument list follows, and a
         // field otherwise, which is not recorded.
-        let flush = |ex: &mut Self, path: Vec<String>, member: bool, call: bool| {
+        let flush = |ex: &mut Self, path: Vec<String>, at: usize, member: bool, call: bool| {
             if !member {
-                ex.record_value(path, call, owner, ctx);
+                ex.record_value(path, call, at, owner, ctx);
             } else if call {
                 ex.out.calls.push(CallSite {
                     caller: owner.to_string(),
@@ -386,6 +399,7 @@ impl<'a> Extractor<'a> {
                     self_type: ctx.self_type.clone(),
                     path,
                     method: true,
+                    at: at as u32,
                 });
             }
         };
@@ -393,10 +407,13 @@ impl<'a> Extractor<'a> {
             match token.kind() {
                 "identifier" | "crate" | "self" | "super" => {
                     if !joining && !path.is_empty() {
-                        flush(self, std::mem::take(&mut path), member, false);
+                        flush(self, std::mem::take(&mut path), start, member, false);
                     }
                     if !joining {
                         member = after_dot;
+                    }
+                    if path.is_empty() {
+                        start = token.start_byte();
                     }
                     path.push(self.text(token).to_string());
                     joining = false;
@@ -404,12 +421,12 @@ impl<'a> Extractor<'a> {
                 }
                 "string_literal" | "raw_string_literal" => {
                     if !path.is_empty() {
-                        flush(self, std::mem::take(&mut path), member, false);
+                        flush(self, std::mem::take(&mut path), start, member, false);
                     }
                     joining = false;
                     after_dot = false;
                     for name in format_captures(self.text(token)) {
-                        self.record_value(vec![name], false, owner, ctx);
+                        self.record_value(vec![name], false, token.start_byte(), owner, ctx);
                     }
                 }
                 "::" => {
@@ -419,7 +436,7 @@ impl<'a> Extractor<'a> {
                 "token_tree" => {
                     let call = self.text(token).starts_with('(');
                     if !path.is_empty() {
-                        flush(self, std::mem::take(&mut path), member, call);
+                        flush(self, std::mem::take(&mut path), start, member, call);
                     }
                     joining = false;
                     after_dot = false;
@@ -427,7 +444,7 @@ impl<'a> Extractor<'a> {
                 }
                 kind => {
                     if !path.is_empty() {
-                        flush(self, std::mem::take(&mut path), member, false);
+                        flush(self, std::mem::take(&mut path), start, member, false);
                     }
                     joining = false;
                     after_dot = kind == ".";
@@ -435,16 +452,28 @@ impl<'a> Extractor<'a> {
             }
         }
         if !path.is_empty() {
-            flush(self, path, member, false);
+            flush(self, path, start, member, false);
         }
     }
 
     fn record_call(&mut self, function: Node, owner: &str, ctx: &Ctx) {
-        let (path, method) = match function.kind() {
-            "identifier" => (vec![self.text(function).to_string()], false),
-            "scoped_identifier" => (split_path(self.text(function)), false),
+        let (path, method, at) = match function.kind() {
+            "identifier" => (
+                vec![self.text(function).to_string()],
+                false,
+                function.start_byte(),
+            ),
+            "scoped_identifier" => (
+                split_path(self.text(function)),
+                false,
+                function.start_byte(),
+            ),
+            // The method's name, not the receiver: in `x.first().second()`
+            // both calls start at `x`.
             "field_expression" => match function.child_by_field_name("field") {
-                Some(f) if f.kind() == "field_identifier" => (vec![self.text(f).to_string()], true),
+                Some(f) if f.kind() == "field_identifier" => {
+                    (vec![self.text(f).to_string()], true, f.start_byte())
+                }
                 _ => return,
             },
             "generic_function" => {
@@ -464,6 +493,7 @@ impl<'a> Extractor<'a> {
             self_type: ctx.self_type.clone(),
             path,
             method,
+            at: at as u32,
         });
     }
 
@@ -492,7 +522,7 @@ impl<'a> Extractor<'a> {
         if node.kind() == "attribute_item" {
             // `#[serde(default = "default_limit")]` names a function in a string.
             for name in quoted_paths(self.text(node)) {
-                self.record_value(name, false, owner, ctx);
+                self.record_value(name, false, node.start_byte(), owner, ctx);
             }
             return;
         }
@@ -1013,6 +1043,44 @@ fn free(w: &Widget) -> usize { LIMIT }
             "{:?}",
             p.calls
         );
+    }
+
+    #[test]
+    fn a_call_knows_where_it_stands() {
+        let src = "fn run(x: X) {
+    third(second(first()));
+    x.alpha().beta();
+    let s = format!(\"{}\", inside());
+    first();
+}
+";
+        let p = parse_rust("src/lib.rs", "demo", src).unwrap();
+        let mut calls: Vec<(u32, &str)> = p
+            .calls
+            .iter()
+            .filter(|c| c.caller == "demo::run")
+            .map(|c| (c.at, c.path[c.path.len() - 1].as_str()))
+            .collect();
+        // A call inside a macro is a value with an argument list.
+        calls.extend(
+            p.value_refs
+                .iter()
+                .filter(|v| v.from == "demo::run" && v.call)
+                .map(|v| (v.at, v.path[v.path.len() - 1].as_str())),
+        );
+        calls.sort();
+        // The order of the source, which is not the order of recording: the
+        // outer call of a chain is met first.
+        let names: Vec<&str> = calls.iter().map(|(_, name)| *name).collect();
+        assert_eq!(
+            names,
+            [
+                "third", "second", "first", "alpha", "beta", "inside", "first"
+            ]
+        );
+        for (at, name) in calls {
+            assert!(src[at as usize..].starts_with(name), "{name} at {at}");
+        }
     }
 
     #[test]

@@ -801,6 +801,50 @@ mod tests {
     }
 
     #[test]
+    fn a_call_edge_keeps_the_place_of_the_first_call() {
+        let facts = scan_files(&[
+            (
+                "Cargo.toml",
+                "[package]
+name = \"demo\"
+",
+            ),
+            (
+                "src/lib.rs",
+                "pub fn run() {
+    last(first());
+    middle();
+    first();
+}
+fn first() -> u8 { 0 }
+fn middle() {}
+fn last(_: u8) {}
+pub const LIMIT: u8 = 1;
+pub fn read() -> u8 { LIMIT }
+",
+            ),
+        ]);
+        let mut calls: Vec<(u32, &str)> = facts
+            .edges
+            .iter()
+            .filter(|e| e.src == "demo::run" && e.kind == EdgeKind::Calls)
+            .map(|e| (e.site, e.dst.as_str()))
+            .collect();
+        calls.sort();
+        // `first` is called twice and stands where it is called first.
+        let order: Vec<&str> = calls.iter().map(|(_, dst)| *dst).collect();
+        assert_eq!(order, ["demo::last", "demo::first", "demo::middle"]);
+        assert!(calls.iter().all(|(site, _)| *site > 0));
+        // What is no call has no place.
+        let read = facts
+            .edges
+            .iter()
+            .find(|e| e.src == "demo::read" && e.dst == "demo::LIMIT")
+            .unwrap();
+        assert_eq!((read.kind, read.site), (EdgeKind::References, 0));
+    }
+
+    #[test]
     fn a_name_matches_a_method_only_in_a_crate_the_caller_depends_on() {
         let call = "pub fn draw(d: gpui::Div) -> gpui::Div { d.size(4.0) }\n";
         let facts = scan_files(&[

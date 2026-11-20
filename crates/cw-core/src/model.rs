@@ -293,6 +293,11 @@ pub struct Edge {
     pub dst: String,
     pub kind: EdgeKind,
     pub confidence: Confidence,
+    /// For a call: the byte offset, in the caller's file, of the callee's
+    /// name at the first such call. Sorting a caller's calls by it gives the
+    /// order they stand in the source. 0 for every other kind.
+    #[serde(default)]
+    pub site: u32,
 }
 
 /// Node id for a file-level node.

@@ -3,7 +3,7 @@
 //! Turns the per-file facts into graph edges. Resolution is heuristic, so each
 //! edge records how it was matched; see [`cw_core::Confidence`].
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cw_core::{Confidence, Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility, file_node};
 
@@ -430,11 +430,16 @@ impl<'a> Resolver<'a> {
 
     /// Build every edge for the repository.
     pub fn resolve(&self, files: &[(String, ParsedFile)]) -> Resolved {
-        let mut edges: BTreeSet<(String, String, EdgeKind, Confidence)> = BTreeSet::new();
+        // Each edge once, with the place of the first call it stands for.
+        let mut edges: BTreeMap<(String, String, EdgeKind, Confidence), u32> = BTreeMap::new();
         let mut external: BTreeSet<ExternalUse> = BTreeSet::new();
-        let mut add = |src: String, dst: String, kind: EdgeKind, conf: Confidence| {
+        // `at` is where a call stands in its file, and 0 for what is no call.
+        let mut add = |src: String, dst: String, kind: EdgeKind, conf: Confidence, at: u32| {
             if src != dst {
-                edges.insert((src, dst, kind, conf));
+                edges
+                    .entry((src, dst, kind, conf))
+                    .and_modify(|first| *first = (*first).min(at))
+                    .or_insert(at);
             }
         };
         let callable = |k: SymbolKind| matches!(k, SymbolKind::Function | SymbolKind::Method);
@@ -448,6 +453,7 @@ impl<'a> Resolver<'a> {
                         file_node(&target.file),
                         EdgeKind::Imports,
                         Confidence::High,
+                        0,
                     ),
                     None => {
                         let first = u.path[0].as_str();
@@ -477,6 +483,7 @@ impl<'a> Resolver<'a> {
                         child,
                         EdgeKind::Declares,
                         Confidence::High,
+                        0,
                     );
                 }
             }
@@ -493,6 +500,7 @@ impl<'a> Resolver<'a> {
                         tr.qualified.clone(),
                         EdgeKind::Implements,
                         Confidence::High,
+                        0,
                     );
                 }
             }
@@ -530,6 +538,7 @@ impl<'a> Resolver<'a> {
                         target.qualified.clone(),
                         EdgeKind::Calls,
                         conf,
+                        c.at,
                     );
                 }
             }
@@ -549,11 +558,13 @@ impl<'a> Resolver<'a> {
                     k if k.is_type() => EdgeKind::References,
                     _ => continue,
                 };
+                let at = if kind == EdgeKind::Calls { v.at } else { 0 };
                 add(
                     v.from.clone(),
                     target.qualified.clone(),
                     kind,
                     Confidence::High,
+                    at,
                 );
             }
 
@@ -568,6 +579,7 @@ impl<'a> Resolver<'a> {
                         target.qualified.clone(),
                         EdgeKind::References,
                         conf,
+                        0,
                     );
                 }
             }
@@ -576,11 +588,12 @@ impl<'a> Resolver<'a> {
         Resolved {
             edges: edges
                 .into_iter()
-                .map(|(src, dst, kind, confidence)| Edge {
+                .map(|((src, dst, kind, confidence), site)| Edge {
                     src,
                     dst,
                     kind,
                     confidence,
+                    site,
                 })
                 .collect(),
             external_uses: external.into_iter().collect(),

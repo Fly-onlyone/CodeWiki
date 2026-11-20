@@ -1,7 +1,7 @@
 //! Database schema. Bump `SCHEMA_VERSION` on any change; an index with a
 //! different version is dropped and rebuilt rather than migrated.
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS edges (
     dst        TEXT NOT NULL,
     kind       TEXT NOT NULL,
     confidence TEXT NOT NULL,
+    site       INTEGER NOT NULL,
     PRIMARY KEY (src, dst, kind)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS edges_dst ON edges(dst);

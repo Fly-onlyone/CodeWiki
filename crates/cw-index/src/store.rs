@@ -63,6 +63,7 @@ fn edge_from_row(row: &Row) -> rusqlite::Result<Edge> {
         dst: row.get(1)?,
         kind: EdgeKind::parse(&kind).unwrap_or(EdgeKind::References),
         confidence: Confidence::parse(&confidence),
+        site: row.get(4)?,
     })
 }
 
@@ -139,14 +140,15 @@ impl Index {
                 .map_err(&err)?;
             }
             let mut stmt = tx
-                .prepare("INSERT OR REPLACE INTO edges VALUES (?1, ?2, ?3, ?4)")
+                .prepare("INSERT OR REPLACE INTO edges VALUES (?1, ?2, ?3, ?4, ?5)")
                 .map_err(&err)?;
             for e in &facts.edges {
                 stmt.execute(params![
                     e.src,
                     e.dst,
                     e.kind.as_str(),
-                    e.confidence.as_str()
+                    e.confidence.as_str(),
+                    e.site
                 ])
                 .map_err(&err)?;
             }
@@ -260,7 +262,7 @@ impl Index {
 
     pub fn edges(&self) -> Result<Vec<Edge>> {
         self.collect(
-            "SELECT src, dst, kind, confidence FROM edges ORDER BY src, dst, kind",
+            "SELECT src, dst, kind, confidence, site FROM edges ORDER BY src, dst, kind",
             [],
             edge_from_row,
         )
@@ -268,7 +270,7 @@ impl Index {
 
     pub fn edges_from(&self, node: &str) -> Result<Vec<Edge>> {
         self.collect(
-            "SELECT src, dst, kind, confidence FROM edges WHERE src = ?1 ORDER BY dst, kind",
+            "SELECT src, dst, kind, confidence, site FROM edges WHERE src = ?1 ORDER BY dst, kind",
             [node],
             edge_from_row,
         )
@@ -276,7 +278,7 @@ impl Index {
 
     pub fn edges_to(&self, node: &str) -> Result<Vec<Edge>> {
         self.collect(
-            "SELECT src, dst, kind, confidence FROM edges WHERE dst = ?1 ORDER BY src, kind",
+            "SELECT src, dst, kind, confidence, site FROM edges WHERE dst = ?1 ORDER BY src, kind",
             [node],
             edge_from_row,
         )
@@ -399,6 +401,7 @@ mod tests {
                 dst: "demo::run".into(),
                 kind: EdgeKind::Calls,
                 confidence: Confidence::High,
+                site: 42,
             }],
             external_uses: vec![ExternalUse {
                 file: "src/lib.rs".into(),

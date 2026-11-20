@@ -155,6 +155,26 @@ impl<'a> Repo<'a> {
         }
     }
 
+    /// The calls `qualified` makes, in the order they stand in its source,
+    /// each callee once.
+    pub fn calls_from(&self, qualified: &str) -> Vec<&'a Edge> {
+        let mut calls: Vec<&Edge> = self
+            .outgoing
+            .get(qualified)
+            .map(|edges| {
+                edges
+                    .iter()
+                    .copied()
+                    .filter(|e| e.kind == EdgeKind::Calls)
+                    .collect()
+            })
+            .unwrap_or_default();
+        calls.sort_by(|a, b| a.site.cmp(&b.site).then_with(|| a.dst.cmp(&b.dst)));
+        let mut seen = HashSet::new();
+        calls.retain(|e| seen.insert(e.dst.as_str()));
+        calls
+    }
+
     /// Index of the unit that holds the symbol named `qualified`.
     pub fn unit_index(&self, qualified: &str) -> Option<usize> {
         match self.symbols.get(qualified) {
@@ -723,13 +743,7 @@ fn startup_messages(repo: &Repo, owner: &HashMap<String, String>, entry: &str) -
         let Some(from) = owner.get(current) else {
             continue;
         };
-        let mut calls: Vec<&&Edge> = repo
-            .outgoing
-            .get(current)
-            .map(|v| v.iter().filter(|e| e.kind == EdgeKind::Calls).collect())
-            .unwrap_or_default();
-        calls.sort_by(|a, b| a.dst.cmp(&b.dst));
-        for edge in calls {
+        for edge in repo.calls_from(current) {
             let callee = edge.dst.as_str();
             if !seen.insert(callee) {
                 continue;

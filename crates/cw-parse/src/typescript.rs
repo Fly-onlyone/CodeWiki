@@ -1004,12 +1004,12 @@ impl<'a> Extractor<'a> {
             "member_expression" => self.member(node, ctx),
             "call_expression" => self.call(node, ctx),
             "new_expression" => {
-                let chain = node
-                    .child_by_field_name("constructor")
-                    .and_then(|c| self.chain(c));
+                let constructor = node.child_by_field_name("constructor");
+                let chain = constructor.and_then(|c| self.chain(c));
                 if let Some(mut path) = chain.filter(|c| !ctx.locals.contains(&c[0])) {
                     path.push("constructor".to_string());
-                    self.sink.call(&ctx.owner, path, false, None);
+                    let at = constructor.unwrap_or(node);
+                    self.sink.call(&ctx.owner, path, false, None, at);
                 }
                 self.children(node, ctx);
             }
@@ -1065,14 +1065,16 @@ impl<'a> Extractor<'a> {
                 let name = self.sink.text(function);
                 if !ctx.locals.contains(name) {
                     self.sink
-                        .call(&ctx.owner, vec![name.to_string()], false, None);
+                        .call(&ctx.owner, vec![name.to_string()], false, None, function);
                 }
             }
             "member_expression" => {
-                let name = function
-                    .child_by_field_name("property")
+                let property = function.child_by_field_name("property");
+                let name = property
                     .map(|p| self.sink.text(p).to_string())
                     .unwrap_or_default();
+                // The called name, not the receiver before it.
+                let at = property.unwrap_or(function);
                 let on_this = function
                     .child_by_field_name("object")
                     .is_some_and(|o| o.kind() == "this");
@@ -1080,17 +1082,19 @@ impl<'a> Extractor<'a> {
                     // `this.name(...)`: a method of the enclosing class, or
                     // one it inherits.
                     _ if on_this => {
-                        self.sink
-                            .call(&ctx.owner, vec![name], true, ctx.self_type.as_deref());
+                        let class = ctx.self_type.as_deref();
+                        self.sink.call(&ctx.owner, vec![name], true, class, at);
                     }
                     // `module.name(...)` or `Class.name(...)`: a path.
                     Some(chain)
                         if !ctx.locals.contains(&chain[0]) && self.roots.contains(&chain[0]) =>
                     {
-                        self.sink.call(&ctx.owner, chain, false, None);
+                        self.sink.call(&ctx.owner, chain, false, None, at);
                     }
                     // A receiver of unknown type.
-                    _ if !name.is_empty() => self.sink.call(&ctx.owner, vec![name], true, None),
+                    _ if !name.is_empty() => {
+                        self.sink.call(&ctx.owner, vec![name], true, None, at);
+                    }
                     _ => {}
                 }
             }
@@ -1328,6 +1332,39 @@ export default greet;
         // Local export aliases, including the default export.
         assert!(has(&["src", "app", "counter"], "count", false));
         assert!(has(&["src", "app", "greet"], "default", false));
+    }
+
+    /// The names `caller` calls, in the order they stand in `source`.
+    fn call_order(p: &ParsedFile, caller: &str, source: &str) -> Vec<String> {
+        let mut calls: Vec<(u32, &str)> = p
+            .calls
+            .iter()
+            .filter(|c| c.caller == caller)
+            .map(|c| (c.at, c.path[c.path.len() - 1].as_str()))
+            .collect();
+        calls.sort();
+        for (at, name) in &calls {
+            assert!(source[*at as usize..].starts_with(name), "{name} at {at}");
+        }
+        calls
+            .into_iter()
+            .map(|(_, name)| name.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_call_knows_where_it_stands() {
+        let source = "function run(x: any) {
+  third(second(first()));
+  x.alpha().beta();
+}
+";
+        let p = parse_typescript("src/m.ts", "src::m", source, &|_| None).unwrap();
+        // The outer call of a chain is recorded first and stands last.
+        assert_eq!(
+            call_order(&p, "src::m::run", source),
+            ["third", "second", "first", "alpha", "beta"]
+        );
     }
 
     #[test]

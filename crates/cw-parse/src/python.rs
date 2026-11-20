@@ -461,14 +461,16 @@ impl<'a> Extractor<'a> {
                 let name = self.sink.text(function);
                 if !ctx.locals.contains(name) {
                     self.sink
-                        .call(&ctx.owner, vec![name.to_string()], false, None);
+                        .call(&ctx.owner, vec![name.to_string()], false, None, function);
                 }
             }
             "attribute" => {
-                let name = function
-                    .child_by_field_name("attribute")
+                let attribute = function.child_by_field_name("attribute");
+                let name = attribute
                     .map(|a| self.sink.text(a).to_string())
                     .unwrap_or_default();
+                // The called name, not the receiver before it.
+                let at = attribute.unwrap_or(function);
                 match self.chain(function) {
                     // `self.name(...)`: a method of the enclosing class, or
                     // one it inherits.
@@ -476,16 +478,18 @@ impl<'a> Extractor<'a> {
                         let on_self = (chain.len() == 2)
                             .then_some(ctx.self_type.as_deref())
                             .flatten();
-                        self.sink.call(&ctx.owner, vec![name], true, on_self);
+                        self.sink.call(&ctx.owner, vec![name], true, on_self, at);
                     }
                     // `module.name(...)` or `Class.name(...)`: a path.
                     Some(chain)
                         if !ctx.locals.contains(&chain[0]) && self.roots.contains(&chain[0]) =>
                     {
-                        self.sink.call(&ctx.owner, chain, false, None);
+                        self.sink.call(&ctx.owner, chain, false, None, at);
                     }
                     // A receiver of unknown type.
-                    _ if !name.is_empty() => self.sink.call(&ctx.owner, vec![name], true, None),
+                    _ if !name.is_empty() => {
+                        self.sink.call(&ctx.owner, vec![name], true, None, at);
+                    }
                     _ => {}
                 }
             }
@@ -764,6 +768,38 @@ if __name__ == "__main__":
             p.uses
                 .iter()
                 .any(|u| u.path == ["pkg", "text", "shout"] && u.alias == "shout")
+        );
+    }
+
+    /// The names `caller` calls, in the order they stand in `source`.
+    fn call_order(p: &ParsedFile, caller: &str, source: &str) -> Vec<String> {
+        let mut calls: Vec<(u32, &str)> = p
+            .calls
+            .iter()
+            .filter(|c| c.caller == caller)
+            .map(|c| (c.at, c.path[c.path.len() - 1].as_str()))
+            .collect();
+        calls.sort();
+        for (at, name) in &calls {
+            assert!(source[*at as usize..].starts_with(name), "{name} at {at}");
+        }
+        calls
+            .into_iter()
+            .map(|(_, name)| name.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_call_knows_where_it_stands() {
+        let source = "def run(x):
+    third(second(first()))
+    x.alpha().beta()
+";
+        let p = parse_python("m.py", "m", false, source).unwrap();
+        // The outer call of a chain is recorded first and stands last.
+        assert_eq!(
+            call_order(&p, "m::run", source),
+            ["third", "second", "first", "alpha", "beta"]
         );
     }
 

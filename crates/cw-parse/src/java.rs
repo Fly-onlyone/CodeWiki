@@ -448,15 +448,16 @@ impl<'a> Extractor<'a> {
             }
             "method_invocation" => self.invocation(node, owner, ctx),
             "object_creation_expression" => {
-                let path = node
-                    .child_by_field_name("type")
+                let class = node.child_by_field_name("type");
+                let path = class
                     .map(|t| self.qualify(ctx, self.type_path(t)))
                     .unwrap_or_default();
                 // The constructor is the method named after its class.
                 if let Some(last) = path.last().cloned() {
                     let mut constructor = path;
                     constructor.push(last);
-                    self.sink.call(owner, constructor, false, None);
+                    let at = class.unwrap_or(node);
+                    self.sink.call(owner, constructor, false, None, at);
                 }
                 self.children(node, owner, ctx);
             }
@@ -490,16 +491,18 @@ impl<'a> Extractor<'a> {
         let Some(name) = self.name_of(node).map(str::to_string) else {
             return;
         };
+        // The called name, not the receiver before it.
+        let at = node.child_by_field_name("name").unwrap_or(node);
         match node.child_by_field_name("object") {
             // A bare call names a member of an enclosing type or a static
             // import. Inherited methods are not followed.
             None => {
                 let path = self.qualify(ctx, vec![name]);
-                self.sink.call(owner, path, false, None);
+                self.sink.call(owner, path, false, None, at);
             }
             Some(object) if object.kind() == "this" => {
                 let class = ctx.classes.last().map(|(q, _)| q.as_str());
-                self.sink.call(owner, vec![name], true, class);
+                self.sink.call(owner, vec![name], true, class, at);
             }
             Some(object) => {
                 match self.chain(object) {
@@ -509,10 +512,10 @@ impl<'a> Extractor<'a> {
                     {
                         let mut path = self.qualify(ctx, chain);
                         path.push(name);
-                        self.sink.call(owner, path, false, None);
+                        self.sink.call(owner, path, false, None, at);
                     }
                     // A receiver of unknown type, `super` included.
-                    _ => self.sink.call(owner, vec![name], true, None),
+                    _ => self.sink.call(owner, vec![name], true, None, at),
                 }
                 self.walk(object, owner, ctx);
             }
@@ -698,6 +701,42 @@ record Point(int x, Label label) {}
         assert!(has(&["java", "util", "List"], "List", false));
         assert!(has(&["org", "junit", "Test"], "Test", false));
         assert!(p.uses.iter().all(|u| u.scope == "com::acme::app"));
+    }
+
+    /// The names `caller` calls, in the order they stand in `source`.
+    fn call_order(p: &ParsedFile, caller: &str, source: &str) -> Vec<String> {
+        let mut calls: Vec<(u32, &str)> = p
+            .calls
+            .iter()
+            .filter(|c| c.caller == caller)
+            .map(|c| (c.at, c.path[c.path.len() - 1].as_str()))
+            .collect();
+        calls.sort();
+        for (at, name) in &calls {
+            assert!(source[*at as usize..].starts_with(name), "{name} at {at}");
+        }
+        calls
+            .into_iter()
+            .map(|(_, name)| name.to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_call_knows_where_it_stands() {
+        let source = "package p;
+class A {
+  void run(B x) {
+    third(second(first()));
+    x.alpha().beta();
+  }
+}
+";
+        let p = parse_java("src/main/java/p/A.java", source).unwrap();
+        // The outer call of a chain is recorded first and stands last.
+        assert_eq!(
+            call_order(&p, "p::A::run", source),
+            ["third", "second", "first", "alpha", "beta"]
+        );
     }
 
     #[test]

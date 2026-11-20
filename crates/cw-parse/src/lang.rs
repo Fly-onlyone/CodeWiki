@@ -394,6 +394,7 @@ impl<'a> Sink<'a> {
             self_type: None,
             path,
             call: false,
+            at: 0,
         });
     }
 
@@ -414,8 +415,16 @@ impl<'a> Sink<'a> {
 
     /// A call made by `owner`. `method` marks `receiver.name(...)` where the
     /// receiver's type is unknown; `self_type` is set only when the receiver
-    /// is the instance itself.
-    pub fn call(&mut self, owner: &str, path: Vec<String>, method: bool, self_type: Option<&str>) {
+    /// is the instance itself. `at` is the node of the callee's name; where
+    /// it starts is the call's place in the source.
+    pub fn call(
+        &mut self,
+        owner: &str,
+        path: Vec<String>,
+        method: bool,
+        self_type: Option<&str>,
+        at: Node,
+    ) {
         if path.is_empty() {
             return;
         }
@@ -425,6 +434,7 @@ impl<'a> Sink<'a> {
             self_type: self_type.map(str::to_string),
             path,
             method,
+            at: at.start_byte() as u32,
         });
     }
 

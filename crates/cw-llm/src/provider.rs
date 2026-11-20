@@ -96,7 +96,6 @@ fn agent(timeout: Duration) -> ureq::Agent {
 pub(crate) enum Method {
     Get,
     Post,
-    Delete,
 }
 
 /// One HTTP request to a provider.
@@ -107,8 +106,6 @@ pub(crate) struct Call<'a> {
     pub unreachable: &'a str,
     pub method: Method,
     pub url: &'a str,
-    /// Query parameters, encoded on the way.
-    pub query: &'a [(&'a str, &'a str)],
     pub headers: &'a [(&'a str, &'a str)],
     /// A JSON body, sent with `Post` only.
     pub body: Option<&'a Value>,
@@ -135,15 +132,8 @@ impl Reply {
 pub(crate) fn exchange(call: &Call) -> Result<Reply> {
     let agent = agent(call.timeout);
     let sent = match call.method {
-        Method::Get | Method::Delete => {
-            let mut request = if call.method == Method::Get {
-                agent.get(call.url)
-            } else {
-                agent.delete(call.url)
-            };
-            for (key, value) in call.query {
-                request = request.query(*key, *value);
-            }
+        Method::Get => {
+            let mut request = agent.get(call.url);
             for (key, value) in call.headers {
                 request = request.header(*key, *value);
             }
@@ -151,9 +141,6 @@ pub(crate) fn exchange(call: &Call) -> Result<Reply> {
         }
         Method::Post => {
             let mut request = agent.post(call.url);
-            for (key, value) in call.query {
-                request = request.query(*key, *value);
-            }
             for (key, value) in call.headers {
                 request = request.header(*key, *value);
             }
@@ -202,7 +189,6 @@ fn post_json(
         unreachable: &format!("calling {provider}"),
         method: Method::Post,
         url,
-        query: &[],
         headers,
         body: Some(body),
         timeout,

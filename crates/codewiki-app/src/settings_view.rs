@@ -35,7 +35,7 @@ use crate::mui::tokens::Variant;
 use crate::mui::{select, surfaces};
 use crate::settings::{Category, FieldId, Note};
 use crate::settings_layout as layout;
-use crate::settings_pages::{self, Model, ProxyLogin, Tested};
+use crate::settings_pages::{self, Model, Tested};
 use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update};
 
 /// The name the app's log level is saved under (`prefs.rs`).
@@ -45,10 +45,6 @@ pub const LOG_LEVEL_PREF: &str = "log_level";
 pub const MODEL_HINT: &str = "model_hint";
 /// How long the app waits before it asks again how far a model's job is.
 const MODELS_PAUSE: std::time::Duration = std::time::Duration::from_secs(1);
-/// How long the app waits before it asks again how a sign-in through
-/// CLIProxyAPI goes, and how long it waits for one at most.
-const LOGIN_PAUSE: std::time::Duration = std::time::Duration::from_secs(2);
-const LOGIN_LIMIT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// The list of a select that is open.
 struct OpenMenu {
@@ -98,10 +94,6 @@ pub struct State {
     cliproxy: Option<Value>,
     /// Why that could not be read.
     cliproxy_error: Option<String>,
-    /// Why the last thing asked of an account failed.
-    cliproxy_note: Option<String>,
-    /// The sign-in the user is finishing in the browser, and when it began.
-    login: Option<(ProxyLogin, std::time::Instant)>,
     menu: Option<OpenMenu>,
     /// Holds the focus while the list of a select is open.
     menu_focus: FocusHandle,
@@ -152,8 +144,6 @@ impl State {
             connect: None,
             cliproxy: None,
             cliproxy_error: None,
-            cliproxy_note: None,
-            login: None,
             menu: None,
             menu_focus,
         };
@@ -418,136 +408,6 @@ impl AppView {
                     log::warn!("could not ask about the CLIProxyAPI: {error}");
                     this.settings.cliproxy_error = Some(error);
                 }
-            },
-        );
-    }
-
-    /// Start signing in an account of `vendor` through the proxy: open the
-    /// vendor's page in the browser, then watch how it goes.
-    fn add_proxy_account(&mut self, vendor: String, cx: &mut Context<Self>) {
-        self.settings.cliproxy_note = None;
-        log::info!("signing in a {vendor} account through CLIProxyAPI");
-        let body = json!({ "provider": vendor });
-        self.settings_request(
-            cx,
-            move |backend| backend.post("/v1/cliproxy/accounts", &body),
-            move |this, result, cx| match result {
-                Ok(started) => {
-                    let login = ProxyLogin {
-                        vendor,
-                        state: started["state"].as_str().unwrap_or_default().to_string(),
-                        url: started["url"].as_str().unwrap_or_default().to_string(),
-                    };
-                    cx.open_url(&login.url);
-                    this.settings.login = Some((login, std::time::Instant::now()));
-                    this.watch_login(cx);
-                }
-                Err(error) => this.settings.cliproxy_note = Some(error),
-            },
-        );
-    }
-
-    /// Ask in a moment how the sign-in goes, and go on asking while the user
-    /// is at it, for five minutes at most.
-    fn watch_login(&mut self, cx: &mut Context<Self>) {
-        let Some((login, _)) = self.settings.login.clone() else {
-            return;
-        };
-        cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(LOGIN_PAUSE).await;
-            _ = this.update(cx, |this, cx| this.ask_login(login.state, cx));
-        })
-        .detach();
-    }
-
-    /// Ask how the sign-in named by `state` goes, when it is still the one
-    /// the page waits for.
-    fn ask_login(&mut self, state: String, cx: &mut Context<Self>) {
-        let Some((login, began)) = self.settings.login.clone() else {
-            return;
-        };
-        if login.state != state {
-            return;
-        }
-        if began.elapsed() > LOGIN_LIMIT {
-            self.cancel_proxy_login(cx);
-            self.settings.cliproxy_note =
-                Some("The sign-in took too long and was cancelled.".into());
-            cx.notify();
-            return;
-        }
-        let path = format!("/v1/cliproxy/login?state={}", cw_client::encode(&state));
-        self.settings_request(
-            cx,
-            move |backend| backend.get(&path),
-            move |this, result, cx| {
-                let current = this
-                    .settings
-                    .login
-                    .as_ref()
-                    .is_some_and(|(login, _)| login.state == state);
-                if !current {
-                    return;
-                }
-                let status = match &result {
-                    Ok(status) => status["status"].as_str().unwrap_or("error"),
-                    Err(_) => "error",
-                };
-                match status {
-                    "wait" => this.watch_login(cx),
-                    "ok" => {
-                        log::info!("a {} account was added", login.vendor);
-                        this.settings.login = None;
-                        this.load_cliproxy(cx);
-                    }
-                    _ => {
-                        this.settings.login = None;
-                        this.settings.cliproxy_note = Some(match result {
-                            Ok(status) => status["error"]
-                                .as_str()
-                                .unwrap_or("The sign-in failed.")
-                                .to_string(),
-                            Err(error) => error,
-                        });
-                    }
-                }
-            },
-        );
-    }
-
-    /// Stop waiting for the sign-in, and tell the proxy so.
-    fn cancel_proxy_login(&mut self, cx: &mut Context<Self>) {
-        let Some((login, _)) = self.settings.login.take() else {
-            return;
-        };
-        let path = format!(
-            "/v1/cliproxy/login?state={}",
-            cw_client::encode(&login.state)
-        );
-        self.settings_request(
-            cx,
-            move |backend| backend.delete(&path),
-            |_, result, _| {
-                if let Err(error) = result {
-                    log::warn!("could not cancel the sign-in: {error}");
-                }
-            },
-        );
-    }
-
-    /// Have the proxy forget an account, and show the accounts left.
-    fn remove_proxy_account(&mut self, name: String, cx: &mut Context<Self>) {
-        self.settings.cliproxy_note = None;
-        log::info!("removing a CLIProxyAPI account");
-        let path = format!("/v1/cliproxy/accounts?name={}", cw_client::encode(&name));
-        self.settings_request(
-            cx,
-            move |backend| backend.delete(&path),
-            |this, result, cx| {
-                if let Err(error) = result {
-                    this.settings.cliproxy_note = Some(error);
-                }
-                this.load_cliproxy(cx);
             },
         );
     }
@@ -924,12 +784,6 @@ impl AppView {
                 self.settings.cliproxy_error = None;
                 self.load_cliproxy(cx);
             }
-            Action::AddProxyAccount(vendor) => self.add_proxy_account(vendor.clone(), cx),
-            Action::CancelProxyLogin => {
-                self.cancel_proxy_login(cx);
-                cx.notify();
-            }
-            Action::RemoveProxyAccount(name) => self.remove_proxy_account(name.clone(), cx),
             Action::OpenUrl(url) => cx.open_url(url),
             Action::OpenDataFolder => {
                 let dir = cw_core::paths::data_dir();
@@ -1132,8 +986,6 @@ impl AppView {
                     data_dir: &data_dir,
                     cliproxy: self.settings.cliproxy.as_ref(),
                     cliproxy_error: self.settings.cliproxy_error.as_deref(),
-                    cliproxy_note: self.settings.cliproxy_note.as_deref(),
-                    login: self.settings.login.as_ref().map(|(login, _)| login),
                 },
             )
         };

@@ -135,18 +135,9 @@ pub const CLIPROXY_API_KEY: Key = Key {
     secret: true,
     default: None,
 };
-/// The proxy's `management.secret-key`, which lists, adds and removes the
-/// accounts it rotates.
-pub const CLIPROXY_MANAGEMENT_KEY: Key = Key {
-    env: "CODEWIKI_CLIPROXY_MANAGEMENT_KEY",
-    section: "cliproxy",
-    field: "management_key",
-    secret: true,
-    default: None,
-};
 
 /// Every setting, in the order a page shows them.
-pub const ALL: [Key; 12] = [
+pub const ALL: [Key; 11] = [
     LLM_PROVIDER,
     LLM_MODEL,
     ANTHROPIC_API_KEY,
@@ -155,7 +146,6 @@ pub const ALL: [Key; 12] = [
     OLLAMA_HOST,
     CLIPROXY_URL,
     CLIPROXY_API_KEY,
-    CLIPROXY_MANAGEMENT_KEY,
     EMBED_PROVIDER,
     EMBED_MODEL,
     EMBED_DEVICE,
@@ -523,7 +513,7 @@ mod tests {
             .filter(|key| key.section() == "cliproxy" && key.secret)
             .map(|key| key.field())
             .collect();
-        assert_eq!(secrets, ["api_key", "management_key"]);
+        assert_eq!(secrets, ["api_key"]);
         let resolved = Resolved::from_parts(&Settings::default(), no_env);
         assert_eq!(
             resolved.get("CODEWIKI_CLIPROXY_URL").as_deref(),

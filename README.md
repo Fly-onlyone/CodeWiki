@@ -90,13 +90,15 @@ Closing the app also stops the local backend it used; one named by `CODEWIKI_URL
 | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Credentials and endpoint for the API providers |
 | `OLLAMA_HOST` | Address of Ollama; `http://127.0.0.1:11434` when not set |
 | `CODEWIKI_CLIPROXY_URL` | Address of CLIProxyAPI; `http://127.0.0.1:8317` when not set |
-| `CODEWIKI_CLIPROXY_KEY`, `CODEWIKI_CLIPROXY_MANAGEMENT_KEY` | Its client key and its management key |
+| `CODEWIKI_CLIPROXY_KEY` | A client key from its `access.api-keys` |
 
 A note whose LLM call fails keeps its structural draft, and the next update asks again. A reply that comes back unusable (it breaks the house style) is not asked for again until the note's code changes.
 
 ### CLIProxyAPI
 
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) is a separate program, MIT-licensed, that holds several Claude and Codex subscription logins and serves them behind one OpenAI-compatible address. For each request it takes the next account that is ready, and it rests an account that reached its usage limit. With it, a long update goes on across your accounts instead of stopping at the first limit. CodeWiki does not install, start or stop it: you run it, and CodeWiki connects to it.
+[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) is a separate program, MIT-licensed, that holds several Claude and Codex subscription logins and serves them behind one OpenAI-compatible address. For each request it takes the next account that is ready, and it rests an account that reached its usage limit. With it, a long update goes on across your accounts instead of stopping at the first limit.
+
+CodeWiki does not install, start or stop CLIProxyAPI, and it does not manage the proxy's accounts. You install and run the proxy, and add your accounts in it. CodeWiki connects to it with an address and a client key.
 
 1. Download the release for your system from its [releases page](https://github.com/router-for-me/CLIProxyAPI/releases) and unpack it.
 2. Copy `config.example.yaml` to `config.yaml` and set at least:
@@ -106,20 +108,19 @@ A note whose LLM call fails keeps its structural draft, and the next update asks
      host: "127.0.0.1"      # this machine only
      port: 8317
    management:
-     secret-key: "<a long random text>"   # lets CodeWiki list and add accounts
-     disable-control-panel: true
+     secret-key: "<a long random text>"   # opens the proxy's own panel
    access:
      api-keys:
        - "<another long random text>"     # CodeWiki's client key
    ```
 
 3. Start it: `cli-proxy-api -config config.yaml`.
-4. In the app, choose **CLIProxyAPI (Claude and Codex subscriptions)** under Settings → AI model, and enter the address, the client key and the management key. The page then lists the proxy's accounts.
-5. Press **Add Claude account** or **Add Codex account**: the vendor's sign-in page opens in the browser, and the account shows on the page once you are done. Repeat for each subscription. Pick the model from the list, then press Test.
+4. Add your accounts in the proxy itself, one per subscription. Either:
+   - open its panel at `http://127.0.0.1:8317/management.html` and enter the `secret-key`; or
+   - run `cli-proxy-api -config config.yaml -claude-login` or `-codex-login`.
+5. In the app, choose **CLIProxyAPI (Claude and Codex subscriptions)** under Settings → AI model, and enter the address and the client key. Pick the model from the list of models your accounts serve, then press Test. The page links to the proxy's panel for its accounts.
 
-Accounts are added from the app only through a proxy on the same machine, because the vendor sends the browser back to a port on the proxy's machine. For a proxy elsewhere, sign in there with `cli-proxy-api -claude-login` or `-codex-login`; the app still lists and removes its accounts.
-
-When every account is at its limit, the proxy says so and the update stops: the notes already written stay, the rest wait, and the wiki still reads as behind its code. The app shows "Sync stopped", how many notes wait and, when the proxy says, when an account is free again. The next update writes the notes that wait. `codewiki update` and the MCP tool `sync_wiki` report the same.
+When every account is at its limit, the proxy says so and the update stops. An update also stops when no account serves the chosen model, for example after its account was removed. The notes already written stay, the rest wait, and the wiki still reads as behind its code. The app shows "Sync stopped", how many notes wait and, when the proxy says, when an account is free again. The next update writes the notes that wait. `codewiki update` and the MCP tool `sync_wiki` report the same.
 
 ### Search
 

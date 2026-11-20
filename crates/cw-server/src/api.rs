@@ -170,14 +170,6 @@ pub fn routes(state: AppState) -> Router {
         .route("/models/{id}/install", post(install_model))
         .route("/models/{id}/use", post(use_model))
         .route("/cliproxy", get(read_cliproxy))
-        .route(
-            "/cliproxy/accounts",
-            post(add_proxy_account).delete(remove_proxy_account),
-        )
-        .route(
-            "/cliproxy/login",
-            get(proxy_login_status).delete(cancel_proxy_login),
-        )
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -322,94 +314,27 @@ async fn remove_model(State(state): State<AppState>, Path(id): Path<String>) -> 
         .into_response()
 }
 
-/// The answer of every CLIProxyAPI route on a backend that listens beyond
-/// this machine: the proxy's accounts are managed where the backend runs.
+/// The answer of the CLIProxyAPI route on a backend that listens beyond
+/// this machine: its proxy is set up where the backend runs.
 fn proxy_closed(state: &AppState) -> Option<Response> {
     (!state.0.config.settings_writable).then(|| {
         (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "this backend's CLIProxyAPI accounts are managed on its own machine"
+                "error": "this backend's CLIProxyAPI is set up on its own machine"
             })),
         )
             .into_response()
     })
 }
 
-/// The proxy the settings name: whether it answers, its models, its
-/// accounts. Always 200; a part that cannot be read says why.
+/// The proxy the settings name: whether it answers, the models its
+/// accounts serve, its panel. Always 200; a part that cannot be read says why.
 async fn read_cliproxy(State(state): State<AppState>) -> Response {
     if let Some(closed) = proxy_closed(&state) {
         return closed;
     }
     blocking(move || Ok(cliproxy::describe(&state)))
-        .await
-        .into_response()
-}
-
-#[derive(Deserialize)]
-struct AddProxyAccount {
-    provider: String,
-}
-
-/// Start signing in an account: answers with the page to open and the
-/// state to ask about with `GET /v1/cliproxy/login?state=`.
-async fn add_proxy_account(
-    State(state): State<AppState>,
-    Json(body): Json<AddProxyAccount>,
-) -> Response {
-    if let Some(closed) = proxy_closed(&state) {
-        return closed;
-    }
-    blocking(move || cliproxy::add(&state, &body.provider))
-        .await
-        .into_response()
-}
-
-/// The sign-in's state travels in the query, which the request log leaves
-/// out.
-#[derive(Deserialize)]
-struct ProxyLogin {
-    state: String,
-}
-
-async fn proxy_login_status(
-    State(state): State<AppState>,
-    Query(query): Query<ProxyLogin>,
-) -> Response {
-    if let Some(closed) = proxy_closed(&state) {
-        return closed;
-    }
-    blocking(move || cliproxy::login_status(&state, &query.state))
-        .await
-        .into_response()
-}
-
-async fn cancel_proxy_login(
-    State(state): State<AppState>,
-    Query(query): Query<ProxyLogin>,
-) -> Response {
-    if let Some(closed) = proxy_closed(&state) {
-        return closed;
-    }
-    blocking(move || cliproxy::cancel_login(&state, &query.state))
-        .await
-        .into_response()
-}
-
-#[derive(Deserialize)]
-struct ProxyAccount {
-    name: String,
-}
-
-async fn remove_proxy_account(
-    State(state): State<AppState>,
-    Query(query): Query<ProxyAccount>,
-) -> Response {
-    if let Some(closed) = proxy_closed(&state) {
-        return closed;
-    }
-    blocking(move || cliproxy::remove(&state, &query.name))
         .await
         .into_response()
 }

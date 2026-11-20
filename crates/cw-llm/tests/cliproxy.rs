@@ -1,8 +1,8 @@
-//! The CLIProxyAPI provider and its management client, over real HTTP
-//! against a stand-in server that answers as CLIProxyAPI 8 does.
+//! The CLIProxyAPI provider and its model list, over real HTTP against a
+//! stand-in server that answers as CLIProxyAPI 8 does.
 //!
 //! The shapes come from a live CLIProxyAPI 8.0.79 and its source
-//! (`sdk/cliproxy/auth/errors.go`, `internal/api/handlers/management`).
+//! (`sdk/cliproxy/auth/errors.go`, `sdk/api/handlers/handlers_errors.go`).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
@@ -10,7 +10,7 @@ use std::thread::JoinHandle;
 
 use cw_core::Error;
 use cw_llm::LlmProvider;
-use cw_llm::cliproxy::{Account, CliProxy, LoginStatus, Management, models};
+use cw_llm::cliproxy::{CliProxy, models, reachable};
 use serde_json::{Value, json};
 
 /// One request the stand-in received.
@@ -110,13 +110,6 @@ fn proxy(url: &str) -> CliProxy {
         // Made-up keys: nothing here is a real one.
         api_key: "client-key".into(),
         model: "claude-sonnet-x".into(),
-    }
-}
-
-fn management(url: &str) -> Management {
-    Management {
-        base_url: url.to_string(),
-        key: "management-key".into(),
     }
 }
 
@@ -263,8 +256,22 @@ fn a_proxy_that_does_not_answer_is_named() {
         error.contains(&format!("CLIProxyAPI not reachable at {url}")),
         "{error}"
     );
-    let error = management(&url).accounts().unwrap_err().to_string();
+    let error = models(&url, "client-key").unwrap_err().to_string();
     assert!(error.contains("CLIProxyAPI not reachable"), "{error}");
+    assert!(!reachable(&url));
+}
+
+#[test]
+fn any_answer_means_the_proxy_is_there() {
+    // A refused key still proves something listens.
+    let (url, server) = serve(vec![json_answer(
+        401,
+        json!({ "error": "missing api key" }),
+    )]);
+    assert!(reachable(&url));
+    let got = server.join().unwrap().remove(0);
+    assert_eq!(got.target, "/v1/models");
+    assert_eq!(got.header("authorization"), None);
 }
 
 #[test]
@@ -284,136 +291,4 @@ fn models_are_listed_with_the_client_key() {
         ("GET", "/v1/models")
     );
     assert_eq!(got.header("authorization"), Some("Bearer client-key"));
-}
-
-#[test]
-fn accounts_are_read_from_the_credentials_list() {
-    let (url, server) = serve(vec![json_answer(
-        200,
-        json!({ "observed_at": "2026-11-20T01:30:37Z", "files": [
-            {
-                "name": "claude-a@example.com.json",
-                "provider": "claude",
-                "email": "a@example.com",
-                "status": "active",
-                "status_message": "",
-                "disabled": false,
-                "unavailable": false,
-            },
-            {
-                "name": "codex-b.json",
-                "provider": "codex",
-                "status": "error",
-                "status_message": "quota exhausted",
-                "unavailable": true,
-                "next_retry_after": "2026-11-20T03:00:00Z",
-            },
-        ]}),
-    )]);
-    let accounts = management(&url).accounts().unwrap();
-    assert_eq!(
-        accounts,
-        [
-            Account {
-                name: "claude-a@example.com.json".into(),
-                provider: "claude".into(),
-                email: Some("a@example.com".into()),
-                status: "active".into(),
-                message: None,
-                unavailable: false,
-                disabled: false,
-                next_retry_after: None,
-            },
-            Account {
-                name: "codex-b.json".into(),
-                provider: "codex".into(),
-                email: None,
-                status: "error".into(),
-                message: Some("quota exhausted".into()),
-                unavailable: true,
-                disabled: false,
-                next_retry_after: Some("2026-11-20T03:00:00Z".into()),
-            },
-        ]
-    );
-    let got = server.join().unwrap().remove(0);
-    assert_eq!(got.target, "/v8/management/credentials");
-    assert_eq!(got.header("authorization"), Some("Bearer management-key"));
-}
-
-#[test]
-fn a_login_is_started_watched_and_cancelled() {
-    let (url, server) = serve(vec![
-        json_answer(
-            200,
-            json!({ "status": "ok", "state": "s-1", "url": "https://auth.example/authorize?x=1" }),
-        ),
-        json_answer(200, json!({ "status": "wait" })),
-        json_answer(200, json!({ "status": "ok" })),
-        json_answer(
-            200,
-            json!({ "status": "error", "error": "unknown or expired state" }),
-        ),
-        json_answer(200, json!({ "status": "ok", "cancelled": true })),
-    ]);
-    let manage = management(&url);
-    let login = manage.start_login("codex").unwrap();
-    assert_eq!(login.state, "s-1");
-    assert_eq!(login.url, "https://auth.example/authorize?x=1");
-    assert_eq!(manage.login_status("s-1").unwrap(), LoginStatus::Waiting);
-    assert_eq!(manage.login_status("s-1").unwrap(), LoginStatus::Done);
-    assert_eq!(
-        manage.login_status("s-1").unwrap(),
-        LoginStatus::Failed("unknown or expired state".into())
-    );
-    manage.cancel_login("s-1").unwrap();
-
-    let got = server.join().unwrap();
-    assert_eq!(
-        got[0].target,
-        "/v8/management/oauth/auth-url?provider=codex&is_webui=true"
-    );
-    assert_eq!(got[1].target, "/v8/management/oauth/status?state=s-1");
-    assert_eq!(
-        (got[4].method.as_str(), got[4].target.as_str()),
-        ("DELETE", "/v8/management/oauth/session?state=s-1")
-    );
-}
-
-#[test]
-fn an_account_is_removed_by_its_file_name() {
-    let (url, server) = serve(vec![json_answer(200, json!({ "status": "ok" }))]);
-    management(&url)
-        .remove("claude-a@example.com.json")
-        .unwrap();
-    let got = server.join().unwrap().remove(0);
-    assert_eq!(got.method, "DELETE");
-    assert_eq!(
-        got.target,
-        "/v8/management/credentials?name=claude-a%40example.com.json"
-    );
-}
-
-#[test]
-fn management_errors_say_what_to_fix() {
-    let (url, server) = serve(vec![
-        json_answer(401, json!({ "error": "invalid management key" })),
-        Answer {
-            status: 404,
-            headers: vec![("Content-Type", "text/plain".into())],
-            body: "404 page not found".into(),
-        },
-        json_answer(404, json!({ "error": "provider_not_found" })),
-    ]);
-    let manage = management(&url);
-    let error = manage.accounts().unwrap_err().to_string();
-    assert!(error.contains("invalid management key"), "{error}");
-    let error = manage.accounts().unwrap_err().to_string();
-    assert!(
-        error.contains("CLIProxyAPI 8") && error.contains("management.secret-key"),
-        "{error}"
-    );
-    let error = manage.start_login("gemini").unwrap_err().to_string();
-    assert!(error.contains("provider_not_found"), "{error}");
-    server.join().unwrap();
 }

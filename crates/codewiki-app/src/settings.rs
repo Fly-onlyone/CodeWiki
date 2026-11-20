@@ -92,14 +92,13 @@ pub enum FieldId {
     OllamaHost,
     CliproxyUrl,
     CliproxyKey,
-    CliproxyManagementKey,
     EmbedModel,
     RemoteUrl,
     RemoteToken,
 }
 
 impl FieldId {
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 10] = [
         Self::LlmModel,
         Self::AnthropicKey,
         Self::OpenAiKey,
@@ -107,7 +106,6 @@ impl FieldId {
         Self::OllamaHost,
         Self::CliproxyUrl,
         Self::CliproxyKey,
-        Self::CliproxyManagementKey,
         Self::EmbedModel,
         Self::RemoteUrl,
         Self::RemoteToken,
@@ -125,7 +123,6 @@ impl FieldId {
             Self::OllamaHost => Some(("ollama", "host")),
             Self::CliproxyUrl => Some(("cliproxy", "url")),
             Self::CliproxyKey => Some(("cliproxy", "api_key")),
-            Self::CliproxyManagementKey => Some(("cliproxy", "management_key")),
             Self::EmbedModel => Some(("embed", "model")),
             Self::RemoteUrl | Self::RemoteToken => None,
         }
@@ -135,11 +132,7 @@ impl FieldId {
     pub fn secret(self) -> bool {
         matches!(
             self,
-            Self::AnthropicKey
-                | Self::OpenAiKey
-                | Self::CliproxyKey
-                | Self::CliproxyManagementKey
-                | Self::RemoteToken
+            Self::AnthropicKey | Self::OpenAiKey | Self::CliproxyKey | Self::RemoteToken
         )
     }
 
@@ -152,7 +145,6 @@ impl FieldId {
             Self::OllamaHost => "http://127.0.0.1:11434",
             Self::CliproxyUrl => "http://127.0.0.1:8317",
             Self::CliproxyKey => "One of access.api-keys",
-            Self::CliproxyManagementKey => "management.secret-key",
             Self::EmbedModel => "The provider's default",
             Self::RemoteUrl => "http://host:7411",
             Self::RemoteToken => "The backend's token",
@@ -236,12 +228,11 @@ mod tests {
                 FieldId::AnthropicKey,
                 FieldId::OpenAiKey,
                 FieldId::CliproxyKey,
-                FieldId::CliproxyManagementKey,
                 FieldId::RemoteToken
             ]
         );
         for field in secrets.iter().filter_map(|f| f.place()) {
-            assert!(field.1.ends_with("_key"), "{field:?}");
+            assert_eq!(field.1, "api_key");
         }
     }
 }

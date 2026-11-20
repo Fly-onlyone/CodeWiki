@@ -89,13 +89,6 @@ pub enum Action {
     DismissModelHint,
     /// Ask the CLIProxyAPI the settings name about itself again.
     ReloadProxy,
-    /// Sign in an account of this vendor (`claude`, `codex`) through the
-    /// proxy: its sign-in page opens in the browser.
-    AddProxyAccount(String),
-    /// Stop waiting for the sign-in in progress.
-    CancelProxyLogin,
-    /// Have the proxy forget the account saved under this file name.
-    RemoveProxyAccount(String),
     /// Open a web page in the browser.
     OpenUrl(String),
 }

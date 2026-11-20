@@ -741,15 +741,14 @@ fn stand_in_many(answers: Vec<Answer>) -> (String, std::thread::JoinHandle<Vec<S
     (url, handle)
 }
 
-/// Point the settings at a CLIProxyAPI at `url`, with both of its keys.
-/// Made-up keys: nothing here is a real one.
+/// Point the settings at a CLIProxyAPI at `url`, with its client key.
+/// Made-up key: not a real one.
 async fn use_proxy(h: &Harness, url: &str) {
     h.put(
         "/v1/settings",
         json!({ "cliproxy": {
             "url": url,
             "api_key": { "set": "client-key-for-tests" },
-            "management_key": { "set": "management-key-for-tests" },
         }}),
     )
     .await;
@@ -757,7 +756,7 @@ async fn use_proxy(h: &Harness, url: &str) {
 
 #[cfg(windows)]
 #[tokio::test]
-async fn the_proxy_page_lists_models_and_accounts() {
+async fn the_proxy_page_lists_its_models_and_its_panel() {
     let h = Harness::new();
     let (url, proxy) = stand_in_many(vec![
         // Is anything there: any answer will do.
@@ -767,114 +766,22 @@ async fn the_proxy_page_lists_models_and_accounts() {
             vec![],
             json!({ "data": [{ "id": "gpt-5-codex" }, { "id": "claude-sonnet-x" }] }),
         ),
-        (
-            200,
-            vec![],
-            json!({ "files": [{
-                "name": "claude-a@example.com.json",
-                "provider": "claude",
-                "email": "a@example.com",
-                "status": "active",
-                "unavailable": false,
-                "disabled": false,
-            }]}),
-        ),
     ]);
     use_proxy(&h, &url).await;
     let page = h.get("/v1/cliproxy").await;
     assert_eq!(page["url"], url.as_str());
-    assert_eq!(
-        (&page["reachable"], &page["loopback"]),
-        (&json!(true), &json!(true))
-    );
+    assert_eq!(page["reachable"], true);
     assert_eq!(page["models"], json!(["claude-sonnet-x", "gpt-5-codex"]));
-    assert_eq!(page["accounts"][0]["email"], "a@example.com");
-    assert_eq!(page["accounts"][0]["provider"], "claude");
+    assert_eq!(page["panel"], format!("{url}/management.html"));
     assert_eq!(page["error"], Value::Null);
+    assert_eq!(page["models_error"], Value::Null);
+    // The accounts are the proxy's business: nothing else is asked of it.
     let asked = proxy.join().unwrap();
-    assert_eq!(
-        asked,
-        [
-            "GET /v1/models",
-            "GET /v1/models",
-            "GET /v8/management/credentials"
-        ]
-    );
-}
-
-#[cfg(windows)]
-#[tokio::test]
-async fn an_account_is_added_watched_and_removed_through_the_proxy() {
-    let h = Harness::new();
-    let (url, proxy) = stand_in_many(vec![
-        (
-            200,
-            vec![],
-            json!({ "status": "ok", "state": "s-1", "url": "https://auth.example/authorize" }),
-        ),
-        (200, vec![], json!({ "status": "wait" })),
-        (200, vec![], json!({ "status": "ok" })),
-        (200, vec![], json!({ "status": "ok", "cancelled": true })),
-        (200, vec![], json!({ "status": "ok" })),
-    ]);
-    use_proxy(&h, &url).await;
-    let login = h
-        .post(
-            "/v1/cliproxy/accounts",
-            Some(json!({ "provider": "claude" })),
-        )
-        .await;
-    assert_eq!(
-        login,
-        json!({ "url": "https://auth.example/authorize", "state": "s-1" })
-    );
-    assert_eq!(
-        h.get("/v1/cliproxy/login?state=s-1").await,
-        json!({ "status": "wait" })
-    );
-    assert_eq!(
-        h.get("/v1/cliproxy/login?state=s-1").await,
-        json!({ "status": "ok" })
-    );
-    let (status, _) = h
-        .call("DELETE", "/v1/cliproxy/login?state=s-1", Some(TOKEN), None)
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, body) = h
-        .call(
-            "DELETE",
-            "/v1/cliproxy/accounts?name=claude-a%40example.com.json",
-            Some(TOKEN),
-            None,
-        )
-        .await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    assert_eq!(body["removed"], "claude-a@example.com.json");
-    let asked = proxy.join().unwrap();
-    assert_eq!(
-        asked[0],
-        "GET /v8/management/oauth/auth-url?provider=claude&is_webui=true"
-    );
-    assert_eq!(asked[3], "DELETE /v8/management/oauth/session?state=s-1");
-    assert_eq!(
-        asked[4],
-        "DELETE /v8/management/credentials?name=claude-a%40example.com.json"
-    );
-
-    // Only the two vendors CodeWiki offers, and nothing is asked of the proxy.
-    let (status, body) = h
-        .call(
-            "POST",
-            "/v1/cliproxy/accounts",
-            Some(TOKEN),
-            Some(json!({ "provider": "gemini" })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    assert_eq!(asked, ["GET /v1/models", "GET /v1/models"]);
 }
 
 #[tokio::test]
-async fn a_proxy_elsewhere_or_away_is_reported_and_adds_no_account() {
+async fn a_proxy_that_is_away_or_misnamed_is_reported() {
     let h = Harness::new();
     let closed = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
@@ -887,27 +794,6 @@ async fn a_proxy_elsewhere_or_away_is_reported_and_adds_no_account() {
     let error = page["error"].as_str().unwrap();
     assert!(error.contains("not reachable"), "{error}");
 
-    // A proxy on another machine: the vendor's sign-in page would send the
-    // browser back to that machine, so no account is added through it.
-    h.put(
-        "/v1/settings",
-        json!({ "cliproxy": { "url": "http://192.0.2.1:8317" } }),
-    )
-    .await;
-    let (status, body) = h
-        .call(
-            "POST",
-            "/v1/cliproxy/accounts",
-            Some(TOKEN),
-            Some(json!({ "provider": "claude" })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(
-        body["error"].as_str().unwrap().contains("this machine"),
-        "{body}"
-    );
-
     // An address that is not one is refused when saved.
     let (status, error) = h
         .refused(json!({ "cliproxy": { "url": "127.0.0.1:8317" } }))
@@ -919,20 +805,8 @@ async fn a_proxy_elsewhere_or_away_is_reported_and_adds_no_account() {
 #[tokio::test]
 async fn a_backend_that_listens_beyond_this_machine_keeps_the_proxy_to_itself() {
     let h = Harness::with_config(Some(SECRET), false, no_env);
-    for (method, uri, body) in [
-        ("GET", "/v1/cliproxy", None),
-        (
-            "POST",
-            "/v1/cliproxy/accounts",
-            Some(json!({ "provider": "claude" })),
-        ),
-        ("GET", "/v1/cliproxy/login?state=s", None),
-        ("DELETE", "/v1/cliproxy/login?state=s", None),
-        ("DELETE", "/v1/cliproxy/accounts?name=a.json", None),
-    ] {
-        let (status, _) = h.call(method, uri, Some(TOKEN), body).await;
-        assert_eq!(status, StatusCode::FORBIDDEN, "{method} {uri}");
-    }
+    let (status, _) = h.call("GET", "/v1/cliproxy", Some(TOKEN), None).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
 }
 
 #[cfg(windows)]

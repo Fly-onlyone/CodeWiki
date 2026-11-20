@@ -1671,7 +1671,6 @@ dependencies = [
  "cw-vault",
  "cw-wiki",
  "log",
- "serde",
  "serde_json",
  "tempfile",
  "ureq",

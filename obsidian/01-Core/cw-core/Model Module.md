@@ -14,8 +14,8 @@ tags: [core, cw-core, module]
 
 Main items:
 
-- [[Language]] — source language of a file.
 - [[Symbol]] — A named code entity.
+- [[Language]] — source language of a file.
 - `Visibility` — enum
 - [[SymbolKind]] — enum
 - `EdgeKind` — enum

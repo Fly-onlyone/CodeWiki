@@ -15,7 +15,7 @@ tags: [core, cw-parse, module]
 Main items:
 
 - [[ParsedFile]] — struct
-- [[UseImport]] — one name brought into scope by a `use` declaration.
+- `UseImport` — one name brought into scope by a `use` declaration.
 - `ValueRef` — A name used as a value, or called inside a macro's arguments.
 - `CallSite` — A call found in a function or method body.
 - `TypeRef` — A type mentioned inside a symbol's declaration or body.
@@ -31,12 +31,11 @@ Main items:
 - [[Symbol]] — uses `Symbol`
 - [[SymbolKind]] — uses `SymbolKind`
 - [[ParsedFile]] — uses `ParsedFile`
-- [[UseImport]] — uses `UseImport`
 
 ## Used by
 
-- [[Sink]] — from `call`, `inherits`, `type_ref`, `value`
-- [[Lang Module]] — from `link_imports`
+- [[Sink]] — from `call`, `import`, `inherits`, `type_ref`
+- [[Lang Module]] — from `external`, `link_imports`, `link_java`, `link_python`
 - [[Scan Module]] — from `scan_repo`
 - [[ParsedFile]] — from `ParsedFile`
 

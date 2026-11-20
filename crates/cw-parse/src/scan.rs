@@ -217,7 +217,9 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
             })
             .filter_map(|s| s.qualified.split("::").next()),
     );
-    let resolved = Resolver::new(&facts.symbols, &parsed, roots).resolve(&parsed);
+    let resolved = Resolver::new(&facts.symbols, &parsed, roots)
+        .with_crates(&facts.crates)
+        .resolve(&parsed);
     facts.edges = resolved.edges;
     facts.external_uses = resolved.external_uses;
     facts.symbols.sort_by(|a, b| a.qualified.cmp(&b.qualified));
@@ -795,6 +797,37 @@ mod tests {
                 .edges
                 .iter()
                 .any(|e| e.src == "demo::run" && e.kind == EdgeKind::Calls)
+        );
+    }
+
+    #[test]
+    fn a_name_matches_a_method_only_in_a_crate_the_caller_depends_on() {
+        let call = "pub fn draw(d: gpui::Div) -> gpui::Div { d.size(4.0) }\n";
+        let facts = scan_files(&[
+            ("Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n"),
+            ("crates/models/Cargo.toml", "[package]\nname = \"models\"\n"),
+            (
+                "crates/models/src/lib.rs",
+                "pub struct Entry;\nimpl Entry {\n    pub fn size(&self) -> u64 { 0 }\n}\n",
+            ),
+            // `app` does not depend on `models`: its `size` is gpui's.
+            (
+                "crates/app/Cargo.toml",
+                "[package]\nname = \"app\"\n[dependencies]\ngpui = \"0\"\n",
+            ),
+            ("crates/app/src/lib.rs", call),
+            // `ui` does, under a target table.
+            (
+                "crates/ui/Cargo.toml",
+                "[package]\nname = \"ui\"\n[target.'cfg(windows)'.dependencies]\nmodels = { path = \"../models\" }\n",
+            ),
+            ("crates/ui/src/lib.rs", call),
+        ]);
+        let size = "models::Entry::size";
+        assert_eq!(edge_of(&facts, "app::draw", size, EdgeKind::Calls), None);
+        assert_eq!(
+            edge_of(&facts, "ui::draw", size, EdgeKind::Calls),
+            Some(Confidence::Low)
         );
     }
 }

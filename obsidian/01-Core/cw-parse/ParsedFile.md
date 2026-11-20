@@ -18,7 +18,6 @@ Declared as `pub struct ParsedFile`.
 
 - [[Rust Module]] — uses `CallSite`, `ImplFact`, `ModDecl`, `TypeRef`
 - [[Symbol]] — uses `Symbol`
-- [[UseImport]] — uses `UseImport`
 
 ## Used by
 

@@ -21,13 +21,12 @@ Main items:
 - `LOG_DIR_ENV` — environment variable naming the folder of the log files.
 - `LIMIT` — largest a log file grows before it is moved aside.
 - `LEVEL_ENV` — environment variable setting the level: `error`, `warn`, `info`, `debug`, `trace` or `off`.
-- `init` — send the `log` records of program `name` at `default` and above (or at the level in `CODEWIKI_LOG`) to `<log dir>/<name>.log` and to standard error, and log every panic.
+- `timestamp` — `time` in UTC as `2026-11-13T20:03:13.123Z`, the form every log line starts with.
 
 ## Depends on
 
 - [[cw-core]] — uses `VERSION`
 - [[Paths Module]] — uses `data_dir`
-- [[ListItemButton]] — uses `level`
 - [[Resolved]] — uses `load`
 
 ## Used by

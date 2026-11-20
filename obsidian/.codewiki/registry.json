@@ -180,6 +180,11 @@
     "kind": "flow"
   },
   {
+    "id": "type:cw_parse::workspace::CrateInfo",
+    "path": "01-Core/cw-parse/CrateInfo.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::mui::tokens::curve",
     "path": "01-Core/codewiki-app/mui/tokens/Curve Module.md",
     "kind": "concept"
@@ -1137,11 +1142,6 @@
   {
     "id": "mod:codewiki_app::update",
     "path": "01-Core/codewiki-app/Update Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_parse::rust::UseImport",
-    "path": "01-Core/cw-parse/UseImport.md",
     "kind": "concept"
   },
   {

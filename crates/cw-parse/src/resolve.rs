@@ -8,6 +8,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use cw_core::{Confidence, Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility, file_node};
 
 use crate::rust::ParsedFile;
+use crate::workspace::CrateInfo;
 
 /// A `use` of a crate that is not part of the repository.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -152,6 +153,8 @@ pub struct Resolver<'a> {
     /// module -> absolute paths of glob-imported modules
     globs: HashMap<String, Vec<Vec<String>>>,
     crate_names: HashSet<&'a str>,
+    /// crate -> the crates its manifest lets its code name, itself excluded
+    crate_deps: HashMap<&'a str, HashSet<&'a str>>,
 }
 
 impl<'a> Resolver<'a> {
@@ -172,6 +175,7 @@ impl<'a> Resolver<'a> {
             imports: HashMap::new(),
             globs: HashMap::new(),
             crate_names: crate_names.into_iter().collect(),
+            crate_deps: HashMap::new(),
         };
         for (_, parsed) in files {
             for u in &parsed.uses {
@@ -338,11 +342,39 @@ impl<'a> Resolver<'a> {
         None
     }
 
+    /// Tell the resolver which crates each Cargo package depends on, so that a
+    /// name never matches a method in a crate the caller cannot reach.
+    pub fn with_crates(mut self, crates: &'a [CrateInfo]) -> Self {
+        self.crate_deps = crates
+            .iter()
+            .map(|c| {
+                let deps = c.code_deps.iter().map(String::as_str).collect();
+                (c.name.as_str(), deps)
+            })
+            .collect();
+        self
+    }
+
+    /// Whether code in `module` can reach the crate `symbol` is declared in:
+    /// its own crate, or one its manifest depends on. A crate no manifest
+    /// describes reaches every crate.
+    fn reaches(&self, module: &str, symbol: &Symbol) -> bool {
+        let from = module.split("::").next().unwrap_or("");
+        let to = symbol.qualified.split("::").next().unwrap_or("");
+        from == to
+            || self
+                .crate_deps
+                .get(from)
+                .is_none_or(|deps| deps.contains(to))
+    }
+
     /// Fall back to matching by bare name when path resolution fails.
     ///
     /// A name that only one method has is taken to mean it, unless the caller
     /// cannot see that method: a call such as `request.header(..)` on a type
-    /// from a dependency must not bind to a private `header` elsewhere. When
+    /// from a dependency must not bind to a private `header` elsewhere, and
+    /// gpui's `div().size(..)` must not bind to a `size` in a crate the
+    /// caller's crate does not depend on. When
     /// several methods share the name, a Rust caller gets the one declared in
     /// its own module, if there is just one. With `private_here`, the name is
     /// common enough that only a private method of the caller's own module is
@@ -356,7 +388,7 @@ impl<'a> Resolver<'a> {
         private_here: bool,
     ) -> Option<(&'a Symbol, Confidence)> {
         let rust = language == Language::Rust;
-        let visible = |s: &Symbol| !rust || visible_from(s, module);
+        let visible = |s: &Symbol| !rust || (visible_from(s, module) && self.reaches(module, s));
         let only = |found: Vec<&'a Symbol>| (found.len() == 1).then(|| found[0]);
         // A name never matches a symbol written in another language.
         let all: Vec<&Symbol> = self

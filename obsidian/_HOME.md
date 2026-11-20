@@ -2,11 +2,11 @@
 tags: [moc, home]
 ---
 
-# fix-code-scanning-alerts — Knowledge Vault
+# CodeWiki — Knowledge Vault
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **fix-code-scanning-alerts** is a Rust codebase of 19 crates and 321 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 19 crates and 320 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 

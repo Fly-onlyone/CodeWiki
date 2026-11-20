@@ -25,7 +25,6 @@ Main items:
 
 ## Depends on
 
-- [[Logs Module]] — uses `flush`
 - [[Download Module]] — uses `download_limited`
 - [[Release Module]] — uses `check`
 - [[Release]] — uses `Release`

@@ -36,7 +36,6 @@ Public API:
 - [[codewiki-app]] — from `AppView`, `backend_to_stop`, `connect`, `connect_remote`
 - [[codewiki-mcp]] — from `Bridge`, `call`, `connected`
 - [[cw-client]] — from `check_remote_in`, `health_version`
-- [[Api Module]] — from `routes`
 
 ## See also
 

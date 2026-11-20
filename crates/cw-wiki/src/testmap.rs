@@ -328,6 +328,7 @@ mod tests {
             dir: dir.into(),
             description: String::new(),
             deps: Vec::new(),
+            code_deps: Vec::new(),
             has_lib,
             has_bin: !has_lib,
         }

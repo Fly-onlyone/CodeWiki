@@ -30,7 +30,6 @@ Main items:
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`
-- [[Entry]] — uses `size`
 
 ## Used by
 

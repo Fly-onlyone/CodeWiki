@@ -32,7 +32,7 @@ Public API:
 - [[Error Module]] — uses `Result`
 - [[Resolve Module]] — uses `ExternalUse`
 - [[Scan Module]] — uses `RepoFacts`
-- [[Workspace Module]] — uses `CrateInfo`
+- [[Language]] — uses `parse`
 
 ## Used by
 

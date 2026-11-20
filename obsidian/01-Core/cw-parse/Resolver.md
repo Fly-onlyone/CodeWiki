@@ -4,7 +4,7 @@ tags: [core, cw-parse]
 
 # Resolver
 
-> `Resolver` struct defined in `cw_parse::resolve` with 7 methods.
+> `Resolver` struct defined in `cw_parse::resolve` with 9 methods.
 
 ## Source
 
@@ -18,6 +18,7 @@ Public API:
 
 - `pub fn lookup( &self, path: &[String], module: &str, self_type: Option<&str>, ) -> Option<&'a Symbol>` — resolve a path as written at a use site inside `module`.
 - `pub fn lookup_from( &self, path: &[String], module: &str, self_type: Option<&str>, from: &str, ) -> Option<&'a Symbol>` — `Self::lookup`, then the scopes enclosing `from`: an item declared inside a function is visible to the code around it.
+- `pub fn with_crates(mut self, crates: &'a [CrateInfo]) -> Self` — tell the resolver which crates each Cargo package depends on, so that a name never matches a method in a crate the caller cannot reach.
 - `pub fn resolve(&self, files: &[(String, ParsedFile)]) -> Resolved` — build every edge for the repository.
 - `pub fn new( symbols: &'a [Symbol], files: &[(String, ParsedFile)], crate_names: impl IntoIterator<Item = &'a str>, ) -> Self`
 
@@ -30,6 +31,7 @@ Public API:
 - [[Confidence]] — uses `Confidence`
 - [[Symbol]] — uses `Symbol`
 - [[ParsedFile]] — uses `ParsedFile`
+- [[CrateInfo]] — uses `CrateInfo`
 
 ## Used by
 

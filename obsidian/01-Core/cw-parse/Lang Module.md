@@ -25,10 +25,9 @@ Main items:
 
 ## Depends on
 
+- [[Rust Module]] — uses `ModDecl`, `UseImport`
 - [[Language]] — uses `Language`, `from_path`
-- [[Rust Module]] — uses `ModDecl`
 - [[ParsedFile]] — uses `ParsedFile`
-- [[UseImport]] — uses `UseImport`
 
 ## Used by
 

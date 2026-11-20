@@ -71,9 +71,11 @@ pub(crate) fn describe(state: &AppState) -> Value {
         };
     }
     out["llm"]["provider"]["options"] = json!(cw_llm::PROVIDERS);
-    // A choice that cannot work is not offered: the built-in embedder needs
-    // an installed model, the graphics card a card and a worker for it. The value in
-    // effect is always listed, so that a page can show it.
+    // A choice that cannot work is not offered: the built-in embedder needs a
+    // build that can run a model, the graphics card a card and a worker for
+    // it. The built-in embedder is offered before a model is installed; it
+    // then waits for one. The value in effect is always listed, so that a
+    // page can show it.
     let data_dir = &state.0.config.data_dir;
     let offered = |options: &[&str], key: Key, conditional: &str, usable: bool| -> Vec<String> {
         let current = resolved.get(key.env);
@@ -85,13 +87,11 @@ pub(crate) fn describe(state: &AppState) -> Value {
             .map(|option| option.to_string())
             .collect()
     };
-    let has_model =
-        cw_models::ENGINE && !cw_models::Store::new(data_dir, None).installed().is_empty();
     out["embed"]["provider"]["options"] = json!(offered(
         &cw_embed::PROVIDERS,
         settings::EMBED_PROVIDER,
         "builtin",
-        has_model
+        cw_models::ENGINE
     ));
     out["embed"]["device"]["options"] = json!(offered(
         &cw_embed::DEVICES,
@@ -299,8 +299,10 @@ pub(crate) fn change(state: &AppState, body: &Value) -> Result<Value> {
             // A built-in embedder that cannot work is refused here, not
             // found out at the next search: its model must be one of the
             // catalog and installed, its device one this installation has.
-            if is_built_in {
-                let after = Resolved::from_parts(saved, config.env);
+            // One with no model yet waits for Install or Use to name one;
+            // until then nothing embeds, and nothing is checked.
+            let after = Resolved::from_parts(saved, config.env);
+            if is_built_in && after.get(settings::EMBED_MODEL.env).is_some() {
                 cw_embed::from_settings_in(&after, &config.data_dir)?;
             }
         }

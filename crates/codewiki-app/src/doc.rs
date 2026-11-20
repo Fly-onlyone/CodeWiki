@@ -87,6 +87,17 @@ pub enum Action {
     CancelModelJob,
     /// Take the offer of a built-in model off Home for good.
     DismissModelHint,
+    /// Ask the CLIProxyAPI the settings name about itself again.
+    ReloadProxy,
+    /// Sign in an account of this vendor (`claude`, `codex`) through the
+    /// proxy: its sign-in page opens in the browser.
+    AddProxyAccount(String),
+    /// Stop waiting for the sign-in in progress.
+    CancelProxyLogin,
+    /// Have the proxy forget the account saved under this file name.
+    RemoveProxyAccount(String),
+    /// Open a web page in the browser.
+    OpenUrl(String),
 }
 
 /// A stretch of text within a line.

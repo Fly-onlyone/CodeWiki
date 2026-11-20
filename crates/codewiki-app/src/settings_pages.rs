@@ -85,7 +85,31 @@ pub struct Model<'a> {
     pub log_level_locked: bool,
     pub logs_dir: &'a str,
     pub data_dir: &'a str,
+    /// What the backend says of the CLIProxyAPI the settings name
+    /// (`GET /v1/cliproxy`), once it has arrived.
+    pub cliproxy: Option<&'a Value>,
+    /// Why that could not be read.
+    pub cliproxy_error: Option<&'a str>,
+    /// Why the last thing asked of an account failed.
+    pub cliproxy_note: Option<&'a str>,
+    /// The sign-in the user is finishing in the browser.
+    pub login: Option<&'a ProxyLogin>,
 }
+
+/// A sign-in of an account through CLIProxyAPI, which the user finishes on
+/// the vendor's page in the browser.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProxyLogin {
+    /// `claude` or `codex`.
+    pub vendor: String,
+    /// What names the sign-in when the proxy is asked how it went.
+    pub state: String,
+    /// The vendor's sign-in page.
+    pub url: String,
+}
+
+/// Where CodeWiki's README says how to set up CLIProxyAPI.
+pub const PROXY_SETUP: &str = "https://github.com/Fly-onlyone/CodeWiki#cliproxyapi";
 
 impl Model<'_> {
     /// Whether the backend runs somewhere else than on this machine.
@@ -346,8 +370,231 @@ fn llm_name(provider: &str) -> &str {
         "ollama" => "Ollama",
         "claude-cli" => "Claude Code (your own login)",
         "codex-cli" => "Codex (your own login)",
+        "cliproxy" => "CLIProxyAPI (Claude and Codex subscriptions)",
         other => other,
     }
+}
+
+fn vendor_name(vendor: &str) -> &str {
+    match vendor {
+        "claude" => "Claude",
+        "codex" => "Codex",
+        other => other,
+    }
+}
+
+/// The model of a run through CLIProxyAPI, picked from the models its
+/// accounts serve. `None` while the proxy has listed none, so that one can
+/// still be typed.
+fn proxy_model(model: &Model, settings: &Value) -> Option<Block> {
+    let mut models: Vec<&str> = model.cliproxy?["models"]
+        .as_array()?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    if models.is_empty() {
+        return None;
+    }
+    let entry = &settings["llm"]["model"];
+    let chosen = entry["value"].as_str().unwrap_or("");
+    // A model no account serves now stays visible as the one in effect.
+    if !chosen.is_empty() && !models.contains(&chosen) {
+        models.push(chosen);
+    }
+    Some(Block::Select {
+        label: "Model".into(),
+        help: Some("The models your accounts can serve".into()),
+        options: models
+            .into_iter()
+            .map(|name| Choice {
+                label: name.to_string(),
+                action: Action::SetSetting {
+                    section: "llm".into(),
+                    field: "model".into(),
+                    value: Some(name.to_string()),
+                },
+                selected: name == chosen,
+                icon: None,
+            })
+            .collect(),
+        locked: lock(model, settings, entry),
+        note: model.notes.get(&FieldId::LlmModel).cloned(),
+    })
+}
+
+/// One account the proxy rotates: who, which vendor, whether it takes
+/// requests now, and what can be done about it.
+fn account_card(entry: &Value, can_remove: bool) -> Block {
+    let name = entry["name"].as_str().unwrap_or_default();
+    let vendor = vendor_name(entry["provider"].as_str().unwrap_or_default());
+    let (state, tone) = if entry["disabled"] == true {
+        ("Disabled", Tone::Neutral)
+    } else if entry["unavailable"] == true {
+        ("Resting", Tone::Warning)
+    } else if entry["status"] == "error" {
+        ("Error", Tone::Error)
+    } else {
+        ("Ready", Tone::Success)
+    };
+    let mut body = Vec::new();
+    if let Some(message) = entry["message"].as_str() {
+        body.push(Block::Text(vec![text(message)]));
+    }
+    if let Some(when) = entry["next_retry_after"].as_str() {
+        body.push(Block::Text(vec![text("Tried again after "), code(when)]));
+    }
+    if can_remove {
+        body.push(Block::Buttons(vec![Press::new(
+            "Remove",
+            Action::RemoveProxyAccount(name.to_string()),
+        )]));
+    }
+    Block::Card {
+        title: entry["email"].as_str().unwrap_or(name).to_string(),
+        chips: vec![(vendor.to_string(), Tone::Neutral), (state.into(), tone)],
+        body,
+    }
+}
+
+/// The CLIProxyAPI the settings name: where it is, its keys, whether it
+/// answers, and the accounts it takes turns with.
+fn proxy_section(model: &Model, settings: &Value) -> Vec<Block> {
+    let mut connection = vec![
+        field(
+            model,
+            settings,
+            FieldId::CliproxyUrl,
+            "Address",
+            "Where your CLIProxyAPI listens. You start it; CodeWiki only connects",
+        ),
+        secret(
+            model,
+            settings,
+            FieldId::CliproxyKey,
+            "Client key",
+            "One of access.api-keys in its config.yaml",
+        ),
+        secret(
+            model,
+            settings,
+            FieldId::CliproxyManagementKey,
+            "Management key",
+            "management.secret-key in its config.yaml; lists and adds accounts",
+        ),
+    ];
+    let mut blocks = Vec::new();
+    if model.remote() {
+        // The proxy's accounts are the backend machine's business.
+        connection.push(Block::Alert {
+            tone: Tone::Info,
+            text: "The proxy's accounts are managed on the backend's machine, not from here."
+                .into(),
+            button: None,
+        });
+        blocks.push(card("CLIProxyAPI", connection));
+        return blocks;
+    }
+    let Some(proxy) = model.cliproxy else {
+        connection.push(match model.cliproxy_error {
+            Some(error) => Block::Alert {
+                tone: Tone::Error,
+                text: format!("The proxy could not be asked: {error}"),
+                button: Some(("Try again".into(), Action::ReloadProxy)),
+            },
+            None => Block::Empty("Asking the proxy…".into()),
+        });
+        blocks.push(card("CLIProxyAPI", connection));
+        return blocks;
+    };
+    if proxy["reachable"] != true {
+        connection.push(Block::Alert {
+            tone: Tone::Warning,
+            text: proxy["error"]
+                .as_str()
+                .unwrap_or("CLIProxyAPI does not answer")
+                .to_string(),
+            button: Some(("Try again".into(), Action::ReloadProxy)),
+        });
+        connection.push(Block::Text(vec![
+            text("CodeWiki does not start the proxy. "),
+            Span::Link {
+                label: "How to set up CLIProxyAPI".into(),
+                code: false,
+                action: Action::OpenUrl(PROXY_SETUP.into()),
+            },
+        ]));
+        blocks.push(card("CLIProxyAPI", connection));
+        return blocks;
+    }
+    if let Some(error) = proxy["models_error"].as_str() {
+        connection.push(Block::Alert {
+            tone: Tone::Warning,
+            text: error.to_string(),
+            button: None,
+        });
+    }
+    blocks.push(card("CLIProxyAPI", connection));
+
+    let mut accounts = vec![Block::Text(vec![text(
+        "The proxy takes the next ready account for each request and rests one that reached its limit. When none is ready, a sync stops and the next one goes on.",
+    )])];
+    if let Some(error) = proxy["accounts_error"].as_str() {
+        accounts.push(Block::Alert {
+            tone: Tone::Warning,
+            text: error.to_string(),
+            button: None,
+        });
+    }
+    if let Some(note) = model.cliproxy_note {
+        accounts.push(Block::Alert {
+            tone: Tone::Error,
+            text: note.to_string(),
+            button: None,
+        });
+    }
+    let entries: Vec<&Value> = proxy["accounts"].as_array().into_iter().flatten().collect();
+    if entries.is_empty() && proxy["accounts_error"].is_null() {
+        accounts.push(Block::Empty("No account yet.".into()));
+    }
+    let manageable = proxy["accounts_error"].is_null();
+    if let Some(login) = model.login {
+        accounts.push(Block::Alert {
+            tone: Tone::Info,
+            text: format!(
+                "Finish signing in to {} in your browser. This page notices when you are done.",
+                vendor_name(&login.vendor)
+            ),
+            button: Some(("Cancel".into(), Action::CancelProxyLogin)),
+        });
+        accounts.push(Block::Text(vec![Span::Link {
+            label: "Open the sign-in page again".into(),
+            code: false,
+            action: Action::OpenUrl(login.url.clone()),
+        }]));
+    } else if manageable && proxy["loopback"] == true {
+        accounts.push(Block::Buttons(
+            ["claude", "codex"]
+                .into_iter()
+                .map(|vendor| {
+                    Press::new(
+                        format!("Add {} account", vendor_name(vendor)),
+                        Action::AddProxyAccount(vendor.into()),
+                    )
+                })
+                .collect(),
+        ));
+    } else if manageable {
+        accounts.push(Block::Text(vec![text(
+            "The proxy is on another machine: add accounts on the proxy's machine, with its --claude-login or --codex-login.",
+        )]));
+    }
+    blocks.push(card("Accounts", accounts));
+    blocks.extend(
+        entries
+            .into_iter()
+            .map(|entry| account_card(entry, manageable)),
+    );
+    blocks
 }
 
 fn embedder_name(provider: &str) -> &str {
@@ -406,6 +653,19 @@ fn ai_model(model: &Model) -> Vec<Block> {
     let Some(settings) = model.settings else {
         return without_settings(model);
     };
+    let through_proxy = settings["llm"]["provider"]["value"] == "cliproxy";
+    let model_choice = through_proxy
+        .then(|| proxy_model(model, settings))
+        .flatten()
+        .unwrap_or_else(|| {
+            field(
+                model,
+                settings,
+                FieldId::LlmModel,
+                "Model",
+                "Anthropic has a default; the others need a name",
+            )
+        });
     let mut provider_card = vec![
         provider(
             model,
@@ -415,13 +675,7 @@ fn ai_model(model: &Model) -> Vec<Block> {
             "Writes the prose of notes and answers questions",
             llm_name,
         ),
-        field(
-            model,
-            settings,
-            FieldId::LlmModel,
-            "Model",
-            "Anthropic has a default; the others need a name",
-        ),
+        model_choice,
         in_use(settings, "llm", "No provider is chosen."),
         Block::Buttons(vec![
             Press::new("Test", Action::TestLlm).disabled(*model.llm_test == Tested::Running),
@@ -430,6 +684,9 @@ fn ai_model(model: &Model) -> Vec<Block> {
     provider_card.extend(tested(model.llm_test));
     let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
     blocks.push(card("Provider", provider_card));
+    if through_proxy {
+        blocks.extend(proxy_section(model, settings));
+    }
     blocks.push(card(
         "Keys and addresses",
         vec![
@@ -1075,7 +1332,7 @@ mod tests {
             "writable": true,
             "llm": {
                 "provider": { "value": "none", "source": "default", "env": "CODEWIKI_LLM",
-                    "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli"] },
+                    "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli", "cliproxy"] },
                 "model": { "value": null, "source": "default", "env": "CODEWIKI_MODEL" },
                 "name": null, "problem": null,
             },
@@ -1093,6 +1350,47 @@ mod tests {
                 "base_url": { "value": "https://api.openai.com/v1", "source": "default", "env": "OPENAI_BASE_URL" },
             },
             "ollama": { "host": { "value": "http://127.0.0.1:11434", "source": "default", "env": "OLLAMA_HOST" } },
+            "cliproxy": {
+                "url": { "value": "http://127.0.0.1:8317", "source": "default", "env": "CODEWIKI_CLIPROXY_URL" },
+                "api_key": { "state": "unset", "hint": "", "env": "CODEWIKI_CLIPROXY_KEY" },
+                "management_key": { "state": "unset", "hint": "", "env": "CODEWIKI_CLIPROXY_MANAGEMENT_KEY" },
+            },
+        })
+    }
+
+    /// The settings with CLIProxyAPI chosen and both of its keys saved.
+    fn proxy_settings() -> Value {
+        let mut settings = defaults();
+        settings["llm"]["provider"]["value"] = json!("cliproxy");
+        settings["llm"]["model"]["value"] = json!("claude-sonnet-x");
+        settings["llm"]["name"] = json!("cliproxy:claude-sonnet-x");
+        for key in ["api_key", "management_key"] {
+            settings["cliproxy"][key]["state"] = json!("saved");
+            settings["cliproxy"][key]["hint"] = json!("abcd");
+        }
+        settings
+    }
+
+    /// What `GET /v1/cliproxy` says of a proxy on this machine with two
+    /// accounts, one of them resting.
+    fn proxy() -> Value {
+        json!({
+            "url": "http://127.0.0.1:8317",
+            "loopback": true,
+            "reachable": true,
+            "models": ["claude-sonnet-x", "gpt-5-codex"],
+            "accounts": [
+                {
+                    "name": "claude-a@example.com.json", "provider": "claude",
+                    "email": "a@example.com", "status": "active",
+                    "unavailable": false, "disabled": false,
+                },
+                {
+                    "name": "codex-b.json", "provider": "codex", "status": "error",
+                    "message": "quota exhausted", "unavailable": true, "disabled": false,
+                },
+            ],
+            "error": null, "models_error": null, "accounts_error": null,
         })
     }
 
@@ -1150,6 +1448,10 @@ mod tests {
         autostart: Option<bool>,
         open_last: bool,
         log_level_locked: bool,
+        cliproxy: Option<Value>,
+        cliproxy_error: Option<String>,
+        cliproxy_note: Option<String>,
+        login: Option<ProxyLogin>,
     }
 
     impl Fixture {
@@ -1176,7 +1478,19 @@ mod tests {
                 autostart: Some(false),
                 open_last: false,
                 log_level_locked: false,
+                cliproxy: None,
+                cliproxy_error: None,
+                cliproxy_note: None,
+                login: None,
             }
+        }
+
+        /// With CLIProxyAPI chosen, and the proxy as [`proxy`] describes it.
+        fn with_proxy() -> Self {
+            let mut fixture = Self::new();
+            fixture.settings = Some(proxy_settings());
+            fixture.cliproxy = Some(proxy());
+            fixture
         }
 
         fn page(&self, category: Category) -> Doc {
@@ -1210,6 +1524,10 @@ mod tests {
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
                     data_dir: "C:/data",
+                    cliproxy: self.cliproxy.as_ref(),
+                    cliproxy_error: self.cliproxy_error.as_deref(),
+                    cliproxy_note: self.cliproxy_note.as_deref(),
+                    login: self.login.as_ref(),
                 },
             )
         }
@@ -1328,9 +1646,11 @@ mod tests {
         let doc = fixture.page(Category::AiModel);
         let words = doc.words();
         assert!(
-            words.contains("Provider: None: notes keep their structural draft (None: notes keep their structural draft / Anthropic / OpenAI-compatible / Ollama / Claude Code (your own login) / Codex (your own login))"),
+            words.contains("Provider: None: notes keep their structural draft (None: notes keep their structural draft / Anthropic / OpenAI-compatible / Ollama / Claude Code (your own login) / Codex (your own login) / CLIProxyAPI (Claude and Codex subscriptions))"),
             "{words}"
         );
+        // The proxy's own settings show only once it is chosen.
+        assert!(!words.contains("Management key"), "{words}");
         assert!(words.contains("No provider is chosen."));
         assert!(words.contains("Anthropic API key: <typed, hidden>"));
         assert!(words.contains("Test"));
@@ -1342,6 +1662,7 @@ mod tests {
             "ollama",
             "claude-cli",
             "codex-cli",
+            "cliproxy",
         ] {
             assert!(actions.contains(&set("llm", name)), "{name}");
         }
@@ -1356,6 +1677,122 @@ mod tests {
                 FieldId::OllamaHost
             ]
         );
+    }
+
+    fn model_choice(model: &str) -> Action {
+        Action::SetSetting {
+            section: "llm".into(),
+            field: "model".into(),
+            value: Some(model.into()),
+        }
+    }
+
+    #[test]
+    fn a_chosen_proxy_offers_its_models_and_lists_its_accounts() {
+        let doc = Fixture::with_proxy().page(Category::AiModel);
+        let words = doc.words();
+        assert!(
+            words.contains("Model: claude-sonnet-x (claude-sonnet-x / gpt-5-codex)"),
+            "{words}"
+        );
+        assert!(words.contains("Client key: Saved, ends in abcd"), "{words}");
+        assert!(
+            words.contains("Management key: Saved, ends in abcd"),
+            "{words}"
+        );
+        assert!(words.contains("a@example.com"), "{words}");
+        assert!(words.contains("Ready"), "{words}");
+        assert!(words.contains("Resting"), "{words}");
+        assert!(words.contains("quota exhausted"), "{words}");
+        let actions = doc.actions();
+        assert!(actions.contains(&model_choice("gpt-5-codex")));
+        assert!(actions.contains(&Action::AddProxyAccount("claude".into())));
+        assert!(actions.contains(&Action::AddProxyAccount("codex".into())));
+        assert!(actions.contains(&Action::RemoveProxyAccount(
+            "claude-a@example.com.json".into()
+        )));
+        // The model is picked from the list, not typed.
+        let fields = doc.fields();
+        assert!(!fields.contains(&FieldId::LlmModel), "{fields:?}");
+        assert!(fields.contains(&FieldId::CliproxyUrl), "{fields:?}");
+    }
+
+    #[test]
+    fn a_proxy_without_models_takes_a_typed_model_name() {
+        let mut fixture = Fixture::with_proxy();
+        let mut proxy = proxy();
+        proxy["models"] = json!([]);
+        proxy["accounts"] = json!([]);
+        fixture.cliproxy = Some(proxy);
+        let doc = fixture.page(Category::AiModel);
+        assert!(doc.fields().contains(&FieldId::LlmModel));
+        let words = doc.words();
+        assert!(words.contains("No account yet"), "{words}");
+    }
+
+    #[test]
+    fn a_proxy_that_does_not_answer_says_where_to_look() {
+        let mut fixture = Fixture::with_proxy();
+        fixture.cliproxy = Some(json!({
+            "url": "http://127.0.0.1:8317", "loopback": true, "reachable": false,
+            "models": [], "accounts": [],
+            "error": "CLIProxyAPI not reachable at http://127.0.0.1:8317: start it, or check the address",
+        }));
+        let doc = fixture.page(Category::AiModel);
+        let words = doc.words();
+        assert!(words.contains("CLIProxyAPI not reachable at"), "{words}");
+        let actions = doc.actions();
+        assert!(actions.contains(&Action::ReloadProxy));
+        assert!(actions.contains(&Action::OpenUrl(PROXY_SETUP.into())));
+        assert!(
+            !actions
+                .iter()
+                .any(|a| matches!(a, Action::AddProxyAccount(_)))
+        );
+    }
+
+    #[test]
+    fn accounts_are_added_only_through_a_proxy_on_this_machine() {
+        let mut fixture = Fixture::with_proxy();
+        fixture.cliproxy.as_mut().unwrap()["loopback"] = json!(false);
+        let doc = fixture.page(Category::AiModel);
+        assert!(
+            !doc.actions()
+                .iter()
+                .any(|a| matches!(a, Action::AddProxyAccount(_)))
+        );
+        assert!(
+            doc.words().contains("on the proxy's machine"),
+            "{}",
+            doc.words()
+        );
+
+        // Nor from an app whose backend is elsewhere.
+        let mut fixture = Fixture::with_proxy();
+        fixture.origin = Some(Origin::Saved);
+        let doc = fixture.page(Category::AiModel);
+        assert!(!doc.actions().iter().any(|a| matches!(
+            a,
+            Action::AddProxyAccount(_) | Action::RemoveProxyAccount(_)
+        )));
+    }
+
+    #[test]
+    fn a_sign_in_in_progress_can_be_reopened_or_cancelled() {
+        let mut fixture = Fixture::with_proxy();
+        fixture.login = Some(ProxyLogin {
+            vendor: "claude".into(),
+            state: "s-1".into(),
+            url: "https://auth.example/authorize".into(),
+        });
+        fixture.cliproxy_note = Some("the sign-in failed".into());
+        let doc = fixture.page(Category::AiModel);
+        let words = doc.words();
+        assert!(words.contains("Finish signing in to Claude"), "{words}");
+        assert!(words.contains("the sign-in failed"), "{words}");
+        let actions = doc.actions();
+        assert!(actions.contains(&Action::CancelProxyLogin));
+        assert!(actions.contains(&Action::OpenUrl("https://auth.example/authorize".into())));
     }
 
     #[test]

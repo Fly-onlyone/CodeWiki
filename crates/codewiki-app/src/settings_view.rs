@@ -200,6 +200,12 @@ fn change(section: &str, field: &str, value: Value) -> Value {
     json!({ section: { field: value } })
 }
 
+/// Whether a change touches the embedder, after which what the backend said
+/// about its models (the one in use, the embedder chosen) is out of date.
+fn changes_the_embedder(body: &Value) -> bool {
+    body.get("embed").is_some()
+}
+
 impl AppView {
     pub(crate) fn on_settings_page(&self) -> bool {
         matches!(self.page, Page::Settings(_))
@@ -491,12 +497,17 @@ impl AppView {
         }
         self.error = None;
         cx.notify();
+        let embedder = changes_the_embedder(&body);
         self.settings_request(
             cx,
             move |backend| backend.put("/v1/settings", &body),
             move |this, result, cx| match (result, field) {
                 (Ok(settings), field) => {
                     this.take_settings(settings);
+                    if embedder {
+                        // The model shown in use may no longer be.
+                        this.load_models(cx);
+                    }
                     // What the provider or the embedder was tested as may no
                     // longer be what is chosen.
                     this.settings.llm_test = Tested::Not;
@@ -1041,8 +1052,29 @@ mod tests {
     // which would stand in for the standard one.
     use serde_json::{Value, json};
 
-    use super::{change, shown_value, test_line};
+    use super::{change, changes_the_embedder, shown_value, test_line};
     use crate::settings_pages::Tested;
+
+    #[test]
+    fn a_change_of_the_embedder_reads_the_models_again() {
+        // Which model is in use, and whether the built-in embedder is the
+        // one chosen, are in what the backend says about its models.
+        assert!(changes_the_embedder(&change(
+            "embed",
+            "provider",
+            json!("local")
+        )));
+        assert!(changes_the_embedder(&change(
+            "embed",
+            "device",
+            json!("cpu")
+        )));
+        assert!(!changes_the_embedder(&change(
+            "llm",
+            "provider",
+            json!("none")
+        )));
+    }
 
     #[test]
     fn a_field_shows_what_is_saved_or_set_and_not_a_default() {

@@ -488,7 +488,7 @@ fn search(model: &Model) -> Vec<Block> {
         for option in options.iter_mut().filter(|option| {
             matches!(&option.action, Action::SetSetting { value: Some(value), .. } if value == "builtin")
         }) {
-            option.action = builtin_choice(model.models);
+            option.action = builtin_choice(model.models, settings);
         }
     }
     let mut embedder = vec![chooser];
@@ -539,20 +539,19 @@ fn search(model: &Model) -> Vec<Block> {
 /// What choosing the built-in embedder does. An installed model is used at
 /// once, the recommended one first, and one in use is left as it is. With
 /// none installed the choice is saved, and waits for Install or Use to name
-/// a model.
-fn builtin_choice(models: Option<&Value>) -> Action {
-    let entries: Vec<&Value> = models
+/// a model. What is in use comes from `settings`, which every change brings
+/// back; the models may have been read before the last change.
+fn builtin_choice(models: Option<&Value>, settings: &Value) -> Action {
+    let chosen = &settings["embed"];
+    let in_use = chosen["provider"]["value"] == "builtin" && chosen["model"]["value"].is_string();
+    let installed: Vec<&str> = models
         .and_then(|models| models["models"].as_array())
         .into_iter()
         .flatten()
-        .collect();
-    let installed: Vec<&str> = entries
-        .iter()
-        .filter(|entry| entry["installed"] == true && entry["active"] != true)
+        .filter(|entry| entry["installed"] == true)
         .filter_map(|entry| entry["id"].as_str())
         .collect();
     let recommended = models.and_then(|models| models["recommended"]["model"].as_str());
-    let in_use = entries.iter().any(|entry| entry["active"] == true);
     match recommended
         .filter(|id| installed.contains(id))
         .or(installed.first().copied())
@@ -1627,10 +1626,29 @@ mod tests {
             Action::UseModel(BALANCED.into())
         );
         // A model in use stays: choosing the entry again switches nothing.
+        let embed = &mut fixture.settings.as_mut().unwrap()["embed"];
+        embed["provider"]["value"] = json!("builtin");
+        embed["model"]["value"] = json!(BALANCED);
         fixture.models.as_mut().unwrap()["models"][1]["active"] = json!(true);
         assert_eq!(
             built_in_entry(&fixture.page(Category::Search)),
             set("embed", "builtin")
+        );
+    }
+
+    #[test]
+    fn the_built_in_entry_trusts_the_settings_over_models_read_before() {
+        // The models were read while Granite was in use; the settings, saved
+        // since, chose the embedder that needs no model. Choosing the
+        // built-in model again uses Granite.
+        let mut fixture = offering_built_in();
+        let models = fixture.models.as_mut().unwrap();
+        models["models"][0]["installed"] = json!(true);
+        models["models"][0]["active"] = json!(true);
+        models["embedder"] = json!("builtin");
+        assert_eq!(
+            built_in_entry(&fixture.page(Category::Search)),
+            Action::UseModel("granite-small-english-r2".into())
         );
     }
 

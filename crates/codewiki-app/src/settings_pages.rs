@@ -21,7 +21,7 @@ use crate::icons;
 use crate::motion::MotionPref;
 use crate::mui::feedback::Tone;
 use crate::settings::{Category, FieldId, Note};
-use crate::update;
+use crate::{update, zoom};
 
 /// Where a test of a provider stands.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -44,6 +44,8 @@ pub struct Model<'a> {
     pub motion: MotionPref,
     /// What the choice in `motion` comes to.
     pub animations_on: bool,
+    /// The zoom level, in percent.
+    pub zoom: u16,
     /// The backend's settings, once they have arrived.
     pub settings: Option<&'a Value>,
     /// Why they could not be read or changed.
@@ -177,8 +179,46 @@ fn appearance(model: &Model) -> Vec<Block> {
                 ))]),
             ],
         ),
+        zoom_card(model),
         startup(model),
     ]
+}
+
+/// How large the whole app is drawn.
+fn zoom_card(model: &Model) -> Block {
+    card(
+        "Zoom",
+        vec![
+            Block::Select {
+                label: "Zoom".into(),
+                help: Some("The whole window except its title bar".into()),
+                options: zoom::LEVELS
+                    .into_iter()
+                    .map(|level| Choice {
+                        label: if level == zoom::DEFAULT {
+                            format!("{} (default)", zoom::label(level))
+                        } else {
+                            zoom::label(level)
+                        },
+                        action: Action::Zoom(level),
+                        selected: level == model.zoom,
+                        icon: None,
+                    })
+                    .collect(),
+                locked: None,
+                note: None,
+            },
+            Block::Text(vec![
+                text("Ctrl+wheel, "),
+                code("Ctrl+="),
+                text(" and "),
+                code("Ctrl+-"),
+                text(" zoom in and out; "),
+                code("Ctrl+0"),
+                text(" goes back to 100%."),
+            ]),
+        ],
+    )
 }
 
 /// Where the app starts, whether Windows starts it at sign-in, and what
@@ -1000,6 +1040,10 @@ fn keyboard() -> Vec<Block> {
         ("Ctrl+B", "Hide or show the sidebar"),
         ("Ctrl+Alt+B", "Hide or show the details pane"),
         ("Ctrl+S", "Save the note being edited"),
+        ("Ctrl+=", "Zoom in"),
+        ("Ctrl+-", "Zoom out"),
+        ("Ctrl+0", "Back to 100%"),
+        ("Ctrl+wheel", "Zoom in or out"),
     ] {
         keys.row([Cell::chip(chord, Tone::Neutral), Cell::text(action)]);
     }
@@ -1222,6 +1266,7 @@ mod tests {
                     themes: &self.themes,
                     motion: MotionPref::Reduced,
                     animations_on: false,
+                    zoom: 125,
                     settings: self.settings.as_ref(),
                     settings_error: self.error.as_deref(),
                     notes: &self.notes,
@@ -1357,6 +1402,30 @@ mod tests {
         for pref in MotionPref::ALL {
             assert!(actions.contains(&Action::Motion(pref)));
         }
+    }
+
+    #[test]
+    fn the_appearance_page_offers_every_zoom_level() {
+        let doc = Fixture::new().page(Category::Appearance);
+        let zoom = doc
+            .flat()
+            .into_iter()
+            .find_map(|block| match block {
+                Block::Select { label, options, .. } if label == "Zoom" => Some(options.clone()),
+                _ => None,
+            })
+            .expect("a zoom select");
+        let levels: Vec<Action> = zoom.iter().map(|option| option.action.clone()).collect();
+        let expected: Vec<Action> = zoom::LEVELS.into_iter().map(Action::Zoom).collect();
+        assert_eq!(levels, expected);
+        // The fixture is at 125%, and only that level is chosen.
+        let chosen: Vec<&str> = zoom
+            .iter()
+            .filter(|option| option.selected)
+            .map(|option| option.label.as_str())
+            .collect();
+        assert_eq!(chosen, ["125%"]);
+        assert!(zoom.iter().any(|option| option.label == "100% (default)"));
     }
 
     #[test]
@@ -1961,6 +2030,10 @@ mod tests {
             "Ctrl+B | Hide or show the sidebar",
             "Ctrl+Alt+B | Hide or show the details pane",
             "Ctrl+S | Save the note being edited",
+            "Ctrl+= | Zoom in",
+            "Ctrl+- | Zoom out",
+            "Ctrl+0 | Back to 100%",
+            "Ctrl+wheel | Zoom in or out",
         ] {
             assert!(words.contains(line), "{line}");
         }

@@ -10,7 +10,9 @@
 use std::time::Duration;
 
 use gpui_kit::base::animation::cubic_bezier;
-use gpui_kit::{BoxShadow, FontWeight, Hsla, hsla, point, px};
+use gpui_kit::{BoxShadow, FontWeight, Hsla, hsla, point};
+
+use crate::zoom::px;
 
 /// One step of MUI's spacing scale (`theme.spacing(1)`).
 pub const SPACING: f32 = 8.0;

@@ -19,7 +19,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, Bounds, BoxShadow, ClickEvent, ElementId, FocusHandle, Hsla, InteractiveElement as _,
     IntoElement, ParentElement as _, Pixels, RenderOnce, SharedString, Styled as _, Window, div,
-    point, px,
+    point,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
@@ -28,6 +28,7 @@ use super::motion::scaled;
 use super::text_field::HEIGHT;
 use super::tokens::{self, curve, duration, easing};
 use crate::icons::{self, Glyph};
+use crate::zoom::px;
 
 /// `OutlinedInput.js`, `size: 'small'`: `padding: '8.5px 14px'`.
 const PADDING: f32 = 14.0;

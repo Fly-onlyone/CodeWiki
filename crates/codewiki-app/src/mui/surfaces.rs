@@ -9,11 +9,12 @@
 
 use gpui_kit::component::{ActiveTheme as _, v_flex};
 use gpui_kit::{
-    App, BoxShadow, Div, Hsla, ParentElement as _, SharedString, Styled as _, div, hsla, point, px,
+    App, BoxShadow, Div, Hsla, ParentElement as _, SharedString, Styled as _, div, hsla, point,
 };
 
 use super::tokens::{self, Variant};
 use crate::glass;
+use crate::zoom::px;
 
 /// MUI's `CardContent`: `padding: 16`.
 pub const CARD_PADDING: f32 = 16.0;

@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, BoxShadow, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, hsla, linear_color_stop, linear_gradient, point, px,
+    Window, div, hsla, linear_color_stop, linear_gradient, point,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
@@ -23,6 +23,7 @@ use super::feedback;
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{self, Variant, curve, duration, easing};
 use crate::icons::Glyph;
+use crate::zoom::px;
 
 /// `Button.js`: the narrowest a button gets.
 const MIN_WIDTH: f32 = 64.0;

@@ -23,6 +23,10 @@
 //! every frame where only the shapes had moved, which with the drift on is
 //! nearly every frame.
 //!
+//! The shell also takes Ctrl+wheel for `zoom`, ahead of everything under the
+//! pointer, and draws the title bar at 100% whatever the zoom. Its shapes are
+//! shares of the window and keep GPUI's own pixels.
+//!
 //! The shapes stand still when the window is inactive and under reduced
 //! motion, so an idle or backgrounded window costs nothing. They also stand
 //! still when Direct3D runs on the processor (a virtual machine, a remote
@@ -30,6 +34,7 @@
 //! drawn by the processor, and in a clean-Windows test an idle window kept
 //! both cores of the machine busy and starved everything else.
 
+use std::cell::RefCell;
 use std::f32::consts::TAU;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -37,12 +42,13 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Context, Div, Entity, Hsla, IntoElement, ParentElement as _, Render,
-    StyleRefinement, Styled as _, Subscription, Window, div, px,
+    AnyElement, App, Bounds, Context, DispatchPhase, Div, Entity, Hsla, IntoElement,
+    ParentElement as _, Pixels, Render, ScrollEvent, StyleRefinement, Styled as _, Subscription,
+    Window, canvas, div, px,
 };
 
 use crate::doc_view::{DocPage, PageSlot};
-use crate::glass;
+use crate::{glass, win32, zoom};
 
 /// Seconds for the shapes to come back to where they started.
 const PERIOD: f32 = 90.0;
@@ -185,7 +191,10 @@ pub struct Shell<V: Render> {
     /// When the shapes last moved; `None` while they stand still.
     moved_at: Option<Instant>,
     tick_pending: bool,
+    /// Notches of Ctrl+wheel not yet made into a zoom step.
+    wheel: Rc<RefCell<zoom::Wheel>>,
     _activation: Subscription,
+    _zoom_chip: Subscription,
 }
 
 impl<V: Render> Shell<V> {
@@ -200,6 +209,8 @@ impl<V: Render> Shell<V> {
         slot.read_by(cx.entity_id());
         // Start and stop drifting as the window gains and loses focus.
         let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
+        // The zoom level in the title bar comes and goes.
+        let zoom_chip = cx.observe_global::<zoom::Indicator>(|_, cx| cx.notify());
         let specs = window.gpu_specs();
         let software = specs.as_ref().is_some_and(|gpu| {
             draws_on_processor(gpu.is_software_emulated, &gpu.device_name, &gpu.driver_name)
@@ -224,7 +235,9 @@ impl<V: Render> Shell<V> {
             phase: 0.0,
             moved_at: None,
             tick_pending: false,
+            wheel: Rc::default(),
             _activation: activation,
+            _zoom_chip: zoom_chip,
         }
     }
 
@@ -256,6 +269,8 @@ impl<V: Render> Shell<V> {
         }
     }
 
+    // Shares of the window, in the screen's pixels: zoom leaves them alone.
+    #[allow(clippy::disallowed_methods)]
     fn shapes(&self, window: &Window, cx: &App) -> Div {
         let theme = cx.theme();
         // The glow behind the window blends the theme's three brand colors.
@@ -297,10 +312,45 @@ impl<V: Render> Shell<V> {
 
 impl<V: Render> Render for Shell<V> {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        // gpui-kit writes a theme file's sizes back into the theme when its
+        // list of themes changes. Put the zoom back into them before anything
+        // is laid out; the rem of this frame was already taken from them.
+        if zoom::sync_theme(cx) {
+            window.set_rem_size(cx.theme().font_size);
+        }
         self.drift(window, cx);
+        // The title bar keeps its size at every zoom, as a browser's does.
+        let title_bar = zoom::unscaled(|| (self.title_bar)(window, cx));
+        let wheel = self.wheel.clone();
         div()
             .size_full()
             .relative()
+            // Ctrl+wheel zooms wherever the pointer is. The wheel is taken
+            // before anything under the pointer sees it, so nothing scrolls
+            // and the graph does not zoom itself as well.
+            .child(
+                canvas(
+                    |_, _, _| (),
+                    move |_: Bounds<Pixels>, _, window, _| {
+                        window.on_mouse_event(move |event: &ScrollEvent, phase, _, cx| {
+                            let keys = &event.modifiers;
+                            let zoom_keys =
+                                keys.control && !keys.alt && !keys.shift && !keys.platform;
+                            if phase != DispatchPhase::Capture || !zoom_keys {
+                                return;
+                            }
+                            let notches = zoom::notches(event.delta, win32::wheel_scroll_lines());
+                            let steps = wheel.borrow_mut().feed(notches, Instant::now());
+                            if steps != 0 {
+                                zoom::step_by(steps, cx);
+                            }
+                            cx.stop_propagation();
+                        });
+                    },
+                )
+                .absolute()
+                .inset_0(),
+            )
             // Painted first, so under everything.
             .when_some(self.debug_backdrop, |shell, color| {
                 shell.child(div().absolute().inset_0().bg(color))
@@ -318,7 +368,7 @@ impl<V: Render> Render for Shell<V> {
                     .top_0()
                     .left_0()
                     .w_full()
-                    .child((self.title_bar)(window, cx)),
+                    .child(zoom::FixedRem::new(zoom::base_rem(cx), title_bar)),
             )
             // The page, in the place the app left empty for it.
             .when_some(self.slot.bounds(), |shell, place| {

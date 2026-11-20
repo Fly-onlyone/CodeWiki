@@ -19,7 +19,7 @@ use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, BoxShadow, ElementId, Entity, Focusable as _, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div, point, px,
+    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div, point,
 };
 
 use super::base::Hover;
@@ -27,6 +27,7 @@ use super::feedback::Tone;
 use super::motion::scaled;
 use super::tokens::{self, Variant, curve, duration, easing};
 use crate::icons::Glyph;
+use crate::zoom::px;
 
 /// `OutlinedInput.js`, `size: 'small'`: `padding: '8.5px 14px'` around a line
 /// of `1.4375em` at 16 px.

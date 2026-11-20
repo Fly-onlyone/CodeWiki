@@ -11,12 +11,13 @@ use gpui_kit::component::tooltip::Tooltip;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex};
 use gpui_kit::{
     Animation, AnimationExt as _, AnyView, App, Div, FontWeight, Hsla, IntoElement,
-    ParentElement as _, SharedString, Styled as _, Window, div, px, relative,
+    ParentElement as _, SharedString, Styled as _, Window, div, relative,
 };
 
 use super::motion::scaled;
 use super::tokens::easing;
 use crate::icons::{self, Glyph};
+use crate::zoom::px;
 
 /// What kind of news something is. MUI's `severity`, and the `color` of a
 /// chip.

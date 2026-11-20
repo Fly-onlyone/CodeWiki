@@ -16,6 +16,7 @@ async-channel = "2"
 cw-client = { path = "../cw-client" }
 # Paths and log files only; the engine crates stay out of the app.
 cw-core = { path = "../cw-core" }
+cw-telemetry = { path = "../cw-telemetry" }
 cw-illustrate = { version = "0.2.0", path = "../cw-illustrate" }
 cw-mermaid = { version = "0.2.0", path = "../cw-mermaid" }
 # Updates its own installation; see AGENTS.md.

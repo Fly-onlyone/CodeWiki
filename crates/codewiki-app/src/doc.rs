@@ -35,6 +35,8 @@ pub enum Action {
     Autostart(bool),
     /// Start the app on the wiki map of the repository it opens, or on Home.
     OpenLast(bool),
+    /// Send error reports to Sentry from the next start on, or stop at once.
+    ErrorReports(bool),
     /// Open the registered repository with this id.
     OpenRepo(String),
     /// Take the repository with this id off the list. Its folder and the

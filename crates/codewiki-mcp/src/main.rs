@@ -1173,7 +1173,7 @@ impl ServerHandler for Bridge {}
 async fn main() -> std::process::ExitCode {
     // Standard output carries the protocol; the log goes to `mcp.log` and to
     // standard error, which the agent's host keeps.
-    cw_core::logs::init("mcp", log::LevelFilter::Info);
+    let _telemetry = cw_telemetry::init("mcp", log::LevelFilter::Info);
     let service = match Bridge::default().serve(stdio()).await {
         Ok(service) => service,
         Err(e) => {

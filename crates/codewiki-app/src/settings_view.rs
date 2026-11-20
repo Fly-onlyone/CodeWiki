@@ -930,6 +930,8 @@ impl AppView {
                     log_level_locked: cw_core::logs::level_in_env().is_some(),
                     logs_dir: &logs_dir,
                     data_dir: &data_dir,
+                    error_reports: cw_telemetry::reporting(),
+                    error_reports_on: cw_telemetry::consent(),
                 },
             )
         };

@@ -1,0 +1,31 @@
+{
+  "name": "codewiki",
+  "version": "0.2.0",
+  "description": "Gives Codex a maintained wiki and structural index of the repository through the CodeWiki backend.",
+  "author": {
+    "name": "CodeWiki contributors"
+  },
+  "homepage": "https://fly-3.gitbook.io/codewiki/",
+  "repository": "https://github.com/Fly-onlyone/CodeWiki",
+  "license": "Apache-2.0",
+  "keywords": ["wiki", "documentation", "code-intelligence", "mcp"],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "CodeWiki",
+    "shortDescription": "Codebase wiki for your agent",
+    "longDescription": "Gives Codex the repository's CodeWiki: a wiki that writes itself and stays current, and a structural index of the code. 24 MCP tools read it, a briefing at the start of each session says whether it is up to date, and two skills cover when to call which tool and how to edit a note by hand.",
+    "developerName": "CodeWiki contributors",
+    "category": "Coding",
+    "capabilities": [],
+    "websiteURL": "https://fly-3.gitbook.io/codewiki/",
+    "defaultPrompt": [
+      "Give me an overview of this repository's architecture.",
+      "What should I know before I change this file?",
+      "Bring the wiki up to date with the code."
+    ],
+    "composerIcon": "./assets/codewiki.png",
+    "logo": "./assets/codewiki.png"
+  }
+}

@@ -141,7 +141,7 @@ To install the plugin:
    claude plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
    ```
 
-   In PowerShell the folder is `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`. It holds the plugin and nothing else, and Claude Code reads it where it is: nothing is downloaded, and git is not needed.
+   In PowerShell the folder is `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`. It holds the agent plugins and nothing else, and Claude Code reads it where it is: nothing is downloaded, and git is not needed.
 
    Without the Windows package (programs built from source, or a backend on another machine), add this repository instead: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, and that needs git.
 3. Install the plugin:
@@ -164,9 +164,25 @@ claude plugin uninstall codewiki@codewiki
 claude plugin marketplace remove codewiki
 ```
 
-### Codex
+### Codex plugin
 
-Codex has no plugin. `plugins/codex/README.md` gives the MCP server and session-start hook configuration that does the same.
+The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and two skills:
+
+- `using-codewiki` says which tool to call at each step of a change, and when to write or refresh the wiki with `sync_wiki`;
+- `wiki-note-style` holds the house style of CodeWiki's notes, for when Codex edits a note in `obsidian/` by hand.
+
+To install it, after installing CodeWiki and opening a new terminal:
+
+```
+codex plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
+codex plugin add codewiki@codewiki
+```
+
+Without the Windows package, add the repository instead: `codex plugin marketplace add Fly-onlyone/CodeWiki`.
+
+Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in Codex once and trust the `SessionStart` hook that runs `codewiki hook session-start`.
+
+`plugins/codex/README.md` covers updating, removing, and the same setup without the plugin. The plugin's files are checked against Codex's source and by a test; it has not yet been run in a Codex session.
 
 ### Docker
 

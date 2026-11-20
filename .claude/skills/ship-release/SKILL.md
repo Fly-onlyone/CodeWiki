@@ -63,7 +63,7 @@ A worktree is finished when its session says so, not when its folder looks clean
 ## 5. Version and package
 
 1. Get the previous published package first: `gh release download v<previous> --repo Fly-onlyone/CodeWiki --pattern "*.zip*" --dir dist\old`. A package built before the bump has the old version's name and replaces the zip in `dist\`.
-2. Bump `version` in the root `Cargo.toml`, the `version = "<old>", path` requirements in `crates/*/Cargo.toml`, and `plugins/claude-code/.claude-plugin/plugin.json`. Run `cargo check --workspace` once without `--locked`: it rewrites `Cargo.lock`, which the package build and CI then hold to. Commit as `chore(release)`.
+2. Bump `version` in the root `Cargo.toml`, the `version = "<old>", path` requirements in `crates/*/Cargo.toml`, `plugins/claude-code/.claude-plugin/plugin.json` and `plugins/codex/.codex-plugin/plugin.json` (`crates/codewiki/tests/plugins.rs` fails if a plugin is missed). Run `cargo check --workspace` once without `--locked`: it rewrites `Cargo.lock`, which the package build and CI then hold to. Commit as `chore(release)`.
 3. `pwsh scripts\package.ps1`.
 
 ## 6. Test in the guest

@@ -208,6 +208,8 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
     $plugins = @($entries | Where-Object { $_ -like "plugins/*" }).Count
     # Without it the plugins folder cannot be added to Claude Code as a marketplace.
     if ($entries -notcontains "plugins/.claude-plugin/marketplace.json") { $missing += "plugins/.claude-plugin/marketplace.json" }
+    # The same for Codex.
+    if ($entries -notcontains "plugins/.agents/plugins/marketplace.json") { $missing += "plugins/.agents/plugins/marketplace.json" }
     $unpacked = Join-Path ([System.IO.Path]::GetTempPath()) "cwvm-zip-$PID"
     Expand-Archive -Path $Zip -DestinationPath $unpacked -Force
     # Names of the DLLs each program asks Windows for, read from the file itself.

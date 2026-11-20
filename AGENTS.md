@@ -32,7 +32,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
 | `crates/codewiki` | CLI and `serve` |
 | `crates/codewiki-mcp` | MCP stdio bridge |
 | `crates/codewiki-app` | Desktop app |
-| `plugins/` | Claude Code plugin and Codex configuration |
+| `plugins/` | Claude Code and Codex plugins, and their marketplaces (`.claude-plugin/`, `.agents/plugins/`) |
 | `scripts/` | Packaging, install, uninstall, cleanup |
 | `scripts/vm/` | Test of a package in a Hyper-V guest |
 | `report/` | Test reports with their screenshots and recordings. Git ignores it: reports stay on the machine that ran them |

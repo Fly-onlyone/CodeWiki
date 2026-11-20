@@ -24,7 +24,7 @@ Status as of 2026-11-18. "Verified" means covered by automated tests or by a liv
 | M7 Docker image | Verified | Final image (271 MB) built and run: 401 without token, repository registered by container path, sync, semantic search, workspace, signed webhook (202, and 401 on a bad signature), runs as a non-root user. The MCP bridge was driven against an earlier build of the image |
 | M7 Semantic search | Verified with the built-in embedder | Vectors stored in the index, merged with full-text results by rank. The Ollama and OpenAI-compatible embedders are tested over real HTTP against a stand-in server, not against the real services. See Deviations |
 | M8 MCP bridge and Claude Code plugin | Verified | 24 tools. All were driven over real stdio except `get_coverage` with a report present (it answered "no coverage report", as it should here). A live Claude Code run called tools through the plugin's `.mcp.json` |
-| M8 Codex integration | Skipped | Not tested by the owner's choice (no Codex subscription at present). Config is documented in `plugins/codex/README.md` |
+| M8 Codex plugin | Built, not run | `plugins/codex/`: the MCP server, the session-start hook, and the skills `using-codewiki` and `wiki-note-style`, listed in `.agents/plugins/marketplace.json` at the repository root and in `plugins/`. Checked against Codex's source (manifest and interface fields, marketplace search order, hook matcher, and that a stdio server without `cwd` starts in the session's folder) and by `crates/codewiki/tests/plugins.rs`. Not run in Codex by the owner's choice (no Codex subscription at present) |
 | M9 Viewer, search, sync, review queue | Seen | |
 | M9 Native Mermaid diagrams | Verified | 62 of 65 real diagrams render. A note's diagrams are drawn off the UI thread and kept, with "Drawing diagram…" in their place meanwhile: opening such a note once froze the window for seconds |
 | M9 Native illustrations (OpenUI Lang) | Verified | Parser matches the reference on 55 of 55 programs |
@@ -106,4 +106,9 @@ These cannot be done from an automated session on this machine.
 - Press Tab through the toolbar and a page, and press Enter and Space on a button, a tab and a sidebar row.
 - Open a note whose illustration has tabs, and switch between them.
 - Close the palette with Escape, to see it fade out.
-- Codex round trip, when a Codex subscription is available.
+- Codex plugin round trip, when a Codex subscription is available:
+  - add the marketplace from `plugins/` and see that Codex lists `codewiki@codewiki` from `.agents/plugins/marketplace.json`, not from the Claude Code file next to it;
+  - install the plugin, and see that `/mcp` shows the `codewiki` server running in the session's folder;
+  - trust the hook in `/hooks`, and see the briefing reach the session;
+  - see both skills offered;
+  - call `get_overview` and `sync_wiki`.

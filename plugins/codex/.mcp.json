@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codewiki": {
+      "command": "codewiki-mcp",
+      "args": []
+    }
+  }
+}

@@ -386,7 +386,7 @@ impl<'a> Extractor<'a> {
         };
         let target = match self.target(&self.string(source)) {
             Target::Module(target) => target,
-            Target::Package(package) => return self.sink.import(vec![package], "", false, false),
+            Target::Package(package) => return self.import_package(node, &package),
             Target::Unknown => return,
         };
         // The file depends on the module even when a name it imports is not
@@ -436,6 +436,50 @@ impl<'a> Extractor<'a> {
                 }
                 _ => {}
             }
+        }
+    }
+
+    /// An import from a package outside the repository, or a re-export of
+    /// one: record each name it takes, `default` for the default export and
+    /// `*` for all of it.
+    fn import_package(&mut self, node: Node, package: &str) {
+        let mut names: Vec<String> = Vec::new();
+        for clause in named(node) {
+            match clause.kind() {
+                "import_clause" => {
+                    for part in named(clause) {
+                        match part.kind() {
+                            "identifier" => names.push("default".to_string()),
+                            "namespace_import" => names.push("*".to_string()),
+                            "named_imports" => {
+                                for spec in named(part) {
+                                    if let Some(name) = spec.child_by_field_name("name") {
+                                        names.push(self.specifier_name(name));
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // `import x = require("package")` takes the whole of it.
+                "import_require_clause" | "namespace_export" => names.push("*".to_string()),
+                "export_clause" => {
+                    for spec in named(clause) {
+                        if let Some(name) = spec.child_by_field_name("name") {
+                            names.push(self.specifier_name(name));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        // `import "package"` runs it and takes no name.
+        if names.is_empty() {
+            names.push(String::new());
+        }
+        for name in names {
+            self.sink.import_external(package, &name);
         }
     }
 
@@ -508,7 +552,7 @@ impl<'a> Extractor<'a> {
     fn reexport(&mut self, node: Node, source: Node) {
         let target = match self.target(&self.string(source)) {
             Target::Module(target) => target,
-            Target::Package(package) => return self.sink.import(vec![package], "", false, false),
+            Target::Package(package) => return self.import_package(node, &package),
             Target::Unknown => return,
         };
         self.sink.import(target.clone(), "", false, true);

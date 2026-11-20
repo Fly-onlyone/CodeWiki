@@ -450,6 +450,20 @@ impl<'a> Sink<'a> {
             alias: alias.to_string(),
             glob,
             public,
+            external: String::new(),
+        });
+    }
+
+    /// The file takes `name` from `package`, which is outside the
+    /// repository. An empty `name` states only that it uses the package.
+    pub fn import_external(&mut self, package: &str, name: &str) {
+        self.out.uses.push(UseImport {
+            scope: self.module.clone(),
+            path: vec![package.to_string()],
+            alias: String::new(),
+            glob: false,
+            public: false,
+            external: name.to_string(),
         });
     }
 
@@ -608,12 +622,22 @@ fn modules_of(parsed: &[(String, ParsedFile)], language: Language) -> HashSet<St
         .collect()
 }
 
-/// An import that leaves the repository: keep one segment naming the package.
-fn external(import: UseImport, package: String) -> UseImport {
+/// An import that leaves the repository: keep one segment naming the
+/// package, and what the import takes from it. The first `package_len`
+/// segments of the path name the package.
+fn external(import: UseImport, package: String, package_len: usize) -> UseImport {
+    let mut taken = import.path[package_len.min(import.path.len())..].join(".");
+    if import.glob {
+        if !taken.is_empty() {
+            taken.push('.');
+        }
+        taken.push('*');
+    }
     UseImport {
         path: vec![package],
         alias: String::new(),
         glob: false,
+        external: taken,
         ..import
     }
 }
@@ -638,7 +662,7 @@ fn link_python(mut import: UseImport, modules: &HashSet<String>) -> Option<UseIm
     if PYTHON_STDLIB.contains(&root.as_str()) {
         return None;
     }
-    Some(external(import, root))
+    Some(external(import, root, 1))
 }
 
 fn link_java(import: UseImport, packages: &HashSet<String>) -> Option<UseImport> {
@@ -654,7 +678,7 @@ fn link_java(import: UseImport, packages: &HashSet<String>) -> Option<UseImport>
     let len = import.path.len();
     let keep = if import.glob { len } else { len - 1 }.clamp(1, 2);
     let package = import.path[..keep].join(".");
-    Some(external(import, package))
+    Some(external(import, package, keep))
 }
 
 /// Decide, for every Python and Java import, whether it names repository

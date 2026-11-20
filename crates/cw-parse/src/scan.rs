@@ -334,7 +334,8 @@ mod tests {
             facts.external_uses,
             vec![ExternalUse {
                 file: "crates/util/src/text.rs".into(),
-                krate: "serde".into()
+                krate: "serde".into(),
+                names: vec!["Serialize".into()],
             }]
         );
     }
@@ -477,7 +478,9 @@ mod tests {
             facts.external_uses,
             vec![ExternalUse {
                 file: "src/pkg/text.py".into(),
-                krate: "requests".into()
+                krate: "requests".into(),
+                // `import requests` names the package alone.
+                names: vec![],
             }]
         );
     }
@@ -647,7 +650,8 @@ mod tests {
             facts.external_uses,
             vec![ExternalUse {
                 file: "web/src/app.tsx".into(),
-                krate: "express".into()
+                krate: "express".into(),
+                names: vec!["default".into()],
             }]
         );
     }
@@ -770,7 +774,8 @@ mod tests {
             facts.external_uses,
             vec![ExternalUse {
                 file: "src/main/java/com/acme/app/App.java".into(),
-                krate: "org.slf4j".into()
+                krate: "org.slf4j".into(),
+                names: vec!["Logger".into()],
             }]
         );
     }
@@ -798,6 +803,79 @@ mod tests {
                 .iter()
                 .any(|e| e.src == "demo::run" && e.kind == EdgeKind::Calls)
         );
+    }
+
+    /// What `file` imports from `package`.
+    fn imported<'a>(facts: &'a RepoFacts, file: &str, package: &str) -> Vec<&'a str> {
+        facts
+            .external_uses
+            .iter()
+            .find(|u| u.file == file && u.krate == package)
+            .unwrap_or_else(|| panic!("{file} does not use {package}"))
+            .names
+            .iter()
+            .map(String::as_str)
+            .collect()
+    }
+
+    #[test]
+    fn an_outside_package_keeps_the_names_a_file_takes_from_it() {
+        let facts = scan_files(&[
+            (
+                "Cargo.toml",
+                "[package]\nname = \"demo\"\n[dependencies]\nserde = \"1\"\naxum = \"0\"\ntokio = \"1\"\n",
+            ),
+            (
+                "src/lib.rs",
+                "use axum::extract::{Path, State};\nuse axum::Router as App;\nuse serde::de::{self, Visitor};\nuse serde::Serialize;\nuse tokio;\nuse tokio::sync::*;\n",
+            ),
+            (
+                "tools/fetch.py",
+                "import requests\nfrom requests import Session\nfrom requests.adapters import HTTPAdapter as Adapter\nfrom yaml import *\n",
+            ),
+            (
+                "web/app.ts",
+                "import React, { useState, useEffect as effect } from \"react\";\nimport * as path from \"lodash\";\nimport \"reflect-metadata\";\nexport { z } from \"zod\";\nimport { Client } from \"@scope/sdk/client\";\n",
+            ),
+            (
+                "src/main/java/p/A.java",
+                "package p;\n\nimport org.slf4j.Logger;\nimport org.slf4j.LoggerFactory;\nimport com.google.common.collect.*;\nimport static org.junit.Assert.assertEquals;\n\nclass A {}\n",
+            ),
+        ]);
+        // Rust: the path after the crate, the written name and not its
+        // alias; a module is left out when a name inside it is listed.
+        assert_eq!(
+            imported(&facts, "src/lib.rs", "axum"),
+            ["Router", "extract::Path", "extract::State"]
+        );
+        assert_eq!(
+            imported(&facts, "src/lib.rs", "serde"),
+            ["Serialize", "de::Visitor"]
+        );
+        assert_eq!(imported(&facts, "src/lib.rs", "tokio"), ["sync::*"]);
+
+        assert_eq!(
+            imported(&facts, "tools/fetch.py", "requests"),
+            ["Session", "adapters.HTTPAdapter"]
+        );
+        assert_eq!(imported(&facts, "tools/fetch.py", "yaml"), ["*"]);
+
+        assert_eq!(
+            imported(&facts, "web/app.ts", "react"),
+            ["default", "useEffect", "useState"]
+        );
+        assert_eq!(imported(&facts, "web/app.ts", "lodash"), ["*"]);
+        assert!(imported(&facts, "web/app.ts", "reflect-metadata").is_empty());
+        assert_eq!(imported(&facts, "web/app.ts", "zod"), ["z"]);
+        assert_eq!(imported(&facts, "web/app.ts", "@scope/sdk"), ["Client"]);
+
+        let java = "src/main/java/p/A.java";
+        assert_eq!(
+            imported(&facts, java, "org.slf4j"),
+            ["Logger", "LoggerFactory"]
+        );
+        assert_eq!(imported(&facts, java, "com.google"), ["common.collect.*"]);
+        assert_eq!(imported(&facts, java, "org.junit"), ["Assert.assertEquals"]);
     }
 
     #[test]

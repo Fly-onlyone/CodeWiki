@@ -17,6 +17,11 @@ pub struct UseImport {
     pub alias: String,
     pub glob: bool,
     pub public: bool,
+    /// What the import takes from a package outside the repository, as the
+    /// language writes it (`adapters.HTTPAdapter`, `*`). Empty when it names
+    /// repository code or the package alone, and for Rust, whose `path`
+    /// still says it.
+    pub external: String,
 }
 
 /// A call found in a function or method body.
@@ -698,6 +703,7 @@ impl<'a> Extractor<'a> {
                     alias,
                     glob: false,
                     public,
+                    external: String::new(),
                 });
             }
             "use_as_clause" => {
@@ -716,6 +722,7 @@ impl<'a> Extractor<'a> {
                     alias,
                     glob: false,
                     public,
+                    external: String::new(),
                 });
             }
             "use_wildcard" => {
@@ -730,6 +737,7 @@ impl<'a> Extractor<'a> {
                     alias: String::new(),
                     glob: true,
                     public,
+                    external: String::new(),
                 });
             }
             "scoped_use_list" => {

@@ -15,6 +15,27 @@ use crate::workspace::CrateInfo;
 pub struct ExternalUse {
     pub file: String,
     pub krate: String,
+    /// What the file imports from the crate, as its language writes it
+    /// (`extract::Path`, `adapters.HTTPAdapter`, `*`), in name order. Empty
+    /// when the file names only the crate itself. A module is left out
+    /// when a name inside it is listed.
+    pub names: Vec<String>,
+}
+
+/// `names` without each one that only leads to another: `de` beside
+/// `de::Visitor`.
+fn leaves(names: BTreeSet<String>) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| {
+            !names.iter().any(|other| {
+                other
+                    .strip_prefix(name.as_str())
+                    .is_some_and(|rest| rest.starts_with("::") || rest.starts_with('.'))
+            })
+        })
+        .cloned()
+        .collect()
 }
 
 #[derive(Debug, Default)]
@@ -432,7 +453,7 @@ impl<'a> Resolver<'a> {
     pub fn resolve(&self, files: &[(String, ParsedFile)]) -> Resolved {
         // Each edge once, with the place of the first call it stands for.
         let mut edges: BTreeMap<(String, String, EdgeKind, Confidence), u32> = BTreeMap::new();
-        let mut external: BTreeSet<ExternalUse> = BTreeSet::new();
+        let mut external: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
         // `at` is where a call stands in its file, and 0 for what is no call.
         let mut add = |src: String, dst: String, kind: EdgeKind, conf: Confidence, at: u32| {
             if src != dst {
@@ -466,10 +487,24 @@ impl<'a> Resolver<'a> {
                             && !self.crate_names.contains(first)
                             && !TOOLCHAIN_CRATES.contains(&first)
                         {
-                            external.insert(ExternalUse {
-                                file: file.clone(),
-                                krate: first.to_string(),
-                            });
+                            let taken = if language == Language::Rust {
+                                let mut taken = u.path[1..].join("::");
+                                if u.glob {
+                                    if !taken.is_empty() {
+                                        taken.push_str("::");
+                                    }
+                                    taken.push('*');
+                                }
+                                taken
+                            } else {
+                                u.external.clone()
+                            };
+                            let names = external
+                                .entry((file.clone(), first.to_string()))
+                                .or_default();
+                            if !taken.is_empty() {
+                                names.insert(taken);
+                            }
                         }
                     }
                 }
@@ -596,7 +631,14 @@ impl<'a> Resolver<'a> {
                     site,
                 })
                 .collect(),
-            external_uses: external.into_iter().collect(),
+            external_uses: external
+                .into_iter()
+                .map(|((file, krate), names)| ExternalUse {
+                    file,
+                    krate,
+                    names: leaves(names),
+                })
+                .collect(),
         }
     }
 }

@@ -161,10 +161,13 @@ impl Index {
                 stmt.execute(params![c.name, json]).map_err(&err)?;
             }
             let mut stmt = tx
-                .prepare("INSERT OR IGNORE INTO external_uses VALUES (?1, ?2)")
+                .prepare("INSERT OR IGNORE INTO external_uses VALUES (?1, ?2, ?3)")
                 .map_err(&err)?;
             for u in &facts.external_uses {
-                stmt.execute(params![u.file, u.krate]).map_err(&err)?;
+                let names = serde_json::to_string(&u.names)
+                    .map_err(|e| Error::external("encoding imported names", e))?;
+                stmt.execute(params![u.file, u.krate, names])
+                    .map_err(&err)?;
             }
         }
         tx.commit().map_err(&err)
@@ -295,12 +298,15 @@ impl Index {
 
     pub fn external_uses(&self) -> Result<Vec<ExternalUse>> {
         self.collect(
-            "SELECT file, krate FROM external_uses ORDER BY krate, file",
+            "SELECT file, krate, names FROM external_uses ORDER BY krate, file",
             [],
             |r| {
+                let names: String = r.get(2)?;
                 Ok(ExternalUse {
                     file: r.get(0)?,
                     krate: r.get(1)?,
+                    // A row that does not read is a row without names.
+                    names: serde_json::from_str(&names).unwrap_or_default(),
                 })
             },
         )
@@ -406,6 +412,7 @@ mod tests {
             external_uses: vec![ExternalUse {
                 file: "src/lib.rs".into(),
                 krate: "serde".into(),
+                names: vec!["Deserialize".into(), "de::Visitor".into()],
             }],
             files_with_errors: vec![],
         }

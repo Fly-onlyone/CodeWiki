@@ -1,7 +1,7 @@
 //! Database schema. Bump `SCHEMA_VERSION` on any change; an index with a
 //! different version is dropped and rebuilt rather than migrated.
 
-pub const SCHEMA_VERSION: i64 = 4;
+pub const SCHEMA_VERSION: i64 = 5;
 
 pub const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS meta (
@@ -52,6 +52,7 @@ CREATE TABLE IF NOT EXISTS crates (
 CREATE TABLE IF NOT EXISTS external_uses (
     file  TEXT NOT NULL,
     krate TEXT NOT NULL,
+    names TEXT NOT NULL,
     PRIMARY KEY (file, krate)
 ) WITHOUT ROWID;
 

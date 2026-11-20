@@ -2,7 +2,9 @@ name: Release
 
 # A version tag (v0.2.0, v0.2.0-rc.1) builds the Windows package with
 # scripts/package.ps1 and publishes it as a GitHub Release. The tag must match
-# the workspace version in Cargo.toml.
+# the workspace version in Cargo.toml. The programs carry the DSN of the
+# repository variable SENTRY_DSN, and with the secret SENTRY_AUTH_TOKEN their
+# debug files go to Sentry.
 #
 # A pull request that changes the packaging, and a manual run, build the same
 # package as a dry run: it is kept as a workflow artifact and nothing is
@@ -62,6 +64,11 @@ jobs:
 
       - name: Build and package
         shell: pwsh
+        env:
+          # The programs carry the DSN and report only once the user turns
+          # error reports on. A repository without the variable builds
+          # programs that never report.
+          CODEWIKI_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
         run: ./scripts/package.ps1
 
       - name: Write the checksum
@@ -96,3 +103,34 @@ jobs:
           if ($env:VERSION.Contains('-')) { $flags += '--prerelease' }
           gh release create $env:GITHUB_REF_NAME $env:ZIP "$env:ZIP.sha256" `
             --title "CodeWiki $env:VERSION" --generate-notes --verify-tag @flags
+
+      # A secret cannot be named in a step's condition, and the token must not
+      # reach the build above, whose build scripts see its environment.
+      - name: Look for a Sentry token
+        id: sentry
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+        run: |
+          "ready=$([bool]$env:SENTRY_AUTH_TOKEN)".ToLower() >> $env:GITHUB_OUTPUT
+
+      # Sentry names the functions of a release build's stack trace from these
+      # files (dist/symbols-<version>, written by package.ps1).
+      - name: Send the debug files to Sentry
+        if: steps.sentry.outputs.ready == 'true'
+        shell: pwsh
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: fly-theonlyone
+          SENTRY_PROJECT: codewiki
+          RELEASE: codewiki@${{ steps.version.outputs.version }}
+          SYMBOLS: dist/symbols-${{ steps.version.outputs.version }}
+        run: |
+          $cli = "@sentry/cli@3.8.2"
+          npx --yes $cli releases new $env:RELEASE
+          if ($LASTEXITCODE -ne 0) { throw "sentry-cli could not create the release" }
+          npx --yes $cli debug-files upload --wait $env:SYMBOLS
+          if ($LASTEXITCODE -ne 0) { throw "sentry-cli could not upload the debug files" }
+          npx --yes $cli releases finalize $env:RELEASE
+          if ($LASTEXITCODE -ne 0) { throw "sentry-cli could not finalize the release" }

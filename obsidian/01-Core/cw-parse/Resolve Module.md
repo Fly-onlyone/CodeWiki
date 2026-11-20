@@ -18,16 +18,19 @@ Main items:
 - `ExternalUse` — A `use` of a crate that is not part of the repository.
 - `Resolved` — struct
 - `MAX_REEXPORT_DEPTH` — const
-- `COMMON_METHODS` — method names so common in the standard library that a receiver of unknown type almost never means a repository method of the same name.
-- `TOOLCHAIN_CRATES` — crates that ship with the toolchain; never reported as integrations.
+- `home_module` — the module a Rust symbol is declared in: its qualified name without its own name, and without the type for a method (`module::Type::name`).
+- `is_separate_target` — A file of an integration test, a bench or an example: a crate of its own, whose items the library cannot name.
+- `within` — `module` is `outer` or nested inside it.
+- `visible_from` — whether Rust code in `module` can name `symbol`: a private item in its own module and the ones inside it, a `pub(crate)` item in its crate, and an item of a test, bench or example only from that file.
 
 ## Depends on
 
 - [[Model Module]] — uses `Edge`
+- [[Symbol]] — uses `Symbol`
 
 ## Used by
 
-- [[Resolver]] — from `resolve`, `resolve_abs`
+- [[Resolver]] — from `by_bare_name`, `resolve`, `resolve_abs`
 - [[Scan Module]] — from `RepoFacts`
 - [[Index]] — from `external_uses`
 

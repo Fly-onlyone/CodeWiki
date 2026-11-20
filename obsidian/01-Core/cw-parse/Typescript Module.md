@@ -17,8 +17,8 @@ Main items:
 - `parse_typescript` — parse one TypeScript or TSX source file.
 - `Extractor` — struct
 - `Ctx` — struct
-- `text` — function
 - `pattern_names` — names bound by a declaration or parameter pattern.
+- `text` — function
 - `is_function_value` — function
 - `bindings` — names bound anywhere in a function scope, not descending into nested functions and classes.
 - `Target` — what an import specifier names.

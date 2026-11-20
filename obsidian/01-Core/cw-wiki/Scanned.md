@@ -25,9 +25,8 @@ Public API:
 
 ## Depends on
 
-- [[Rustscan Module]] — uses `find_tests`, `is_ident`, `mask`, `matching`
+- [[Rustscan Module]] — uses `TestFn`, `find_tests`, `is_ident`, `mask`
 - [[Literal]] — uses `Literal`
-- [[TestFn]] — uses `TestFn`
 
 ## Used by
 

@@ -28,7 +28,7 @@ Public API:
 
 ## Used by
 
-- [[cw-embed]] — from `a_failed_probe_carries_the_providers_explanation`, `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config`, `openai_embedder_sends_a_bearer_token_and_orders_by_index`
+- [[cw-embed]] — from `a_failed_probe_carries_the_providers_explanation`, `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config_in`, `openai_embedder_sends_a_bearer_token_and_orders_by_index`
 
 ## See also
 

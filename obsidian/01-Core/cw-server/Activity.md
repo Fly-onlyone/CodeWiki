@@ -24,7 +24,6 @@ Public API:
 
 - [[Activity Module]] — uses `RunningUpdate`, `UpdateGuard`, `now`
 - [[cw-core]] — uses `VERSION`
-- [[Diagrams Module]] — uses `store`
 
 ## Used by
 

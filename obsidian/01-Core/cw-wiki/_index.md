@@ -31,13 +31,13 @@ tags: [moc, core, cw-wiki]
 - [[Render Module]] — rendering of planned notes into Markdown in the vault's house style.
 - [[RenderCtx]] — `RenderCtx` struct defined in `cw_wiki::render` with 22 methods.
 - [[Repo]] — lookup tables over the scanned facts.
+- [[Run]] — one pass that brings the stored vectors of some kinds in line with their documents, a batch at a time.
 - [[Rustscan Module]] — A light lexical scan of Rust source, shared by the test map and the security rules.
 - [[Scanned]] — `Scanned` struct defined in `cw_wiki::rustscan` with 7 methods.
 - [[Security Module]] — security pattern findings for Rust source.
 - [[Semantic Module]] — semantic search: embeds search documents and blends vector matches with full-text matches.
 - [[Service Module]] — High-level operations shared by the CLI, the server and the MCP tools.
 - [[Slot]] — the place that holds the embedder in use.
-- [[TestFn]] — A `test`-like function found in a file.
 - [[Testmap Module]] — test map: which tests exist, what they exercise, and which to run after a change.
 - [[Unit]] — one top-level part of the repository.
 - [[Units]] — every unit of a repository and the lookup from code to unit.

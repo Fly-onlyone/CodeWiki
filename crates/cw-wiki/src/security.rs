@@ -7,6 +7,11 @@
 //! `#[test]`. The rules favour silence over recall; they flag what is worth a
 //! reviewer's look, not everything that could go wrong.
 //!
+//! An `unsafe` block is reported only when no `// SAFETY:` comment says why
+//! it is sound: in the comments directly above the statement that holds it,
+//! or on the first line inside it. Clippy's `undocumented_unsafe_blocks`
+//! asks the same of this workspace.
+//!
 //! A finding is silenced by a comment on its line or the line above:
 //! `// codewiki-allow: security/<rule>`, or `// codewiki-allow` for any rule.
 
@@ -19,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use crate::level::Level;
 use crate::rustscan::{Literal, Scanned, is_test_path};
 
-/// An `unsafe { … }` block. `unsafe fn`, `impl` and `trait` are declarations
-/// and are not reported.
+/// An `unsafe { … }` block with no `// SAFETY:` comment. `unsafe fn`, `impl`
+/// and `trait` are declarations and are not reported.
 pub const UNSAFE_BLOCK: &str = "security/unsafe-block";
 /// A recognisable credential, or a high-entropy literal assigned to a name
 /// such as `token`, `secret`, `password` or `api_key`.
@@ -88,9 +93,9 @@ fn unsafe_blocks(s: &Scanned, out: &mut Vec<Hit>) {
         if s.code[pos + 6..].trim_start().starts_with('{') {
             out.push(Hit {
                 rule: UNSAFE_BLOCK,
-                level: Level::Note,
+                level: Level::Warning,
                 offset: pos,
-                message: "`unsafe` block; check that its safety conditions are stated and hold"
+                message: "`unsafe` block with no `// SAFETY:` comment saying why it is sound"
                     .into(),
             });
         }
@@ -595,6 +600,48 @@ fn insecure_http(s: &Scanned, out: &mut Vec<Hit>) {
     }
 }
 
+/// True when a `// SAFETY:` comment states why the `unsafe` block on line
+/// `at` (1-based) is sound. The comment is in the run of comments directly
+/// above the statement that holds the block, found by walking up past the
+/// statement's own earlier lines (`let previous =`), or it is the first line
+/// inside a block that opens at the end of line `at`.
+fn has_safety_comment(lines: &[&str], at: usize) -> bool {
+    fn comment(line: &str) -> bool {
+        let line = line.trim_start();
+        line.starts_with("//") || line.starts_with("/*") || line.starts_with('*')
+    }
+    let safety = |line: &str| comment(line) && line.contains("SAFETY:");
+    // A line of code that ends like this leaves its statement unfinished.
+    let unfinished = |line: &str| {
+        let line = line.trim_end();
+        !comment(line)
+            && ["=", "(", ",", "&&", "||"]
+                .iter()
+                .any(|end| line.ends_with(end))
+    };
+    let Some(line) = at.checked_sub(1).and_then(|i| lines.get(i)) else {
+        return false;
+    };
+    if line.trim_end().ends_with('{') && lines.get(at).is_some_and(|next| safety(next)) {
+        return true;
+    }
+    let mut above = at - 1;
+    while above > 0 && unfinished(lines[above - 1]) {
+        above -= 1;
+    }
+    while above > 0 {
+        let line = lines[above - 1];
+        if safety(line) {
+            return true;
+        }
+        if !comment(line) && !line.trim_start().starts_with("#[") {
+            return false;
+        }
+        above -= 1;
+    }
+    false
+}
+
 /// True when a `codewiki-allow` comment on `line` covers `rule`.
 fn allows(line: &str, rule: &str) -> bool {
     line.split_once("codewiki-allow")
@@ -630,6 +677,7 @@ pub fn scan_source(path: &str, source: &str) -> Vec<SecurityFinding> {
             line: s.line_of(hit.offset),
             message: hit.message,
         })
+        .filter(|f| f.rule != UNSAFE_BLOCK || !has_safety_comment(&lines, f.line as usize))
         .filter(|f| {
             let at = f.line as usize;
             ![at.checked_sub(1), at.checked_sub(2)]
@@ -697,6 +745,44 @@ mod tests {
         );
         silent("unsafe fn f() {}\nunsafe impl Send for X {}\npub unsafe trait T {}\n");
         silent("// unsafe { }\nconst DOC: &str = \"unsafe { }\";\nfn not_unsafe_here() {}\n");
+    }
+
+    #[test]
+    fn a_safety_comment_silences_an_unsafe_block() {
+        // Directly above, over several lines.
+        silent(
+            "fn f(p: *const u8) -> u8 {\n    // SAFETY: `p` points to a live byte;\n    // the caller keeps it alive.\n    unsafe { *p }\n}\n",
+        );
+        // Above a statement that starts on an earlier line, with an attribute
+        // between.
+        silent(
+            "fn f(p: *const u8) -> u8 {\n    // SAFETY: `p` points to a live byte.\n    #[allow(clippy::let_and_return)]\n    let byte =\n        unsafe { *p };\n    byte\n}\n",
+        );
+        // First line inside the block.
+        silent(
+            "fn f(p: *const u8) -> u8 {\n    unsafe {\n        // SAFETY: `p` points to a live byte.\n        *p\n    }\n}\n",
+        );
+        // A comment that states nothing, or a SAFETY comment above an earlier
+        // statement, does not count.
+        assert_eq!(
+            rules("fn f(p: *const u8) -> u8 {\n    // Read the byte.\n    unsafe { *p }\n}\n"),
+            [(UNSAFE_BLOCK.to_string(), 3)]
+        );
+        assert_eq!(
+            rules(
+                "fn f(p: *const u8) -> u8 {\n    // SAFETY: nothing to see.\n    let a = 1;\n    unsafe { *p }\n}\n"
+            ),
+            [(UNSAFE_BLOCK.to_string(), 4)]
+        );
+        // The word must be in a comment.
+        fires(
+            UNSAFE_BLOCK,
+            "fn f(p: *const u8) -> u8 {\n    let _ = \"SAFETY:\";\n    unsafe { *p }\n}\n",
+        );
+        // An allowance still silences it.
+        silent(
+            "fn f(p: *const u8) -> u8 {\n    // codewiki-allow: security/unsafe-block\n    unsafe { *p }\n}\n",
+        );
     }
 
     #[test]
@@ -929,7 +1015,7 @@ mod tests {
         assert_eq!(
             levels,
             [
-                (UNSAFE_BLOCK, Level::Note, 2),
+                (UNSAFE_BLOCK, Level::Warning, 2),
                 (ENV_SET_VAR, Level::Warning, 3),
                 (TLS_DISABLED, Level::Error, 4),
             ]

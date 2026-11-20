@@ -26,11 +26,12 @@ Main items:
 ## Depends on
 
 - [[ListItemButton]] — uses `icon`, `new`, `trailing`
-- [[Motion Module (mui)]] — uses `MENU`, `enter`
 - [[Doc View Module]] — uses `set`
 - [[List Module]] — uses `subheader`
+- [[Motion Module (mui)]] — uses `enter`
 - [[Surfaces Module]] — uses `paper`
 - [[Glyph]] — uses `Glyph`
+- [[Enter]] — uses `MENU`
 
 ## Used by
 

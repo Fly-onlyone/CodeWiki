@@ -12,7 +12,7 @@ tags: [core, codewiki-app, module]
 
 ## How it works
 
-`styles/createTransitions.js`, `easing`.
+`createTransitions.js`, `easing`.
 
 Main items:
 

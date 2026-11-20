@@ -14,7 +14,7 @@ tags: [core, codewiki-app, module]
 
 Main items:
 
-- [[Button]] — A button with a label, and optionally an icon before it.
+- `Button` — A button with a label, and optionally an icon before it.
 - `IconButton` — A round button that is only an icon.
 - `ToggleButtonGroup` — A few buttons side by side, one of them chosen: MUI's exclusive `ToggleButtonGroup` in the primary color.
 - `Metrics` — what a size comes to for a button of one kind.
@@ -27,17 +27,17 @@ Main items:
 
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
 - [[Tokens Module]] — uses `easing`, `spec`, `states`
+- [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
 - [[Feedback Module]] — uses `tooltip`
-- [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`
 - [[Glyph]] — uses `Glyph`
+- [[Spring]] — uses `policy`
 
 ## Used by
 
-- [[codewiki-app]] — from `settings_frame`, `tab_bar`, `toolbar`
-- [[Button]] — from `Button`, `render`
-- [[Doc View Module]] — from `choices_row`
+- [[codewiki-app]] — from `details`, `edit_view`, `proposal_actions`, `settings_frame`
+- [[Doc View Module]] — from `choices_row`, `draw`, `secret_control`
 
 ## See also
 

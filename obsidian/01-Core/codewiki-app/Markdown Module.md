@@ -23,7 +23,7 @@ Main items:
 - `Diagram` — what the viewer shows in place of one Mermaid block.
 - `decode` — decode `%XX` escapes produced by `encode`.
 - `outline` — `##` headings of a note, for the outline pane.
-- `prepare_note` — turn a vault note into Markdown the viewer can render: frontmatter becomes a tag line and `(wikilinks)` become ordinary links with the note scheme.
+- `prepare_note` — turn a vault note into Markdown the viewer can render: frontmatter becomes a tag line and `[[wikilinks]]` become ordinary links with the note scheme.
 
 ## Depends on
 

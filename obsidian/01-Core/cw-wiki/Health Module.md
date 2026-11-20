@@ -17,8 +17,8 @@ Main items:
 - `DriftKind` — enum
 - `Drift` — struct
 - `Finding` — struct
-- `Certainty` — enum
 - `dead_code` — symbols nothing refers to.
+- `Certainty` — enum
 - `file_health` — health score for every source file with symbol support, worst first.
 - `doc_drift` — where the documentation no longer matches the code.
 - `DeadSymbol` — struct
@@ -36,7 +36,7 @@ Main items:
 
 ## Used by
 
-- [[cw-wiki]] — from `finds_dead_code_without_false_alarms`, `reports_documentation_drift_and_coverage`, `scores_file_health_with_reasons`
+- [[cw-wiki]] — from `a_cycle_is_two_sibling_files_not_a_module_and_its_parent`, `finds_dead_code_without_false_alarms`, `private_items_used_through_receivers_and_constants_are_alive`, `reports_documentation_drift_and_coverage`
 - [[Api Module]] — from `dead_code`, `doc_drift`, `file_health`
 - [[Refactor Module]] — from `extract_types`, `move_functions`, `split_files`
 - [[codewiki]] — from `run`

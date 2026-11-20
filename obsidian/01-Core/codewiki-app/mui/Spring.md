@@ -19,8 +19,8 @@ Public API:
 - `pub fn config(self) -> SpringConfig` — for `with_spring` and `sampled_easing`.
 - `pub fn response(self) -> Duration` — the time one swing would take with no damping: `2π / √(k/m)`.
 - `pub fn damping_ratio(self) -> f32` — the damping ratio `c / (2√(km))`.
-- `pub fn policy(self, epsilon: f32) -> kit::Spring` — for `gpui_kit::base::motion::spring`, which follows a moving target.
 - `pub fn animation(self) -> Animation` — one run of the spring from rest at 0 to rest at 1, as an animation.
+- `pub fn policy(self, epsilon: f32) -> kit::Spring` — for `gpui_kit::base::motion::spring`, which follows a moving target.
 - `pub const fn new(stiffness: f32, damping: f32) -> Self`
 
 ## Depends on
@@ -30,10 +30,11 @@ Public API:
 
 ## Used by
 
-- [[Motion Module (mui)]] — from `BOUNCY`, `Enter`, `GENTLE`, `PAGE`
+- [[Motion Module (mui)]] — from `BOUNCY`, `GENTLE`, `PAGE`, `SNAPPY`
+- [[Enter]] — from `Enter`, `rise`, `slide`
 - [[Doc View Module]] — from `stat_tile`
+- [[Button Module]] — from `render`
 - [[Tabs Module]] — from `render`
-- [[Button]] — from `render`
 - [[ListItemButton]] — from `render`
 
 ## See also

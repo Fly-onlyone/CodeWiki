@@ -25,11 +25,11 @@ Main items:
 
 ## Depends on
 
+- [[Security Module]] — uses `COMMAND_INJECTION`, `ENV_SET_VAR`, `HARDCODED_SECRET`, `INSECURE_HTTP`
 - [[Health Module]] — uses `dead_code`, `doc_drift`, `file_health`
 - [[cw-core]] — uses `VAULT_DIR`, `VERSION`
 - [[Error Module]] — uses `Result`
 - [[Decisions Module]] — uses `list`
-- [[Security Module]] — uses `scan`
 - [[Index]] — uses `Index`
 - [[Level]] — uses `Level`
 

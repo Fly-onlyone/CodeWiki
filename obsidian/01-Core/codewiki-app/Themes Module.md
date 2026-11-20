@@ -34,10 +34,10 @@ Main items:
 
 - [[codewiki-app]] — from `main`, `open_theme_menu`, `palette_matches`, `select_theme`
 - [[Reading Module]] — from `frame`, `style`
+- [[Standard Module]] — from `REFERENCE`, `from_json`
 - [[Backdrop Module]] — from `shapes`
 - [[Doc View Module]] — from `choice_tint`
 - [[List Module]] — from `subheader`
-- [[Standard Module]] — from `from_json`
 - [[ListItemButton]] — from `render`
 
 ## See also

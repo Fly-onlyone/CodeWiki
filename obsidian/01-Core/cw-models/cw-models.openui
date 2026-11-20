@@ -1,0 +1,8 @@
+root = Card([summary, figures, chart], "cw-models")
+summary = TextContent("Built-in embedding models of CodeWiki: the catalog, the machine's hardware, the recommendation and the model files on disk.", "muted")
+figures = Grid([f0, f1, f2, f3], 4)
+f0 = Stat("Modules", "7")
+f1 = Stat("Public types", "21")
+f2 = Stat("Functions", "51")
+f3 = Stat("Used by crates", "4")
+chart = BarChart(["worker", "store", "game", "catalog", "recommend", "hardware"], [Series("Symbols per module", [45, 20, 15, 11, 10, 7])], "Symbols per module")

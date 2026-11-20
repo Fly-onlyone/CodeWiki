@@ -28,7 +28,7 @@ Main items:
 - [[Scan Module]] — from `scan_repo`
 - [[Manifest Module]] — from `body_hash`
 - [[Generate Module]] — from `generate`
-- [[Semantic Module]] — from `embed_documents`
+- [[Run]] — from `plan`
 
 ## See also
 

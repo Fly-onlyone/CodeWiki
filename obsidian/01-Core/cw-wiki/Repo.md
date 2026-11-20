@@ -19,9 +19,9 @@ Public API:
 - `pub fn unit_of(&self, qualified: &str) -> Option<&Unit>` — the unit that holds the symbol named `qualified`.
 - `pub fn unit_index(&self, qualified: &str) -> Option<usize>` — index of the unit that holds the symbol named `qualified`.
 - `pub fn subtree_rank(&self, qualified: &str) -> f64` — rank of a symbol plus everything nested in it.
+- `pub fn module_count(&self, unit: &Unit) -> usize` — number of source modules in `unit`.
 - `pub fn top_modules(&self, unit: &Unit) -> Vec<&'a Symbol>` — modules directly below the top of `unit`, in name order.
 - `pub fn at(root: &Path, facts: &'a RepoFacts, metrics: &'a [(String, NodeMetrics)]) -> Self` — lookup tables for the repository checked out at `root`.
-- `pub fn module_count(&self, unit: &Unit) -> usize` — number of source modules in `unit`.
 
 ## Depends on
 
@@ -29,10 +29,10 @@ Public API:
 - [[Units Module]] — uses `discover`, `is_test_file`
 - [[Unit]] — uses `Unit`, `is_rust`
 - [[Model Module]] — uses `Edge`
+- [[Store Module]] — uses `NodeMetrics`
 - [[Scan Module]] — uses `RepoFacts`
 - [[Plan Module]] — uses `is_test_path`
 - [[Language]] — uses `from_path`
-- [[Symbol]] — uses `Symbol`
 
 ## Used by
 

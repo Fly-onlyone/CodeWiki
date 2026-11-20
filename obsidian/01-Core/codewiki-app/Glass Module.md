@@ -20,8 +20,8 @@ Main items:
 - `hairline` — A one-pixel strip across the top of a surface that starts in the primary color and fades out to the right.
 - `tinted` — A chrome surface: `surface` tinted toward the active theme's primary color.
 - `PANE_TINT` — share of the primary color mixed into the reading pane, as much as the chrome so that the page and its frame read as one surface.
+- `debug_backdrop` — an opaque color to paint under every surface instead of the real backdrop, from `CODEWIKI_BACKDROP=#RRGGBB`.
 - `tinted_pane` — the reading pane's surface: `surface` tinted toward the active theme's primary color.
-- `debug_backdrop` — an opaque color to paint under every surface instead of the real backdrop, from `CODEWIKI_BACKDROP=RRGGBB`.
 
 ## Depends on
 

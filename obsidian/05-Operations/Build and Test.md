@@ -19,7 +19,7 @@ tags: [operations]
 
 ## How it works
 
-The repository is a Cargo workspace of 17 packages. Run every command from the repository root.
+The repository is a Cargo workspace of 19 packages. Run every command from the repository root.
 
 ```sh
 cargo build --workspace

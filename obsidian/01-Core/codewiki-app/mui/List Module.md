@@ -25,7 +25,7 @@ Main items:
 
 ## Depends on
 
-- [[ListItemButton]] — uses `ListItemButton`, `new`
+- [[ListItemButton]] — uses `ListItemButton`, `icon`, `new`, `on_click`
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Tokens Module]] — uses `easing`
 - [[Curve Module]] — uses `EASE_IN_OUT`

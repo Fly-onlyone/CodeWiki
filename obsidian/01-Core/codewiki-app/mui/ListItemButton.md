@@ -38,9 +38,9 @@ Public API:
 
 - [[codewiki-app]] — from `palette_view`, `settings_entry`, `settings_frame`, `sidebar`
 - [[List Module]] — from `ListFolder`, `render`, `rows`
+- [[Logs Module]] — from `enabled`, `line`
 - [[Doc View Module]] — from `draw_row`
 - [[Menu Module]] — from `render`
-- [[Logs Module]] — from `enabled`
 
 ## See also
 

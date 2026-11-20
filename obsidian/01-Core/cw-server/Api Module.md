@@ -16,12 +16,12 @@ Main items:
 
 - `routes` — function
 - `ApiError` — struct
-- `Repo` — resolved repository: its root folder and its index.
 - `blocking` — run blocking work (SQLite, file I/O, parsing) off the async runtime.
+- `Repo` — resolved repository: its root folder and its index.
 - `Api` — type alias
 - `default_search_limit` — function
-- `SLOW_REQUEST` — A request that takes longer than this is logged at Info.
-- `GraphNode` — struct
+- `start_model_job` — start a job and answer 202 with it; its progress is in `GET /v1/models`.
+- `models_closed` — the answer of every model route on a backend that listens beyond this machine.
 
 ## Depends on
 
@@ -31,8 +31,8 @@ Main items:
 - [[Index]] — uses `Index`, `edges`, `files`, `find_symbols`
 - [[Coverage Module]] — uses `CoverageReport`, `import`, `import_text`, `load`
 - [[Health Module]] — uses `DeadSymbol`, `DocReport`, `FileHealth`, `dead_code`
+- [[Models Module]] — uses `Kind`, `after_update`, `describe`, `remove`
 - [[Repos Module]] — uses `RepoEntry`, `add`, `get`, `load`
-- [[Settings Module (cw-server)]] — uses `change`, `describe`, `resolved`, `test_embedder`
 
 ## Used by
 

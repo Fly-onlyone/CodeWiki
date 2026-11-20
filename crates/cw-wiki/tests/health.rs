@@ -86,6 +86,129 @@ fn finds_dead_code_without_false_alarms() {
     );
 }
 
+/// Private items used in ways a name-based resolver can miss: methods on a
+/// receiver of unknown type whose name other methods share, a method called
+/// inside a macro, a constant read only by another constant.
+fn receivers_fixture() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+    write(r, "crates/kit/Cargo.toml", "[package]\nname = \"kit\"\n");
+    write(
+        r,
+        "crates/kit/src/lib.rs",
+        "//! Kit.\npub mod consts;\npub mod logs;\npub mod page;\npub mod tray;\npub mod units;\n",
+    );
+    write(
+        r,
+        "crates/kit/src/page.rs",
+        "//! Pages.\nstruct Page(u8);\n\nimpl Page {\n    fn id(&self) -> u8 { self.0 }\n    fn really_unused(&self) -> u8 { 0 }\n}\n\n/// The shown page.\npub fn shown() -> u8 {\n    let page = Page(1);\n    page.id()\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/tray.rs",
+        "//! Tray.\n/// A command.\npub struct Command(u8);\n\nimpl Command {\n    /// Its id.\n    pub fn id(&self) -> u8 { self.0 }\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/logs.rs",
+        "//! Logs.\nuse std::sync::atomic::{AtomicU8, Ordering};\n\nstruct Level(AtomicU8);\n\nimpl Level {\n    fn get(&self) -> u8 { self.0.load(Ordering::Relaxed) }\n}\n\n/// A logger.\npub struct Logger {\n    level: Level,\n}\n\nimpl Logger {\n    /// Whether it writes anything.\n    pub fn enabled(&self) -> bool { self.level.get() > 0 }\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/units.rs",
+        "//! Units.\nstruct Family;\n\nimpl Family {\n    fn suffix(&self) -> &'static str { \"s\" }\n}\n\n/// A unit's name.\npub fn name(family: Family) -> String {\n    format!(\"unit{}\", family.suffix())\n}\n",
+    );
+    write(
+        r,
+        "crates/kit/src/consts.rs",
+        "//! Sizes.\nconst THUMB_PADDING: f32 = 2.0;\n\n/// The halo around a thumb.\npub const HALO: f32 = 20.0 + 2.0 * THUMB_PADDING;\n\nconst STRENGTH: f32 = 0.2;\nconst _: () = assert!(STRENGTH <= 0.3);\n",
+    );
+    dir
+}
+
+#[test]
+fn private_items_used_through_receivers_and_constants_are_alive() {
+    let dir = receivers_fixture();
+    let index = indexed(dir.path());
+    let dead = health::dead_code(&index).unwrap();
+    let find = |name: &str| dead.iter().find(|d| d.qualified.ends_with(name));
+
+    for alive in [
+        "::page::Page::id",        // `page.id()`, though `tray::Command::id` exists
+        "::logs::Level::get",      // `self.level.get()`, a common method name
+        "::units::Family::suffix", // `family.suffix()` inside `format!`
+        "::consts::THUMB_PADDING", // read by `HALO`
+        "::consts::STRENGTH",      // read by the anonymous assertion
+    ] {
+        assert!(find(alive).is_none(), "{alive} was reported dead: {dead:?}");
+    }
+    assert!(
+        !dead.iter().any(|d| d.qualified.ends_with("::_")),
+        "the anonymous constant is not an item: {dead:?}"
+    );
+    assert_eq!(
+        find("::page::Page::really_unused").map(|d| d.certainty),
+        Some(Certainty::Likely),
+        "{dead:?}"
+    );
+}
+
+#[test]
+fn a_cycle_is_two_sibling_files_not_a_module_and_its_parent() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[workspace]\nmembers = [\"crates/*\"]\n");
+    write(r, "crates/srv/Cargo.toml", "[package]\nname = \"srv\"\n");
+    // `lib.rs` calls into `api.rs`, which uses `lib.rs`'s `State`.
+    write(
+        r,
+        "crates/srv/src/lib.rs",
+        "//! Server.\npub mod a;\npub mod api;\npub mod b;\npub mod net;\n\n/// Shared state.\npub struct State;\n\n/// Serve.\npub fn serve() -> State { api::route() }\n",
+    );
+    write(
+        r,
+        "crates/srv/src/api.rs",
+        "//! Routes.\nuse crate::State;\n\n/// The one route.\npub fn route() -> State { State }\n",
+    );
+    // Two siblings that call each other.
+    write(
+        r,
+        "crates/srv/src/a.rs",
+        "//! A.\n/// Ping.\npub fn ping(n: u8) -> u8 { if n == 0 { 0 } else { crate::b::pong(n - 1) } }\n",
+    );
+    write(
+        r,
+        "crates/srv/src/b.rs",
+        "//! B.\n/// Pong.\npub fn pong(n: u8) -> u8 { if n == 0 { 0 } else { crate::a::ping(n - 1) } }\n",
+    );
+    // The library calls `.header(..)` on a type from elsewhere; the test's
+    // private `Received::header` is not that method.
+    write(
+        r,
+        "crates/srv/src/net.rs",
+        "//! Network.\n/// Send a request.\npub fn send(request: http::Request<()>) -> bool {\n    request.headers().contains_key(\"a\")\n}\n\n/// Build a request.\npub fn build() -> http::request::Builder {\n    http::Request::builder().header(\"a\", \"b\")\n}\n",
+    );
+    write(
+        r,
+        "crates/srv/tests/wire.rs",
+        "struct Received;\n\nimpl Received {\n    fn header(&self) -> u8 { 0 }\n}\n\n#[test]\nfn sends() {\n    let _ = srv::net::build();\n    assert_eq!(Received.header(), 0);\n}\n",
+    );
+
+    let health = health::file_health(&indexed(r)).unwrap();
+    let mut cyclic: Vec<&str> = health
+        .iter()
+        .filter(|h| h.findings.iter().any(|f| f.detector == "mutual-dependency"))
+        .map(|h| h.path.as_str())
+        .collect();
+    cyclic.sort_unstable();
+    assert_eq!(
+        cyclic,
+        ["crates/srv/src/a.rs", "crates/srv/src/b.rs"],
+        "{health:?}"
+    );
+}
+
 #[test]
 fn reports_documentation_drift_and_coverage() {
     let dir = fixture();
@@ -102,7 +225,7 @@ fn reports_documentation_drift_and_coverage() {
     write(
         &vault,
         "04-Patterns/Area Pattern.md",
-        "---\ntags: [pattern]\n---\n\n# Area Pattern\n\n> Mine.\n\n## Source\n\n- `crates/lib/src/lib.rs` — the trait\n- `crates/lib/src/gone.rs` — removed long ago\n\n## See also\n\n- [[_index]]\n- [[No Such Note]]\n",
+        "---\ntags: [pattern]\n---\n\n# Area Pattern\n\n> Mine.\n\n## Source\n\n- `crates/lib/src/lib.rs` — the trait\n- `crates/lib/src/gone.rs` — removed long ago\n- `styles/createTransitions.js` — another project's file\n\n## See also\n\n- [[_index]]\n- [[No Such Note]]\n",
     );
     let facts = cw_parse::scan_repo(dir.path()).unwrap();
     generate(dir.path(), &facts, &analyze(&facts), None, None).unwrap();
@@ -125,6 +248,11 @@ fn reports_documentation_drift_and_coverage() {
         kinds
             .iter()
             .any(|(k, d)| *k == DriftKind::DeadPath && d.contains("gone.rs")),
+        "{kinds:?}"
+    );
+    // A path that starts at no folder of the repository is not one of ours.
+    assert!(
+        !kinds.iter().any(|(_, d)| d.contains("createTransitions")),
         "{kinds:?}"
     );
     assert!(

@@ -9,8 +9,8 @@ tags: [moc, core, cw-index]
 ## Notes
 
 - [[cw-index]] — SQLite index: files, symbols, edges, metrics and full-text search for CodeWiki.
+- [[Document]] — one searchable unit.
 - [[Index]] — `Index` struct defined in `cw_index::store` with 19 methods.
-- [[NodeMetrics]] — `NodeMetrics` struct defined in `cw_index::store`.
 - [[Schema Module]] — database schema.
 - [[Search Module]] — Full-text search over notes, symbols and files (SQLite FTS5, BM25).
 - [[Store Module]] — reads and writes of structural facts.

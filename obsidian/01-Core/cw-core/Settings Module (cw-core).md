@@ -34,9 +34,11 @@ Main items:
 
 - [[Resolved]] — from `Resolved`, `from_env`, `from_parts`, `load`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
-- [[Settings Module (cw-server)]] — from `change`, `checked`, `describe`, `resolved`
+- [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `change`, `checked`, `describe`
+- [[Provider Module]] — from `MODEL_ENV`, `PROVIDER_ENV`, `from_config`
+- [[Models Module]] — from `chosen`, `describe`, `switch`
+- [[Model Module (codewiki)]] — from `remove`, `store`
 - [[Serve Module]] — from `run`
-- [[Provider Module]] — from `from_config`
 
 ## See also
 

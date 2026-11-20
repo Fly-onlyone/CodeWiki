@@ -28,11 +28,12 @@ Main items:
 ## Depends on
 
 - [[Diagrams Module]] — uses `store`
+- [[Doc View Module]] — uses `set`
 - [[Icons Module]] — uses `load`
 
 ## Used by
 
-- [[codewiki-app]] — from `listen`, `start_tray`
+- [[codewiki-app]] — from `listen`, `main`, `start_tray`
 - [[Instance Module]] — from `hand_over`
 - [[Tray Module]] — from `new`
 

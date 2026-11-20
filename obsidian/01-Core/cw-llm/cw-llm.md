@@ -39,14 +39,8 @@ Defined at the crate root:
 
 ## Used by
 
-- [[cw-server]] — from `call_as`, `hook`
 - [[codewiki]] — from `run`
-- [[cw-embed]] — from `post_json`
-- [[Provider Module]] — from `post_json`
 - [[Api Module]] — from `run_update`
-- [[Download Module]] — from `get`
-- [[Release Module]] — from `check`
-- [[Proposal Module]] — from `unified_diff`
 
 ## See also
 

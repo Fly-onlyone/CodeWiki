@@ -71,8 +71,9 @@ pub fn gutter(pane_width: f32, measure: f32) -> f32 {
 }
 
 /// The text view's whole style: what gpui-component 0.9.1 derives from its
-/// theme (`text/mod.rs`, `base_text_view_style`), with this pane's spacing
-/// folded in as its `text/compat.rs` folds it, and the theme's hues on top.
+/// theme (`base_text_view_style` in its `text` module), with this pane's
+/// spacing folded in as its `text::compat` folds it, and the theme's hues on
+/// top.
 fn style(cx: &App) -> TextViewStyle {
     let theme = cx.theme();
     let brand = themes::brand(cx);

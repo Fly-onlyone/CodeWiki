@@ -15,13 +15,13 @@ tags: [core, cw-vault, module]
 Main items:
 
 - `Severity` — enum
-- `Issue` — struct
 - `MAX_WORDS` — const
 - `MIN_WORDS` — const
+- `Issue` — struct
 - `Mode` — enum
 - `link_resolution_rate` — share of wikilinks across `notes` that resolve, from 0.0 to 1.0.
 - `lint` — lint one note.
-- `has_inline_tag` — `word` at a word boundary, where `word` starts with a letter.
+- `has_inline_tag` — `#word` at a word boundary, where `word` starts with a letter.
 
 ## Depends on
 
@@ -32,6 +32,7 @@ Main items:
 
 ## Used by
 
+- [[codewiki]] — from `note_style_skill_follows_the_lint`
 - [[Generate Module]] — from `generate`
 
 ## See also

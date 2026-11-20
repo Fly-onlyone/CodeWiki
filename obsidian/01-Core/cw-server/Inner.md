@@ -17,7 +17,9 @@ Declared as `pub(crate) struct Inner`.
 ## Depends on
 
 - [[cw-server]] — uses `ServerConfig`
+- [[Models Module]] — uses `HardwareCache`
 - [[Activity]] — uses `Activity`
+- [[Jobs]] — uses `Jobs`
 
 ## Used by
 

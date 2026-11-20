@@ -44,12 +44,12 @@ Modules:
 
 - [[Ci Module]] — uses `CheckFinding`, `check`, `fails`, `to_junit`
 - [[Gitintel Module]] — uses `blast_radius`, `change_risk`, `file_risk`, `hotspots`
+- [[Service Module]] — uses `DOCUMENT_KINDS`, `is_stale`, `open_existing_index_in`, `open_index_in`
 - [[Coverage Module]] — uses `import`, `import_text`, `load`, `report`
 - [[Security Module]] — uses `COMMAND_INJECTION`, `HARDCODED_SECRET`, `INSECURE_HTTP`, `SQL_FORMAT`
 - [[Health Module]] — uses `DriftKind`, `dead_code`, `doc_drift`, `file_health`
 - [[VaultMeta]] — uses `by_path`, `load`, `registry`, `save`
 - [[Proposal Module]] — uses `list`, `patch_text`, `reject`
-- [[Contracts Module]] — uses `RepoContracts`, `match_workspace`, `scan`
 
 ## See also
 

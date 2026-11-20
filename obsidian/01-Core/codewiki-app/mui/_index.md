@@ -9,8 +9,8 @@ tags: [moc, core, mui]
 ## Notes
 
 - [[Base Module]] — what every pressable control shares: MUI's `ButtonBase`.
-- [[Button]] — A button with a label, and optionally an icon before it.
 - [[Button Module]] — `Button` and `IconButton`.
+- [[Enter]] — an entrance: where the element comes from, on which spring, after what wait.
 - [[Feedback Module]] — `Alert`, `Chip`, `LinearProgress` and the tooltip: how the app tells the user something.
 - [[List Module]] — `List`: rows that can be pressed, a heading over a group of them, and a folder that opens and closes.
 - [[ListItemButton]] — A row that can be pressed.

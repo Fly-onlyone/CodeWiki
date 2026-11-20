@@ -28,7 +28,7 @@ Public API:
 
 ## Used by
 
-- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `embedders_report_http_errors_and_short_responses`, `from_config`, `ollama_embedder_posts_a_batch_and_normalizes_vectors`
+- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `embedders_report_http_errors_and_short_responses`, `from_config_in`, `ollama_embedder_posts_a_batch_and_normalizes_vectors`
 
 ## See also
 

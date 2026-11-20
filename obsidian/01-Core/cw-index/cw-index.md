@@ -24,16 +24,20 @@ Modules:
 
 ## Depends on
 
-- [[Search Module]] — uses `Document`, `Hit`, `fts_query`
-- [[Vectors Module]] — uses `VectorRow`, `from_blob`, `to_blob`
+- [[Vectors Module]] — uses `VectorRow`, `delete`, `from_blob`, `upsert`
+- [[Search Module]] — uses `Hit`, `fts_query`
 - [[Error Module]] — uses `Result`
 - [[Store Module]] — uses `db`
+- [[Document]] — uses `Document`
 
 ## Used by
 
-- [[Semantic Module]] — from `embed_documents`, `nearest`, `search_with`
-- [[Service Module]] — from `index_notes`, `reindex`
+- [[Service Module]] — from `index_notes`, `reembed`, `reindex`
+- [[Semantic Module]] — from `nearest`, `search_with`
+- [[Run]] — from `plan`, `store`
 - [[codewiki]] — from `run`
+- [[cw-wiki]] — from `the_documents_of_an_index_are_embedded_again_in_steps`
+- [[Models Module]] — from `embed_repo`
 - [[Query Module]] — from `answer`
 
 ## See also

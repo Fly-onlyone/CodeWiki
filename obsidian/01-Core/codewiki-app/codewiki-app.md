@@ -67,17 +67,15 @@ Defined at the crate root:
 
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
+- [[Live Module]] — uses `HomeInput`, `Project`, `file_page`, `home_page`
 - [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`
-- [[Live Module]] — uses `HomeInput`, `Project`, `file_page`, `home_page`
-- [[Backend]] — uses `Backend`, `answers`, `connect`, `delete`
+- [[Settings View Module]] — uses `LOG_LEVEL_PREF`, `MODELS_PAUSE`, `MODEL_HINT`, `OpenMenu`
 - [[Glass Module]] — uses `Levels`, `OPAQUE`, `chrome`, `for_window`
 - [[Update Module]] — uses `State`, `auto_check`, `available`, `can_check`
 
 ## Used by
 
-- [[cw-server]] — from `call_as`, `hook`
-- [[Api Module]] — from `log_request`, `require_token`
 - [[Settings View Module]] — from `new`
 
 ## See also

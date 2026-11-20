@@ -214,7 +214,7 @@ fn looks_like_path(span: &str) -> bool {
         && !span.contains("::")
         && !span.starts_with("http")
         && !span.starts_with('/')
-        && !span.contains(['(', '<', '{', '*', '$', '=', '|'])
+        && !span.contains(['(', '<', '{', '[', '*', '$', '=', '|', '"'])
 }
 
 /// Where the documentation no longer matches the code.
@@ -294,7 +294,13 @@ pub fn doc_drift(root: &Path, index: &Index) -> Result<DocReport> {
             }
             for span in line.split('`').skip(1).step_by(2) {
                 let path = span.trim().trim_end_matches('/');
+                // Only a path that starts at a folder or file of the
+                // repository or the vault claims to be one of ours. A file of
+                // another project (MUI's `Tab/Tab.js`) or an API route
+                // (`releases/latest`) starts nowhere here.
+                let first = path.split('/').next().unwrap_or(path);
                 if looks_like_path(span)
+                    && (root.join(first).exists() || vault.join(first).exists())
                     && !hashes.contains_key(path)
                     && !dirs.contains(path)
                     // Ignored paths (the vault, build output) are not indexed
@@ -438,16 +444,20 @@ pub fn file_health(index: &Index) -> Result<Vec<FileHealth>> {
         .map(|s| (s.qualified.as_str(), s.file.as_str()))
         .collect();
     let mut fan_out: HashMap<&str, HashSet<&str>> = HashMap::new();
+    // (file of a module, file of a module it declares with `mod`).
+    let mut declares: HashSet<(&str, &str)> = HashSet::new();
     let edges = index.edges()?;
     for edge in &edges {
-        if !DEPENDENCY_KINDS.contains(&edge.kind) {
+        let Some((src, dst)) = file_of
+            .get(edge.src.as_str())
+            .zip(file_of.get(edge.dst.as_str()))
+            .filter(|(src, dst)| src != dst)
+        else {
             continue;
-        }
-        if let (Some(src), Some(dst)) = (
-            file_of.get(edge.src.as_str()),
-            file_of.get(edge.dst.as_str()),
-        ) && src != dst
-        {
+        };
+        if edge.kind == EdgeKind::Declares {
+            declares.insert((src, dst));
+        } else if DEPENDENCY_KINDS.contains(&edge.kind) {
             fan_out.entry(src).or_default().insert(dst);
         }
     }
@@ -540,16 +550,18 @@ pub fn file_health(index: &Index) -> Result<Vec<FileHealth>> {
         }
 
         // Two files that need each other cannot be understood, tested or
-        // moved one at a time.
+        // moved one at a time. A module and the one that declares it are the
+        // exception: `lib.rs` declares `mod api;` and `api.rs` uses
+        // `crate::State`, and neither is meant to move without the other.
+        let path = file.path.as_str();
         let mut mutual: Vec<&str> = fan_out
-            .get(file.path.as_str())
+            .get(path)
             .into_iter()
             .flatten()
             .copied()
+            .filter(|other| fan_out.get(other).is_some_and(|back| back.contains(path)))
             .filter(|other| {
-                fan_out
-                    .get(other)
-                    .is_some_and(|back| back.contains(file.path.as_str()))
+                !declares.contains(&(path, *other)) && !declares.contains(&(*other, path))
             })
             .collect();
         mutual.sort_unstable();
@@ -660,6 +672,8 @@ mod tests {
             "a / b",
             "Vec<a/b>",
             "x=a/b",
+            "Agent[/ws/agent]",
+            "\"a/b\"",
         ] {
             assert!(!looks_like_path(no), "{no}");
         }

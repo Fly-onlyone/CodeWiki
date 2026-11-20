@@ -18,10 +18,10 @@ Main items:
 - `Tab` — one tab: its label and, optionally, something after it, such as a close button.
 - `bar` — where the bar sits under a tab that starts at `left` and is `width` wide: its own left edge and width.
 - `HEIGHT` — `MuiTab`: `minHeight: 44`.
+- `FONT` — `Tab/Tab.js`: the button text size at a line height of 1.25.
 - `BAR_MAX` — const
 - `BAR_SHARE` — const
 - `OnSelect` — what choosing the tab at an index does.
-- `BAR` — `MuiTab`, `::after`: `height: 3`, `width: 60%`, `maxWidth: 88`.
 
 ## Depends on
 

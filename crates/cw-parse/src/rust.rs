@@ -298,48 +298,49 @@ impl<'a> Extractor<'a> {
         }
     }
 
-    /// Walk a function body: record calls and type mentions, and extract
-    /// items declared inside it under the function's own scope.
+    /// Walk a function body or a constant's value: record the calls, values
+    /// and type mentions in `node` and below it, and extract items declared
+    /// inside it under the scope of `ctx`.
     fn walk_body(&mut self, node: Node, owner: &str, ctx: &Ctx, seen: &mut Vec<Vec<String>>) {
+        match node.kind() {
+            "function_item" | "struct_item" | "enum_item" | "union_item" | "trait_item"
+            | "impl_item" | "mod_item" | "use_declaration" | "const_item" | "static_item"
+            | "type_item" | "macro_definition" => {
+                self.visit_item(node, ctx);
+                return;
+            }
+            "call_expression" => {
+                if let Some(f) = node.child_by_field_name("function") {
+                    self.record_call(f, owner, ctx);
+                }
+            }
+            "type_identifier" | "scoped_type_identifier" => {
+                self.record_type_ref(node, owner, ctx, seen);
+                return;
+            }
+            // A name used as a value: a function passed as a callback, a
+            // constant, a static. Locals are recorded too and simply fail
+            // to resolve.
+            "identifier" | "scoped_identifier" => {
+                self.record_value(split_path(self.text(node)), false, owner, ctx);
+                return;
+            }
+            "macro_invocation" => {
+                let mut cursor = node.walk();
+                let trees: Vec<Node> = node
+                    .children(&mut cursor)
+                    .filter(|n| n.kind() == "token_tree")
+                    .collect();
+                for tree in trees {
+                    self.scan_tokens(tree, owner, ctx);
+                }
+                return;
+            }
+            _ => {}
+        }
         let mut cursor = node.walk();
         let children: Vec<Node> = node.named_children(&mut cursor).collect();
         for child in children {
-            match child.kind() {
-                "function_item" | "struct_item" | "enum_item" | "union_item" | "trait_item"
-                | "impl_item" | "mod_item" | "use_declaration" | "const_item" | "static_item"
-                | "type_item" | "macro_definition" => {
-                    self.visit_item(child, ctx);
-                    continue;
-                }
-                "call_expression" => {
-                    if let Some(f) = child.child_by_field_name("function") {
-                        self.record_call(f, owner, ctx);
-                    }
-                }
-                "type_identifier" | "scoped_type_identifier" => {
-                    self.record_type_ref(child, owner, ctx, seen);
-                    continue;
-                }
-                // A name used as a value: a function passed as a callback, a
-                // constant, a static. Locals are recorded too and simply fail
-                // to resolve.
-                "identifier" | "scoped_identifier" => {
-                    self.record_value(split_path(self.text(child)), false, owner, ctx);
-                    continue;
-                }
-                "macro_invocation" => {
-                    let mut cursor = child.walk();
-                    let trees: Vec<Node> = child
-                        .children(&mut cursor)
-                        .filter(|n| n.kind() == "token_tree")
-                        .collect();
-                    for tree in trees {
-                        self.scan_tokens(tree, owner, ctx);
-                    }
-                    continue;
-                }
-                _ => {}
-            }
             self.walk_body(child, owner, ctx, seen);
         }
     }
@@ -363,49 +364,78 @@ impl<'a> Extractor<'a> {
 
     /// Macro arguments are an unparsed token tree, so calls such as
     /// `format!("{}", helper(x))` are invisible to the expression walk.
-    /// Rebuild paths from the tokens: `a :: b` followed by `( .. )` is a call.
+    /// Rebuild paths from the tokens: `a :: b` followed by `( .. )` is a call,
+    /// and `. name ( .. )` is a method call.
     fn scan_tokens(&mut self, tree: Node, owner: &str, ctx: &Ctx) {
         let mut cursor = tree.walk();
         let tokens: Vec<Node> = tree.children(&mut cursor).collect();
         let mut path: Vec<String> = Vec::new();
         let mut joining = false;
+        // The last token was `.`, and then: `path` is a method or field name.
+        let mut after_dot = false;
+        let mut member = false;
+        // A name after `.` is a method when an argument list follows, and a
+        // field otherwise, which is not recorded.
+        let flush = |ex: &mut Self, path: Vec<String>, member: bool, call: bool| {
+            if !member {
+                ex.record_value(path, call, owner, ctx);
+            } else if call {
+                ex.out.calls.push(CallSite {
+                    caller: owner.to_string(),
+                    module: ctx.module.clone(),
+                    self_type: ctx.self_type.clone(),
+                    path,
+                    method: true,
+                });
+            }
+        };
         for token in tokens {
             match token.kind() {
                 "identifier" | "crate" | "self" | "super" => {
                     if !joining && !path.is_empty() {
-                        self.record_value(std::mem::take(&mut path), false, owner, ctx);
+                        flush(self, std::mem::take(&mut path), member, false);
+                    }
+                    if !joining {
+                        member = after_dot;
                     }
                     path.push(self.text(token).to_string());
                     joining = false;
+                    after_dot = false;
                 }
                 "string_literal" | "raw_string_literal" => {
                     if !path.is_empty() {
-                        self.record_value(std::mem::take(&mut path), false, owner, ctx);
+                        flush(self, std::mem::take(&mut path), member, false);
                     }
                     joining = false;
+                    after_dot = false;
                     for name in format_captures(self.text(token)) {
                         self.record_value(vec![name], false, owner, ctx);
                     }
                 }
-                "::" => joining = !path.is_empty(),
+                "::" => {
+                    joining = !path.is_empty();
+                    after_dot = false;
+                }
                 "token_tree" => {
                     let call = self.text(token).starts_with('(');
                     if !path.is_empty() {
-                        self.record_value(std::mem::take(&mut path), call, owner, ctx);
+                        flush(self, std::mem::take(&mut path), member, call);
                     }
                     joining = false;
+                    after_dot = false;
                     self.scan_tokens(token, owner, ctx);
                 }
-                _ => {
+                kind => {
                     if !path.is_empty() {
-                        self.record_value(std::mem::take(&mut path), false, owner, ctx);
+                        flush(self, std::mem::take(&mut path), member, false);
                     }
                     joining = false;
+                    after_dot = kind == ".";
                 }
             }
         }
         if !path.is_empty() {
-            self.record_value(path, false, owner, ctx);
+            flush(self, path, member, false);
         }
     }
 
@@ -497,10 +527,23 @@ impl<'a> Extractor<'a> {
         } else {
             kind
         };
-        let qualified = self.push_symbol(node, ctx, name, kind);
+        // `const _: () = assert!(..);` declares nothing that can be named;
+        // what its value uses belongs to the scope around it.
+        let owner = if name == "_" {
+            ctx.scope.clone()
+        } else {
+            self.push_symbol(node, ctx, name, kind)
+        };
+        let mut seen = vec![vec![name.to_string()]];
         if let Some(ty) = node.child_by_field_name("type") {
-            let mut seen = vec![vec![name.to_string()]];
-            self.collect_refs(ty, &qualified, ctx, &mut seen);
+            self.collect_refs(ty, &owner, ctx, &mut seen);
+        }
+        // A constant's value can use other items: `HALO = THUMB + 2.0 *
+        // THUMB_PADDING`.
+        if matches!(kind, SymbolKind::Const | SymbolKind::Static)
+            && let Some(value) = node.child_by_field_name("value")
+        {
+            self.walk_body(value, &owner, ctx, &mut seen);
         }
     }
 
@@ -926,6 +969,49 @@ fn free(w: &Widget) -> usize { LIMIT }
         assert!(
             has(&["crate", "other", "name"], true),
             "scoped call inside format!"
+        );
+    }
+
+    #[test]
+    fn records_method_calls_inside_macros() {
+        let src = "struct Family;\nimpl Family {\n    fn suffix(&self) -> &str { \"\" }\n}\nfn name(family: Family, point: (u8, u8)) -> String {\n    format!(\"{}{}\", family.suffix(), point.0)\n}\n";
+        let p = parse_rust("src/lib.rs", "demo", src).unwrap();
+        assert!(
+            p.calls
+                .iter()
+                .any(|c| c.caller == "demo::name" && c.method && c.path == ["suffix"]),
+            "{:?}",
+            p.calls
+        );
+        // A name after `.` is a method or a field, never a value.
+        assert!(
+            !p.value_refs.iter().any(|r| r.path == ["suffix"]),
+            "{:?}",
+            p.value_refs
+        );
+    }
+
+    #[test]
+    fn records_what_a_constant_value_uses() {
+        let src = "const THUMB: f32 = 20.0;\nconst PADDING: f32 = 9.0;\nconst HALO: f32 = THUMB + 2.0 * PADDING;\nconst STRENGTH: f32 = 0.2;\nconst _: () = assert!(STRENGTH <= 0.3);\nstatic TABLE: [f32; 1] = [scale(PADDING)];\n";
+        let p = parse_rust("src/lib.rs", "demo", src).unwrap();
+        let uses = |from: &str, name: &str| {
+            p.value_refs
+                .iter()
+                .any(|r| r.from == from && r.path == [name])
+        };
+        assert!(uses("demo::HALO", "PADDING"), "{:?}", p.value_refs);
+        assert!(uses("demo::HALO", "THUMB"));
+        assert!(uses("demo::TABLE", "PADDING"));
+        // The anonymous constant is no symbol; its value is the module's.
+        assert!(!p.symbols.iter().any(|s| s.name == "_"));
+        assert!(uses("demo", "STRENGTH"), "{:?}", p.value_refs);
+        assert!(
+            p.calls
+                .iter()
+                .any(|c| c.caller == "demo::TABLE" && c.path == ["scale"]),
+            "{:?}",
+            p.calls
         );
     }
 

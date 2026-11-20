@@ -21,6 +21,7 @@ Declared as `pub(crate) struct AppState`.
 ## Used by
 
 - [[Api Module]] — from `add_repo`, `approve_proposal`, `ask`, `backend_status`
+- [[Models Module]] — from `after_update`, `chosen`, `describe`, `embed_all`
 - [[Settings Module (cw-server)]] — from `change`, `describe`, `resolved`, `test_embedder`
 - [[cw-server]] — from `state`
 

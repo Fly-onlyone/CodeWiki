@@ -18,9 +18,9 @@ Main items:
 - [[Note]] — struct
 - `Section` — struct
 - `WikiLink` — struct
-- `extract_links` — find `(target)`, `(target|alias)`, `(target#heading)` and `!(embed)`.
+- `extract_links` — find `[[target]]`, `[[target|alias]]`, `[[target#heading]]` and `![[embed]]`.
 - `count_words` — function
-- `parse_tags` — read `tags: a, b` or a YAML block list under `tags:`.
+- `parse_tags` — read `tags: [a, b]` or a YAML block list under `tags:`.
 - `push_line` — function
 
 ## Used by

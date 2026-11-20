@@ -8,6 +8,8 @@ use cw_core::settings::{self, Key, Resolved};
 use cw_core::{Error, Result};
 use serde_json::{Value, json};
 
+use crate::cliproxy::CliProxy;
+
 /// Default Anthropic model for prose generation.
 pub const DEFAULT_ANTHROPIC_MODEL: &str = "claude-opus-5-5";
 const ANTHROPIC_VERSION: &str = "2026-10-21";
@@ -15,14 +17,14 @@ const ANTHROPIC_VERSION: &str = "2026-10-21";
 const ANTHROPIC_FALLBACK_BETA: &str = "server-side-fallback-2026-07-01";
 /// Non-streaming requests stay under HTTP timeouts at this size; notes are short.
 const MAX_TOKENS: u32 = 16000;
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
+pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(600);
 /// How long a probe waits. Long enough for a local server to load its model,
 /// short enough for someone watching a "Test" button.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
+pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
 /// Output a probe allows where the service makes the caller name a limit.
 const PROBE_MAX_TOKENS: u32 = 16;
-const PROBE_SYSTEM: &str = "Reply with the single word OK.";
-const PROBE_USER: &str = "ping";
+pub(crate) const PROBE_SYSTEM: &str = "Reply with the single word OK.";
+pub(crate) const PROBE_USER: &str = "ping";
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Completion {
@@ -90,6 +92,102 @@ fn agent(timeout: Duration) -> ureq::Agent {
         .into()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Method {
+    Get,
+    Post,
+    Delete,
+}
+
+/// One HTTP request to a provider.
+pub(crate) struct Call<'a> {
+    /// The service's name in messages, for example `Anthropic`.
+    pub provider: &'a str,
+    /// What an error says when the server cannot be reached at all.
+    pub unreachable: &'a str,
+    pub method: Method,
+    pub url: &'a str,
+    /// Query parameters, encoded on the way.
+    pub query: &'a [(&'a str, &'a str)],
+    pub headers: &'a [(&'a str, &'a str)],
+    /// A JSON body, sent with `Post` only.
+    pub body: Option<&'a Value>,
+    pub timeout: Duration,
+}
+
+/// Whatever the server answered, an error status included.
+pub(crate) struct Reply {
+    pub status: u16,
+    /// `Retry-After` in seconds, when the server sent it as a number.
+    pub retry_after: Option<u64>,
+    /// The body as JSON, or as a JSON string when it was not JSON.
+    pub body: Value,
+}
+
+impl Reply {
+    pub fn is_success(&self) -> bool {
+        (200..300).contains(&self.status)
+    }
+}
+
+/// Send one request. Only a server that cannot be reached is an error here;
+/// an HTTP error status is a [`Reply`] like any other.
+pub(crate) fn exchange(call: &Call) -> Result<Reply> {
+    let agent = agent(call.timeout);
+    let sent = match call.method {
+        Method::Get | Method::Delete => {
+            let mut request = if call.method == Method::Get {
+                agent.get(call.url)
+            } else {
+                agent.delete(call.url)
+            };
+            for (key, value) in call.query {
+                request = request.query(*key, *value);
+            }
+            for (key, value) in call.headers {
+                request = request.header(*key, *value);
+            }
+            request.call()
+        }
+        Method::Post => {
+            let mut request = agent.post(call.url);
+            for (key, value) in call.query {
+                request = request.query(*key, *value);
+            }
+            for (key, value) in call.headers {
+                request = request.header(*key, *value);
+            }
+            request.send_json(call.body.unwrap_or(&Value::Null))
+        }
+    };
+    let mut response = sent.map_err(|e| Error::external(call.unreachable, e))?;
+    let status = response.status().as_u16();
+    let retry_after = response
+        .headers()
+        .get("retry-after")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse().ok());
+    let text = response
+        .body_mut()
+        .read_to_string()
+        .map_err(|e| Error::external(format!("reading the {} response", call.provider), e))?;
+    let body = serde_json::from_str(&text).unwrap_or(Value::String(text));
+    Ok(Reply {
+        status,
+        retry_after,
+        body,
+    })
+}
+
+/// The error for an HTTP error status, with the provider's own explanation.
+pub(crate) fn http_error(provider: &str, reply: &Reply) -> Error {
+    let detail = reply.body["error"]["message"]
+        .as_str()
+        .or_else(|| reply.body["error"].as_str())
+        .unwrap_or("no detail given");
+    Error::external(format!("{provider} returned HTTP {}", reply.status), detail)
+}
+
 /// Send a JSON request and return the parsed body, turning HTTP errors into
 /// messages that include the provider's own explanation.
 fn post_json(
@@ -99,30 +197,43 @@ fn post_json(
     body: &Value,
     timeout: Duration,
 ) -> Result<Value> {
-    let mut request = agent(timeout).post(url);
-    for (key, value) in headers {
-        request = request.header(*key, *value);
+    let reply = exchange(&Call {
+        provider,
+        unreachable: &format!("calling {provider}"),
+        method: Method::Post,
+        url,
+        query: &[],
+        headers,
+        body: Some(body),
+        timeout,
+    })?;
+    if !reply.is_success() {
+        return Err(http_error(provider, &reply));
     }
-    let mut response = request
-        .send_json(body)
-        .map_err(|e| Error::external(format!("calling {provider}"), e))?;
-    let status = response.status();
-    let text = response
-        .body_mut()
-        .read_to_string()
-        .map_err(|e| Error::external(format!("reading the {provider} response"), e))?;
-    let value: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
-    if !status.is_success() {
-        let detail = value["error"]["message"]
+    Ok(reply.body)
+}
+
+/// The body of a chat-completions request.
+pub(crate) fn chat_request(model: &str, system: &str, user: &str) -> Value {
+    json!({
+        "model": model,
+        "messages": [
+            { "role": "system", "content": system },
+            { "role": "user", "content": user },
+        ],
+    })
+}
+
+/// The answer in a chat-completions response.
+pub(crate) fn chat_completion(value: &Value) -> Completion {
+    Completion {
+        text: value["choices"][0]["message"]["content"]
             .as_str()
-            .or_else(|| value["error"].as_str())
-            .unwrap_or("no detail given");
-        return Err(Error::external(
-            format!("{provider} returned HTTP {}", status.as_u16()),
-            detail,
-        ));
+            .unwrap_or("")
+            .to_string(),
+        input_tokens: value["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
+        output_tokens: value["usage"]["completion_tokens"].as_u64().unwrap_or(0),
     }
-    Ok(value)
 }
 
 pub struct Anthropic {
@@ -218,13 +329,7 @@ pub struct OpenAiCompatible {
 
 impl OpenAiCompatible {
     fn send(&self, system: &str, user: &str, timeout: Duration) -> Result<Value> {
-        let body = json!({
-            "model": self.model,
-            "messages": [
-                { "role": "system", "content": system },
-                { "role": "user", "content": user },
-            ],
-        });
+        let body = chat_request(&self.model, system, user);
         let auth = format!("Bearer {}", self.api_key);
         post_json(
             "the OpenAI-compatible server",
@@ -250,14 +355,7 @@ impl LlmProvider for OpenAiCompatible {
 
     fn complete(&self, system: &str, user: &str) -> Result<Completion> {
         let value = self.send(system, user, REQUEST_TIMEOUT)?;
-        Ok(Completion {
-            text: value["choices"][0]["message"]["content"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
-            input_tokens: value["usage"]["prompt_tokens"].as_u64().unwrap_or(0),
-            output_tokens: value["usage"]["completion_tokens"].as_u64().unwrap_or(0),
-        })
+        Ok(chat_completion(&value))
     }
 }
 
@@ -391,13 +489,14 @@ pub const PROVIDER_ENV: &str = settings::LLM_PROVIDER.env;
 /// Model name for the selected provider.
 pub const MODEL_ENV: &str = settings::LLM_MODEL.env;
 /// The providers a user can choose, in the order a page lists them.
-pub const PROVIDERS: [&str; 6] = [
+pub const PROVIDERS: [&str; 7] = [
     "none",
     "anthropic",
     "openai",
     "ollama",
     "claude-cli",
     "codex-cli",
+    "cliproxy",
 ];
 
 fn env(name: &str) -> Option<String> {
@@ -454,6 +553,12 @@ pub fn from_config(
         }),
         Some("claude-cli") => Box::new(AgentCli::claude()),
         Some("codex-cli") => Box::new(AgentCli::codex()),
+        Some("cliproxy") => Box::new(CliProxy {
+            api_key: value(settings::CLIPROXY_API_KEY)
+                .ok_or_else(|| missing("cliproxy", "a client key", settings::CLIPROXY_API_KEY))?,
+            model: need_model("cliproxy")?,
+            base_url: value(settings::CLIPROXY_URL).unwrap_or_default(),
+        }),
         Some(other) => {
             return Err(Error::invalid(format!(
                 "unknown provider '{other}'; use {}",
@@ -543,6 +648,27 @@ mod tests {
                 .as_deref(),
             Some("codex-cli")
         );
+        assert_eq!(
+            configured(&[
+                ("CODEWIKI_LLM", "cliproxy"),
+                ("CODEWIKI_CLIPROXY_KEY", "k"),
+                ("CODEWIKI_MODEL", "claude-x"),
+            ])
+            .unwrap()
+            .as_deref(),
+            Some("cliproxy:claude-x")
+        );
+    }
+
+    #[test]
+    fn the_proxy_needs_a_client_key_and_a_model() {
+        let error = problem(&[("CODEWIKI_LLM", "cliproxy"), ("CODEWIKI_MODEL", "m")]);
+        assert!(
+            error.contains("a client key") && error.contains("CODEWIKI_CLIPROXY_KEY"),
+            "{error}"
+        );
+        let error = problem(&[("CODEWIKI_LLM", "cliproxy"), ("CODEWIKI_CLIPROXY_KEY", "k")]);
+        assert!(error.contains("CODEWIKI_MODEL"), "{error}");
     }
 
     #[test]

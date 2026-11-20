@@ -8,7 +8,7 @@ use std::sync::Mutex;
 
 use cw_vault::NoteKind;
 use cw_wiki::plan::Planned;
-use cw_wiki::{ProseWriter, Rewrite, WriterContext, WriterUsage};
+use cw_wiki::{ProseWriter, Rewrite, Stopped, WriterContext, WriterUsage};
 
 use crate::provider::LlmProvider;
 
@@ -135,6 +135,19 @@ impl ProseWriter for LlmWriter {
                         Rewrite::Rejected
                     }
                 }
+            }
+            Err(cw_core::Error::Exhausted {
+                message,
+                retry_after,
+            }) => {
+                // Nothing will answer for a while: asking for every other
+                // note would only collect the same refusal.
+                log::warn!("writer stopped at '{}': {message}", note.title);
+                self.record(|u| u.calls += 1);
+                Rewrite::Stop(Stopped {
+                    message,
+                    retry_after_secs: retry_after,
+                })
             }
             Err(error) => {
                 // One failed note must not abort a whole run; the structural
@@ -278,5 +291,33 @@ mod tests {
             Rewrite::Rejected
         );
         assert_eq!(junk.usage().fallbacks, 1);
+    }
+
+    struct Spent;
+
+    impl LlmProvider for Spent {
+        fn name(&self) -> String {
+            "spent".into()
+        }
+        fn complete(&self, _system: &str, _user: &str) -> Result<Completion> {
+            Err(cw_core::Error::Exhausted {
+                message: "no auth available".into(),
+                retry_after: Some(30),
+            })
+        }
+    }
+
+    #[test]
+    fn a_provider_with_nothing_left_stops_the_run() {
+        let writer = LlmWriter::new(Box::new(Spent));
+        assert_eq!(
+            writer.rewrite(&planned(), "draft", &context()),
+            Rewrite::Stop(Stopped {
+                message: "no auth available".into(),
+                retry_after_secs: Some(30),
+            })
+        );
+        let usage = writer.usage();
+        assert_eq!((usage.calls, usage.fallbacks), (1, 0));
     }
 }

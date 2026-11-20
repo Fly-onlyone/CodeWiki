@@ -4,6 +4,7 @@
 //! configured, the writer replaces structural prose with explained prose.
 
 pub mod answer;
+pub mod cliproxy;
 pub mod illustrate;
 pub mod provider;
 pub mod writer;

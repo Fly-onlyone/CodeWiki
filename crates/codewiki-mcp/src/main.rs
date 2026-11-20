@@ -1045,7 +1045,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "Security pattern findings in Rust source, test code excluded: hard-coded secrets, shell commands and SQL built with `format!`, disabled TLS verification, `std::env::set_var`, world-writable file modes, plain-HTTP URLs to remote hosts, and `unsafe` blocks. Each finding has a rule id, level, file and line. `level` sets the lowest level returned (`note`, `warning` or `error`)."
+        description = "Security pattern findings in Rust source, test code excluded: hard-coded secrets, shell commands and SQL built with `format!`, disabled TLS verification, `std::env::set_var`, world-writable file modes, plain-HTTP URLs to remote hosts, and `unsafe` blocks with no `// SAFETY:` comment. Each finding has a rule id, level, file and line. `level` sets the lowest level returned (`note`, `warning` or `error`)."
     )]
     async fn get_security_findings(
         &self,

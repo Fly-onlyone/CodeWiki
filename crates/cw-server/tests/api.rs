@@ -1152,10 +1152,10 @@ async fn analysis_routes() {
     );
     assert_eq!(findings[0]["file"], "src/net.rs");
     assert_eq!(findings[0]["level"], "warning");
-    let warnings = h
-        .get(&format!("/v1/repos/{id}/security?level=warning"))
-        .await;
-    assert_eq!(warnings.as_array().unwrap().len(), 1);
+    // The `unsafe` block has no `// SAFETY:` comment.
+    assert_eq!(findings[1]["level"], "warning");
+    let errors = h.get(&format!("/v1/repos/{id}/security?level=error")).await;
+    assert_eq!(errors, json!([]));
     let (status, _) = h
         .call(
             "GET",

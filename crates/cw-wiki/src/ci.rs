@@ -79,7 +79,7 @@ pub(crate) const RULES: [(&str, &str); 22] = [
     ),
     (
         security::UNSAFE_BLOCK,
-        "An `unsafe` block outside test code.",
+        "An `unsafe` block outside test code with no `// SAFETY:` comment.",
     ),
     (
         security::HARDCODED_SECRET,

@@ -58,7 +58,7 @@ claude plugin marketplace remove codewiki
 | `get_dead_code` | Symbols nothing refers to, marked `likely` or `possible`. Verify before deleting. |
 | `get_health` | Files scoring below 10 with the findings behind the score, plus documentation coverage and drift. |
 | `get_coverage` | Line coverage from an LCOV or Cobertura report, with the least covered files ranked by how often they change and how much depends on them. `report` imports a new report. |
-| `get_security_findings` | Security pattern findings in Rust source, test code excluded: hard-coded secrets, shell commands and SQL built with `format!`, disabled TLS verification, `unsafe` blocks and more. |
+| `get_security_findings` | Security pattern findings in Rust source, test code excluded: hard-coded secrets, shell commands and SQL built with `format!`, disabled TLS verification, `unsafe` blocks with no `// SAFETY:` comment and more. |
 | `get_refactoring_plan` | Refactoring suggestions, highest priority first, each with its evidence and ordered steps. No model is involved. |
 | `get_contracts` | HTTP endpoints a repository provides and the URL paths it calls. With `workspace: true`, matched across all registered repositories. |
 | `sync_wiki` | Re-index and update the wiki. Notes a person edited are never overwritten; changes to them wait as proposals. |

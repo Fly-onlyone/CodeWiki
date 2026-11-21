@@ -109,8 +109,8 @@ struct PathParams {
 struct NoteParams {
     /// Note name (`Scan Module`) or vault path (`01-Core/cw-parse/Scan Module.md`).
     note: String,
-    /// Also return `How it works`, the step-by-step walk-through of which
-    /// function calls which. Left out by default: the code shows it.
+    /// Also return a `How it works` that is only the rule-made walk-through
+    /// of which function calls which. Left out by default: the code shows it.
     #[serde(default)]
     full: Option<bool>,
     /// Repository root path. Defaults to the directory the agent runs in.
@@ -1192,7 +1192,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "Read one wiki note, by note name or vault path: what the thing is for, where its source is, what each of its items does, its gotchas and what it depends on. The walk-through of calls under `How it works` is left out, since the code shows it; pass `full: true` to get it too."
+        description = "Read one wiki note, by note name or vault path: what the thing is for, where its source is, what each of its items does, its gotchas and what it depends on. While `How it works` is only the walk-through of calls that CodeWiki makes by rule, it is left out, since the code shows it; pass `full: true` to get it too. Once an agent explained that section, it is always included."
     )]
     async fn read_note(
         &self,

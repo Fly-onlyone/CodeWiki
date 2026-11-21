@@ -232,6 +232,11 @@ enum Page {
         explanation: String,
         explained_by: String,
         behind: Vec<String>,
+        /// The note is shown as a coding agent reads it: `text` may lack
+        /// sections, so it must never be edited and saved.
+        agent: bool,
+        /// Headings the agent view leaves out.
+        left_out: Vec<String>,
     },
     /// Symbol detail, search results and other generated pages.
     Generated {
@@ -1386,6 +1391,10 @@ impl AppView {
             return;
         }
         // Forms used to open the app on a view from a script.
+        if let Some(note) = first.strip_prefix("agent:") {
+            self.open_note_as(note.to_string(), false, true, cx);
+            return;
+        }
         if let Some(note) = first.strip_prefix("edit:") {
             self.pending_edit = true;
             self.open_note(note.to_string(), false, cx);
@@ -1462,7 +1471,14 @@ impl AppView {
     }
 
     fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Page::Note { path, text, .. } = &self.page else {
+        // Not in the agent view: what would be saved is less than the note.
+        let Page::Note {
+            path,
+            text,
+            agent: false,
+            ..
+        } = &self.page
+        else {
             return;
         };
         let (path, original) = (path.clone(), text.clone());
@@ -1985,15 +2001,38 @@ impl AppView {
     }
 
     fn open_note(&mut self, path_or_name: String, remember: bool, cx: &mut Context<Self>) {
+        self.open_note_as(path_or_name, remember, false, cx);
+    }
+
+    /// Switch the note on the page between the whole note and the view a
+    /// coding agent gets. It is the same page, so Back does not lead to the
+    /// other view.
+    fn toggle_agent_view(&mut self, cx: &mut Context<Self>) {
+        let Page::Note { path, agent, .. } = &self.page else {
+            return;
+        };
+        let (path, agent) = (path.clone(), *agent);
+        self.open_note_as(path, false, !agent, cx);
+    }
+
+    /// Open a note: whole, or with `agent` as a coding agent reads it.
+    fn open_note_as(
+        &mut self,
+        path_or_name: String,
+        remember: bool,
+        agent: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let view = if agent { "&view=agent" } else { "" };
         self.run(
             "Opening note",
             cx,
             move |b| {
                 b.get(&format!(
-                    "/v1/repos/{}/note?path={}",
+                    "/v1/repos/{}/note?path={}{view}",
                     repo.id,
                     encode(&path_or_name)
                 ))
@@ -2034,6 +2073,13 @@ impl AppView {
                             .into_iter()
                             .flatten()
                             .filter_map(|reason| reason.as_str().map(str::to_string))
+                            .collect(),
+                        agent,
+                        left_out: content["left_out"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|heading| heading.as_str().map(str::to_string))
                             .collect(),
                     },
                     remember,
@@ -2629,8 +2675,28 @@ impl AppView {
                         .child(format!("{busy}…")),
                 )
             })
+            .when_some(
+                match &self.page {
+                    Page::Note { agent, .. } if self.editing.is_none() => Some(*agent),
+                    _ => None,
+                },
+                |this, agent| {
+                    this.child(
+                        Button::new("agent-view")
+                            .icon(if agent { icons::NOTE } else { icons::AGENT })
+                            .label(if agent { "Whole note" } else { "Agent view" })
+                            .tooltip(if agent {
+                                "Show the whole note, with its pictures"
+                            } else {
+                                "Show the note as a coding agent reads it"
+                            })
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_agent_view(cx))),
+                    )
+                },
+            )
             .when(
-                matches!(self.page, Page::Note { .. }) && self.editing.is_none(),
+                matches!(self.page, Page::Note { agent: false, .. }) && self.editing.is_none(),
                 |this| {
                     this.child(
                         Button::new("edit")
@@ -3296,6 +3362,9 @@ impl AppView {
             .when_some(self.proposal_actions(cx), |this, actions| {
                 this.child(actions)
             })
+            .when_some(self.agent_view_notice(cx), |this, notice| {
+                this.child(notice)
+            })
             .child(page)
     }
 
@@ -3691,6 +3760,37 @@ impl AppView {
             ),
         )
         .into_any_element()
+    }
+
+    /// The line above a note in the agent view. It stays in place while
+    /// the note scrolls: what is on the page is not the whole note.
+    fn agent_view_notice(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let Page::Note {
+            agent: true,
+            left_out,
+            ..
+        } = &self.page
+        else {
+            return None;
+        };
+        Some(
+            h_flex()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .items_center()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(icons::AGENT).small().text_color(cx.theme().info))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(live::agent_view_line(left_out)),
+                ),
+        )
     }
 
     fn proposal_actions(&self, cx: &mut Context<Self>) -> Option<Div> {

@@ -393,6 +393,20 @@ pub fn sync_page(report: &Value) -> Doc {
     doc
 }
 
+/// The line above a note in the agent view: what the view is, and what it
+/// leaves out of the note.
+pub fn agent_view_line(left_out: &[String]) -> String {
+    let start = "Agent view: the note as a coding agent reads it.";
+    if left_out.is_empty() {
+        format!("{start} The text is whole; the pictures are left out.")
+    } else {
+        format!(
+            "{start} Left out: {}, which is a walk-through made by rule that the code shows, and the pictures.",
+            left_out.join(", ")
+        )
+    }
+}
+
 /// What the details pane says about a note's explanation, a line for each
 /// string: who wrote it, and why it may be behind. `explanation` is the
 /// backend's word for where it stands. Nothing for a note no agent explains.
@@ -1085,6 +1099,18 @@ mod tests {
             "proposal": {"kind": "agent"}, "pictures": [{"section": "Gotchas"}],
         }));
         assert!(one.words().contains("gives the note 1 picture."));
+    }
+
+    #[test]
+    fn the_agent_view_says_what_it_leaves_out() {
+        assert_eq!(
+            agent_view_line(&["How it works".to_string()]),
+            "Agent view: the note as a coding agent reads it. Left out: How it works, which is a walk-through made by rule that the code shows, and the pictures."
+        );
+        assert_eq!(
+            agent_view_line(&[]),
+            "Agent view: the note as a coding agent reads it. The text is whole; the pictures are left out."
+        );
     }
 
     #[test]

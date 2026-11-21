@@ -77,19 +77,24 @@ pub enum View {
     Agent,
 }
 
-/// Sections a coding agent can do without.
+/// Sections a coding agent can do without, while rules wrote them.
 ///
-/// `How it works` walks through which function calls which. An agent reads
-/// that from the code it is about to edit, and reads it more exactly there.
-/// What the code does not say stays in: what the thing is for, where it is,
-/// what each item does, what can go wrong, who depends on it.
+/// `How it works` as rules write it walks through which function calls
+/// which. An agent reads that from the code it is about to edit, and reads
+/// it more exactly there. What the code does not say stays in: what the
+/// thing is for, where it is, what each item does, what can go wrong, who
+/// depends on it.
 const AGENT_OMITS: [&str; 1] = ["How it works"];
 
 /// The text of a note for a coding agent: the note without the sections in
 /// [`AGENT_OMITS`], and the headings that were left out. Only a note about a
 /// module, a crate or a type is cut. In a flow note `How it works` is the
 /// diagram, which is the note.
-pub fn agent_view(text: &str, kind: NoteKind) -> (String, Vec<String>) {
+///
+/// `by_agent` are the headings an agent wrote. Such a section stays: it
+/// holds reasons, conditions and error paths, which the code does not say
+/// in one place.
+pub fn agent_view(text: &str, kind: NoteKind, by_agent: &[String]) -> (String, Vec<String>) {
     if kind != NoteKind::Concept {
         return (text.to_string(), Vec::new());
     }
@@ -104,7 +109,7 @@ pub fn agent_view(text: &str, kind: NoteKind) -> (String, Vec<String>) {
         } else if !in_fence && let Some(heading) = trimmed.strip_prefix("## ") {
             // A `## ` line inside a code block is code, not a heading.
             let heading = heading.trim();
-            skipping = AGENT_OMITS.contains(&heading);
+            skipping = AGENT_OMITS.contains(&heading) && !by_agent.iter().any(|h| h == heading);
             if skipping {
                 left_out.push(heading.to_string());
             }
@@ -262,7 +267,12 @@ pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteC
     let full = vault.join(&entry.path);
     let text = std::fs::read_to_string(&full).map_err(|e| Error::io(full, e))?;
     if view == View::Agent {
-        let (text, left_out) = agent_view(&text, entry.kind);
+        let by_agent: &[String] = entry
+            .explained
+            .as_ref()
+            .map(|explained| explained.sections.as_slice())
+            .unwrap_or(&[]);
+        let (text, left_out) = agent_view(&text, entry.kind, by_agent);
         return Ok(NoteContent {
             info: info(entry, &vault),
             text,
@@ -513,7 +523,7 @@ mod tests {
     #[test]
     fn an_agent_gets_a_note_without_its_walk_through() {
         let note = "---\ntags: [core]\n---\n\n# Settings Module\n\n> Keeps the one setting.\n\n## What it does\n\nIt is a file.\n\n```text\n## How it works\nnot a heading\n```\n\n## Source\n\n- `src/settings.rs` — module\n\n## How it works\n\n1. `main` calls `enabled`.\n\n```rust\n## Items\n```\n\nCalls are listed in the order of the source.\n\n## Items\n\n- `pub fn enabled() -> bool` — whether it is on.\n\n## See also\n\n- [[_index]]\n";
-        let (text, left_out) = agent_view(note, NoteKind::Concept);
+        let (text, left_out) = agent_view(note, NoteKind::Concept, &[]);
         assert_eq!(left_out, ["How it works"]);
         // The section goes whole, up to the next heading that is one: a
         // `## ` line in a code block is code.
@@ -523,19 +533,28 @@ mod tests {
         );
 
         // A flow's `How it works` is its diagram: the note stays whole.
-        let (flow, left_out) = agent_view(note, NoteKind::Flow);
+        let (flow, left_out) = agent_view(note, NoteKind::Flow, &[]);
         assert_eq!(flow, note);
         assert!(left_out.is_empty());
+
+        // Once an agent wrote `How it works`, it says what the code does
+        // not: the note stays whole. Another section of the agent's does
+        // not keep the rule-made walk-through in.
+        let (kept, left_out) = agent_view(note, NoteKind::Concept, &["How it works".to_string()]);
+        assert_eq!(kept, note);
+        assert!(left_out.is_empty());
+        let (_, left_out) = agent_view(note, NoteKind::Concept, &["Gotchas".to_string()]);
+        assert_eq!(left_out, ["How it works"]);
 
         // Nothing to leave out, and the section as the last one.
         let plain = "# T\n\n> S.\n\n## Items\n\n- `a`\n";
         assert_eq!(
-            agent_view(plain, NoteKind::Concept),
+            agent_view(plain, NoteKind::Concept, &[]),
             (plain.to_string(), Vec::new())
         );
         let last = "# T\n\n> S.\n\n## How it works\n\n1. Step.";
         assert_eq!(
-            agent_view(last, NoteKind::Concept),
+            agent_view(last, NoteKind::Concept, &[]),
             (
                 "# T\n\n> S.\n\n".to_string(),
                 vec!["How it works".to_string()]

@@ -47,6 +47,8 @@ app_icons! {
     NOTE = "article",
     BACK = "arrow-back",
     FORWARD = "arrow-forward",
+    // The view of a note that a coding agent gets.
+    AGENT = "smart-toy",
     EDIT = "edit",
     SAVE = "save",
     CLOSE = "close",

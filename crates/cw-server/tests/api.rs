@@ -1612,6 +1612,10 @@ async fn an_agent_explains_a_note_through_the_routes() {
         .get(&format!("/v1/repos/{id}/note?path={NOTE}&view=agent"))
         .await;
     assert!(cut.get("pictures").is_none(), "{cut}");
+    // `How it works` is the agent's now, and says what the code does not
+    // say in one place: it is no longer left out.
+    assert!(cut.get("left_out").is_none(), "{cut}");
+    assert!(cut["text"].as_str().unwrap().contains("overflowzebra"));
     // The new words are found by a search at once.
     let hits = h
         .get(&format!("/v1/repos/{id}/search?q=overflowzebra"))

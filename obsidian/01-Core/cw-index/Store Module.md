@@ -29,7 +29,6 @@ And 3 more private items with no comment.
 - [[Confidence]] — uses `parse`
 - [[Symbol]] — uses `Symbol`
 - [[SymbolKind]] — uses `parse`
-- [[Visibility]] — uses `parse`
 - [[Index]] — uses `collect`
 
 ## Used by

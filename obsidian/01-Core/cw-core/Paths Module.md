@@ -12,7 +12,7 @@ tags: [core, cw-core, module]
 
 ## How it works
 
-1. `run` and `sentry_test` in [[codewiki]], and 16 more, call `data_dir`.
+1. `run` and `sentry_test` in [[codewiki]], and 11 more, call `data_dir`.
 2. `add` in [[Repos Module]] calls `repo_id`. `repo_id` calls `sha256_hex` in [[Hash Module]].
 3. `open_index` in [[Service Module]] calls `index_path`. `index_path` calls `index_path_in`, then `data_dir`.
 4. `open_existing_index_in` and `open_index_in` in [[Service Module]] call `index_path_in`. `index_path_in` calls `repo_id`.
@@ -35,12 +35,12 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[cw-client]] — from `check_remote`, `forget_remote`, `save_remote`, `saved_remote`
 - [[Service Module]] — from `open_existing_index_in`, `open_index`, `open_index_in`, `update`
-- [[Model Module (codewiki)]] — from `recommend`, `remove`, `store`
 - [[codewiki]] — from `run`, `sentry_test`
 - [[codewiki-app]] — from `run_settings_action`, `settings_frame`
-- [[cw-embed]] — from `from_config`
 - [[Serve Module]] — from `run`
 - [[Logs Module]] — from `dir_from`
+- [[Repos Module]] — from `add`
+- [[Backend]] — from `connect`
 
 ## See also
 

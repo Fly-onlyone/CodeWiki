@@ -23,9 +23,9 @@ tags: [core, cw-server, module]
 - `fn trace_name(method: &str, route: Option<&str>) -> Option<String>` — the name a request is traced under: its method and its route, never its path, which holds ids and names. `None` for a request that is not traced.
 - `pub fn routes(state: AppState) -> Router` — public function, returns `Router`; called by `router`, `serve`.
 - `async fn backend_status(State(state): State<AppState>) -> Json<Value>` — what the backend is doing: the wiki updates that are running, whoever started them, and when an agent's MCP bridge last called. The app shows it in its tray icon. Unlike `/v1/health` it needs the token.
-- `fn models_closed(state: &AppState) -> Option<Response>` — the answer of every model route on a backend that listens beyond this machine. A model is installed on the backend's machine and takes its disk, memory and graphics card; like the settings, that is decided there.
-- `async fn start_model_job(state: AppState, kind: models::Kind, id: Option<String>) -> Response` — start a job and answer 202 with it; its progress is in `GET /v1/models`.
-- `async fn cancel_model_job(State(state): State<AppState>) -> Response` — stop the running job. What it downloaded and embedded stays, and the next job goes on from there.
+- `async fn embed_models(State(state): State<AppState>) -> Api<Value>` — the models the chosen embedder's server offers. Always 200: a server that does not answer is reported in the body.
+- `fn embed_closed(state: &AppState) -> Option<Response>` — the answer of every embedding job route on a backend that listens beyond this machine. The job runs on the backend's machine and calls the model server its settings name; like the settings, that is decided there.
+- `async fn cancel_embed_job(State(state): State<AppState>) -> Response` — stop the running job. What it embedded stays, and the next job goes on from there.
 - `struct Repo` — resolved repository: its root folder and its index.
 - `struct ListedRepo` — A registered repository as `GET /v1/repos` lists it. `present` is worked out on each request, on this machine, where the paths are; it is never written to `repos.json`.
 - `fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report>` — Re-index a repository and bring its wiki up to date, holding the write lock. Shared by the update route and the git webhook.
@@ -37,7 +37,7 @@ tags: [core, cw-server, module]
 - `struct ExplanationsQuery` — which waiting notes a coding agent asks for.
 - `coverage` — coverage imported earlier; without one, a report found in a conventional place in the repository is read but not stored.
 
-And 82 more items.
+And 79 more items.
 
 ## Depends on
 
@@ -48,7 +48,7 @@ And 82 more items.
 - [[Proposal Module]] — uses `Proposal`, `get`, `list`, `patch_text`
 - [[Coverage Module]] — uses `CoverageReport`, `import`, `import_text`, `load`
 - [[Health Module]] — uses `DeadSymbol`, `DocReport`, `FileHealth`, `dead_code`
-- [[Models Module]] — uses `Kind`, `after_update`, `describe`, `remove`
+- [[Repos Module]] — uses `RepoEntry`, `add`, `get`, `load`
 
 ## Used by
 

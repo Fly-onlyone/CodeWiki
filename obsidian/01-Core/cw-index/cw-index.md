@@ -52,12 +52,11 @@ Modules:
 
 ## Used by
 
-- [[Service Module]] — from `index_notes`, `reembed`, `reindex`
 - [[Semantic Module]] — from `nearest`, `search_with`
+- [[Service Module]] — from `index_notes`, `reindex`
 - [[Run]] — from `plan`, `store`
 - [[codewiki]] — from `run`
-- [[cw-wiki]] — from `the_documents_of_an_index_are_embedded_again_in_steps`
-- [[Models Module]] — from `embed_repo`
+- [[Embed Job Module]] — from `embed_repo`
 - [[Query Module]] — from `answer`
 
 ## See also

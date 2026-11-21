@@ -8,7 +8,7 @@ tags: [core, cw-telemetry]
 
 ## What it does
 
-Error reports to Sentry from the programs that run for a long time: the app, the backend, the MCP bridge and the embedding worker.
+Error reports to Sentry from the programs that run for a long time: the app, the backend and the MCP bridge.
 
 A program reports only when one of these holds:
 
@@ -28,7 +28,7 @@ Each program reads that file itself, so the MCP bridge and a backend an agent st
 
 Builds a library.
 
-1. `main` and `sentry_test` in [[codewiki]], and 3 more, call `init`. `init` calls `start`, then `init_with` in [[Logs Module]]. `start` calls `choose`, then `env_dsn`, then `built_in_dsn`, then `consent`, then `environment`, then `traces_rate`, and 3 more.
+1. `main` and `sentry_test` in [[codewiki]], and 2 more, call `init`. `init` calls `start`, then `init_with` in [[Logs Module]]. `start` calls `choose`, then `env_dsn`, then `built_in_dsn`, then `consent`, then `environment`, then `traces_rate`, and 3 more.
 2. `sentry_test` in [[codewiki]] and `trace_request` in [[Api Module]] call `sending`. `sending` calls `allowed`. `allowed` calls `switch_on`.
 3. `AppView::settings_frame` in [[codewiki-app]] calls `reporting`. `reporting` calls `env_dsn`, then `built_in_dsn`.
 4. `AppView::settings_frame` in [[codewiki-app]] calls `consent`. `consent` calls `consent_path`, then `read_consent`.
@@ -81,7 +81,6 @@ And 10 more items.
 - [[codewiki-app]] — from `main`, `run_action`, `settings_frame`
 - [[codewiki]] — from `main`, `sentry_test`
 - [[codewiki-mcp]] — from `main`
-- [[cw-embed-engine]] — from `worker`
 - [[Settings Pages Module]] — from `error_reports`
 - [[Api Module]] — from `trace_request`
 

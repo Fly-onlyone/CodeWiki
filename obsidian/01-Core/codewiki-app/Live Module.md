@@ -22,7 +22,7 @@ Like the reports in `pages`, each turns what the backend sent into a `Doc`. Thes
 4. `AppView::open_file` in [[codewiki-app]] calls `file_page`. `file_page` calls `string`, then `Doc::new` in [[Doc]], then `Stat::new` in [[Doc Module]], then `number`, then `code` in [[Doc Module]], then `list`, and 8 more.
 5. `AppView::open_proposal` in [[codewiki-app]] calls `proposal_page`. `proposal_page` calls `Doc::new` in [[Doc]], then `code` in [[Doc Module]], then `string`, then `text` in [[Doc Module]].
 
-7 more entry points: `sync_page`, `agent_view_line`, `explanation_lines`, `message_page`, `model_offer`, `home_page`, and 1 more.
+6 more entry points: `sync_page`, `agent_view_line`, `explanation_lines`, `message_page`, `home_page`, `offline_page`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -33,6 +33,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn number(value: &Value) -> String` — private function, returns `String`; called by `file_page`, `hotspots_page`, `symbol_page`, `sync_page`.
 - `fn symbol_row(qualified: &str, detail: impl Into<String>) -> Row` — A row that opens a symbol, with its signature or relation under its name.
 - `fn file_row(path: &str) -> Row` — A row that opens a file.
+- `fn section(doc: &mut Doc, title: &str, rows: Vec<Row>)` — A heading over rows, or nothing when there are no rows.
 - `pub fn symbol_page(detail: &Value) -> Doc` — one symbol: what it is, where it is, and what it touches.
 - `pub fn search_page(query: &str, hits: &Value) -> Doc` — search results, grouped by what was found.
 - `pub fn hotspots_page(rows: &Value) -> Doc` — the hotspot ranking.
@@ -44,12 +45,11 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn message_page(message: &str) -> Doc` — A page that only says something, such as that there is no wiki yet.
 - `pub struct Project<'a>` — A registered repository, as Home lists it.
 - `pub struct HomeInput<'a>` — what Home is made from.
-- `pub struct ModelOffer` — the offer of a built-in embedding model on Home.
-- `pub fn model_offer(models: &Value, dismissed: bool) -> Option<ModelOffer>` — the model Home offers, from what the backend says about its models (`GET /v1/models`). There is an offer only for someone who searches with the embedder that needs no model, has no model installed, and has not turned the offer down. Once a model is installed the offer is gone: the settings are then where its models are.
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
+- `fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a>>` — `projects` in the order of `recent`, then the ones never opened in the app, by name.
 - `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: where its log is, and a button that tries again. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 4 more items.
+And 2 more items.
 
 ## Depends on
 

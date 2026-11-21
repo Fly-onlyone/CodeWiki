@@ -15,7 +15,7 @@ tags: [core, codewiki]
 
 Builds a binary.
 
-1. The program starts at `main`. `main` calls `session_start_hook`, then `embed_worker`, then `sentry_test`, then `init` in [[cw-telemetry]], then `init_console` in [[Logs Module]], then `run`. `session_start_hook` calls `vault_root`, then `session_start` (both in [[Briefing Module]]). `embed_worker` calls `worker` in [[cw-embed-engine]].
+1. The program starts at `main`. `main` calls `session_start_hook`, then `sentry_test`, then `init` in [[cw-telemetry]], then `init_console` in [[Logs Module]], then `run`. `session_start_hook` calls `vault_root`, then `session_start` (both in [[Briefing Module]]). `sentry_test` calls `init`, then `sending` (both in [[cw-telemetry]]), then `data_dir` in [[Paths Module]], then `send_test_report` in [[cw-telemetry]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -23,7 +23,6 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 Modules:
 
-- [[Model Module (codewiki)]] — `codewiki model`: the built-in embedding models from the command line.
 - [[Serve Module]] — `codewiki serve`: run the backend HTTP server.
 
 Defined at the crate root:
@@ -32,7 +31,6 @@ Defined at the crate root:
 - `fn print_json(encoded: serde_json::Result<String>) -> Result<()>` — print a result encoded with `serde_json::to_string_pretty`.
 - `fn run(cli: Cli) -> Result<()>` — private function, returns `Result<()>`; called by `main`.
 - `fn sentry_test(panic: bool) -> ExitCode` — `codewiki sentry-test`: one report through the same path an error or a panic of the backend takes.
-- `fn embed_worker(model: &str, models_dir: &std::path::Path) -> ExitCode` — private function, returns `ExitCode`; called by `main`.
 - `fn main() -> ExitCode` — private function, returns `ExitCode`.
 
 And 4 more private items with no comment.

@@ -58,9 +58,9 @@ And 1 more private item with no comment.
 
 - [[Semantic Module]] — from `behind`, `embed_documents`, `embed_documents_with`, `embed_within`
 - [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `apply_writes_both_files_and_preserves_the_authors_text`, `fixture`, `indexed`
-- [[Service Module]] — from `built`, `index_notes`, `open_existing_index_in`, `open_index`
 - [[Gitintel Module]] — from `blast_radius`, `change_risk`, `dependents_by_file`, `file_risk`
 - [[Query Module]] — from `answer`, `context`, `dependency_path`, `overview`
+- [[Service Module]] — from `built`, `index_notes`, `open_existing_index_in`, `open_index`
 - [[Coverage Module]] — from `import`, `import_text`, `load`, `report`
 - [[Api Module]] — from `find_symbols`, `graph`, `index`, `list_files`
 - [[Health Module]] — from `dead_code`, `doc_drift`, `file_health`

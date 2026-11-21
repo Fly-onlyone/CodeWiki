@@ -34,7 +34,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Sink]] — uses `Sink`, `between`, `inherits`, `module_symbol`
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
-- [[Visibility]] — uses `Visibility`
+- [[Model Module]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

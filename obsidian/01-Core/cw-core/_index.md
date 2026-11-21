@@ -4,7 +4,7 @@ tags: [moc, core, cw-core]
 
 # Core / cw-core — Map of Content
 
-> Notes for `cw-core`: 17 concepts.
+> Notes for `cw-core`: 16 concepts.
 
 ## Notes
 
@@ -24,7 +24,6 @@ tags: [moc, core, cw-core]
 - [[Settings Module (cw-core)]] — settings the backend keeps for its user: which embedder serves semantic search, and the keys and addresses it needs.
 - [[Symbol]] — A named code entity.
 - [[SymbolKind]] — `SymbolKind` enum defined in `cw_core::model` with 3 methods.
-- [[Visibility]] — `Visibility` enum defined in `cw_core::model` with 2 methods.
 
 ## Folders
 

@@ -16,7 +16,7 @@ It holds decrypted secrets, so it has no `Debug` and should not outlive the work
 
 ## How it works
 
-1. `run` in [[codewiki]] and `remove` in [[Model Module (codewiki)]], and 1 more, call `load`. `load` calls `from_parts`, then `load` in [[Settings Module (cw-core)]].
+1. `run` in [[codewiki]] and `run` in [[Serve Module]] call `load`. `load` calls `from_parts`, then `load` in [[Settings Module (cw-core)]].
 2. `change` and `resolved` in [[Settings Module (cw-server)]] call `from_parts`. `from_parts` calls `saved_secret`. `saved_secret` calls `unprotect` in [[Secret Module]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -45,13 +45,12 @@ Members:
 ## Used by
 
 - [[Settings Module (cw-server)]] — from `change`, `describe`, `resolved`
-- [[cw-embed]] — from `from_settings`, `from_settings_in`
-- [[Semantic Module]] — from `configure`, `configure_in`
-- [[Slot]] — from `configure`, `configure_in`
+- [[cw-embed]] — from `from_settings`, `list_models_in`
 - [[codewiki]] — from `run`
-- [[Model Module (codewiki)]] — from `remove`
 - [[Serve Module]] — from `run`
 - [[Logs Module]] — from `get`
+- [[Semantic Module]] — from `configure`
+- [[Slot]] — from `configure`
 
 ## See also
 

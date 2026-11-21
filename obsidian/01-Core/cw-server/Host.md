@@ -4,11 +4,11 @@ tags: [core, cw-server]
 
 # Host
 
-> What the work on built-in models asks of the machine.
+> What the background embedding job asks of the machine.
 
 ## What it does
 
-A test replaces each with a stand-in, so that it starts no model, reads no hardware and waits for no game.
+A test replaces it with a stand-in, so that it calls no model server.
 
 ## Source
 
@@ -28,15 +28,12 @@ Members:
 
 ## Depends on
 
-- [[Game Module]] — uses `busy`
-- [[Hardware Module]] — uses `probe`
 - [[Semantic Module]] — uses `embedder`
 - [[Embedder]] — uses `Embedder`
-- [[Hardware]] — uses `Hardware`
 
 ## Used by
 
-- [[cw-server]] — from `ServerConfig`, `host`, `new`, `shutdown_route_ends_serve`
+- [[cw-server]] — from `ServerConfig`, `config`, `shutdown_route_ends_serve`, `with_config`
 - [[Serve Module]] — from `run`
 
 ## See also

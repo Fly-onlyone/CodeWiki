@@ -4,7 +4,7 @@ tags: [core, cw-embed]
 
 # Embedder
 
-> `Embedder` trait defined in `cw_embed` with 6 methods.
+> `Embedder` trait defined in `cw_embed` with 5 methods.
 
 ## Source
 
@@ -29,10 +29,9 @@ Required and provided methods:
 - `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>` — one vector per text, in order. Every vector has the same length.
 - `fn embed_query(&self, text: &str) -> Result<Vec<f32>>` — the vector of what a user searches for. Some models put an instruction before a query and none before a document; the others embed both alike, which is the default.
 - `fn batch_size(&self) -> usize` — how many documents to hand to one `Embedder::embed` call when many wait. Between two calls a long run reports how far it is and can be stopped, so a slow embedder names a small number.
-- `fn slow(&self) -> bool` — whether a repository's documents take it minutes. A caller that holds a lock, and someone's patience, while it embeds then leaves the work to the background.
 - `fn probe(&self) -> Result<usize>` — check that the embedder answers: embed one word and return the length of its vector. An error carries the provider's own explanation.
 
-Implemented by [[BuiltinEmbedder]], [[LocalEmbedder]], [[OllamaEmbedder]], [[OpenAiEmbedder]], `StandIn`, and `Other`.
+Implemented by [[LocalEmbedder]], [[OllamaEmbedder]], [[OpenAiEmbedder]], `Failing`, and `StandIn`.
 
 ## Depends on
 
@@ -42,14 +41,14 @@ Implemented by [[BuiltinEmbedder]], [[LocalEmbedder]], [[OllamaEmbedder]], [[Ope
 
 ## Used by
 
+- [[cw-server]] — from `Failing`, `StandIn`, `config`, `failing`
 - [[Semantic Module]] — from `built`, `embed_documents`, `embed_documents_with`, `embed_within`
-- [[cw-embed]] — from `from_config`, `from_config_in`, `from_env`, `from_settings`
-- [[cw-server]] — from `StandIn`, `stand_in`
-- [[Models Module]] — from `embed_repo`, `wait_out_game`
+- [[cw-embed]] — from `from_config`, `from_env`, `from_settings`
+- [[Embed Job Module]] — from `embed_all`, `embed_repo`, `run`
 - [[Slot]] — from `Slot`, `get`
-- [[cw-wiki]] — from `Other`
-- [[Service Module]] — from `reembed`
-- [[BuiltinEmbedder]] — from `BuiltinEmbedder`
+- [[LocalEmbedder]] — from `LocalEmbedder`
+- [[OllamaEmbedder]] — from `OllamaEmbedder`
+- [[OpenAiEmbedder]] — from `OpenAiEmbedder`
 
 ## See also
 

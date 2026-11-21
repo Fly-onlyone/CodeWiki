@@ -363,11 +363,39 @@ fn folder_size(dir: &Path) -> u64 {
         .sum()
 }
 
+/// Delete what the store of the built-in models wrote under `models`: a
+/// folder per model that holds a `manifest.json`, and `.partial`, where a
+/// download was made. Other files stay, since a data folder may be shared;
+/// `models` goes too when nothing else is left in it. The bytes freed, or
+/// `None` when nothing was deleted.
+fn delete_models(models: &Path) -> Result<Option<u64>> {
+    let Ok(entries) = std::fs::read_dir(models) else {
+        return Ok(None);
+    };
+    let mut freed = None;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let ours = path.is_dir()
+            && (entry.file_name() == ".partial" || path.join("manifest.json").is_file());
+        if ours {
+            let size = folder_size(&path);
+            std::fs::remove_dir_all(&path).map_err(|e| Error::io(&path, e))?;
+            *freed.get_or_insert(0) += size;
+        }
+    }
+    let empty = std::fs::read_dir(models).is_ok_and(|mut left| left.next().is_none());
+    if empty {
+        std::fs::remove_dir(models).map_err(|e| Error::io(models, e))?;
+        freed.get_or_insert(0);
+    }
+    Ok(freed)
+}
+
 /// Move a user of the removed built-in embedder to a working state. A saved
 /// `builtin` choice becomes `local` and its model name is cleared, since the
 /// name belonged to the built-in engine. `embed.device` leaves the file, and
-/// the built-in models in `<data_dir>/models` are deleted. A file that holds
-/// none of these is not written.
+/// the built-in models in `<data_dir>/models` are deleted ([`delete_models`]).
+/// A file that holds none of these is not written.
 pub fn retire_builtin(data_dir: &Path) -> Result<Retired> {
     let mut done = Retired::default();
     if let Some(settings) = read(data_dir) {
@@ -390,12 +418,7 @@ pub fn retire_builtin(data_dir: &Path) -> Result<Retired> {
             Ok(())
         })?;
     }
-    let models = data_dir.join("models");
-    if models.is_dir() {
-        let size = folder_size(&models);
-        std::fs::remove_dir_all(&models).map_err(|e| Error::io(&models, e))?;
-        done.freed = Some(size);
-    }
+    done.freed = delete_models(&data_dir.join("models"))?;
     Ok(done)
 }
 
@@ -843,12 +866,19 @@ mod tests {
             r#"{"version":1,"embed":{"provider":"builtin","model":"gte-modernbert-base","device":"cuda"}}"#,
         )
         .unwrap();
-        std::fs::create_dir_all(dir.join("models").join("x")).unwrap();
-        std::fs::write(dir.join("models").join("x").join("w.bin"), [0u8; 10]).unwrap();
+        // What the store of the built-in models wrote: a folder per model
+        // with its manifest, and `.partial` for a download under way.
+        let model = dir.join("models").join("x");
+        std::fs::create_dir_all(&model).unwrap();
+        std::fs::write(model.join("w.bin"), [0u8; 10]).unwrap();
+        std::fs::write(model.join("manifest.json"), "{}").unwrap();
+        let partial = dir.join("models").join(".partial").join("y");
+        std::fs::create_dir_all(&partial).unwrap();
+        std::fs::write(partial.join("w.bin.part"), [0u8; 5]).unwrap();
 
         let done = retire_builtin(&dir).unwrap();
         assert!(done.provider && done.device);
-        assert_eq!(done.freed, Some(10));
+        assert_eq!(done.freed, Some(17));
         let value: Value =
             serde_json::from_str(&std::fs::read_to_string(dir.join(FILE)).unwrap()).unwrap();
         assert_eq!(value["embed"]["provider"], "local");
@@ -860,6 +890,30 @@ mod tests {
         let bytes = std::fs::read(dir.join(FILE)).unwrap();
         assert_eq!(retire_builtin(&dir).unwrap(), Retired::default());
         assert_eq!(std::fs::read(dir.join(FILE)).unwrap(), bytes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn only_what_the_model_store_wrote_is_deleted() {
+        // A data folder shared with something else may hold other files
+        // under `models`.
+        let dir = temp_dir("models-shared");
+        let models = dir.join("models");
+        std::fs::create_dir_all(models.join("x")).unwrap();
+        std::fs::write(models.join("x").join("manifest.json"), "{}").unwrap();
+        std::fs::write(models.join("mine.txt"), "mine").unwrap();
+        std::fs::create_dir_all(models.join("other")).unwrap();
+
+        let done = retire_builtin(&dir).unwrap();
+        assert_eq!(done.freed, Some(2));
+        assert!(!models.join("x").exists());
+        assert!(models.join("mine.txt").is_file());
+        assert!(models.join("other").is_dir());
+        assert!(models.is_dir());
+
+        // Nothing of the store is left: nothing is deleted or reported.
+        assert_eq!(retire_builtin(&dir).unwrap(), Retired::default());
+        assert!(models.join("mine.txt").is_file());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

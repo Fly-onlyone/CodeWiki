@@ -156,7 +156,7 @@ impl FieldId {
             Self::LmStudioKey | Self::LlamaCppKey | Self::LemonadeKey => {
                 "Only if the server asks for one"
             }
-            Self::EmbedModel => "The provider's default",
+            Self::EmbedModel => "The model's name, as the server lists it",
             Self::RemoteUrl => "http://host:7411",
             Self::RemoteToken => "The backend's token",
         }

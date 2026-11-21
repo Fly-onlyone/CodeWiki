@@ -177,7 +177,7 @@ fn hash(feature: &str, salt: u8) -> u64 {
     state
 }
 
-/// The built-in embedder: signed feature hashing, no model and no network.
+/// The word-form embedder: signed feature hashing, no model and no network.
 #[derive(Debug, Clone, Copy)]
 pub struct LocalEmbedder {
     pub dimensions: usize,

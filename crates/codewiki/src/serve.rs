@@ -118,7 +118,7 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         .enable_all()
         .build()
         .map_err(|e| Error::external("starting the async runtime", e))?;
-    runtime.block_on(async move {
+    let served = runtime.block_on(async move {
         let shutdown = async {
             let _ = tokio::signal::ctrl_c().await;
         };
@@ -141,7 +141,12 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         withdraw(&data_dir);
         log::info!("codewiki backend stopped");
         Ok(())
-    })
+    });
+    // A job's batch may still be with the embedder, in a blocking task that
+    // only ends when the server answers. Dropping the runtime would wait for
+    // it; Quit waits five seconds at most.
+    runtime.shutdown_timeout(std::time::Duration::from_secs(5));
+    served
 }
 
 #[cfg(test)]

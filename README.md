@@ -130,7 +130,7 @@ Every server except Ollama is asked through the OpenAI-style route `POST /v1/emb
 
 | Embedder | Setting for its address (default) | Setting for its key | How to serve an embedding model | Devices on Windows | Port |
 |---|---|---|---|---|---|
-| `lmstudio` | `CODEWIKI_LMSTUDIO_URL` (`http://127.0.0.1:1234`) | `CODEWIKI_LMSTUDIO_KEY`, optional | Download an embedding model in LM Studio and start the server on the Developer tab | Processor, and NVIDIA, AMD or Intel cards through the runtime LM Studio picks | 1234 |
+| `lmstudio` | `CODEWIKI_LMSTUDIO_URL` (`http://127.0.0.1:1234`) | `CODEWIKI_LMSTUDIO_KEY`, optional | Download an embedding model in LM Studio and start the server on the Developer tab | Processor or graphics card, by the runtime chosen in LM Studio's settings | 1234 |
 | `ollama` | `OLLAMA_HOST` (`http://127.0.0.1:11434`) | none | `ollama pull embeddinggemma`, or another embedding model | Processor, NVIDIA (CUDA), AMD (ROCm) and Vulkan | 11434 |
 | `llamacpp` | `CODEWIKI_LLAMACPP_URL` (`http://127.0.0.1:9931`) | `CODEWIKI_LLAMACPP_KEY`, optional | Load an embedding model (GGUF) in Llama for Windows, or start `llama-server` with one | Processor, CUDA, Vulkan, HIP or SYCL, by the build of `llama-server` | 9931 |
 | `lemonade` | `CODEWIKI_LEMONADE_URL` (`http://127.0.0.1:13305`) | `CODEWIKI_LEMONADE_KEY`, optional | Pull an embedding model in Lemonade, such as `nomic-embed-text-v1-GGUF` | Processor, graphics card, and the AMD NPU through FastFlowLM | 13305 |

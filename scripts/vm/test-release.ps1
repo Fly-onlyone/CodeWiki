@@ -1748,6 +1748,28 @@ foreach (`$line in `$answers) {
         -Status $(if ($tools -eq 27) { "pass" } elseif ($tools -gt 0) { "note" } else { "fail" }) -Output $run.Output -Observed "tools listed: $tools"
 }
 
+# D2 wrote the wiki and D3 showed that the bridge answers. The three tools that
+# let a coding agent write a note are called here the way an agent calls them,
+# over stdio, with no agent: guest\mcp-write.ps1 asks which note waits, reads
+# its brief, tries a submission on an old base and one for a section that is
+# not the agent's (both refused), then submits the explanation and reads the
+# note's file. The note stays changed for the cases after it.
+Test-Case "D4" "Write a note through the MCP bridge" "list_waiting_notes, get_note_brief and submit_note over stdio save an explanation into the note's file" {
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\mcp-write.ps1") -GuestDirectory $script:Vm.GuestDir
+    $run = Invoke-GuestScript -TimeoutSec 600 -Script "& '$powershell' -NoProfile -ExecutionPolicy Bypass -File '$($script:Vm.GuestDir)\mcp-write.ps1' -Mcp '$guestTarget\codewiki-mcp.exe' -Repo '$guestRepo'"
+    $line = { param($key) if ($run.Output -match "(?m)^${key}: (.*)$") { $Matches[1].Trim() } else { "" } }
+    $note = & $line "note"
+    $stale = & $line "stale base"
+    $wrong = & $line "wrong section"
+    $submit = & $line "submit"
+    $held = (& $line "file holds the text") -eq "True"
+    $again = (& $line "brief again, section written by an agent") -eq "True"
+    $ok = $note -and $stale -match "Not saved" -and $wrong -match "Not saved" -and $submit -match "^Saved " -and $held -and $again
+    Add-Result -Id "D4" -Title "Write a note through the MCP bridge" -Expect "a stale base and a section that is not the agent's are refused; the submission is saved; the note's file holds the text" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "note '$note'; old base: '$stale'; wrong section: '$wrong'; submission: '$submit'; the vault file holds the submitted text: $held; the brief now shows the section as written by an agent: $again"
+}
+
 # Each program keeps a log of its own. By now the app, a backend and the MCP
 # bridge have all run.
 Test-Case "L2" "Every program writes its own log" "app.log, backend.log and mcp.log are in the logs folder, none empty" {

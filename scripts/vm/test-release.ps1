@@ -3240,6 +3240,9 @@ $mistralModel = "Qwen/Qwen3-Embedding-0.6B"
 $mistralModelId = $null
 
 Test-Case "MR1" "Install mistral.rs" "README's installer command installs mistralrs.exe for the user" {
+    # The installer checks the program it unpacked; without the Visual C++
+    # runtime that check ended with 0xC0000135 on 2026-11-21 (see LC1).
+    $vc = Install-GuestVcRuntime
     $run = Invoke-GuestScript -TimeoutSec 1800 -Script ((Get-GuestFreeDiskText 5) + "`n" + (@'
 $watch = Get-Date
 # README's command in its own PowerShell, with the installer's switch for "no menu".
@@ -3260,8 +3263,8 @@ $signature = Get-AuthenticodeSignature $exe
     Set-EmbedFact "mistralrs" "installS" (Get-OutputNumber $run.Output "installed in (\d+) s")
     $ok = $run.Output -match "result: installed" -and $run.Output -match "exe: True"
     Add-Result -Id "MR1" -Title "Install mistral.rs" -Expect "irm https://mistralrs.dev/install.ps1 | iex installs mistralrs.exe" `
-        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(installer exit|installed in|exe:|version:|installed MB|signature|Defender)' }) -join '; ') (the script downloads and unpacks in one step: no separate download time)"
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output ("$vc`n" + $run.Output) `
+        -Observed "$vc; $(($run.Output -split "`n" | Where-Object { $_ -match '^(installer exit|installed in|exe:|version:|installed MB|signature|Defender)' }) -join '; ') (the script downloads and unpacks in one step: no separate download time)"
 }
 
 Test-Case "MR2" "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B" "README's command starts the server on port 1234 and it lists the model" {

@@ -1,5 +1,7 @@
 //! Test map and impacted tests on a fixture workspace.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -52,6 +54,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
         "use shapes::area::of_square;\n\nfn main() {\n    let _ = of_square(1.0);\n}\n\n#[cfg(test)]\nmod tests {\n    #[tokio::test]\n    async fn runs() {}\n}\n",
     );
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(r, &mut index).unwrap();
     (dir, index)
 }

@@ -1,5 +1,7 @@
 //! Refactoring plan on a fixture repository with one of each problem.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -90,6 +92,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
         "use crate::geo::{east, north, south};\n\npub fn span() -> u32 { north() + south() + east() }\n\npub fn local() -> u32 { 3 }\n\npub fn uses_local() -> u32 { local() + north() }\n",
     );
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(r, &mut index).unwrap();
     (dir, index)
 }
@@ -179,6 +182,7 @@ fn a_healthy_repository_gets_no_suggestions() {
         "pub fn double(x: u64) -> u64 { x * 2 }\n",
     );
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(dir.path(), &mut index).unwrap();
     assert!(refactor::plan(&index).unwrap().is_empty());
 }

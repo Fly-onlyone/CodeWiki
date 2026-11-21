@@ -1,5 +1,7 @@
 //! Opening the index of a repository without building one.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -42,6 +44,7 @@ fn an_index_that_was_never_built_is_not_opened() {
             .is_none()
     );
 
+    support::no_model_server();
     open_index_in(data.path(), repo.path()).unwrap();
     assert!(
         open_existing_index_in(data.path(), repo.path())

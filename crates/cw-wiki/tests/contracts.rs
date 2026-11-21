@@ -1,5 +1,7 @@
 //! HTTP contracts across fixture repositories: a server and its client.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -19,6 +21,7 @@ fn scan(files: &[(&str, &str)]) -> RepoContracts {
         write(dir.path(), rel, text);
     }
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(dir.path(), &mut index).unwrap();
     contracts::scan(dir.path(), &index).unwrap()
 }

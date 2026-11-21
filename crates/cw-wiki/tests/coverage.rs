@@ -1,5 +1,7 @@
 //! Coverage import and gap ranking on a fixture repository.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -38,6 +40,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
     write(r, "src/leaf.rs", "pub fn alone() -> u64 { 7 }\n");
     write(r, "src/unseen.rs", "pub fn never_built() {}\n");
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(r, &mut index).unwrap();
     (dir, index)
 }

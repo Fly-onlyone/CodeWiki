@@ -1,5 +1,7 @@
 //! Dead code, documentation drift and file health on a fixture repository.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -38,6 +40,7 @@ fn fixture() -> tempfile::TempDir {
 
 fn indexed(root: &Path) -> Index {
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(root, &mut index).unwrap();
     index
 }

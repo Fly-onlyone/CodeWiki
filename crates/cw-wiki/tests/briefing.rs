@@ -1,5 +1,7 @@
 //! The session-start briefing against a real repository and vault.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -39,6 +41,7 @@ fn commit(root: &Path, message: &str) {
 /// index kept in memory.
 fn update(root: &Path) {
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     let facts = service::reindex(root, &mut index).unwrap();
     let metrics = index.metrics().unwrap();
     cw_wiki::generate(root, &facts, &metrics, cw_wiki::git::head_commit(root)).unwrap();

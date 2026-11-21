@@ -36,6 +36,17 @@ fn no_env(_: &str) -> Option<String> {
     None
 }
 
+/// Have the process embed with the word-form embedder, which empty settings
+/// and an empty environment name. Until the embedder slot is configured it
+/// holds what the machine's environment names, and an update would call
+/// that server. Every harness calls this before its router or `serve` runs.
+fn no_model_server() {
+    cw_wiki::semantic::configure(&cw_core::settings::Resolved::from_parts(
+        &Default::default(),
+        no_env,
+    ));
+}
+
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex
         .lock()
@@ -210,6 +221,7 @@ impl Harness {
             "src/math.rs",
             "//! Arithmetic helpers.\n\n/// Doubles a number.\npub fn double(x: u64) -> u64 { x * 2 }\n\n/// Halves a number.\npub fn half(x: u64) -> u64 { x / 2 }\n",
         );
+        no_model_server();
         let app = router(config(data.path(), settings_writable, embedder));
         Self { app, data, repo }
     }

@@ -863,3 +863,39 @@ fn rules_draw_no_picture_and_remove_the_ones_they_drew_before() {
         None
     );
 }
+
+#[test]
+fn every_explainable_note_splits_and_joins_to_itself() {
+    // An agent's sections are woven into a note by its sections. A note
+    // that did not come back to the letter would be rewritten by a weave
+    // that changed nothing.
+    for dir in [fixture(), explained()] {
+        run(dir.path());
+        let vault = dir.path().join("obsidian");
+        let meta = VaultMeta::load(&vault).unwrap();
+        let mut checked = 0;
+        for entry in meta.notes.values().filter(|e| e.kind.explainable()) {
+            let text = read(&vault, &entry.path);
+            let (head, sections) = cw_vault::note::split(&text);
+            assert_eq!(
+                cw_vault::note::join(&head, &sections),
+                text,
+                "{}",
+                entry.path
+            );
+            // Woven with nothing of an agent's, it is the same note.
+            assert_eq!(cw_vault::weave(&text, &[], entry.kind).text, text);
+            // Every heading is one of its kind: nothing would be moved.
+            for section in &sections {
+                assert!(
+                    entry.kind.sections().contains(&&*section.heading),
+                    "{}: {}",
+                    entry.path,
+                    section.heading
+                );
+            }
+            checked += 1;
+        }
+        assert!(checked > 3, "{checked}");
+    }
+}

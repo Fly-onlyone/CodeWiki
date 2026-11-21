@@ -63,6 +63,32 @@ impl NoteKind {
         }
     }
 
+    /// The sections of a note of this kind that a coding agent writes: what
+    /// the thing is for, how it works, what can go wrong. Rules cannot know
+    /// those. Every other section states a fact read from the code, and
+    /// rules write it. Empty for a kind no agent explains.
+    pub fn agent_sections(self) -> &'static [&'static str] {
+        match self {
+            Self::Concept => &["What it does", "How it works", "Gotchas"],
+            Self::Flow | Self::Operations => &["How it works", "Gotchas"],
+            Self::Pattern => &["Why", "Don't"],
+            Self::Integration => &["What it does", "Wire-up", "Auth mode", "Gotchas"],
+            Self::Home | Self::Index | Self::Glossary | Self::Decision => &[],
+        }
+    }
+
+    /// Whether a coding agent may explain a note of this kind.
+    pub fn explainable(self) -> bool {
+        !self.agent_sections().is_empty()
+    }
+
+    /// Whether the fenced code blocks of the section `heading` are facts:
+    /// the diagram of a flow, the commands of an operations note. Rules
+    /// write them, inside a section whose prose is the agent's.
+    pub fn fact_fences(self, heading: &str) -> bool {
+        matches!(self, Self::Flow | Self::Operations) && heading == "How it works"
+    }
+
     /// Kind implied by a note's file name, for map notes.
     pub fn from_file_name(name: &str) -> Option<Self> {
         match name {
@@ -210,6 +236,54 @@ impl Note {
     }
 }
 
+/// A note's head and its `## ` sections, in their order. The head is all
+/// that stands before the first section: frontmatter, title, summary and
+/// any prose under them. A `## ` line inside a fenced code block starts no
+/// section. [`join`] puts the two together again.
+pub fn split(text: &str) -> (String, Vec<Section>) {
+    let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+    let mut head: Vec<&str> = Vec::new();
+    let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut in_code = false;
+    for line in text.lines() {
+        if line.trim_start().starts_with("```") {
+            in_code = !in_code;
+        } else if !in_code && let Some(heading) = line.trim_end().strip_prefix("## ") {
+            sections.push((heading.trim().to_string(), Vec::new()));
+            continue;
+        }
+        match sections.last_mut() {
+            Some((_, body)) => body.push(line),
+            None => head.push(line),
+        }
+    }
+    let sections = sections
+        .into_iter()
+        .map(|(heading, body)| Section {
+            heading,
+            body: body.join("\n").trim().to_string(),
+        })
+        .collect();
+    (head.join("\n").trim_end_matches('\n').to_string(), sections)
+}
+
+/// A note from its head and its sections: the one definition of a note's
+/// layout. Each section is a blank line, its heading, a blank line and its
+/// body. A section with no body is left out.
+pub fn join(head: &str, sections: &[Section]) -> String {
+    let mut out = head.trim_end_matches('\n').to_string();
+    if !out.is_empty() {
+        out.push('\n');
+    }
+    for section in sections {
+        let body = section.body.trim();
+        if !body.is_empty() {
+            out.push_str(&format!("\n## {}\n\n{body}\n", section.heading));
+        }
+    }
+    out
+}
+
 fn push_line(current: &mut Option<Section>, preamble: &mut String, line: &str) {
     let target = match current {
         Some(s) => &mut s.body,
@@ -300,6 +374,69 @@ fn count_words(prose: &str) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_note_splits_into_its_sections_and_joins_again() {
+        let text = "---\ntags: [core]\n---\n\n# Engine\n\n> Runs jobs.\n\n## Source\n\n- `src/engine.rs`\n\n## How it works\n\n```md\n## not a heading\n```\n\nIt runs.\n\n## See also\n\n- [[_index]]\n";
+        let (head, sections) = split(text);
+        assert_eq!(head, "---\ntags: [core]\n---\n\n# Engine\n\n> Runs jobs.");
+        let headings: Vec<&str> = sections.iter().map(|s| s.heading.as_str()).collect();
+        assert_eq!(headings, ["Source", "How it works", "See also"]);
+        assert_eq!(sections[1].body, "```md\n## not a heading\n```\n\nIt runs.");
+        assert_eq!(join(&head, &sections), text);
+        // The same sections `parse` finds.
+        assert_eq!(Note::parse(text).sections, sections);
+        // Windows line ends and a byte order mark read the same.
+        let windows = format!("{}{}", '\u{feff}', text.replace('\n', "\r\n"));
+        assert_eq!(split(&windows), (head.clone(), sections.clone()));
+
+        // A section with no body is left out, and a note may have none.
+        let mut fewer = sections.clone();
+        fewer[0].body.clear();
+        assert!(!join(&head, &fewer).contains("## Source"));
+        assert_eq!(join(&head, &[]), format!("{head}\n"));
+        assert_eq!(split("just words"), ("just words".to_string(), vec![]));
+    }
+
+    #[test]
+    fn each_kind_says_which_sections_an_agent_writes() {
+        for kind in [
+            NoteKind::Concept,
+            NoteKind::Flow,
+            NoteKind::Operations,
+            NoteKind::Pattern,
+            NoteKind::Integration,
+        ] {
+            assert!(kind.explainable(), "{kind:?}");
+            // Every one of them is a section of the kind, and rules keep
+            // at least one section, the links at the end among them.
+            for heading in kind.agent_sections() {
+                assert!(kind.sections().contains(heading), "{kind:?} {heading}");
+            }
+            assert!(!kind.agent_sections().contains(&"See also"));
+            assert!(kind.agent_sections().len() < kind.sections().len());
+        }
+        for kind in [
+            NoteKind::Home,
+            NoteKind::Index,
+            NoteKind::Glossary,
+            NoteKind::Decision,
+        ] {
+            assert!(!kind.explainable(), "{kind:?}");
+        }
+        // Rules keep the items of a module and the settings of an
+        // integration.
+        assert!(!NoteKind::Concept.agent_sections().contains(&"Items"));
+        assert!(
+            !NoteKind::Integration
+                .agent_sections()
+                .contains(&"Configuration")
+        );
+        assert!(NoteKind::Flow.fact_fences("How it works"));
+        assert!(NoteKind::Operations.fact_fences("How it works"));
+        assert!(!NoteKind::Flow.fact_fences("Gotchas"));
+        assert!(!NoteKind::Concept.fact_fences("How it works"));
+    }
 
     const NOTE: &str = "---\ntags: [backend, handlers]\n---\n\n# HuntModeHandler\n\n> Time-targeted purchase handler — launches its own browser.\n\n## Source\n\n- `backend/handlers/HuntModeHandler.py` — primary implementation\n\n## How it works\n\nThree phases.\n\n```mermaid\nflowchart LR\n    A[[not a link]] --> B\n```\n\nPolls with [[Bot Entry Point]] and `[[ignored]]`.\n\n## See also\n\n- [[_index]]\n- [[01-Backend/_index|Backend]]\n- [[Hunt Mode Lifecycle#Phases]]\n";
 

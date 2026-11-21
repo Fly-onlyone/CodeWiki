@@ -1429,25 +1429,31 @@ impl<'a> RenderCtx<'a> {
 
 /// Accumulates a note's sections; empty ones are dropped.
 struct Doc {
-    out: String,
+    head: String,
+    sections: Vec<cw_vault::Section>,
 }
 
 impl Doc {
     fn new(note: &Planned, summary: &str) -> Self {
-        let mut out = front(&note.tags);
-        out.push_str(&format!("# {}\n\n> {summary}\n", note.title));
-        Self { out }
-    }
-
-    fn section(&mut self, heading: &str, body: String) {
-        let body = body.trim();
-        if !body.is_empty() {
-            self.out.push_str(&format!("\n## {heading}\n\n{body}\n"));
+        let mut head = front(&note.tags);
+        head.push_str(&format!("# {}\n\n> {summary}\n", note.title));
+        Self {
+            head,
+            sections: Vec::new(),
         }
     }
 
+    fn section(&mut self, heading: &str, body: String) {
+        self.sections.push(cw_vault::Section {
+            heading: heading.to_string(),
+            body,
+        });
+    }
+
+    /// The note. Its layout is the vault's, which also puts an agent's
+    /// sections into a note: the two cannot drift apart.
     fn finish(self) -> String {
-        self.out
+        cw_vault::note::join(&self.head, &self.sections)
     }
 }
 

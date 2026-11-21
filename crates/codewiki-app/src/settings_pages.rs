@@ -14,7 +14,9 @@ use cw_client::Origin;
 use cw_telemetry::Reporting;
 use serde_json::Value;
 
-use crate::doc::{Action, Block, Cell, Choice, Column, Doc, Press, SecretState, Table, code, text};
+use crate::doc::{
+    Action, Block, Cell, Choice, Column, Doc, Press, SecretState, Span, Table, code, text,
+};
 use crate::icons;
 use crate::motion::MotionPref;
 use crate::mui::feedback::Tone;
@@ -514,7 +516,7 @@ fn server_rows(model: &Model, settings: &Value, provider: &str) -> Vec<Block> {
     let keyed = rows.iter().any(|row| matches!(row, Block::Secret { .. }));
     rows.extend(model_rows(model, settings));
     if let Some(help) = serve_help(provider) {
-        rows.push(Block::Text(vec![text(help)]));
+        rows.push(Block::Text(help));
     }
     if keyed {
         rows.push(Block::Text(vec![text(
@@ -635,19 +637,34 @@ fn server_label(provider: &str) -> &str {
 // is the serve form of its README, on port 1234.
 // Lemonade: nomic-embed-text-v1-GGUF is in
 // https://github.com/lemonade-sdk/lemonade/blob/main/src/cpp/resources/server_models.json
-fn serve_help(provider: &str) -> Option<&'static str> {
+// llama-server: `-ub` is the physical batch (512 by default) and `-b` the
+// logical one; a bidirectional encoder's whole input must fit the physical
+// batch (https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md).
+fn serve_help(provider: &str) -> Option<Vec<Span>> {
     Some(match provider {
-        "lmstudio" => {
-            "In LM Studio, download an embedding model and start the server on the Developer tab. LM Studio and mistral.rs both use port 1234."
-        }
-        "ollama" => "Run `ollama pull embeddinggemma`, or name another embedding model.",
-        "llamacpp" => {
-            "Load an embedding model (GGUF) in Llama for Windows, or start llama-server with one. Both use port 9931. For long texts, start llama-server with -ub 2048 -b 2048, or add those flags to the custom serve arguments of Llama for Windows."
-        }
-        "lemonade" => "Pull an embedding model in Lemonade, such as nomic-embed-text-v1-GGUF.",
-        "mistralrs" => {
-            "Run `mistralrs serve -m Qwen/Qwen3-Embedding-0.6B`. mistral.rs and LM Studio both use port 1234."
-        }
+        "lmstudio" => vec![text(
+            "In LM Studio, download an embedding model and start the server on the Developer tab. LM Studio and mistral.rs both use port 1234.",
+        )],
+        "ollama" => vec![
+            text("Run "),
+            code("ollama pull embeddinggemma"),
+            text(", or name another embedding model."),
+        ],
+        "llamacpp" => vec![
+            text(
+                "Load an embedding model (GGUF) in Llama for Windows, or start llama-server with one. Both use port 9931. For long texts, start llama-server with ",
+            ),
+            code("-ub 2048 -b 2048"),
+            text(", or add those flags to the custom serve arguments of Llama for Windows."),
+        ],
+        "lemonade" => vec![text(
+            "Pull an embedding model in Lemonade, such as nomic-embed-text-v1-GGUF.",
+        )],
+        "mistralrs" => vec![
+            text("Run "),
+            code("mistralrs serve -m Qwen/Qwen3-Embedding-0.6B"),
+            text(". mistral.rs and LM Studio both use port 1234."),
+        ],
         _ => return None,
     })
 }
@@ -956,7 +973,7 @@ fn error_reports(model: &Model) -> Block {
                 locked,
             },
             Block::Text(vec![text(
-                "A crash or an error of the app, the backend, the agents' bridge or the embedding worker goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key. Sentry keeps the city and country of the network a report comes from, not its address.",
+                "A crash or an error of the app, the backend or the agents' bridge goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key. Sentry keeps the city and country of the network a report comes from, not its address.",
             )]),
         ],
     )
@@ -1442,6 +1459,25 @@ mod tests {
         );
         let words = search_with("mistralrs", None).words();
         assert!(words.contains("mistralrs serve -m Qwen/Qwen3-Embedding-0.6B"));
+        // A command is set in the code font, not between backticks.
+        for (provider, command) in [
+            ("ollama", "ollama pull embeddinggemma"),
+            ("mistralrs", "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B"),
+            ("llamacpp", "-ub 2048 -b 2048"),
+        ] {
+            let doc = search_with(provider, None);
+            let spans: Vec<&Span> = doc
+                .flat()
+                .into_iter()
+                .filter_map(|block| match block {
+                    Block::Text(line) => Some(line),
+                    _ => None,
+                })
+                .flatten()
+                .collect();
+            assert!(spans.contains(&&code(command)), "{provider}: {spans:?}");
+            assert!(!doc.words().contains('`'), "{provider}");
+        }
         assert!(!words.contains("stored encrypted"), "{words}");
         assert!(
             search_with("lmstudio", None)

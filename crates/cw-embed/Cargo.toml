@@ -1,6 +1,6 @@
 [package]
 name = "cw-embed"
-description = "Text embeddings for CodeWiki's semantic search: a built-in local embedder and HTTP providers"
+description = "Text embeddings for CodeWiki's semantic search: a word-form hashing embedder and HTTP providers"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

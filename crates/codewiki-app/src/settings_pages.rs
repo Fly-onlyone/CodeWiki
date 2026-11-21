@@ -603,7 +603,7 @@ fn serve_help(provider: &str) -> Option<&'static str> {
         }
         "ollama" => "Run `ollama pull embeddinggemma`, or name another embedding model.",
         "llamacpp" => {
-            "Load an embedding model (GGUF) in Llama for Windows, or start llama-server with one. Both use port 9931."
+            "Load an embedding model (GGUF) in Llama for Windows, or start llama-server with one. Both use port 9931. For long texts, start llama-server with -ub 2048 -b 2048, or add those flags to the custom serve arguments of Llama for Windows."
         }
         "lemonade" => "Pull an embedding model in Lemonade, such as nomic-embed-text-v1-GGUF.",
         "mistralrs" => {
@@ -1395,6 +1395,12 @@ mod tests {
             );
         }
         // How to start each server, and what keeps a key.
+        // A long text needs a physical batch larger than llama-server's own.
+        let llama = search_with("llamacpp", None).words();
+        assert!(
+            llama.contains("-ub 2048 -b 2048") && llama.contains("port 9931"),
+            "{llama}"
+        );
         let words = search_with("mistralrs", None).words();
         assert!(words.contains("mistralrs serve -m Qwen/Qwen3-Embedding-0.6B"));
         assert!(!words.contains("stored encrypted"), "{words}");

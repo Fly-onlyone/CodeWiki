@@ -495,6 +495,18 @@ fn model_from_env(name: &str) -> Option<String> {
     (name == "CODEWIKI_EMBED_MODEL").then(|| "env-model".to_string())
 }
 
+fn builtin_from_env(name: &str) -> Option<String> {
+    (name == "CODEWIKI_EMBED").then(|| "builtin".to_string())
+}
+
+#[tokio::test]
+async fn a_built_in_embedder_named_by_the_environment_says_it_was_removed() {
+    let h = Harness::with_config(Some(SECRET), true, builtin_from_env);
+    let settings = h.get("/v1/settings").await;
+    let problem = settings["embed"]["problem"].as_str().unwrap_or_default();
+    assert!(problem.contains("was removed"), "{problem}");
+}
+
 #[tokio::test]
 async fn a_setting_given_by_the_environment_cannot_be_changed() {
     let h = Harness::with_config(Some(SECRET), true, model_from_env);

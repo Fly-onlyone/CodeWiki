@@ -999,6 +999,98 @@ foreach ($view in $views) {
     }
 }
 
+# ---------------------------------------------------------------- helpers for the cases below
+# End the app the way a user does: palette, "Quit CodeWiki", Enter. The app
+# and its backend must be gone afterwards; one that stays is ended by force.
+# Returns whether Quit ended them by itself. The window must have the focus.
+function Exit-GuestApp {
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "quit codewiki"; Wait-For 2
+    Send-Keys "enter"
+    $deadline = (Get-Date).AddSeconds(60)
+    do {
+        Start-Sleep -Seconds 3
+        $probe = Get-Probe "quit" -Quick
+        $left = (Get-App $probe).Count + (Get-Backend $probe).Count
+    } while ($left -gt 0 -and (Get-Date) -lt $deadline)
+    if ($left) { Stop-GuestApp }
+    $left -eq 0
+}
+
+# The share of a screenshot's pixels (sampled) that differ clearly from
+# another's. A diagram viewer over the window changes a large part of it.
+function Get-ImageChange {
+    param([string]$A, [string]$B)
+    Add-Type -AssemblyName System.Drawing
+    $first = New-Object System.Drawing.Bitmap $A
+    $second = New-Object System.Drawing.Bitmap $B
+    try {
+        $width = [math]::Min($first.Width, $second.Width)
+        $height = [math]::Min($first.Height, $second.Height)
+        $changed = 0
+        $total = 0
+        for ($y = 0; $y -lt $height; $y += 8) {
+            for ($x = 0; $x -lt $width; $x += 8) {
+                $p = $first.GetPixel($x, $y)
+                $q = $second.GetPixel($x, $y)
+                if ([math]::Abs($p.R - $q.R) + [math]::Abs($p.G - $q.G) + [math]::Abs($p.B - $q.B) -gt 24) { $changed += 1 }
+                $total += 1
+            }
+        }
+        if ($total) { $changed / $total } else { 0 }
+    } finally {
+        $first.Dispose()
+        $second.Dispose()
+    }
+}
+
+# What a script that talks to the backend in the guest starts with: the
+# address and token of the running backend (backend.json) and Invoke-Backend,
+# which returns the answer's text, or "HTTP error: ..." with the body of a
+# refusal. Get-RepoId finds a registered repository by its name.
+$backendPrelude = @'
+$ErrorActionPreference = 'Stop'
+$info = Get-Content (Join-Path $env:LOCALAPPDATA 'CodeWiki\backend.json') -Raw | ConvertFrom-Json
+function Invoke-Backend {
+    param([string]$Method, [string]$Path, $Body = $null, [int]$Wait = 120)
+    $request = @{ UseBasicParsing = $true; Method = $Method; Uri = ($info.url + $Path); TimeoutSec = $Wait
+        Headers = @{ Authorization = ('Bearer ' + $info.token) } }
+    if ($null -ne $Body) { $request.Body = ($Body | ConvertTo-Json -Depth 8 -Compress); $request.ContentType = 'application/json' }
+    try { (Invoke-WebRequest @request).Content }
+    catch {
+        $detail = ''
+        if ($_.Exception.Response) { try { $detail = (New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() } catch { } }
+        "HTTP error: $($_.Exception.Message) $detail"
+    }
+}
+function Get-RepoId {
+    param([string]$Name)
+    $list = @(Invoke-Backend GET '/v1/repos' | ConvertFrom-Json)
+    ($list | Where-Object { $_.name -eq $Name } | Select-Object -First 1).id
+}
+'@
+function Invoke-GuestBackendScript {
+    param([Parameter(Mandatory)][string]$Script, [int]$TimeoutSec = 300)
+    Invoke-GuestScript -TimeoutSec $TimeoutSec -Script ($backendPrelude + "`n" + $Script)
+}
+
+# ---------------------------------------------------------------- AV1, the agent view
+# `agent:<note>` starts the app on the note's agent view, the note as the MCP
+# tool read_note gives it to a coding agent (main.rs, open_startup_view).
+Test-Case "AV1" "The agent view of a note" "the window opens on the note's agent view, with the page drawn" {
+    if (-not $noteName) { throw "D2 produced no note to open" }
+    Start-GuestApp -Arguments $guestRepo, "agent:$noteName"
+    Wait-For 15
+    $shot = Shot "view-agent"
+    $probe = Get-Probe "view-agent" -Quick
+    $app = Get-App $probe
+    $window = @($app | Where-Object { $_.hasWindow })
+    Add-Result -Id "AV1" -Title "The agent view of a note" -Expect "the window opens on the note's agent view" `
+        -Status $(if ($window) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "started on 'agent:$noteName'; app processes $($app.Count), with a window $($window.Count); read the screenshot: the note is drawn, a line above it says what is left out (the walk-through of calls that rules wrote) and stays while the note scrolls, and the toolbar offers no Edit"
+    Stop-GuestApp
+}
+
 # A page must appear without any input. Start-GuestApp clicks the window to
 # give it the focus, which hid this: here the app is started and left alone.
 # With motion reduced, a page once stayed a lone "CodeWiki" heading until the
@@ -1209,6 +1301,92 @@ Test-Case "ST1" "The Settings page and its categories" "each row of the list ope
     Stop-GuestApp
 }
 
+# ---------------------------------------------------------------- Z1, zoom
+# The whole app zooms with Ctrl+wheel (zoom.rs): 100, 110, 125 ... percent,
+# kept in zoom.txt under %APPDATA%\CodeWiki. The wheel is the VM's own mouse
+# device and Ctrl is held on its keyboard device, as a hand does: the app
+# reads the modifier from the keyboard's state, which a message posted to the
+# window with MK_CONTROL would not change.
+function Send-CtrlWheel {
+    param([Parameter(Mandatory)][int]$Notches)
+    Invoke-Device Keyboard PressKey @{ KeyCode = [uint32]0x11 }
+    Start-Sleep -Milliseconds 150
+    Send-Scroll -Notches $Notches
+    Start-Sleep -Milliseconds 150
+    Invoke-Device Keyboard ReleaseKey @{ KeyCode = [uint32]0x11 }
+    Start-Sleep -Milliseconds 300
+}
+
+Test-Case "Z1" "Zoom the whole app with Ctrl+wheel" "two notches up zoom in, two down return to 100 percent, Ctrl+0 resets, and zoom.txt follows" {
+    $read = "if (Test-Path `$env:APPDATA\CodeWiki\zoom.txt) { (Get-Content `$env:APPDATA\CodeWiki\zoom.txt -Raw).Trim() } else { '(not set)' }"
+    Invoke-GuestScript -Script 'Remove-Item (Join-Path $env:APPDATA "CodeWiki\zoom.txt") -ErrorAction SilentlyContinue' | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    # The pointer rests in the middle of the page, where the wheel is read.
+    Move-Pointer -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int]($info.Height / 2))
+    Wait-For 1
+    $a = Shot "zoom-100"
+    $start = (Invoke-GuestScript -Script $read).Output.Trim()
+    Send-CtrlWheel 1; Wait-For 1
+    Send-CtrlWheel 1; Wait-For 3
+    $zoomed = (Invoke-GuestScript -Script $read).Output.Trim()
+    $b = Shot "zoom-in"
+    Send-CtrlWheel -1; Wait-For 1
+    Send-CtrlWheel -1; Wait-For 3
+    $back = (Invoke-GuestScript -Script $read).Output.Trim()
+    $c = Shot "zoom-back"
+    Send-CtrlWheel 1; Wait-For 2
+    Send-Keys "ctrl+0"; Wait-For 3
+    $reset = (Invoke-GuestScript -Script $read).Output.Trim()
+    $d = Shot "zoom-reset"
+    $level = 0
+    $up = [int]::TryParse($zoomed, [ref]$level) -and $level -gt 100
+    $ok = $up -and $back -eq "100" -and $reset -eq "100"
+    Add-Result -Id "Z1" -Title "Zoom the whole app with Ctrl+wheel" -Expect "zoom.txt: above 100 after two notches up, 100 after two down, 100 after Ctrl+0" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c, $d) `
+        -Observed "zoom.txt at the start '$start'; after two notches up with Ctrl held '$zoomed'; after two down '$back'; after one up and Ctrl+0 '$reset'; read the screenshots: the second is larger than the first and shows the level chip in the title bar, the third and fourth look like the first (the title bar never changes size)"
+    Stop-GuestApp
+}
+
+# ---------------------------------------------------------------- LR1, open the last repository
+# Settings > Appearance > Startup > "Open the last repository" is kept in
+# open_last.txt ("on") under %APPDATA%\CodeWiki (startup.rs). On, a start with
+# no repository and no view opens the wiki map of the last repository; off, it
+# opens Home. The switch is turned on through its file (the click's position is
+# not read off a screenshot) and photographed in Settings.
+Test-Case "LR1" "Open the last repository, on and off" "off: a plain start shows Home; on: after Quit a plain start shows cw-core's wiki map" {
+    $file = "`$env:APPDATA\CodeWiki\open_last.txt"
+    Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
+    # Starting with the folder makes it the last repository.
+    Start-GuestApp -Arguments $guestRepo, "settings:appearance"
+    Wait-For 15
+    $a = Shot "open-last-switch-off"
+    $ended = Exit-GuestApp
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null; Set-Content $file 'on' -NoNewline" | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "settings:appearance"
+    Wait-For 15
+    $b = Shot "open-last-switch-on"
+    $endedOn = Exit-GuestApp
+    # A plain start: no folder, no view, a working folder that is no repository.
+    Start-GuestApp
+    Wait-For 25
+    $c = Shot "open-last-on-plain-start"
+    $opened = Get-OpenedRepo
+    $exitedAgain = Exit-GuestApp
+    Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestApp
+    Wait-For 25
+    $d = Shot "open-last-off-plain-start"
+    $openedOff = Get-OpenedRepo
+    Stop-GuestApp
+    $ok = $ended -and $endedOn -and $exitedAgain -and $opened -eq "cw-core"
+    Add-Result -Id "LR1" -Title "Open the last repository, on and off" -Expect "after Quit, a plain start opens cw-core with the switch on, and Home with it off" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c, $d) `
+        -Observed "Settings > Appearance photographed with the switch off, then on (open_last.txt written); Quit ended the app and its backend by itself: $ended, $endedOn, $exitedAgain; plain start with the switch on opened '$opened'; off, '$openedOff'; read the screenshots: the third is cw-core's wiki map, the fourth Home. open_last.txt removed again"
+}
+
 Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the file" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
@@ -1323,6 +1501,117 @@ Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes
     Add-Result -Id "HM2" -Title "Remove a project whose folder is gone" -Expect "gone-demo is no longer registered; cw-core is" `
         -Status $(if ($left.Count -eq 0 -and (Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })) { "pass" } else { "fail" }) -Shots @($shot) `
         -Observed "clicked Remove at ($x,$y); the backend now lists: $((Get-Registered $probe | ForEach-Object { $_.name }) -join ', ')"
+}
+
+# ---------------------------------------------------------------- DV1, the diagram viewer
+# A drawn Mermaid diagram in a note is a link, and a click on it opens the
+# diagram viewer over the window; Escape closes it (main.rs, open_diagram). The
+# wiki of cw-core has no diagram: its notes are rules' notes of a single crate,
+# and only a flow note has one (a "Crate Dependency Flow" needs two crates). So
+# this case builds a small Rust workspace of three crates in the guest, writes
+# its wiki, and opens the flow note. Where the diagram is on the page is not
+# known to the script; it clicks down the column and tells the viewer by the
+# change in the picture (Get-ImageChange).
+Test-Case "DV1" "Open a diagram in the viewer, and close it" "a click on the flow note's diagram opens the viewer; Escape closes it and the note is as before" {
+    $demo = "$guestHome\repos\diagram-demo"
+    # The workspace's files, sent as one JSON text so that no quote has to be escaped twice.
+    $demoFiles = [ordered]@{
+        "Cargo.toml"              = "[workspace]`nmembers = [`"crates/*`"]`nresolver = `"2`"`n"
+        "crates/alpha/Cargo.toml" = "[package]`nname = `"alpha`"`nversion = `"0.1.0`"`nedition = `"2021`"`n"
+        "crates/alpha/src/lib.rs" = "/// The base of the other two crates.`npub fn base() -> u32 { 1 }`n"
+        "crates/beta/Cargo.toml"  = "[package]`nname = `"beta`"`nversion = `"0.1.0`"`nedition = `"2021`"`n`n[dependencies]`nalpha = { path = `"../alpha`" }`n"
+        "crates/beta/src/lib.rs"  = "/// Builds on alpha.`npub fn middle() -> u32 { alpha::base() + 1 }`n"
+        "crates/gamma/Cargo.toml" = "[package]`nname = `"gamma`"`nversion = `"0.1.0`"`nedition = `"2021`"`n`n[dependencies]`nalpha = { path = `"../alpha`" }`nbeta = { path = `"../beta`" }`n"
+        "crates/gamma/src/lib.rs" = "/// Builds on alpha and beta.`npub fn top() -> u32 { beta::middle() + alpha::base() }`n"
+    }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($demoFiles | ConvertTo-Json -Compress)))
+    $setup = Invoke-GuestScript -TimeoutSec 300 -Script (@'
+$demo = '{{DEMO}}'
+Remove-Item -Recurse -Force $demo -ErrorAction SilentlyContinue
+$files = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{FILES}}')) | ConvertFrom-Json
+foreach ($property in $files.PSObject.Properties) {
+    $path = Join-Path $demo ($property.Name -replace '/', '\')
+    New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
+    [System.IO.File]::WriteAllText($path, $property.Value)
+}
+Set-Location $demo
+& '{{CODEWIKI}}' init 2>&1
+"init exit: $LASTEXITCODE"
+& '{{CODEWIKI}}' update 2>&1
+"update exit: $LASTEXITCODE"
+$flow = Get-ChildItem (Join-Path $demo 'obsidian') -Recurse -Filter '*Dependency Flow.md' | Select-Object -First 1
+"flow note: $(if ($flow) { $flow.BaseName } else { 'none' })"
+$fence = [string][char]96 * 3 + 'mermaid'
+"has diagram: $(if ($flow) { (Get-Content $flow.FullName -Raw).Contains($fence) } else { $false })"
+$global:LASTEXITCODE = 0
+'@).Replace('{{DEMO}}', $demo).Replace('{{FILES}}', $encoded).Replace('{{CODEWIKI}}', "$guestTarget\codewiki.exe")
+    $flowName = if ($setup.Output -match "flow note: (.+)") { $Matches[1].Trim() } else { "none" }
+    if ($flowName -eq "none" -or $setup.Output -notmatch "has diagram: True") {
+        Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "the demo wiki has a flow note with a diagram" -Status fail -Output $setup.Output `
+            -Observed "the demo workspace's wiki has no flow note with a Mermaid diagram; see the output"
+        return
+    }
+    # With both side panes hidden, the note's column is in the middle of the window.
+    Invoke-GuestScript -Script 'New-Item -ItemType Directory -Force "$env:APPDATA\CodeWiki" | Out-Null; Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" hidden -NoNewline' | Out-Null
+    Start-GuestApp -Arguments $demo, $flowName
+    # The diagram is drawn off the UI thread: a placeholder shows first.
+    Wait-For 25
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $note = Shot "diagram-note"
+    $base = Join-Path $shots $note
+    $probeShot = Join-Path $logs "diagram-scan.png"
+    $found = $null
+    $attempts = 0
+    $step = [int](40 * $info.Scale)
+    foreach ($offset in -100, -250, 60) {
+        $x = $info.Left + [int]($info.Width / 2) + [int]($offset * $info.Scale)
+        for ($y = $info.Top + [int]($info.Height * 0.25); $y -lt $info.Bottom - $step; $y += $step) {
+            Send-Click -X $x -Y $y
+            $attempts += 1
+            Wait-For 2.5
+            Save-Screenshot $probeShot | Out-Null
+            if ((Get-ImageChange $base $probeShot) -gt 0.02) {
+                # Something opened. The viewer closes with Escape and leaves
+                # the note as it was; a page that was navigated to does not.
+                Send-Keys "esc"; Wait-For 2.5
+                Save-Screenshot $probeShot | Out-Null
+                if ((Get-ImageChange $base $probeShot) -lt 0.005) { $found = @($x, $y); break }
+                # A link of the note was followed: start the note again.
+                Stop-GuestApp
+                Start-GuestApp -Arguments $demo, $flowName
+                Wait-For 25
+                Save-Screenshot $base | Out-Null
+            }
+        }
+        if ($found) { break }
+    }
+    if (-not $found) {
+        Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "a click on the diagram opens the viewer" -Status note -Shots @($note) `
+            -Observed "$attempts clicks down the note's column found nothing that opens over the window and closes with Escape; read the screenshot: whether the note shows a drawn diagram (a placeholder or the source means it was not drawn in time)"
+    } else {
+        Send-Click -X $found[0] -Y $found[1]
+        Wait-For 8
+        $open = Shot "diagram-viewer-open"
+        Send-Keys "esc"; Wait-For 3
+        $closed = Shot "diagram-viewer-closed"
+        $after = Get-ImageChange $base (Join-Path $shots $closed)
+        Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "the viewer opens over the note and Escape closes it" `
+            -Status $(if ($after -lt 0.005) { "pass" } else { "fail" }) -Shots @($note, $open, $closed) `
+            -Observed "the flow note '$flowName' of a three-crate workspace built in the guest; a click at ($($found[0]),$($found[1])) after $attempts tries opened something that covers the window, and Escape brought back the note (change from before: $([math]::Round($after * 100, 2)) percent of sampled pixels); read the screenshots: the second must be the diagram viewer (header 'Scroll to zoom, drag to move', a percentage, zoom buttons), sharp after the wait, the third the note"
+    }
+    Stop-GuestApp
+    # Put the guest back as the cases after this one expect: the panes shown,
+    # cw-core the last repository, the demo not registered.
+    Invoke-GuestScript -Script 'Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" shown -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" shown -NoNewline' | Out-Null
+    Start-GuestApp -Arguments $guestRepo
+    Wait-For 12
+    Invoke-GuestBackendScript -Script (@'
+$id = Get-RepoId 'diagram-demo'
+if ($id) { Invoke-Backend DELETE "/v1/repos/$id" | Out-Null }
+Remove-Item -Recurse -Force '{{DEMO}}' -ErrorAction SilentlyContinue
+'@).Replace('{{DEMO}}', $demo) | Out-Null
+    Stop-GuestApp
 }
 
 # ---------------------------------------------------------------- IC, icon

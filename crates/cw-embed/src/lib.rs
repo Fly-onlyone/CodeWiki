@@ -600,7 +600,12 @@ impl OpenAiEmbedder {
             let mut posted = self.post(&url, &input, timeout)?;
             // A model takes only so many tokens, and a server may refuse the
             // batch rather than cut the text. Once more, with shorter texts.
-            if matches!(&posted, Posted::Refused { detail, .. } if says_too_long(detail)) {
+            // Only for the statuses a length error comes with; llama-server
+            // reports one as a 500. Never for a rate limit or a refused token.
+            if matches!(
+                &posted,
+                Posted::Refused { status: 400 | 413 | 422 | 500, detail } if says_too_long(detail)
+            ) {
                 let short: Vec<&str> = batch.iter().map(|t| cut(t, SHORT_CHARS)).collect();
                 posted = self.post(&url, &short, timeout)?;
             }

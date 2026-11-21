@@ -233,6 +233,7 @@ fn an_address_ending_in_v1_is_the_server_root() {
     e.embed(&["a".into()]).unwrap();
     assert_eq!(srv.join().unwrap().path, "/v1/embeddings");
     assert_eq!(server_root("http://h:1/v1/"), "http://h:1");
+    assert_eq!(server_root("http://h:1/v1"), "http://h:1");
     assert_eq!(server_root("http://h:1/"), "http://h:1");
     assert_eq!(server_root("http://h:1"), "http://h:1");
 }
@@ -247,6 +248,18 @@ fn a_refused_token_says_which_setting_holds_it() {
         "{error}"
     );
     srv.join().unwrap();
+}
+
+#[test]
+fn a_rate_limit_is_not_retried_even_when_it_says_exceeded() {
+    let (url, srv) = serve_many(vec![(
+        429,
+        json!({ "error": { "message": "You exceeded your current quota" } }),
+    )]);
+    let e = OpenAiEmbedder::new(Server::OpenAi, &url, Some("k"), "m");
+    let error = e.embed(&["a".into()]).unwrap_err().to_string();
+    assert!(error.contains("429"), "{error}");
+    assert_eq!(srv.join().unwrap().len(), 1);
 }
 
 #[test]

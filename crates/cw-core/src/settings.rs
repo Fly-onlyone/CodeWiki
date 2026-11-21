@@ -97,11 +97,69 @@ pub const OLLAMA_HOST: Key = Key {
     default: Some("http://127.0.0.1:11434"),
 };
 
+pub const LMSTUDIO_URL: Key = Key {
+    env: "CODEWIKI_LMSTUDIO_URL",
+    section: "lmstudio",
+    field: "url",
+    secret: false,
+    default: Some("http://127.0.0.1:1234"),
+};
+pub const LMSTUDIO_KEY: Key = Key {
+    env: "CODEWIKI_LMSTUDIO_KEY",
+    section: "lmstudio",
+    field: "api_key",
+    secret: true,
+    default: None,
+};
+pub const LLAMACPP_URL: Key = Key {
+    env: "CODEWIKI_LLAMACPP_URL",
+    section: "llamacpp",
+    field: "url",
+    secret: false,
+    default: Some("http://127.0.0.1:9931"),
+};
+pub const LLAMACPP_KEY: Key = Key {
+    env: "CODEWIKI_LLAMACPP_KEY",
+    section: "llamacpp",
+    field: "api_key",
+    secret: true,
+    default: None,
+};
+pub const LEMONADE_URL: Key = Key {
+    env: "CODEWIKI_LEMONADE_URL",
+    section: "lemonade",
+    field: "url",
+    secret: false,
+    default: Some("http://127.0.0.1:13305"),
+};
+pub const LEMONADE_KEY: Key = Key {
+    env: "CODEWIKI_LEMONADE_KEY",
+    section: "lemonade",
+    field: "api_key",
+    secret: true,
+    default: None,
+};
+/// mistral.rs has no key setting: its server takes none by default.
+pub const MISTRALRS_URL: Key = Key {
+    env: "CODEWIKI_MISTRALRS_URL",
+    section: "mistralrs",
+    field: "url",
+    secret: false,
+    default: Some("http://127.0.0.1:1234"),
+};
+
 /// Every setting, in the order a page shows them.
-pub const ALL: [Key; 6] = [
+pub const ALL: [Key; 13] = [
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OLLAMA_HOST,
+    LMSTUDIO_URL,
+    LMSTUDIO_KEY,
+    LLAMACPP_URL,
+    LLAMACPP_KEY,
+    LEMONADE_URL,
+    LEMONADE_KEY,
+    MISTRALRS_URL,
     EMBED_PROVIDER,
     EMBED_MODEL,
     EMBED_DEVICE,
@@ -480,6 +538,42 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         dir
+    }
+
+    #[test]
+    fn the_servers_have_their_own_address_and_key() {
+        for (url, key, section, address) in [
+            (
+                LMSTUDIO_URL,
+                Some(LMSTUDIO_KEY),
+                "lmstudio",
+                "http://127.0.0.1:1234",
+            ),
+            (
+                LLAMACPP_URL,
+                Some(LLAMACPP_KEY),
+                "llamacpp",
+                "http://127.0.0.1:9931",
+            ),
+            (
+                LEMONADE_URL,
+                Some(LEMONADE_KEY),
+                "lemonade",
+                "http://127.0.0.1:13305",
+            ),
+            (MISTRALRS_URL, None, "mistralrs", "http://127.0.0.1:1234"),
+        ] {
+            assert_eq!(url.path(), format!("{section}.url"));
+            assert!(!url.secret);
+            assert_eq!(url.default, Some(address));
+            if let Some(key) = key {
+                assert_eq!(key.path(), format!("{section}.api_key"));
+                assert!(key.secret);
+                assert_eq!(key.default, None);
+            }
+        }
+        assert_eq!(LMSTUDIO_KEY.env, "CODEWIKI_LMSTUDIO_KEY");
+        assert_eq!(MISTRALRS_URL.env, "CODEWIKI_MISTRALRS_URL");
     }
 
     #[test]

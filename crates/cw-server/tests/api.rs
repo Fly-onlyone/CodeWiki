@@ -327,9 +327,28 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
     assert_eq!(
         settings["embed"]["provider"]["options"],
         if cfg!(windows) {
-            json!(["local", "builtin", "ollama", "openai", "none"])
+            json!([
+                "local",
+                "builtin",
+                "lmstudio",
+                "ollama",
+                "llamacpp",
+                "lemonade",
+                "mistralrs",
+                "openai",
+                "none"
+            ])
         } else {
-            json!(["local", "ollama", "openai", "none"])
+            json!([
+                "local",
+                "lmstudio",
+                "ollama",
+                "llamacpp",
+                "lemonade",
+                "mistralrs",
+                "openai",
+                "none"
+            ])
         }
     );
     assert!(
@@ -515,7 +534,17 @@ async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
     // Offered before any model is installed.
     assert_eq!(
         settings["embed"]["provider"]["options"],
-        json!(["local", "builtin", "ollama", "openai", "none"])
+        json!([
+            "local",
+            "builtin",
+            "lmstudio",
+            "ollama",
+            "llamacpp",
+            "lemonade",
+            "mistralrs",
+            "openai",
+            "none"
+        ])
     );
     // The graphics card is offered where a worker for it is installed, which
     // a test program is not.
@@ -570,7 +599,17 @@ async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
     install_model(h.data.path(), "granite-small-english-r2");
     assert_eq!(
         h.get("/v1/settings").await["embed"]["provider"]["options"],
-        json!(["local", "builtin", "ollama", "openai", "none"])
+        json!([
+            "local",
+            "builtin",
+            "lmstudio",
+            "ollama",
+            "llamacpp",
+            "lemonade",
+            "mistralrs",
+            "openai",
+            "none"
+        ])
     );
     let settings = h
         .put(

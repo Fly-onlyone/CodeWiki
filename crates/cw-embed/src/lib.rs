@@ -1,6 +1,6 @@
 //! Text embeddings for semantic search.
 //!
-//! Four embedders sit behind one trait:
+//! These embedders sit behind one trait:
 //!
 //! - [`LocalEmbedder`] runs in-process with no model file and no network. It
 //!   hashes words, word pairs and character trigrams into a fixed-size
@@ -10,12 +10,15 @@
 //! - [`BuiltinEmbedder`] has a neural model of CodeWiki's own catalog embed,
 //!   in a hidden child process that CodeWiki starts by itself.
 //! - [`OllamaEmbedder`] calls a model served by a local Ollama.
-//! - [`OpenAiEmbedder`] calls any OpenAI-compatible embeddings endpoint.
+//! - [`OpenAiEmbedder`] calls any OpenAI-compatible embeddings endpoint. It
+//!   also serves LM Studio, llama.cpp, Lemonade and mistral.rs, which take the
+//!   same request at `/v1/embeddings` (see [`Server`]).
 //!
-//! `CODEWIKI_EMBED` selects one: `local` (default), `builtin`, `ollama`,
-//! `openai` or `none`.
+//! `CODEWIKI_EMBED` selects one: `local` (default), `builtin`, `lmstudio`,
+//! `ollama`, `llamacpp`, `lemonade`, `mistralrs`, `openai` or `none`.
 
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use cw_core::{Error, Result};
@@ -28,7 +31,17 @@ pub const EMBED_MODEL_ENV: &str = "CODEWIKI_EMBED_MODEL";
 /// What runs a built-in model.
 pub const EMBED_DEVICE_ENV: &str = "CODEWIKI_EMBED_DEVICE";
 /// The embedders a user can choose, in the order a page lists them.
-pub const PROVIDERS: [&str; 5] = ["local", "builtin", "ollama", "openai", "none"];
+pub const PROVIDERS: [&str; 9] = [
+    "local",
+    "builtin",
+    "lmstudio",
+    "ollama",
+    "llamacpp",
+    "lemonade",
+    "mistralrs",
+    "openai",
+    "none",
+];
 /// The values of [`EMBED_DEVICE_ENV`].
 pub const DEVICES: [&str; 3] = ["auto", "cpu", "cuda"];
 
@@ -36,8 +49,14 @@ pub const DEVICES: [&str; 3] = ["auto", "cpu", "cuda"];
 const BATCH: usize = 64;
 /// Characters of one text sent to an HTTP embedder; models truncate anyway.
 const MAX_CHARS: usize = 8_000;
+/// Characters of one text in the second try, after a server refused a batch
+/// as longer than its model takes.
+const SHORT_CHARS: usize = 2_000;
 /// How long an HTTP embedder may take over one batch.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
+/// How long the first call of an embedder may take: a local server loads its
+/// model when the first request asks for it.
+const FIRST_LOAD_TIMEOUT: Duration = Duration::from_secs(300);
 /// How long a probe waits. Long enough for a local server to load its model,
 /// short enough for someone watching a "Test" button.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(60);
@@ -229,14 +248,29 @@ impl Embedder for LocalEmbedder {
 }
 
 fn clip(text: &str) -> &str {
-    if text.len() <= MAX_CHARS {
+    cut(text, MAX_CHARS)
+}
+
+/// `text` cut to at most `max` bytes, on a character boundary.
+fn cut(text: &str, max: usize) -> &str {
+    if text.len() <= max {
         return text;
     }
-    let mut end = MAX_CHARS;
+    let mut end = max;
     while !text.is_char_boundary(end) {
         end -= 1;
     }
     &text[..end]
+}
+
+/// What a server answered to a POST.
+enum Posted {
+    Done(Value),
+    /// An HTTP error status, with the server's own explanation.
+    Refused {
+        status: u16,
+        detail: String,
+    },
 }
 
 fn post_json(
@@ -245,7 +279,7 @@ fn post_json(
     bearer: Option<&str>,
     body: &Value,
     timeout: Duration,
-) -> Result<Value> {
+) -> Result<Posted> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
         .http_status_as_error(false)
@@ -268,13 +302,28 @@ fn post_json(
         let detail = value["error"]["message"]
             .as_str()
             .or_else(|| value["error"].as_str())
-            .unwrap_or("no detail given");
-        return Err(Error::external(
-            format!("{provider} returned HTTP {}", status.as_u16()),
+            .unwrap_or("no detail given")
+            .to_string();
+        return Ok(Posted::Refused {
+            status: status.as_u16(),
             detail,
-        ));
+        });
     }
-    Ok(value)
+    Ok(Posted::Done(value))
+}
+
+/// The error for a refused request, in the generic form.
+fn refused(provider: &str, status: u16, detail: &str) -> Error {
+    Error::external(format!("{provider} returned HTTP {status}"), detail)
+}
+
+/// Whether a server's explanation says the input was longer than its model
+/// takes.
+fn says_too_long(detail: &str) -> bool {
+    let detail = detail.to_lowercase();
+    ["context", "too long", "too large", "exceed", "maximum"]
+        .iter()
+        .any(|word| detail.contains(word))
 }
 
 fn vector_of(value: &Value) -> Option<Vec<f32>> {
@@ -333,24 +382,50 @@ fn parse_openai(value: &Value) -> Option<Vec<Vec<f32>>> {
 
 /// A model served by Ollama on this machine or another.
 pub struct OllamaEmbedder {
-    pub model: String,
-    pub base_url: String,
+    model: String,
+    base_url: String,
+    /// Set by the first call that succeeds.
+    warm: AtomicBool,
 }
 
 impl OllamaEmbedder {
+    pub fn new(base_url: &str, model: &str) -> Self {
+        Self {
+            model: model.to_string(),
+            base_url: base_url.to_string(),
+            warm: AtomicBool::new(false),
+        }
+    }
+
+    /// How long a batch may take: until the first success, long enough for
+    /// the server to load the model.
+    fn timeout(&self) -> Duration {
+        if self.warm.load(Ordering::Relaxed) {
+            REQUEST_TIMEOUT
+        } else {
+            FIRST_LOAD_TIMEOUT
+        }
+    }
+
     fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/api/embed", self.base_url.trim_end_matches('/'));
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
             let input: Vec<&str> = batch.iter().map(|t| clip(t)).collect();
-            let value = post_json(
+            let value = match post_json(
                 "Ollama",
                 &url,
                 None,
                 &json!({ "model": self.model, "input": input }),
                 timeout,
-            )?;
+            )? {
+                Posted::Done(value) => value,
+                Posted::Refused { status, detail } => {
+                    return Err(refused("Ollama", status, &detail));
+                }
+            };
             out.extend(checked("Ollama", parse_ollama(&value), batch.len())?);
+            self.warm.store(true, Ordering::Relaxed);
         }
         Ok(out)
     }
@@ -362,7 +437,7 @@ impl Embedder for OllamaEmbedder {
     }
 
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_within(texts, REQUEST_TIMEOUT)
+        self.embed_within(texts, self.timeout())
     }
 
     fn probe(&self) -> Result<usize> {
@@ -371,31 +446,170 @@ impl Embedder for OllamaEmbedder {
     }
 }
 
+/// A server that speaks the OpenAI embeddings API.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Server {
+    /// OpenAI, or any other service at an address that ends in `/v1`.
+    OpenAi,
+    LmStudio,
+    LlamaCpp,
+    Lemonade,
+    MistralRs,
+}
+
+impl Server {
+    /// The provider id: what `CODEWIKI_EMBED` says and a vector's name starts
+    /// with.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::OpenAi => "openai",
+            Self::LmStudio => "lmstudio",
+            Self::LlamaCpp => "llamacpp",
+            Self::Lemonade => "lemonade",
+            Self::MistralRs => "mistralrs",
+        }
+    }
+
+    /// How an error names the server.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::OpenAi => "the embeddings API",
+            Self::LmStudio => "LM Studio",
+            Self::LlamaCpp => "llama.cpp",
+            Self::Lemonade => "Lemonade",
+            Self::MistralRs => "mistral.rs",
+        }
+    }
+
+    /// The setting that holds the server's address.
+    pub fn url_env(self) -> &'static str {
+        match self {
+            Self::OpenAi => "OPENAI_BASE_URL",
+            Self::LmStudio => "CODEWIKI_LMSTUDIO_URL",
+            Self::LlamaCpp => "CODEWIKI_LLAMACPP_URL",
+            Self::Lemonade => "CODEWIKI_LEMONADE_URL",
+            Self::MistralRs => "CODEWIKI_MISTRALRS_URL",
+        }
+    }
+
+    /// The setting that holds the server's API token, when it has one.
+    pub fn key_env(self) -> Option<&'static str> {
+        match self {
+            Self::OpenAi => Some("OPENAI_API_KEY"),
+            Self::LmStudio => Some("CODEWIKI_LMSTUDIO_KEY"),
+            Self::LlamaCpp => Some("CODEWIKI_LLAMACPP_KEY"),
+            Self::Lemonade => Some("CODEWIKI_LEMONADE_KEY"),
+            Self::MistralRs => None,
+        }
+    }
+
+    /// The address a server listens on when nothing else is set.
+    fn default_url(self) -> &'static str {
+        match self {
+            Self::OpenAi => "https://api.openai.com/v1",
+            Self::LmStudio | Self::MistralRs => "http://127.0.0.1:1234",
+            Self::LlamaCpp => "http://127.0.0.1:9931",
+            Self::Lemonade => "http://127.0.0.1:13305",
+        }
+    }
+}
+
+/// An address without its trailing `/` and one trailing `/v1`. LM Studio,
+/// Lemonade and mistral.rs show their address with `/v1`; both forms work.
+pub fn server_root(base: &str) -> &str {
+    let base = base.trim_end_matches('/');
+    base.strip_suffix("/v1").unwrap_or(base)
+}
+
 /// Any endpoint that speaks the OpenAI embeddings API.
 pub struct OpenAiEmbedder {
-    pub api_key: String,
-    pub model: String,
-    pub base_url: String,
+    server: Server,
+    api_key: Option<String>,
+    model: String,
+    base_url: String,
+    /// Set by the first call that succeeds.
+    warm: AtomicBool,
 }
 
 impl OpenAiEmbedder {
+    pub fn new(server: Server, base_url: &str, api_key: Option<&str>, model: &str) -> Self {
+        Self {
+            server,
+            api_key: api_key.map(str::to_string),
+            model: model.to_string(),
+            base_url: base_url.to_string(),
+            warm: AtomicBool::new(false),
+        }
+    }
+
+    /// How long a batch may take: until the first success, long enough for
+    /// the server to load the model.
+    fn timeout(&self) -> Duration {
+        if self.warm.load(Ordering::Relaxed) {
+            REQUEST_TIMEOUT
+        } else {
+            FIRST_LOAD_TIMEOUT
+        }
+    }
+
+    fn url(&self) -> String {
+        match self.server {
+            Server::OpenAi => format!("{}/embeddings", self.base_url.trim_end_matches('/')),
+            _ => format!("{}/v1/embeddings", server_root(&self.base_url)),
+        }
+    }
+
+    fn post(&self, url: &str, input: &[&str], timeout: Duration) -> Result<Posted> {
+        let mut body = json!({ "model": self.model, "input": input });
+        if self.server == Server::MistralRs {
+            body["truncate_sequence"] = json!(true);
+        }
+        post_json(
+            self.server.label(),
+            url,
+            self.api_key.as_deref(),
+            &body,
+            timeout,
+        )
+    }
+
+    /// The error for a refused batch. A local server that asks for a token
+    /// says where to set it.
+    fn refusal(&self, status: u16, detail: &str) -> Error {
+        let label = self.server.label();
+        match self.server.key_env() {
+            Some(key_env) if matches!(status, 401 | 403) && self.server != Server::OpenAi => {
+                Error::external(
+                    format!(
+                        "{label} refused the request (HTTP {status}): it asks for an API token; \
+                         set {key_env} or save one in Settings \u{2192} Semantic search"
+                    ),
+                    detail,
+                )
+            }
+            _ => refused(label, status, detail),
+        }
+    }
+
     fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
-        let url = format!("{}/embeddings", self.base_url.trim_end_matches('/'));
+        let url = self.url();
+        let label = self.server.label();
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
             let input: Vec<&str> = batch.iter().map(|t| clip(t)).collect();
-            let value = post_json(
-                "the embeddings API",
-                &url,
-                Some(&self.api_key),
-                &json!({ "model": self.model, "input": input }),
-                timeout,
-            )?;
-            out.extend(checked(
-                "the embeddings API",
-                parse_openai(&value),
-                batch.len(),
-            )?);
+            let mut posted = self.post(&url, &input, timeout)?;
+            // A model takes only so many tokens, and a server may refuse the
+            // batch rather than cut the text. Once more, with shorter texts.
+            if matches!(&posted, Posted::Refused { detail, .. } if says_too_long(detail)) {
+                let short: Vec<&str> = batch.iter().map(|t| cut(t, SHORT_CHARS)).collect();
+                posted = self.post(&url, &short, timeout)?;
+            }
+            let value = match posted {
+                Posted::Done(value) => value,
+                Posted::Refused { status, detail } => return Err(self.refusal(status, &detail)),
+            };
+            out.extend(checked(label, parse_openai(&value), batch.len())?);
+            self.warm.store(true, Ordering::Relaxed);
         }
         Ok(out)
     }
@@ -403,11 +617,11 @@ impl OpenAiEmbedder {
 
 impl Embedder for OpenAiEmbedder {
     fn name(&self) -> String {
-        format!("openai:{}", self.model)
+        format!("{}:{}", self.server.id(), self.model)
     }
 
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_within(texts, REQUEST_TIMEOUT)
+        self.embed_within(texts, self.timeout())
     }
 
     fn probe(&self) -> Result<usize> {
@@ -541,6 +755,24 @@ pub fn from_config(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Box
     from_config_in(lookup, &cw_core::paths::data_dir())
 }
 
+/// The embedder for a local model server. It has no default model: what a
+/// server serves depends on what its user loaded.
+fn local_server(
+    server: Server,
+    lookup: &impl Fn(&str) -> Option<String>,
+) -> Result<OpenAiEmbedder> {
+    let model = lookup(EMBED_MODEL_ENV).ok_or_else(|| {
+        Error::invalid(format!(
+            "choose a model for {}: Settings \u{2192} Semantic search lists the ones it serves, \
+             or set {EMBED_MODEL_ENV}",
+            server.label()
+        ))
+    })?;
+    let url = lookup(server.url_env()).unwrap_or_else(|| server.default_url().into());
+    let key = server.key_env().and_then(lookup);
+    Ok(OpenAiEmbedder::new(server, &url, key.as_deref(), &model))
+}
+
 /// [`from_config`] with the data directory that holds the built-in models.
 pub fn from_config_in(
     lookup: impl Fn(&str) -> Option<String>,
@@ -561,17 +793,25 @@ pub fn from_config_in(
                 .map_or_else(|| "auto".to_string(), |device| device.to_lowercase());
             Some(Box::new(BuiltinEmbedder::new(&id, &device, data_dir)?))
         }
-        Some("ollama") => Some(Box::new(OllamaEmbedder {
-            model: model("embeddinggemma"),
-            base_url: lookup("OLLAMA_HOST").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
-        })),
-        Some("openai") => Some(Box::new(OpenAiEmbedder {
-            api_key: lookup("OPENAI_API_KEY")
-                .ok_or_else(|| Error::invalid("set OPENAI_API_KEY to use the openai embedder"))?,
-            model: model("text-embedding-3-small"),
-            base_url: lookup("OPENAI_BASE_URL")
-                .unwrap_or_else(|| "https://api.openai.com/v1".into()),
-        })),
+        Some("ollama") => Some(Box::new(OllamaEmbedder::new(
+            &lookup("OLLAMA_HOST").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
+            &model("embeddinggemma"),
+        ))),
+        Some("openai") => {
+            let key = lookup("OPENAI_API_KEY")
+                .ok_or_else(|| Error::invalid("set OPENAI_API_KEY to use the openai embedder"))?;
+            Some(Box::new(OpenAiEmbedder::new(
+                Server::OpenAi,
+                &lookup(Server::OpenAi.url_env())
+                    .unwrap_or_else(|| Server::OpenAi.default_url().into()),
+                Some(&key),
+                &model("text-embedding-3-small"),
+            )))
+        }
+        Some("lmstudio") => Some(Box::new(local_server(Server::LmStudio, &lookup)?)),
+        Some("llamacpp") => Some(Box::new(local_server(Server::LlamaCpp, &lookup)?)),
+        Some("lemonade") => Some(Box::new(local_server(Server::Lemonade, &lookup)?)),
+        Some("mistralrs") => Some(Box::new(local_server(Server::MistralRs, &lookup)?)),
         Some(other) => {
             return Err(Error::invalid(format!(
                 "unknown embedder '{other}'; use {}",
@@ -800,6 +1040,63 @@ mod tests {
         // `auto` then means the processor.
         let auto = BuiltinEmbedder::new("granite-small-english-r2", "auto", data.path()).unwrap();
         assert_eq!(auto.device(), cw_models::Device::Cpu);
+    }
+
+    #[test]
+    fn configuration_selects_the_local_servers() {
+        let with = |pairs: &'static [(&'static str, &'static str)]| {
+            move |name: &str| {
+                pairs
+                    .iter()
+                    .find(|(key, _)| *key == name)
+                    .map(|(_, value)| value.to_string())
+            }
+        };
+        let name = from_config(with(&[
+            ("CODEWIKI_EMBED", "lmstudio"),
+            ("CODEWIKI_EMBED_MODEL", "m"),
+        ]))
+        .unwrap()
+        .map(|e| e.name());
+        assert_eq!(name.as_deref(), Some("lmstudio:m"));
+
+        let lookup = with(&[("CODEWIKI_EMBED_MODEL", "m")]);
+        let e = local_server(Server::LmStudio, &lookup).unwrap();
+        assert_eq!(e.base_url, "http://127.0.0.1:1234");
+        let e = local_server(Server::LlamaCpp, &lookup).unwrap();
+        assert_eq!(e.base_url, "http://127.0.0.1:9931");
+        let lookup = with(&[
+            ("CODEWIKI_EMBED_MODEL", "m"),
+            ("CODEWIKI_LEMONADE_URL", "http://h:1/v1"),
+            ("CODEWIKI_LEMONADE_KEY", "t"),
+        ]);
+        let e = local_server(Server::Lemonade, &lookup).unwrap();
+        assert_eq!(e.base_url, "http://h:1/v1");
+        assert_eq!(e.api_key.as_deref(), Some("t"));
+
+        // Without a model the error says to choose one.
+        let error = local_server(Server::MistralRs, &with(&[]))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("choose a model"), "{error}");
+        let error = from_config(with(&[("CODEWIKI_EMBED", "lmstudio")]))
+            .err()
+            .unwrap()
+            .to_string();
+        assert!(error.contains("choose a model"), "{error}");
+    }
+
+    #[test]
+    fn the_first_call_may_wait_for_a_model_to_load() {
+        let e = OpenAiEmbedder::new(Server::LmStudio, "http://h:1", None, "m");
+        assert_eq!(e.timeout(), FIRST_LOAD_TIMEOUT);
+        e.warm.store(true, Ordering::Relaxed);
+        assert_eq!(e.timeout(), REQUEST_TIMEOUT);
+        let e = OllamaEmbedder::new("http://h:1", "m");
+        assert_eq!(e.timeout(), FIRST_LOAD_TIMEOUT);
+        e.warm.store(true, Ordering::Relaxed);
+        assert_eq!(e.timeout(), REQUEST_TIMEOUT);
     }
 
     #[test]

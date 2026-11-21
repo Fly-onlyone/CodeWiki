@@ -12,7 +12,7 @@ tags: [core, codewiki, module]
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[Host]], then `drop_retired`, then `key` (both in [[Settings Module (cw-core)]]), and 7 more. `random_token` calls `Error::external` in [[Error]].
+1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[Host]], then `drop_retired`, then `retire_builtin` (both in [[Settings Module (cw-core)]]), and 8 more. `random_token` calls `Error::external` in [[Error]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 

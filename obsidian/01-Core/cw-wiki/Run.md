@@ -25,7 +25,7 @@ run.finish(index)?;
 
 ## How it works
 
-1. `embed_repo` in [[Models Module]] and `embed_documents_with` in [[Semantic Module]], and 1 more, call `plan`. `plan` calls `text_of` in [[Semantic Module]], then `sha256_hex` in [[Hash Module]].
+1. `embed_repo` in [[Embed Job Module]] and `embed_documents_with` in [[Semantic Module]] call `plan`. `plan` calls `text_of` in [[Semantic Module]], then `sha256_hex` in [[Hash Module]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -55,8 +55,8 @@ Members:
 
 ## Used by
 
-- [[Semantic Module]] — from `embed_documents_with`, `embed_within`, `set_inline_budget`
-- [[Models Module]] — from `embed_repo`
+- [[Semantic Module]] — from `embed_documents_with`, `set_inline_budget`
+- [[Embed Job Module]] — from `embed_repo`
 
 ## See also
 

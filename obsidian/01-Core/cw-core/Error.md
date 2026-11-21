@@ -12,10 +12,10 @@ tags: [core, cw-core]
 
 ## How it works
 
-1. `run` in [[codewiki]] and `checked` in [[cw-embed]], and 46 more, call `invalid`.
-2. `print_json` in [[codewiki]] and `post_json` in [[cw-embed]], and 32 more, call `external`.
-3. `run` in [[codewiki]] and `publish` in [[Serve Module]], and 35 more, call `io`.
-4. `run` in [[codewiki]] and `entry` in [[Models Module]], and 12 more, call `not_found`.
+1. `run` in [[codewiki]] and `checked` in [[cw-embed]], and 35 more, call `invalid`.
+2. `print_json` in [[codewiki]] and `finish` in [[cw-embed]], and 30 more, call `external`.
+3. `run` in [[codewiki]] and `publish` in [[Serve Module]], and 33 more, call `io`.
+4. `run` in [[codewiki]] and `get` in [[Repos Module]], and 11 more, call `not_found`.
 
 ## Items
 
@@ -23,15 +23,15 @@ Declared as `pub enum Error`.
 
 Members:
 
-- `pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self` — public method, returns `Self`; called by `Index::open`, `Store::install`, `Store::remove`, `VaultMeta::load` and 32 more.
-- `pub fn invalid(message: impl Into<String>) -> Self` — public method, returns `Self`; called by `BuiltinEmbedder::embed_query`, `BuiltinEmbedder::new`, `Embedder::embed_query`, `Jobs::begin` and 40 more.
-- `pub fn not_found(what: impl Into<String>) -> Self` — public method, returns `Self`; called by `brief`, `dependency_path`, `entry`, `find_entry` and 9 more.
+- `pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self` — public method, returns `Self`; called by `Index::open`, `VaultMeta::load`, `VaultMeta::save`, `adopt_existing` and 30 more.
+- `pub fn invalid(message: impl Into<String>) -> Self` — public method, returns `Self`; called by `Embedder::embed_query`, `Jobs::begin`, `OllamaEmbedder::embed_query`, `OpenAiEmbedder::embed_query` and 31 more.
+- `pub fn not_found(what: impl Into<String>) -> Self` — public method, returns `Self`; called by `brief`, `dependency_path`, `find_entry`, `get` and 8 more.
 - `pub fn external(context: impl Into<String>, err: impl std::fmt::Display) -> Self` — wrap an error from a third-party library with the operation that failed.
 
 ## Used by
 
 - [[Proposal Module]] — from `approve`, `check_id`, `create_as`, `get`
-- [[Models Module]] — from `Failure`, `entry`, `from`, `remove`
+- [[cw-embed]] — from `checked`, `finish`, `from_config`, `get_json`
 - [[Generate Module]] — from `adopt_existing`, `generate_with`, `keep_placed_pictures`, `read_optional`
 - [[Api Module]] — from `ApiError`, `blocking`, `git_hook`, `import_coverage`
 - [[Query Module]] — from `check_vault_path`, `dependency_path`, `find_entry`, `read_note_as`

@@ -26,21 +26,19 @@ Members:
 
 - `pub const fn new() -> Self` — public method, returns `Self`; called by `EMBEDDER`, `Slot::default`.
 - `pub fn get(&self) -> Option<Arc<dyn Embedder>>` — the embedder in use. Before `Slot::configure` is called it is the one the environment alone names, so a program that never reads the settings file (a test, above all) is not changed by one.
-- `pub fn configure(&self, resolved: &Resolved)` — use the embedder the settings in effect name, from now on. A built-in model is looked for under the default data directory.
-- `pub fn configure_in(&self, resolved: &Resolved, data_dir: &Path)` — `Slot::configure` with the data directory that holds the built-in models.
+- `pub fn configure(&self, resolved: &Resolved)` — use the embedder the settings in effect name, from now on.
 - `fn default() -> Self` — public method, returns `Self`.
 
 ## Depends on
 
-- [[cw-embed]] — uses `from_env`, `from_settings_in`
+- [[cw-embed]] — uses `from_env`, `from_settings`
 - [[Semantic Module]] — uses `built`, `embedder`
-- [[Paths Module]] — uses `data_dir`
 - [[Resolved]] — uses `Resolved`
 - [[Embedder]] — uses `Embedder`
 
 ## Used by
 
-- [[Semantic Module]] — from `EMBEDDER`, `configure`, `configure_in`
+- [[Semantic Module]] — from `EMBEDDER`, `configure`
 
 ## See also
 

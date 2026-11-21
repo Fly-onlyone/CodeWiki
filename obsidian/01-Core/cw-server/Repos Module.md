@@ -39,7 +39,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[Api Module]] — from `ListedRepo`, `add_repo`, `get_repo`, `git_hook`
 - [[Workspace Module (cw-server)]] — from `open`, `repo_contracts`, `summarize`, `workspace`
-- [[Models Module]] — from `embed_all`, `embed_repo`, `resume`
+- [[Embed Job Module]] — from `embed_all`, `embed_repo`, `resume`
 
 ## See also
 

@@ -80,11 +80,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_embed::BuiltinEmbedder",
-    "path": "01-Core/cw-embed/BuiltinEmbedder.md",
-    "kind": "concept"
-  },
-  {
     "id": "type:codewiki_app::mui::button::Button",
     "path": "01-Core/codewiki-app/mui/Button.md",
     "kind": "concept"
@@ -92,11 +87,6 @@
   {
     "id": "mod:codewiki_app::mui::button",
     "path": "01-Core/codewiki-app/mui/Button Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_models::catalog",
-    "path": "01-Core/cw-models/Catalog Module.md",
     "kind": "concept"
   },
   {
@@ -195,11 +185,6 @@
     "kind": "concept"
   },
   {
-    "id": "crate:cw_embed_engine",
-    "path": "01-Core/cw-embed-engine/cw-embed-engine.md",
-    "kind": "concept"
-  },
-  {
     "id": "crate:cw_graph",
     "path": "01-Core/cw-graph/cw-graph.md",
     "kind": "concept"
@@ -217,11 +202,6 @@
   {
     "id": "crate:cw_mermaid",
     "path": "01-Core/cw-mermaid/cw-mermaid.md",
-    "kind": "concept"
-  },
-  {
-    "id": "crate:cw_models",
-    "path": "01-Core/cw-models/cw-models.md",
     "kind": "concept"
   },
   {
@@ -257,11 +237,6 @@
   {
     "id": "mod:cw_wiki::decisions",
     "path": "01-Core/cw-wiki/Decisions Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_models::recommend::Device",
-    "path": "01-Core/cw-models/Device.md",
     "kind": "concept"
   },
   {
@@ -315,23 +290,13 @@
     "kind": "concept"
   },
   {
-    "id": "mod:codewiki::bin::embed_cuda",
-    "path": "01-Core/codewiki/bin/Embed Cuda Module.md",
+    "id": "mod:cw_server::embed_job",
+    "path": "01-Core/cw-server/Embed Job Module.md",
     "kind": "concept"
   },
   {
     "id": "type:cw_embed::Embedder",
     "path": "01-Core/cw-embed/Embedder.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_embed_engine::Engine",
-    "path": "01-Core/cw-embed-engine/Engine.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_models::catalog::Entry",
-    "path": "01-Core/cw-models/Entry.md",
     "kind": "concept"
   },
   {
@@ -380,11 +345,6 @@
     "kind": "concept"
   },
   {
-    "id": "mod:cw_models::game",
-    "path": "01-Core/cw-models/Game Module.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:cw_wiki::generate",
     "path": "01-Core/cw-wiki/Generate Module.md",
     "kind": "concept"
@@ -427,16 +387,6 @@
   {
     "id": "mod:codewiki_app::graph",
     "path": "01-Core/codewiki-app/Graph Module (codewiki-app).md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_models::hardware::Hardware",
-    "path": "01-Core/cw-models/Hardware.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_models::hardware",
-    "path": "01-Core/cw-models/Hardware Module.md",
     "kind": "concept"
   },
   {
@@ -495,8 +445,8 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_server::models::Jobs",
-    "path": "01-Core/cw-server/Jobs.md",
+    "id": "type:cw_server::embed_job::Jobs",
+    "path": "01-Core/cw-server/Jobs (cw-server).md",
     "kind": "concept"
   },
   {
@@ -560,6 +510,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_embed::list",
+    "path": "01-Core/cw-embed/List Module (cw-embed).md",
+    "kind": "concept"
+  },
+  {
     "id": "type:codewiki_app::mui::list::ListItemButton",
     "path": "01-Core/codewiki-app/mui/ListItemButton.md",
     "kind": "concept"
@@ -620,21 +575,6 @@
     "kind": "concept"
   },
   {
-    "id": "mod:codewiki::model",
-    "path": "01-Core/codewiki/Model Module (codewiki).md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:codewiki::model::ModelAction",
-    "path": "01-Core/codewiki/ModelAction.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_server::models",
-    "path": "01-Core/cw-server/Models Module.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:codewiki_app::motion",
     "path": "01-Core/codewiki-app/Motion Module.md",
     "kind": "concept"
@@ -672,11 +612,6 @@
   {
     "id": "type:cw_vault::note::NoteKind",
     "path": "01-Core/cw-vault/NoteKind.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_models::hardware::Nvidia",
-    "path": "01-Core/cw-models/Nvidia.md",
     "kind": "concept"
   },
   {
@@ -745,6 +680,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_embed::prefix",
+    "path": "01-Core/cw-embed/Prefix Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::prefs",
     "path": "01-Core/codewiki-app/Prefs Module.md",
     "kind": "concept"
@@ -767,11 +707,6 @@
   {
     "id": "mod:codewiki_app::reading",
     "path": "01-Core/codewiki-app/Reading Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_models::recommend",
-    "path": "01-Core/cw-models/Recommend Module.md",
     "kind": "concept"
   },
   {
@@ -945,6 +880,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_embed::Server",
+    "path": "01-Core/cw-embed/Server.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::service",
     "path": "01-Core/cw-wiki/Service Module.md",
     "kind": "concept"
@@ -1035,23 +975,8 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_models::store::Store",
-    "path": "01-Core/cw-models/Store.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:cw_index::store",
     "path": "01-Core/cw-index/Store Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_models::store",
-    "path": "01-Core/cw-models/Store Module (cw-models).md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_models::worker::Supervisor",
-    "path": "01-Core/cw-models/Supervisor.md",
     "kind": "concept"
   },
   {
@@ -1165,33 +1090,13 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_core::model::Visibility",
-    "path": "01-Core/cw-core/Visibility.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:codewiki_app::win32",
     "path": "01-Core/codewiki-app/Win32 Module.md",
     "kind": "concept"
   },
   {
-    "id": "mod:cw_models::game::win32",
-    "path": "01-Core/cw-models/game/Win32 Module (game).md",
-    "kind": "concept"
-  },
-  {
-    "id": "integration:windows_sys",
-    "path": "03-Integrations/windows_sys.md",
-    "kind": "integration"
-  },
-  {
     "id": "mod:cw_update::wire_tests",
     "path": "01-Core/cw-update/Wire Tests Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_models::worker",
-    "path": "01-Core/cw-models/Worker Module.md",
     "kind": "concept"
   },
   {
@@ -1245,11 +1150,6 @@
     "kind": "index"
   },
   {
-    "id": "index:01-Core/codewiki/bin",
-    "path": "01-Core/codewiki/bin/_index.md",
-    "kind": "index"
-  },
-  {
     "id": "index:01-Core/cw-client",
     "path": "01-Core/cw-client/_index.md",
     "kind": "index"
@@ -1262,11 +1162,6 @@
   {
     "id": "index:01-Core/cw-core/secret",
     "path": "01-Core/cw-core/secret/_index.md",
-    "kind": "index"
-  },
-  {
-    "id": "index:01-Core/cw-embed-engine",
-    "path": "01-Core/cw-embed-engine/_index.md",
     "kind": "index"
   },
   {
@@ -1292,16 +1187,6 @@
   {
     "id": "index:01-Core/cw-mermaid",
     "path": "01-Core/cw-mermaid/_index.md",
-    "kind": "index"
-  },
-  {
-    "id": "index:01-Core/cw-models",
-    "path": "01-Core/cw-models/_index.md",
-    "kind": "index"
-  },
-  {
-    "id": "index:01-Core/cw-models/game",
-    "path": "01-Core/cw-models/game/_index.md",
     "kind": "index"
   },
   {

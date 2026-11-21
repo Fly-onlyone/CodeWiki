@@ -61,12 +61,10 @@ And 8 more items.
 
 - [[codewiki-app]] — from `connect`, `main`, `open_logs`, `run_settings_action`
 - [[cw-telemetry]] — from `flush`, `init`
-- [[Worker Module]] — from `refuse`, `serve`
 - [[codewiki]] — from `main`
-- [[cw-embed]] — from `serve_once`
+- [[cw-embed]] — from `answer`
 - [[cw-server]] — from `stand_in`
-- [[Model Module (codewiki)]] — from `install`
-- [[Store Module (cw-models)]] — from `fetch`
+- [[Backend]] — from `connect`
 
 ## See also
 

@@ -22,7 +22,7 @@ They live in `settings.json` in the data directory, which only the backend write
 4. `change` in [[Settings Module (cw-server)]] calls `update`. `update` calls `file`, then `read`, then `Error::io`, then `Error::external` (both in [[Error]]).
 5. `run` in [[Serve Module]] calls `drop_retired`. `drop_retired` calls `read`, then `update`.
 
-1 more entry point: `process_env`.
+1 more entry point: `retire_builtin`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -30,41 +30,39 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - `pub const FILE: &str` — the file's name in the data directory.
 - [[Key]] — one setting: the environment variable that names it everywhere, and where it sits in the file.
-- `pub const EMBED_PROVIDER: Key` — public constant; used by `ALL`, `EMBEDDER_KEYS`, `change`, `checked` and 4 more.
-- `pub const EMBED_MODEL: Key` — public constant; used by `ALL`, `EMBEDDER_KEYS`, `change`, `chosen` and 2 more.
-- `pub const EMBED_DEVICE: Key` — what runs a built-in embedding model: `auto` (the graphics card when it can, else the processor), `cpu` or `cuda`.
-- `pub const OPENAI_API_KEY: Key` — public constant; used by `ALL`, `EMBEDDER_KEYS`.
-- `pub const OPENAI_BASE_URL: Key` — public constant; used by `ALL`, `EMBEDDER_KEYS`, `checked`.
-- `pub const OLLAMA_HOST: Key` — public constant; used by `ALL`, `EMBEDDER_KEYS`, `checked`.
-- `pub const ALL: [Key; 6]` — every setting, in the order a page shows them.
+- `pub const EMBED_PROVIDER: Key` — public constant; used by `ALL`, `EMBEDDER_KEYS`, `change`, `checked` and 1 more.
+- `pub const OLLAMA_HOST: Key` — public constant; used by `ADDRESS_KEYS`, `ALL`, `EMBEDDER_KEYS`.
+- `pub const LMSTUDIO_URL: Key` — public constant; used by `ADDRESS_KEYS`, `ALL`, `EMBEDDER_KEYS`.
+- `pub const LLAMACPP_URL: Key` — public constant; used by `ADDRESS_KEYS`, `ALL`, `EMBEDDER_KEYS`.
+- `pub const LEMONADE_URL: Key` — public constant; used by `ADDRESS_KEYS`, `ALL`, `EMBEDDER_KEYS`.
+- `pub const MISTRALRS_URL: Key` — mistral.rs has no key setting: its server takes none by default.
+- `pub const ALL: [Key; 12]` — every setting, in the order a page shows them.
 - `pub fn key(env: &str) -> Option<Key>` — the setting an environment variable names.
 - `pub fn key_at(section: &str, field: &str) -> Option<Key>` — the setting at `section.field`.
-- `pub struct SavedSecret` — A secret as the file holds it.
 - [[Settings]] — what `settings.json` holds.
 - `pub fn load(data_dir: &Path) -> Settings` — the saved settings. A missing or unreadable file gives none, so a damaged file never stops the backend.
 - `update` — read the file, apply `change` and write it back. The new file replaces the old one in one step, so a reader never sees half of it. When `change` fails, nothing is written.
 - `pub fn drop_retired(data_dir: &Path) -> Result<bool>` — take the settings in `RETIRED_SECTIONS` out of the file. Returns whether it held any. A file without them is not written, and neither is one that is missing or cannot be read.
+- `pub fn retire_builtin(data_dir: &Path) -> Result<Retired>` — move a user of the removed built-in embedder to a working state. A saved `builtin` choice becomes `local` and its model name is cleared, since the name belonged to the built-in engine. `embed.device` leaves the file, and the built-in models in `<data_dir>/models` are deleted. A file that holds none of these is not written.
 - `pub enum Source` — where the value of a setting comes from.
 - `pub enum SecretState` — what is known about a secret without showing it.
 - [[Resolved]] — the settings in effect: for each one, the environment variable when it is set, otherwise the saved value, otherwise the default.
 - `pub fn process_env(name: &str) -> Option<String>` — an environment variable of this process. What `Resolved::load` reads the environment with; a test passes its own function in its place.
 
-And 7 more items.
+And 16 more items.
 
 ## Depends on
 
 - [[Error]] — uses `external`, `io`
+- [[Key]] — uses `Key`, `path`
 - [[Error Module]] — uses `Result`
-- [[Key]] — uses `Key`
 - [[Settings]] — uses `Settings`
 
 ## Used by
 
+- [[Settings Module (cw-server)]] — from `ADDRESS_KEYS`, `EMBEDDER_KEYS`, `change`, `checked`
 - [[Resolved]] — from `Resolved`, `from_env`, `from_parts`, `load`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
-- [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `change`, `checked`, `describe`
-- [[Models Module]] — from `chosen`, `describe`, `switch`
-- [[Model Module (codewiki)]] — from `remove`, `store`
 - [[Serve Module]] — from `run`
 
 ## See also

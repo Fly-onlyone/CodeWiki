@@ -29,7 +29,7 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 - `pub struct Backend` — what the backend last said it is doing.
 - `pub enum Bridge` — when an agent's MCP bridge last called the backend.
 - `pub fn parse(body: &Value) -> Backend` — read the body of `GET /v1/status`. Times are ages by the backend's own clock (`now`), so that a backend on another machine with another clock reads the same.
-- `fn model_job_text(job: &Value) -> Option<String>` — what a job on a built-in embedding model is doing, in a few words; `None` when none runs. An older backend says nothing of it.
+- `fn model_job_text(job: &Value) -> Option<String>` — what the embedding job is doing, in a few words; `None` when none runs. An older backend says nothing of it.
 - `pub fn state_with_job(state: String, model_job: Option<&str>) -> String` — the state the tray shows: what `state_text` says, except that a backend that would be idle but for its work on a model says that work.
 - `fn ago(seconds: u64) -> String` — an age in the largest unit that fits: "just now", "12 min ago", "3 h ago", "2 days ago".
 - `pub fn mcp_text(bridge: Bridge) -> String` — what follows "MCP:" in the tooltip and the menu.

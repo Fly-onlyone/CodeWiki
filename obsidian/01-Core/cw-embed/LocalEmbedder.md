@@ -12,7 +12,7 @@ tags: [core, cw-embed]
 
 ## How it works
 
-1. `from_config_in` in [[cw-embed]] calls `default`.
+1. `from_config` in [[cw-embed]] calls `default`.
 
 ## Items
 
@@ -20,7 +20,7 @@ Declared as `pub struct LocalEmbedder`.
 
 Members:
 
-- `fn default() -> Self` — public method, returns `Self`; called by `from_config_in`.
+- `fn default() -> Self` — public method, returns `Self`; called by `from_config`.
 - `pub fn embed_one(&self, text: &str) -> Vec<f32>` — public method, returns `Vec<f32>`; called by `LocalEmbedder::embed`.
 - `fn name(&self) -> String` — public method, returns `String`.
 - `fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>>` — public method, returns `Result<Vec<Vec<f32>>>`.
@@ -35,9 +35,8 @@ And 1 more private item with no comment.
 
 ## Used by
 
-- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config_in`
-- [[cw-server]] — from `StandIn`, `stand_in`
-- [[cw-wiki]] — from `Other`, `the_documents_of_an_index_are_embedded_again_in_steps`
+- [[cw-server]] — from `StandIn`, `held`, `stand_in`
+- [[cw-embed]] — from `a_probe_embeds_one_word_and_reports_the_vector_length`, `from_config`
 
 ## See also
 

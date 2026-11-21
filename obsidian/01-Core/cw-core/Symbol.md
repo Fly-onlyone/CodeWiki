@@ -20,8 +20,8 @@ Declared as `pub struct Symbol`.
 
 ## Depends on
 
+- [[Model Module]] — uses `Visibility`
 - [[SymbolKind]] — uses `SymbolKind`
-- [[Visibility]] — uses `Visibility`
 
 ## Used by
 

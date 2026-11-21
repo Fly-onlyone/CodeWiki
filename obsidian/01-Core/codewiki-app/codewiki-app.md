@@ -95,10 +95,10 @@ And 19 more items.
 - [[Live Module]] — uses `HomeInput`, `Project`, `agent_view_line`, `explanation_lines`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
 - [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
-- [[Settings View Module]] — uses `LOG_LEVEL_PREF`, `MODELS_PAUSE`, `MODEL_HINT`, `OpenMenu`
+- [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
 - [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`
 - [[Diagram View Module]] — uses `SHARP_SCALE`, `STEP`, `WHEEL`, `actual`
-- [[Glass Module]] — uses `Levels`, `OPAQUE`, `chrome`, `for_window`
+- [[Backend]] — uses `Backend`, `answers`, `connect`, `delete`
 
 ## Used by
 

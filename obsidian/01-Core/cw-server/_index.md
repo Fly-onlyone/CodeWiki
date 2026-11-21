@@ -13,10 +13,10 @@ tags: [moc, core, cw-server]
 - [[Api Module]] — routes and handlers.
 - [[AppState]] — `AppState` struct defined in `cw_server`.
 - [[cw-server]] — HTTP API of the CodeWiki backend.
-- [[Host]] — what the work on built-in models asks of the machine.
+- [[Embed Job Module]] — the background embedding job: the one long job that may run.
+- [[Host]] — what the background embedding job asks of the machine.
 - [[Inner]] — `Inner` struct defined in `cw_server`.
-- [[Jobs]] — the job that runs, or the last one that ran.
-- [[Models Module]] — the built-in embedding models, as the model routes see them: what there is, what is installed, and the one long job that may run.
+- [[Jobs (cw-server)]] — the job that runs, or the last one that ran.
 - [[Repos Module]] — the list of repositories this backend manages, stored as `repos.json`.
 - [[Settings Module (cw-server)]] — what the settings routes do: describe the settings in effect, and change the saved ones.
 - [[Workspace Module (cw-server)]] — views across every repository the backend manages.

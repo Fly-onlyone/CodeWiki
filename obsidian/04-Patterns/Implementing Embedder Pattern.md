@@ -4,11 +4,11 @@ tags: [pattern]
 
 # Implementing Embedder Pattern
 
-> Add a new `Embedder` by implementing the trait; 6 types already follow this shape.
+> Add a new `Embedder` by implementing the trait; 5 types already follow this shape.
 
 ## When to apply
 
-When adding a type that must act as a `Embedder`. Existing implementations: [[BuiltinEmbedder]], [[LocalEmbedder]], [[OllamaEmbedder]], [[OpenAiEmbedder]], `StandIn`, and `Other`.
+When adding a type that must act as a `Embedder`. Existing implementations: [[LocalEmbedder]], [[OllamaEmbedder]], [[OpenAiEmbedder]], `Failing`, and `StandIn`.
 
 ## The pattern
 
@@ -27,9 +27,6 @@ impl Embedder for NewType {
         todo!()
     }
     fn probe(&self) -> Result<usize> {
-        todo!()
-    }
-    fn slow(&self) -> bool {
         todo!()
     }
 }

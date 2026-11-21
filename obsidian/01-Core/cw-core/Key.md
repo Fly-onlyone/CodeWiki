@@ -22,9 +22,9 @@ Members:
 
 ## Used by
 
-- [[Settings Module (cw-core)]] — from `ALL`, `EMBED_DEVICE`, `EMBED_MODEL`, `EMBED_PROVIDER`
+- [[Settings Module (cw-core)]] — from `ALL`, `EMBED_MODEL`, `EMBED_PROVIDER`, `LEMONADE_KEY`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
-- [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `apply`, `checked`, `describe`
+- [[Settings Module (cw-server)]] — from `ADDRESS_KEYS`, `EMBEDDER_KEYS`, `apply`, `checked`
 - [[Resolved]] — from `saved_secret`, `secret_state`, `source`
 
 ## See also

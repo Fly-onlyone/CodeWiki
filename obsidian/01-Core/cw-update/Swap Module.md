@@ -30,6 +30,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn write_journal(install: &Path, journal: &Journal) -> Result<(), String>` — private function, returns `Result<(), String>`; called by `close_journal`, `swap`.
 - `fn rename_patiently(from: &Path, to: &Path) -> std::io::Result<()>` — private function, returns `std::io::Result<()>`; called by `recover_and_clean`, `swap`, `undo`.
 - `fn close_journal(install: &Path)` — mark the swap as finished: delete its journal. While the journal exists, the next start undoes the moves it lists, so one that cannot be deleted (a scanner may hold a new file for a moment) is emptied instead, and tried again for a while before giving up.
+- `const OLD_CUDA_DIR: &str` — the folder and program of the removed graphics-card embedding worker.
 - `fn remove(path: &Path) -> std::io::Result<()>` — private function, returns `std::io::Result<()>`; called by `old_name`, `recover_and_clean`.
 - `fn old_name(install: &Path, name: &str) -> Result<PathBuf, String>` — `<name>.old`, or `.old2`, `.old3`… when an older one is still in use (a program from two updates ago that has not ended).
 - `fn undo(moves: &[Move]) -> Vec<String>` — undo `moves` from the last to the first. A move whose target is gone or whose source is back already is skipped, so this can run again after a crash. Returns the moves that could not be undone.
@@ -38,7 +39,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn leftovers(install: &Path) -> Vec<String>` — what `recover_and_clean` has still to delete: the `.old` entries and the `.update` folder, by name. A program that is still running cannot be deleted, so right after an update the app it replaced is usually left.
 - `fn replaced_name(file_name: &str) -> Option<&str>` — for `codewiki.exe.old` or `codewiki.exe.old2`, the name it replaced.
 
-And 4 more private items with no comment.
+And 5 more private items with no comment.
 
 ## Depends on
 

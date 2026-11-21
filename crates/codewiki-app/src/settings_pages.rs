@@ -540,29 +540,45 @@ fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
         .filter(|models| !models.is_empty());
     let mut rows = Vec::new();
     match listed {
-        Some(models) => rows.push(Block::Select {
-            label: "Model".into(),
-            help: Some("The models the server lists; embedding ones come first".into()),
-            options: Some(chosen)
-                .filter(|chosen| {
-                    !chosen.is_empty() && !models.iter().any(|listed| listed["id"] == *chosen)
-                })
-                .into_iter()
-                .chain(models.iter().filter_map(|listed| listed["id"].as_str()))
-                .map(|id| Choice {
-                    label: id.to_string(),
-                    action: Action::SetSetting {
-                        section: "embed".into(),
-                        field: "model".into(),
-                        value: Some(id.into()),
-                    },
-                    selected: id == chosen,
-                    icon: None,
-                })
-                .collect(),
-            locked: lock(model, settings, entry),
-            note: None,
-        }),
+        Some(models) => {
+            rows.push(Block::Select {
+                label: "Model".into(),
+                help: Some("The models the server lists; embedding ones come first".into()),
+                options: Some(chosen)
+                    .filter(|chosen| {
+                        !chosen.is_empty() && !models.iter().any(|listed| listed["id"] == *chosen)
+                    })
+                    .into_iter()
+                    .chain(models.iter().filter_map(|listed| listed["id"].as_str()))
+                    .map(|id| Choice {
+                        label: id.to_string(),
+                        action: Action::SetSetting {
+                            section: "embed".into(),
+                            field: "model".into(),
+                            value: Some(id.into()),
+                        },
+                        selected: id == chosen,
+                        icon: None,
+                    })
+                    .collect(),
+                locked: lock(model, settings, entry),
+                note: None,
+            });
+            // A server may not serve a model it does not list. llama.cpp and
+            // mistral.rs would embed with the one they hold, under the name
+            // of the one chosen.
+            let provider = provider.and_then(Value::as_str).unwrap_or("");
+            if !chosen.is_empty() && !lists(models, provider, chosen) {
+                rows.push(Block::Alert {
+                    tone: Tone::Warning,
+                    text: format!(
+                        "{} does not list {chosen}; choose a model it serves.",
+                        server_label(provider)
+                    ),
+                    button: None,
+                });
+            }
+        }
         None => {
             rows.push(field(
                 model,
@@ -586,6 +602,29 @@ fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
         Action::RefreshEmbedModels,
     )]));
     rows
+}
+
+/// Whether the models a server listed hold `chosen`. Ollama takes a name
+/// without a tag as its `latest`: "The tag is optional and, if not provided,
+/// will default to latest" (https://github.com/ollama/ollama/blob/main/docs/api.md).
+fn lists(models: &[Value], provider: &str, chosen: &str) -> bool {
+    let latest = format!("{chosen}:latest");
+    models.iter().any(|listed| {
+        listed["id"] == chosen || (provider == "ollama" && listed["id"] == latest.as_str())
+    })
+}
+
+/// How the page names the server of `provider`, as its address row does.
+fn server_label(provider: &str) -> &str {
+    match provider {
+        "lmstudio" => "LM Studio",
+        "ollama" => "Ollama",
+        "llamacpp" => "Llama",
+        "lemonade" => "Lemonade",
+        "mistralrs" => "mistral.rs",
+        "openai" => "OpenAI",
+        other => other,
+    }
 }
 
 /// How to get an embedding model going in the server, one line.
@@ -1472,6 +1511,45 @@ mod tests {
         fixture.settings.as_mut().unwrap()["embed"]["model"]["value"] = json!(null);
         let words = fixture.page(Category::Search).words();
         assert!(words.contains("Model:  (a / b)"), "{words}");
+    }
+
+    #[test]
+    fn a_model_the_server_does_not_list_is_warned_about() {
+        let mut fixture = Fixture::new();
+        {
+            let settings = fixture.settings.as_mut().unwrap();
+            settings["embed"]["provider"]["value"] = json!("llamacpp");
+            settings["embed"]["model"]["value"] = json!("zzz");
+        }
+        fixture.embed_models = Some(json!({
+            "provider": "llamacpp", "reachable": true, "problem": null,
+            "models": [{ "id": "a", "embedding": null }],
+        }));
+        let warning = "Llama does not list zzz; choose a model it serves.";
+        let words = fixture.page(Category::Search).words();
+        assert!(words.contains(warning), "{words}");
+        // The choice stays as it is.
+        assert!(words.contains("Model: zzz (zzz / a)"), "{words}");
+
+        // A listed model, or none, is not warned about.
+        for chosen in [json!("a"), json!(null)] {
+            fixture.settings.as_mut().unwrap()["embed"]["model"]["value"] = chosen;
+            let words = fixture.page(Category::Search).words();
+            assert!(!words.contains("does not list"), "{words}");
+        }
+
+        // Ollama takes a name without a tag as its latest.
+        {
+            let settings = fixture.settings.as_mut().unwrap();
+            settings["embed"]["provider"]["value"] = json!("ollama");
+            settings["embed"]["model"]["value"] = json!("embeddinggemma");
+        }
+        fixture.embed_models = Some(json!({
+            "provider": "ollama", "reachable": true, "problem": null,
+            "models": [{ "id": "embeddinggemma:latest", "embedding": true }],
+        }));
+        let words = fixture.page(Category::Search).words();
+        assert!(!words.contains("does not list"), "{words}");
     }
 
     #[test]

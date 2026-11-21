@@ -197,6 +197,17 @@ fn texts() -> Vec<String> {
     vec!["first text".to_string(), "second text".to_string()]
 }
 
+/// A `GET /v1/models` answer that lists `model` alone, as llama-server and
+/// mistral.rs give it. llama.cpp and mistral.rs embed with the model they
+/// hold whatever a request names, so their embedder reads this first.
+/// https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md
+fn listing(model: &str) -> (u16, Value) {
+    (
+        200,
+        json!({ "object": "list", "data": [{ "id": model, "object": "model" }] }),
+    )
+}
+
 #[test]
 fn ollama_embedder_posts_a_batch_and_normalizes_vectors() {
     let (url, server) = serve_once(
@@ -320,13 +331,23 @@ fn each_local_server_gets_its_path_and_a_token_only_when_one_is_set() {
         (Server::Lemonade, Some("t")),
         (Server::MistralRs, None),
     ] {
-        let (url, srv) = serve_once(
+        let lists = matches!(server, Server::LlamaCpp | Server::MistralRs);
+        let mut replies = Vec::new();
+        if lists {
+            replies.push(listing("m"));
+        }
+        replies.push((
             200,
             json!({ "data": [{ "index": 0, "embedding": [3.0, 4.0] }] }),
-        );
+        ));
+        let (url, srv) = serve_many(replies);
         let e = OpenAiEmbedder::new(server, &url, key, "m");
         assert_eq!(e.embed(&["a".into()]).unwrap(), [vec![0.6, 0.8]]);
-        let got = srv.join().unwrap();
+        let mut requests = srv.join().unwrap();
+        if lists {
+            assert_eq!(requests[0].path, "/v1/models");
+        }
+        let got = requests.pop().unwrap();
         assert_eq!(got.path, "/v1/embeddings");
         assert_eq!(got.authorization.is_some(), key.is_some());
         assert_eq!(got.body["model"], "m");
@@ -384,24 +405,23 @@ fn a_batch_refused_as_too_long_is_sent_again_with_shorter_texts() {
         { "index": 0, "embedding": [1.0, 0.0] },
         { "index": 1, "embedding": [0.0, 1.0] },
     ]});
-    let (url, srv) = serve_many(vec![(400, too_long.clone()), (200, two)]);
+    let (url, srv) = serve_many(vec![listing("m"), (400, too_long.clone()), (200, two)]);
     let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
     let texts = vec!["x".repeat(9_000), "short".to_string()];
     assert_eq!(e.embed(&texts).unwrap().len(), 2);
-    let got = srv.join().unwrap();
-    assert_eq!(got.len(), 2);
-    let second = got[1].body["input"].as_array().unwrap();
-    assert!(second[0].as_str().unwrap().len() <= 2_000);
-    assert_eq!(second[1], "short");
+    let sent = inputs(&srv.join().unwrap());
+    assert_eq!(sent.len(), 2);
+    assert!(sent[1][0].len() <= 2_000);
+    assert_eq!(sent[1][1], "short");
 
     // A 400 that is not about length is not retried.
-    let (url, srv) = serve_many(vec![(
-        400,
-        json!({ "error": { "message": "model not loaded" } }),
-    )]);
+    let (url, srv) = serve_many(vec![
+        listing("m"),
+        (400, json!({ "error": { "message": "model not loaded" } })),
+    ]);
     let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
     assert!(e.embed(&texts).is_err());
-    assert_eq!(srv.join().unwrap().len(), 1);
+    assert_eq!(inputs(&srv.join().unwrap()).len(), 1);
 }
 
 /// llama-server's answer to an input longer than its physical batch (`-ub`,
@@ -422,10 +442,11 @@ fn one(vector: [f32; 3]) -> (u16, Value) {
     )
 }
 
-/// The texts each request carried, in order.
+/// The texts each embeddings request carried, in order.
 fn inputs(requests: &[Received]) -> Vec<Vec<String>> {
     requests
         .iter()
+        .filter(|request| request.path == "/v1/embeddings")
         .map(|request| {
             request.body["input"]
                 .as_array()
@@ -439,7 +460,7 @@ fn inputs(requests: &[Received]) -> Vec<Vec<String>> {
 
 #[test]
 fn a_status_500_about_length_is_retried() {
-    let (url, srv) = serve_many(vec![too_large(), one([1.0, 0.0, 0.0])]);
+    let (url, srv) = serve_many(vec![listing("m"), too_large(), one([1.0, 0.0, 0.0])]);
     let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
     assert_eq!(
         e.embed(&["x".repeat(9_000)]).unwrap(),
@@ -453,6 +474,7 @@ fn a_status_500_about_length_is_retried() {
 #[test]
 fn a_batch_refused_twice_is_sent_text_by_text() {
     let (url, srv) = serve_many(vec![
+        listing("nomic-embed-text-v1.5"),
         too_large(),
         too_large(),
         one([1.0, 0.0, 0.0]),
@@ -487,7 +509,13 @@ fn a_batch_refused_twice_is_sent_text_by_text() {
     assert_eq!(sent[5], ["search_document: b"]);
 
     // A text refused at 400 characters too is an error, not a vector.
-    let (url, srv) = serve_many(vec![too_large(), too_large(), too_large(), too_large()]);
+    let (url, srv) = serve_many(vec![
+        listing("m"),
+        too_large(),
+        too_large(),
+        too_large(),
+        too_large(),
+    ]);
     let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
     let error = e.embed(&["x".repeat(9_000)]).unwrap_err().to_string();
     assert!(
@@ -532,13 +560,58 @@ fn a_known_model_gets_its_prefixes_and_a_name_that_says_so() {
 fn the_retry_for_a_too_long_batch_cuts_the_prefixed_text() {
     let too_long = json!({ "error": { "message": "input is too large to process" } });
     let one = json!({ "data": [{ "index": 0, "embedding": [1.0, 0.0] }] });
-    let (url, srv) = serve_many(vec![(400, too_long), (200, one)]);
+    let (url, srv) = serve_many(vec![
+        listing("nomic-embed-text-v1.5"),
+        (400, too_long),
+        (200, one),
+    ]);
     let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "nomic-embed-text-v1.5");
     assert_eq!(e.name(), "llamacpp:nomic-embed-text-v1.5+nomic");
     e.embed(&["x".repeat(9_000)]).unwrap();
-    let got = srv.join().unwrap();
-    let first = got[0].body["input"][0].as_str().unwrap();
+    let sent = inputs(&srv.join().unwrap());
+    let first = &sent[0][0];
     assert!(first.starts_with("search_document: x") && first.len() == 8_000);
-    let second = got[1].body["input"][0].as_str().unwrap();
+    let second = &sent[1][0];
     assert!(second.starts_with("search_document: x") && second.len() == 2_000);
+}
+
+#[test]
+fn a_server_that_does_not_list_the_model_is_not_asked_for_vectors() {
+    for server in [Server::LlamaCpp, Server::MistralRs] {
+        // The server holds another model, and would embed with it.
+        let (url, srv) = serve_many(vec![listing("other")]);
+        let e = OpenAiEmbedder::new(server, &format!("{url}/v1"), None, "m");
+        let error = e.embed(&["a".into()]).unwrap_err().to_string();
+        let wanted = format!(
+            "{} does not list m; choose a model it serves",
+            server.label()
+        );
+        assert!(error.contains(&wanted), "{error}");
+        // The list was the one request: no embeddings request was sent.
+        let got = srv.join().unwrap();
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].path, "/v1/models");
+    }
+
+    // A list that cannot be read is an error, from a Test too.
+    let closed = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    let e = OpenAiEmbedder::new(Server::LlamaCpp, &closed, None, "m");
+    let error = e.probe().unwrap_err().to_string();
+    assert!(error.contains("llama.cpp"), "{error}");
+
+    // A listed model is checked once: after a call that succeeds, the list
+    // is not read again.
+    let (url, srv) = serve_many(vec![
+        listing("m"),
+        one([1.0, 0.0, 0.0]),
+        one([0.0, 1.0, 0.0]),
+    ]);
+    let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
+    e.embed(&["a".into()]).unwrap();
+    e.embed_query("q").unwrap();
+    let paths: Vec<String> = srv.join().unwrap().into_iter().map(|r| r.path).collect();
+    assert_eq!(paths, ["/v1/models", "/v1/embeddings", "/v1/embeddings"]);
 }

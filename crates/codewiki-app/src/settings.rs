@@ -83,16 +83,30 @@ pub enum FieldId {
     OpenAiKey,
     OpenAiBaseUrl,
     OllamaHost,
+    LmStudioUrl,
+    LmStudioKey,
+    LlamaCppUrl,
+    LlamaCppKey,
+    LemonadeUrl,
+    LemonadeKey,
+    MistralRsUrl,
     EmbedModel,
     RemoteUrl,
     RemoteToken,
 }
 
 impl FieldId {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 13] = [
         Self::OpenAiKey,
         Self::OpenAiBaseUrl,
         Self::OllamaHost,
+        Self::LmStudioUrl,
+        Self::LmStudioKey,
+        Self::LlamaCppUrl,
+        Self::LlamaCppKey,
+        Self::LemonadeUrl,
+        Self::LemonadeKey,
+        Self::MistralRsUrl,
         Self::EmbedModel,
         Self::RemoteUrl,
         Self::RemoteToken,
@@ -106,6 +120,13 @@ impl FieldId {
             Self::OpenAiKey => Some(("openai", "api_key")),
             Self::OpenAiBaseUrl => Some(("openai", "base_url")),
             Self::OllamaHost => Some(("ollama", "host")),
+            Self::LmStudioUrl => Some(("lmstudio", "url")),
+            Self::LmStudioKey => Some(("lmstudio", "api_key")),
+            Self::LlamaCppUrl => Some(("llamacpp", "url")),
+            Self::LlamaCppKey => Some(("llamacpp", "api_key")),
+            Self::LemonadeUrl => Some(("lemonade", "url")),
+            Self::LemonadeKey => Some(("lemonade", "api_key")),
+            Self::MistralRsUrl => Some(("mistralrs", "url")),
             Self::EmbedModel => Some(("embed", "model")),
             Self::RemoteUrl | Self::RemoteToken => None,
         }
@@ -113,7 +134,14 @@ impl FieldId {
 
     /// Whether what is typed is hidden, and never shown again once saved.
     pub fn secret(self) -> bool {
-        matches!(self, Self::OpenAiKey | Self::RemoteToken)
+        matches!(
+            self,
+            Self::OpenAiKey
+                | Self::LmStudioKey
+                | Self::LlamaCppKey
+                | Self::LemonadeKey
+                | Self::RemoteToken
+        )
     }
 
     /// What an empty input shows.
@@ -122,6 +150,12 @@ impl FieldId {
             Self::OpenAiKey => "Paste the key",
             Self::OpenAiBaseUrl => "https://api.openai.com/v1",
             Self::OllamaHost => "http://127.0.0.1:11434",
+            Self::LmStudioUrl | Self::MistralRsUrl => "http://127.0.0.1:1234",
+            Self::LlamaCppUrl => "http://127.0.0.1:9931",
+            Self::LemonadeUrl => "http://127.0.0.1:13305",
+            Self::LmStudioKey | Self::LlamaCppKey | Self::LemonadeKey => {
+                "Only if the server asks for one"
+            }
             Self::EmbedModel => "The provider's default",
             Self::RemoteUrl => "http://host:7411",
             Self::RemoteToken => "The backend's token",
@@ -200,7 +234,16 @@ mod tests {
         }
         // The keys and the token are the secrets.
         let secrets: Vec<FieldId> = FieldId::ALL.into_iter().filter(|f| f.secret()).collect();
-        assert_eq!(secrets, [FieldId::OpenAiKey, FieldId::RemoteToken]);
+        assert_eq!(
+            secrets,
+            [
+                FieldId::OpenAiKey,
+                FieldId::LmStudioKey,
+                FieldId::LlamaCppKey,
+                FieldId::LemonadeKey,
+                FieldId::RemoteToken
+            ]
+        );
         for field in secrets.iter().filter_map(|f| f.place()) {
             assert_eq!(field.1, "api_key");
         }

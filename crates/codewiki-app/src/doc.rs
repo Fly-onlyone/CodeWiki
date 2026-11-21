@@ -71,6 +71,8 @@ pub enum Action {
     /// Send the chosen embedder of semantic search one small request and
     /// show whether it answered.
     TestEmbedder,
+    /// Ask the chosen embedding server which models it has.
+    RefreshEmbedModels,
     /// Check the backend typed into the fields and, when it answers, use it.
     ConnectRemote,
     /// Go back to the backend on this machine.

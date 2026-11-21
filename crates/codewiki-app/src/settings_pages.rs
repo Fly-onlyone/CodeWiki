@@ -56,6 +56,9 @@ pub struct Model<'a> {
     /// The embedding job (`GET /v1/embed/job`): the one that runs, or the
     /// last that ran. `None` when there is none.
     pub job: Option<&'a Value>,
+    /// The models of the chosen embedding server
+    /// (`GET /v1/settings/embed/models`). `None` until they are read.
+    pub embed_models: Option<&'a Value>,
     /// The backend in use, and how the app came to it.
     pub backend_url: Option<&'a str>,
     pub origin: Option<Origin>,
@@ -378,7 +381,11 @@ fn select(
 fn embedder_name(provider: &str) -> &str {
     match provider {
         "local" => "Word forms: no model needed",
+        "lmstudio" => "LM Studio",
         "ollama" => "Ollama",
+        "llamacpp" => "Llama / llama.cpp",
+        "lemonade" => "Lemonade",
+        "mistralrs" => "mistral.rs",
         "openai" => "OpenAI-compatible",
         "none" => "Off: full-text search only",
         other => other,
@@ -438,16 +445,11 @@ fn search(model: &Model) -> Vec<Block> {
         "Finds notes and symbols by meaning",
         embedder_name,
     );
-    let mut embedder = vec![
-        chooser,
-        field(
-            model,
-            settings,
-            FieldId::EmbedModel,
-            "Model",
-            "For Ollama and OpenAI; empty takes their default",
-        ),
-    ];
+    let provider_id = settings["embed"]["provider"]["value"]
+        .as_str()
+        .unwrap_or("");
+    let mut embedder = vec![chooser];
+    embedder.extend(server_rows(model, settings, provider_id));
     embedder.extend([
         in_use(settings, "embed", "Semantic search is off."),
         Block::Text(vec![text(
@@ -462,10 +464,38 @@ fn search(model: &Model) -> Vec<Block> {
     embedder.extend(model.job.into_iter().flat_map(job));
     let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
     blocks.push(card("Embedder", embedder));
-    // What the OpenAI and Ollama embedders connect with.
-    blocks.push(card(
-        "Keys and addresses",
-        vec![
+    blocks
+}
+
+/// The address and key rows of a server, then its model, then how to start
+/// it. Nothing for the word-form embedder and for none.
+fn server_rows(model: &Model, settings: &Value, provider: &str) -> Vec<Block> {
+    let address = |id: FieldId, label: &str, help: &str| field(model, settings, id, label, help);
+    let key = |id: FieldId, label: &str| {
+        secret(
+            model,
+            settings,
+            id,
+            label,
+            "Only if the server asks for one",
+        )
+    };
+    let mut rows = match provider {
+        "lmstudio" => vec![
+            address(FieldId::LmStudioUrl, "LM Studio address", ""),
+            key(FieldId::LmStudioKey, "LM Studio key"),
+        ],
+        "ollama" => vec![address(FieldId::OllamaHost, "Ollama address", "")],
+        "llamacpp" => vec![
+            address(FieldId::LlamaCppUrl, "Llama address", ""),
+            key(FieldId::LlamaCppKey, "Llama key"),
+        ],
+        "lemonade" => vec![
+            address(FieldId::LemonadeUrl, "Lemonade address", ""),
+            key(FieldId::LemonadeKey, "Lemonade key"),
+        ],
+        "mistralrs" => vec![address(FieldId::MistralRsUrl, "mistral.rs address", "")],
+        "openai" => vec![
             secret(
                 model,
                 settings,
@@ -473,26 +503,107 @@ fn search(model: &Model) -> Vec<Block> {
                 "OpenAI API key",
                 "For the OpenAI embedder",
             ),
-            field(
-                model,
-                settings,
+            address(
                 FieldId::OpenAiBaseUrl,
                 "OpenAI address",
                 "Any server that speaks the OpenAI protocol",
             ),
-            field(
+        ],
+        _ => return Vec::new(),
+    };
+    let keyed = rows.iter().any(|row| matches!(row, Block::Secret { .. }));
+    rows.extend(model_rows(model, settings));
+    if let Some(help) = serve_help(provider) {
+        rows.push(Block::Text(vec![text(help)]));
+    }
+    if keyed {
+        rows.push(Block::Text(vec![text(
+            "A key is stored encrypted for your Windows user and is never shown again.",
+        )]));
+    }
+    rows
+}
+
+/// The model of the chosen server: a choice from the list the server gave,
+/// or a typed name when it gave none, and a button to ask again.
+fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
+    let entry = &settings["embed"]["model"];
+    let chosen = entry["value"].as_str().unwrap_or("");
+    let listed = model
+        .embed_models
+        .and_then(|models| models["models"].as_array())
+        .filter(|models| !models.is_empty());
+    let mut rows = Vec::new();
+    match listed {
+        Some(models) => rows.push(Block::Select {
+            label: "Model".into(),
+            help: Some("The models the server lists; embedding ones come first".into()),
+            options: models
+                .iter()
+                .filter_map(|listed| listed["id"].as_str())
+                .map(|id| Choice {
+                    label: id.to_string(),
+                    action: Action::SetSetting {
+                        section: "embed".into(),
+                        field: "model".into(),
+                        value: Some(id.into()),
+                    },
+                    selected: id == chosen,
+                    icon: None,
+                })
+                .collect(),
+            locked: lock(model, settings, entry),
+            note: None,
+        }),
+        None => {
+            rows.push(field(
                 model,
                 settings,
-                FieldId::OllamaHost,
-                "Ollama address",
-                "For the Ollama embedder",
-            ),
-            Block::Text(vec![text(
-                "A key is stored encrypted for your Windows user and is never shown again.",
-            )]),
-        ],
-    ));
-    blocks
+                FieldId::EmbedModel,
+                "Model",
+                "The name the server knows the model by",
+            ));
+            let problem = model
+                .embed_models
+                .filter(|models| models["reachable"] == false)
+                .and_then(|models| models["problem"].as_str());
+            rows.extend(problem.map(|problem| Block::Alert {
+                tone: Tone::Warning,
+                text: problem.to_string(),
+                button: None,
+            }));
+        }
+    }
+    rows.push(Block::Buttons(vec![Press::new(
+        "Refresh",
+        Action::RefreshEmbedModels,
+    )]));
+    rows
+}
+
+/// How to get an embedding model going in the server, one line.
+// Commands checked against each server's docs:
+// Ollama: https://ollama.com/library/embeddinggemma (`ollama pull embeddinggemma`).
+// mistral.rs: https://docs.mistralrs.dev/reference/supported-models/ lists
+// Qwen/Qwen3-Embedding-0.6B as an embedding model, and `mistralrs serve -m <model>`
+// is the serve form of its README, on port 1234.
+// Lemonade: nomic-embed-text-v1-GGUF is in
+// https://github.com/lemonade-sdk/lemonade/blob/main/src/cpp/resources/server_models.json
+fn serve_help(provider: &str) -> Option<&'static str> {
+    Some(match provider {
+        "lmstudio" => {
+            "In LM Studio, download an embedding model and start the server on the Developer tab. LM Studio and mistral.rs both use port 1234."
+        }
+        "ollama" => "Run `ollama pull embeddinggemma`, or name another embedding model.",
+        "llamacpp" => {
+            "Load an embedding model (GGUF) in Llama for Windows, or start llama-server with one. Both use port 9931."
+        }
+        "lemonade" => "Pull an embedding model in Lemonade, such as nomic-embed-text-v1-GGUF.",
+        "mistralrs" => {
+            "Run `mistralrs serve -m Qwen/Qwen3-Embedding-0.6B`. mistral.rs and LM Studio both use port 1234."
+        }
+        _ => return None,
+    })
 }
 
 /// Whether an embedding job is under way.
@@ -818,7 +929,7 @@ mod tests {
             "writable": true,
             "embed": {
                 "provider": { "value": "local", "source": "default", "env": "CODEWIKI_EMBED",
-                    "options": ["local", "ollama", "openai", "none"] },
+                    "options": ["local", "lmstudio", "ollama", "llamacpp", "lemonade", "mistralrs", "openai", "none"] },
                 "model": { "value": null, "source": "default", "env": "CODEWIKI_EMBED_MODEL" },
                 "name": "local-hash-v1:384", "problem": null,
             },
@@ -827,6 +938,21 @@ mod tests {
                 "base_url": { "value": "https://api.openai.com/v1", "source": "default", "env": "OPENAI_BASE_URL" },
             },
             "ollama": { "host": { "value": "http://127.0.0.1:11434", "source": "default", "env": "OLLAMA_HOST" } },
+            "lmstudio": {
+                "url": { "value": "http://127.0.0.1:1234", "source": "default", "env": "CODEWIKI_LMSTUDIO_URL" },
+                "api_key": { "state": "unset", "hint": "", "env": "CODEWIKI_LMSTUDIO_KEY" },
+            },
+            "llamacpp": {
+                "url": { "value": "http://127.0.0.1:9931", "source": "default", "env": "CODEWIKI_LLAMACPP_URL" },
+                "api_key": { "state": "unset", "hint": "", "env": "CODEWIKI_LLAMACPP_KEY" },
+            },
+            "lemonade": {
+                "url": { "value": "http://127.0.0.1:13305", "source": "default", "env": "CODEWIKI_LEMONADE_URL" },
+                "api_key": { "state": "unset", "hint": "", "env": "CODEWIKI_LEMONADE_KEY" },
+            },
+            "mistralrs": {
+                "url": { "value": "http://127.0.0.1:1234", "source": "default", "env": "CODEWIKI_MISTRALRS_URL" },
+            },
         })
     }
 
@@ -836,6 +962,7 @@ mod tests {
         settings: Option<Value>,
         error: Option<String>,
         job: Option<Value>,
+        embed_models: Option<Value>,
         notes: HashMap<FieldId, Note>,
         typing: HashSet<FieldId>,
         embed_test: Tested,
@@ -861,6 +988,7 @@ mod tests {
                 settings: Some(defaults()),
                 error: None,
                 job: None,
+                embed_models: None,
                 notes: HashMap::new(),
                 typing: HashSet::new(),
                 embed_test: Tested::Not,
@@ -895,6 +1023,7 @@ mod tests {
                     typing: &self.typing,
                     embed_test: &self.embed_test,
                     job: self.job.as_ref(),
+                    embed_models: self.embed_models.as_ref(),
                     backend_url: self.url.as_deref(),
                     origin: self.origin,
                     env_url: self.env_url.as_deref(),
@@ -1053,6 +1182,7 @@ mod tests {
         let mut settings = defaults();
         settings["openai"]["api_key"] =
             json!({ "state": "saved", "hint": "1234", "env": "OPENAI_API_KEY" });
+        settings["embed"]["provider"]["value"] = json!("openai");
         fixture.settings = Some(settings);
         fixture.notes.insert(FieldId::OpenAiKey, Note::Saved);
 
@@ -1144,6 +1274,7 @@ mod tests {
         let mut fixture = Fixture::new();
         let mut settings = defaults();
         settings["secrets"] = json!("env_only");
+        settings["embed"]["provider"]["value"] = json!("openai");
         fixture.settings = Some(settings);
         let words = fixture.page(Category::Search).words();
         assert!(
@@ -1194,28 +1325,120 @@ mod tests {
         assert!(words.contains("rebuilt at the next Sync"));
         assert!(words.contains("Works: local-hash-v1:384"));
         let actions = doc.actions();
-        for name in ["local", "ollama", "openai", "none"] {
+        for name in [
+            "local",
+            "lmstudio",
+            "ollama",
+            "llamacpp",
+            "lemonade",
+            "mistralrs",
+            "openai",
+            "none",
+        ] {
             assert!(actions.contains(&set("embed", name)), "{name}");
         }
         assert!(actions.contains(&Action::TestEmbedder));
         assert!(actions.contains(&Action::Sync));
-        // What the OpenAI and Ollama embedders connect with is on the page.
-        assert!(words.contains("OpenAI API key: <typed, hidden>"), "{words}");
-        assert_eq!(
-            doc.fields(),
-            [
-                FieldId::EmbedModel,
-                FieldId::OpenAiKey,
-                FieldId::OpenAiBaseUrl,
-                FieldId::OllamaHost
-            ]
-        );
+        // The word-form embedder connects to nothing: no rows of a server.
+        assert!(doc.fields().is_empty(), "{:?}", doc.fields());
+        assert!(!words.contains("Refresh"), "{words}");
 
         // While a test runs, it cannot be started again.
         fixture.embed_test = Tested::Running;
         let doc = fixture.page(Category::Search);
         assert!(doc.words().contains("Testing…"));
         assert!(!doc.actions().contains(&Action::TestEmbedder));
+    }
+
+    /// The page with `provider` chosen.
+    fn search_with(provider: &str, models: Option<Value>) -> Doc {
+        let mut fixture = Fixture::new();
+        fixture.settings.as_mut().unwrap()["embed"]["provider"]["value"] = json!(provider);
+        fixture.embed_models = models;
+        fixture.page(Category::Search)
+    }
+
+    #[test]
+    fn each_server_shows_only_its_own_rows() {
+        use FieldId::*;
+        let rows = [
+            ("lmstudio", vec![LmStudioUrl, LmStudioKey]),
+            ("ollama", vec![OllamaHost]),
+            ("llamacpp", vec![LlamaCppUrl, LlamaCppKey]),
+            ("lemonade", vec![LemonadeUrl, LemonadeKey]),
+            ("mistralrs", vec![MistralRsUrl]),
+            ("openai", vec![OpenAiKey, OpenAiBaseUrl]),
+        ];
+        for (provider, mut expected) in rows {
+            // No list is loaded, so the model is typed.
+            expected.push(EmbedModel);
+            let doc = search_with(provider, None);
+            assert_eq!(doc.fields(), expected, "{provider}");
+            assert!(
+                doc.actions().contains(&Action::RefreshEmbedModels),
+                "{provider}"
+            );
+        }
+        for provider in ["local", "none"] {
+            let doc = search_with(provider, None);
+            assert!(doc.fields().is_empty(), "{provider}");
+            assert!(
+                !doc.actions().contains(&Action::RefreshEmbedModels),
+                "{provider}"
+            );
+        }
+        // How to start each server, and what keeps a key.
+        let words = search_with("mistralrs", None).words();
+        assert!(words.contains("mistralrs serve -m Qwen/Qwen3-Embedding-0.6B"));
+        assert!(!words.contains("stored encrypted"), "{words}");
+        assert!(
+            search_with("lmstudio", None)
+                .words()
+                .contains("stored encrypted")
+        );
+    }
+
+    #[test]
+    fn a_listed_server_offers_its_models_to_choose() {
+        let mut fixture = Fixture::new();
+        {
+            let settings = fixture.settings.as_mut().unwrap();
+            settings["embed"]["provider"]["value"] = json!("lmstudio");
+            settings["embed"]["model"]["value"] = json!("a");
+        }
+        fixture.embed_models = Some(json!({
+            "provider": "lmstudio", "reachable": true, "problem": null,
+            "models": [{ "id": "a", "embedding": true }, { "id": "b", "embedding": null }],
+        }));
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(words.contains("Model: a (a / b)"), "{words}");
+        let choose_b = Action::SetSetting {
+            section: "embed".into(),
+            field: "model".into(),
+            value: Some("b".into()),
+        };
+        assert!(doc.actions().contains(&choose_b));
+        assert!(!doc.fields().contains(&FieldId::EmbedModel));
+        assert!(doc.actions().contains(&Action::RefreshEmbedModels));
+    }
+
+    #[test]
+    fn a_server_that_does_not_answer_keeps_the_typed_model_and_says_why() {
+        let doc = search_with(
+            "llamacpp",
+            Some(json!({
+                "provider": "llamacpp", "reachable": false, "models": null,
+                "problem": "Llama is not running at http://127.0.0.1:9931",
+            })),
+        );
+        let words = doc.words();
+        assert!(
+            words.contains("Llama is not running at http://127.0.0.1:9931"),
+            "{words}"
+        );
+        assert!(doc.fields().contains(&FieldId::EmbedModel));
+        assert!(doc.actions().contains(&Action::RefreshEmbedModels));
     }
 
     /// The job as `GET /v1/embed/job` gives it.

@@ -3172,6 +3172,80 @@ Test-Case "LM3" "Semantic search through Lemonade" "Lemonade and nomic-embed-tex
         -Note "README's model for Lemonade: v1, Q4_K_S, not the model of the llama.cpp, LM Studio and Ollama cases."
 }
 
+# ---------------------------------------------------------------- MR, mistral.rs
+# Run `-Only D2,MR1,MR2,MR3`. Sources (read 2026-11-21):
+#  - https://github.com/EricLBuehler/mistral.rs README, Quick Start, Windows:
+#    `irm https://mistralrs.dev/install.ps1 | iex`; `mistralrs serve -m <model>`
+#    (port 1234, web UI at /ui).
+#  - https://mistralrs.dev/install.ps1: `-Yes` or the environment variable
+#    MISTRALRS_INSTALL_YES=1 skips the menu; the prebuilt zip
+#    mistralrs-cpu-x86_64-pc-windows-msvc.zip (32 MB, a GitHub release asset) is
+#    unpacked to %USERPROFILE%\.mistralrs\mistralrs.exe, with a launcher
+#    mistralrs.cmd in %USERPROFILE%\.local\bin.
+#  - https://huggingface.co/Qwen/Qwen3-Embedding-0.6B: not gated, model.safetensors
+#    1,191,586,416 bytes (BF16), Apache-2.0; listed in mistral.rs's supported models.
+# Not verified: whether a processor-only guest of 3072 MB holds it (peak memory is
+# what the case measures) and how long the first load takes; MR2 waits up to 25
+# minutes and MR3 up to 40 for the job, and both report rather than hang.
+$mistralExe = "$guestHome\.mistralrs\mistralrs.exe"
+$mistralPattern = '\\\.mistralrs\\|\\mistralrs[^\\]*\.exe$'
+$mistralModel = "Qwen/Qwen3-Embedding-0.6B"
+$mistralModelId = $null
+
+Test-Case "MR1" "Install mistral.rs" "README's installer command installs mistralrs.exe for the user" {
+    $run = Invoke-GuestScript -TimeoutSec 1800 -Script ((Get-GuestFreeDiskText 5) + "`n" + (@'
+$watch = Get-Date
+# README's command in its own PowerShell, with the installer's switch for "no menu".
+$child = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; `$env:MISTRALRS_INSTALL_YES = '1'; irm https://mistralrs.dev/install.ps1 | iex" 2>&1 | ForEach-Object { "$_" })
+"installer exit: $LASTEXITCODE"
+"installed in $([int]((Get-Date) - $watch).TotalSeconds) s"
+"installer output ends: $((($child | Where-Object { $_.Trim() }) | Select-Object -Last 8) -join ' | ')"
+$exe = '{{EXE}}'
+"exe: $(Test-Path $exe)"
+if (-not (Test-Path $exe)) { 'result: no mistralrs.exe'; return }
+"version: $((@(& $exe --version 2>&1 | ForEach-Object { "$_" })) -join ' | ')"
+"installed MB: $([math]::Round(((Get-ChildItem (Split-Path -Parent $exe) -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 1))"
+$signature = Get-AuthenticodeSignature $exe
+"signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+'@).Replace('{{EXE}}', $mistralExe) + "`n" + (Get-GuestDefenderText "mistralrs") + "`n" + "'result: installed'")
+    Set-EmbedFact "mistralrs" "version" $(if ($run.Output -match "(?m)^version: (.+)$") { $Matches[1].Trim() } else { $null })
+    Set-EmbedFact "mistralrs" "installMb" (Get-OutputNumber $run.Output "installed MB: ([\d\.]+)")
+    Set-EmbedFact "mistralrs" "installS" (Get-OutputNumber $run.Output "installed in (\d+) s")
+    $ok = $run.Output -match "result: installed" -and $run.Output -match "exe: True"
+    Add-Result -Id "MR1" -Title "Install mistral.rs" -Expect "irm https://mistralrs.dev/install.ps1 | iex installs mistralrs.exe" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(installer exit|installed in|exe:|version:|installed MB|signature|Defender)' }) -join '; ') (the script downloads and unpacks in one step: no separate download time)"
+}
+
+Test-Case "MR2" "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B" "README's command starts the server on port 1234 and it lists the model" {
+    if (-not (Test-Path (Join-Path $PSScriptRoot "guest\serve-logged.ps1"))) { throw "guest\serve-logged.ps1 is missing" }
+    $log = "$embedLogs\mistralrs"
+    $watch = Get-Date
+    Start-LoggedServer -Exe $mistralExe -Log $log -ArgLine "serve -m $mistralModel"
+    # The first start downloads the model (about 1.2 GB) and loads it.
+    $wait = Wait-GuestServer -Url "http://127.0.0.1:1234/v1/models" -ServerProcess $mistralPattern -Seconds 1500 -Log $log
+    $seconds = [int]((Get-Date) - $watch).TotalSeconds
+    $resolved = Resolve-GuestModelId -Url "http://127.0.0.1:1234/v1/models" -Match "Qwen3-Embedding"
+    $script:mistralModelId = $resolved.Id
+    $modelMb = Get-GuestFolderMb @("$guestHome\.cache\huggingface\hub\models--Qwen--Qwen3-Embedding-0.6B")
+    Set-EmbedFact "mistralrs/$($resolved.Id)" "modelMb" $modelMb
+    Set-EmbedFact "mistralrs/$($resolved.Id)" "pullS" $seconds
+    $memory = (Invoke-GuestScript -TimeoutSec 60 -Script "`$free = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1KB); `"guest free memory MB: `$free`"").Output
+    $shot = Shot "mistralrs-running"
+    Add-Result -Id "MR2" -Title "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B" -Expect "the server answers on 1234 and lists the model, within 25 minutes" `
+        -Status $(if ($wait -match "answered after" -and $resolved.Id) { "pass" } else { "fail" }) -Shots @($shot) -Output ($wait + "`n" + $resolved.Output + "`n" + $memory) `
+        -Observed "$(($wait -split "`n" | Select-Object -First 1)) (download of the model and load, $seconds s from the start; model on disk $modelMb MB); the server lists the model as '$($resolved.Id)'; $memory"
+}
+
+Test-Case "MR3" "Semantic search through mistral.rs" "mistral.rs and Qwen3-Embedding-0.6B chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {
+    if (-not $mistralModelId) { $mistralModelId = (Resolve-GuestModelId -Url "http://127.0.0.1:1234/v1/models" -Match "Qwen3-Embedding").Id }
+    if (-not $mistralModelId) { throw "mistral.rs lists no Qwen3-Embedding model on port 1234; run MR1 and MR2 first" }
+    Measure-RealEmbedder -Id "MR3" -Title "Semantic search through mistral.rs" -Provider mistralrs -Model $mistralModelId `
+        -ServerProcess $mistralPattern -Port 1234 -ModelFamily "Qwen3-Embedding-0.6B" -Quantisation "BF16 safetensors as published (mistral.rs may convert on load; see its log)" `
+        -InstallFolder @("$guestHome\.mistralrs") -JobSeconds 2400 `
+        -Note "README's model for mistral.rs, 0.6B parameters, 1024 dimensions: not the model of the llama.cpp, LM Studio and Ollama cases. Processor build; 3072 MB guest."
+}
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run and
 # the start with Windows is on (AS3).

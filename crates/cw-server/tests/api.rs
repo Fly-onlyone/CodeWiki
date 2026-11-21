@@ -19,6 +19,25 @@ fn no_env(_: &str) -> Option<String> {
     None
 }
 
+/// Have the process embed with the word-form embedder, which empty settings
+/// and an empty environment name. Until the embedder slot is configured it
+/// holds what the machine's environment names, and the updates of a test
+/// would call that server. Every harness calls this before its router runs.
+fn no_model_server() {
+    cw_wiki::semantic::configure(&cw_core::settings::Resolved::from_parts(
+        &Default::default(),
+        no_env,
+    ));
+}
+
+/// An address where nothing listens: bound, noted, then closed. A test that
+/// chooses a server points its address here or at a stand-in, never at the
+/// server's default port, where a real one may run.
+fn closed_port() -> String {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    format!("http://{}", listener.local_addr().unwrap())
+}
+
 fn write(root: &Path, rel: &str, text: &str) {
     let path = root.join(rel);
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -66,6 +85,7 @@ impl Harness {
             "src/math.rs",
             "//! Arithmetic helpers.\n\n/// Doubles a number.\npub fn double(x: u64) -> u64 { x * 2 }\n",
         );
+        no_model_server();
         let app = router(ServerConfig {
             data_dir: data.path().to_path_buf(),
             token: TOKEN.into(),
@@ -357,19 +377,20 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
 #[tokio::test]
 async fn a_saved_setting_is_reported_and_takes_effect() {
     let h = Harness::new();
+    let closed = closed_port();
     let settings = h
         .put(
             "/v1/settings",
             json!({
                 "embed": { "provider": "Ollama", "model": " nomic " },
-                "ollama": { "host": "http://box:11434/" },
+                "ollama": { "host": format!("{closed}/") },
             }),
         )
         .await;
     assert_eq!(settings["embed"]["provider"]["value"], "ollama");
     assert_eq!(settings["embed"]["provider"]["source"], "saved");
     assert_eq!(settings["embed"]["model"]["value"], "nomic");
-    assert_eq!(settings["ollama"]["host"]["value"], "http://box:11434");
+    assert_eq!(settings["ollama"]["host"]["value"], closed);
     assert_eq!(settings["embed"]["name"], "ollama:nomic");
     assert_eq!(settings["embed"]["problem"], Value::Null);
     assert_eq!(h.get("/v1/settings").await, settings);
@@ -404,7 +425,7 @@ async fn a_saved_key_is_never_shown() {
             "/v1/settings",
             json!({
                 "embed": { "provider": "openai" },
-                "openai": { "api_key": { "set": KEY } },
+                "openai": { "api_key": { "set": KEY }, "base_url": closed_port() },
             }),
         )
         .await;
@@ -439,8 +460,11 @@ async fn a_saved_key_is_never_shown() {
 #[tokio::test]
 async fn a_change_that_cannot_be_applied_changes_nothing() {
     let h = Harness::new();
-    h.put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
-        .await;
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "provider": "ollama" }, "ollama": { "host": closed_port() } }),
+    )
+    .await;
     for (body, expected) in [
         (
             json!({ "embed": { "provider": "bert" } }),
@@ -523,7 +547,10 @@ async fn a_setting_given_by_the_environment_cannot_be_changed() {
     );
     // The settings beside it can still be changed, and work with it.
     let settings = h
-        .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "ollama" }, "ollama": { "host": closed_port() } }),
+        )
         .await;
     assert_eq!(settings["embed"]["name"], "ollama:env-model");
     h.put("/v1/settings", json!({ "embed": { "provider": null } }))
@@ -657,6 +684,7 @@ async fn the_routes_of_the_built_in_writer_are_gone() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn shutdown_route_ends_serve() {
+    no_model_server();
     let data = tempfile::tempdir().unwrap();
     let config = ServerConfig {
         data_dir: data.path().to_path_buf(),
@@ -1618,7 +1646,11 @@ async fn a_change_of_embedder_clears_the_model_unless_it_names_one() {
     let h = Harness::new();
     h.put(
         "/v1/settings",
-        json!({ "embed": { "provider": "ollama", "model": "m" } }),
+        json!({
+            "embed": { "provider": "ollama", "model": "m" },
+            "ollama": { "host": closed_port() },
+            "lmstudio": { "url": closed_port() },
+        }),
     )
     .await;
     let settings = h
@@ -1640,7 +1672,7 @@ async fn a_change_of_embedder_clears_the_model_unless_it_names_one() {
     let settings = h
         .put(
             "/v1/settings",
-            json!({ "embed": { "provider": "lmstudio" } }),
+            json!({ "embed": { "provider": "lmstudio" }, "lmstudio": { "url": closed_port() } }),
         )
         .await;
     assert_eq!(settings["embed"]["model"]["value"], "env-model");
@@ -1652,7 +1684,7 @@ async fn a_local_server_without_a_model_says_to_choose_one() {
     let settings = h
         .put(
             "/v1/settings",
-            json!({ "embed": { "provider": "lmstudio" } }),
+            json!({ "embed": { "provider": "lmstudio" }, "lmstudio": { "url": closed_port() } }),
         )
         .await;
     let problem = settings["embed"]["problem"].as_str().unwrap();
@@ -1691,10 +1723,7 @@ async fn the_model_list_comes_from_the_chosen_server() {
 #[tokio::test]
 async fn the_model_list_says_when_the_server_does_not_answer() {
     let h = Harness::new();
-    let closed = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        format!("http://{}", listener.local_addr().unwrap())
-    };
+    let closed = closed_port();
     h.put(
         "/v1/settings",
         json!({ "embed": { "provider": "lmstudio" }, "lmstudio": { "url": closed } }),

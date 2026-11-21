@@ -1,5 +1,7 @@
 //! The briefing written into CLAUDE.md and AGENTS.md.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -33,6 +35,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
     );
     write(r, "crates/cli/src/main.rs", "fn main() { engine::run() }\n");
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     let facts = service::reindex(r, &mut index).unwrap();
     generate(r, &facts, &analyze(&facts), None).unwrap();
     (dir, index)
@@ -86,6 +89,7 @@ fn apply_writes_both_files_and_preserves_the_authors_text() {
         "[package]\nname = \"engine\"\ndescription = \"Matching engine, second edition\"\n",
     );
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     let facts = service::reindex(dir.path(), &mut index).unwrap();
     generate(dir.path(), &facts, &analyze(&facts), None).unwrap();
     assert_eq!(

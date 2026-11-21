@@ -1,5 +1,7 @@
 //! Decision records, staleness and the "why" query on a real git repository.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -58,6 +60,7 @@ fn commit(root: &Path, message: &str, day: u32) {
 
 fn sync(root: &Path) -> Index {
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     let facts = service::reindex(root, &mut index).unwrap();
     generate(root, &facts, &analyze(&facts), None).unwrap();
     index

@@ -1,5 +1,7 @@
 //! Security findings across a fixture repository, and their place in `check`.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 
@@ -36,6 +38,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
     // Not Rust: the rules do not apply.
     write(r, "notes.md", "std::env::set_var(\"A\", \"b\")\n");
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(r, &mut index).unwrap();
     (dir, index)
 }

@@ -1,5 +1,7 @@
 //! Git intelligence against a real repository built with the `git` CLI.
 
+mod support;
+
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -82,6 +84,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
     commit(r, "Bo", "docs");
 
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(r, &mut index).unwrap();
     (dir, index)
 }
@@ -184,6 +187,7 @@ fn works_without_git_history() {
     write(dir.path(), "Cargo.toml", "[package]\nname = \"demo\"\n");
     write(dir.path(), "src/lib.rs", "pub fn f() {}\n");
     let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
     service::reindex(dir.path(), &mut index).unwrap();
     let intel = gitintel::load(&index).unwrap();
     assert_eq!(intel.commits_scanned, 0);

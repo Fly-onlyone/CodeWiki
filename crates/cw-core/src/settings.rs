@@ -163,7 +163,8 @@ pub const ALL: [Key; 12] = [
 pub const RETIRED_SECTIONS: [&str; 3] = ["llm", "anthropic", "cliproxy"];
 /// The environment variables of those settings. A program that finds one
 /// set says so in its log: its user expects an effect that no longer comes.
-pub const RETIRED_VARIABLES: [&str; 5] = [
+pub const RETIRED_VARIABLES: [&str; 6] = [
+    "CODEWIKI_EMBED_DEVICE",
     "CODEWIKI_LLM",
     "CODEWIKI_MODEL",
     "ANTHROPIC_API_KEY",
@@ -335,6 +336,67 @@ pub fn drop_retired(data_dir: &Path) -> Result<bool> {
         update(data_dir, |_| Ok(()))?;
     }
     Ok(held)
+}
+
+/// What [`retire_builtin`] changed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Retired {
+    /// The saved embedder was the removed built-in one; it is `local` now.
+    pub provider: bool,
+    /// `embed.device` left the file.
+    pub device: bool,
+    /// Bytes of the built-in models that were deleted.
+    pub freed: Option<u64>,
+}
+
+fn folder_size(dir: &Path) -> u64 {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .map(|entry| match entry.metadata() {
+            Ok(meta) if meta.is_dir() => folder_size(&entry.path()),
+            Ok(meta) => meta.len(),
+            Err(_) => 0,
+        })
+        .sum()
+}
+
+/// Move a user of the removed built-in embedder to a working state. A saved
+/// `builtin` choice becomes `local` and its model name is cleared, since the
+/// name belonged to the built-in engine. `embed.device` leaves the file, and
+/// the built-in models in `<data_dir>/models` are deleted. A file that holds
+/// none of these is not written.
+pub fn retire_builtin(data_dir: &Path) -> Result<Retired> {
+    let mut done = Retired::default();
+    if let Some(settings) = read(data_dir) {
+        let embed = settings.document.get("embed").and_then(Value::as_object);
+        done.provider = embed
+            .and_then(|e| e.get("provider"))
+            .and_then(Value::as_str)
+            == Some("builtin");
+        done.device = embed.is_some_and(|e| e.contains_key("device"));
+    }
+    if done.provider || done.device {
+        update(data_dir, |settings| {
+            if let Some(Value::Object(embed)) = settings.document.get_mut("embed") {
+                if done.provider {
+                    embed.insert("provider".into(), json!("local"));
+                    embed.remove("model");
+                }
+                embed.remove("device");
+            }
+            Ok(())
+        })?;
+    }
+    let models = data_dir.join("models");
+    if models.is_dir() {
+        let size = folder_size(&models);
+        std::fs::remove_dir_all(&models).map_err(|e| Error::io(&models, e))?;
+        done.freed = Some(size);
+    }
+    Ok(done)
 }
 
 /// Where the value of a setting comes from.
@@ -766,6 +828,52 @@ mod tests {
         update(&dir, |s| s.set(EMBED_MODEL, "nomic")).unwrap();
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(!text.contains("anthropic") && !text.contains("cliproxy"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_built_in_choice_becomes_word_forms_once() {
+        let dir = temp_dir("builtin");
+        // Nothing to move: no file is made.
+        assert_eq!(retire_builtin(&dir).unwrap(), Retired::default());
+        assert!(!dir.join(FILE).exists());
+
+        std::fs::write(
+            dir.join(FILE),
+            r#"{"version":1,"embed":{"provider":"builtin","model":"gte-modernbert-base","device":"cuda"}}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("models").join("x")).unwrap();
+        std::fs::write(dir.join("models").join("x").join("w.bin"), [0u8; 10]).unwrap();
+
+        let done = retire_builtin(&dir).unwrap();
+        assert!(done.provider && done.device);
+        assert_eq!(done.freed, Some(10));
+        let value: Value =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(FILE)).unwrap()).unwrap();
+        assert_eq!(value["embed"]["provider"], "local");
+        assert_eq!(value["embed"].get("model"), None);
+        assert_eq!(value["embed"].get("device"), None);
+        assert!(!dir.join("models").exists());
+
+        // Done once: nothing is reported and the file is not written again.
+        let bytes = std::fs::read(dir.join(FILE)).unwrap();
+        assert_eq!(retire_builtin(&dir).unwrap(), Retired::default());
+        assert_eq!(std::fs::read(dir.join(FILE)).unwrap(), bytes);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn other_choices_are_left_alone() {
+        let dir = temp_dir("not-builtin");
+        std::fs::write(
+            dir.join(FILE),
+            r#"{"version":1,"embed":{"provider":"ollama","model":"m"}}"#,
+        )
+        .unwrap();
+        let bytes = std::fs::read(dir.join(FILE)).unwrap();
+        assert_eq!(retire_builtin(&dir).unwrap(), Retired::default());
+        assert_eq!(std::fs::read(dir.join(FILE)).unwrap(), bytes);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

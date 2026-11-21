@@ -769,6 +769,11 @@ pub fn from_config(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Box
         Some("llamacpp") => Some(Box::new(local_server(Server::LlamaCpp, &lookup)?)),
         Some("lemonade") => Some(Box::new(local_server(Server::Lemonade, &lookup)?)),
         Some("mistralrs") => Some(Box::new(local_server(Server::MistralRs, &lookup)?)),
+        Some("builtin") => {
+            return Err(Error::invalid(
+                "the built-in embedder was removed; choose local, lmstudio, ollama, llamacpp, lemonade, mistralrs, openai or none",
+            ));
+        }
         Some(other) => {
             return Err(Error::invalid(format!(
                 "unknown embedder '{other}'; use {}",

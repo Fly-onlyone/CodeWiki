@@ -90,10 +90,23 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         Ok(false) => {}
         Err(e) => log::warn!("could not remove the old AI writer's settings: {e}"),
     }
+    // The built-in embedding model is gone too: a saved choice of it moves to
+    // `local`, and its downloaded models are deleted.
+    match cw_core::settings::retire_builtin(&data_dir) {
+        Ok(done) => {
+            if done.provider {
+                log::info!("moved the removed built-in embedder to local");
+            }
+            if let Some(bytes) = done.freed {
+                log::info!("deleted the built-in models, {} MB", bytes / 1_000_000);
+            }
+        }
+        Err(e) => log::warn!("could not move off the removed built-in embedder: {e}"),
+    }
     for variable in cw_core::settings::RETIRED_VARIABLES {
         if std::env::var_os(variable).is_some() && cw_core::settings::key(variable).is_none() {
             log::warn!(
-                "{variable} is set, but CodeWiki no longer calls an AI model; the variable has no effect"
+                "{variable} is set, but CodeWiki no longer reads it; the variable has no effect"
             );
         }
     }

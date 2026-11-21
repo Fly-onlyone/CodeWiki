@@ -671,6 +671,28 @@ impl OpenAiEmbedder {
         }
     }
 
+    /// llama.cpp and mistral.rs embed with the model they hold, whatever
+    /// model a request names: a model swapped in the server would make
+    /// vectors under the name of the one chosen here, and two models' vectors
+    /// would be compared. Until a call succeeds, the server's own list must
+    /// hold the chosen model. A list that cannot be read is an error too.
+    fn check_listed(&self) -> Result<()> {
+        if !matches!(self.server, Server::LlamaCpp | Server::MistralRs)
+            || self.warm.load(Ordering::Relaxed)
+        {
+            return Ok(());
+        }
+        let models = list::listed_by(self.server, &self.base_url, self.api_key.as_deref())?;
+        if models.iter().any(|listed| listed.id == self.model) {
+            return Ok(());
+        }
+        Err(Error::invalid(format!(
+            "{} does not list {}; choose a model it serves",
+            self.server.label(),
+            self.model
+        )))
+    }
+
     /// The `count` vectors of an answer, or the error of a refusal.
     fn vectors(&self, posted: Posted, count: usize) -> Result<Vec<Vec<f32>>> {
         match posted {
@@ -711,6 +733,7 @@ impl OpenAiEmbedder {
         let url = self.url();
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
+            self.check_listed()?;
             let prefixed = prefixed(prefix, batch);
             let input: Vec<&str> = prefixed.iter().map(|t| clip(t)).collect();
             let mut posted = self.post(&url, &input, timeout)?;

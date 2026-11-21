@@ -107,6 +107,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
     - a 401 or 403 names the key setting to fill in;
     - a batch refused as too long (HTTP 400, 413, 422 or 500 with a message about length) is sent once more with each text cut to 2,000 characters; refused again, its texts go one at a time (`one_by_one`), and a text refused alone once more cut to 400 characters (`TINY_CHARS`), its prefix kept; a text still refused is an error;
     - mistral.rs is sent `truncate_sequence: true`, or a long text is an error;
+    - llama.cpp and mistral.rs embed with the model they hold, whatever `model` names: until an embedder instance's first call succeeds, it reads the server's `/v1/models` (`check_listed`) and fails with "<server> does not list <model>; choose a model it serves" when the model is not there. The Settings page warns the same way for any server whose list lacks the chosen model;
     - a request waits 120 s (`REQUEST_TIMEOUT`); the first call of an embedder instance waits 300 s, so that a server can load a model.
 
     An embedder error never quotes a text it was given.

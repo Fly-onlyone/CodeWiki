@@ -179,7 +179,13 @@ pub fn list_models(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Vec
         }
     };
     let (base, key) = server.address(&lookup);
-    let root = server_root(&base);
+    listed_by(server, &base, key.as_deref()).map(Some)
+}
+
+/// The models `server` at `base` lists, embedding ones first. An error names
+/// the server.
+pub(crate) fn listed_by(server: Server, base: &str, key: Option<&str>) -> Result<Vec<Listed>> {
+    let root = server_root(base);
     let (url, parse): (String, fn(&Value) -> Vec<Listed>) = match server {
         Server::OpenAi => (
             format!("{}/models", base.trim_end_matches('/')),
@@ -189,8 +195,8 @@ pub fn list_models(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Vec
         Server::Lemonade => (format!("{root}/v1/models"), parse_lemonade),
         Server::LlamaCpp | Server::MistralRs => (format!("{root}/v1/models"), parse_ids),
     };
-    let value = fetch(server.label(), &url, key.as_deref())?;
-    Ok(Some(arrange(parse(&value))))
+    let value = fetch(server.label(), &url, key)?;
+    Ok(arrange(parse(&value)))
 }
 
 #[cfg(test)]

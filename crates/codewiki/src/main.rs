@@ -214,27 +214,8 @@ fn print_report(report: &cw_wiki::Report, json: bool) -> Result<()> {
     println!("adopted: {}", report.adopted.len());
     println!("lint warnings: {}", report.lint_warnings);
     println!("links resolved: {:.1}%", report.link_rate * 100.0);
-    if report.llm.calls > 0 {
-        println!(
-            "llm: {} calls, {} input tokens, {} output tokens, {} fell back to the structural draft",
-            report.llm.calls,
-            report.llm.input_tokens,
-            report.llm.output_tokens,
-            report.llm.fallbacks
-        );
-    }
     for path in &report.proposed {
         println!("  proposal queued for {path}");
-    }
-    if let Some(stopped) = &report.stopped {
-        println!(
-            "stopped: {} notes wait for the next run: {}",
-            report.waiting.len(),
-            stopped.message
-        );
-        if let Some(seconds) = stopped.retry_after_secs {
-            println!("  the provider expects to answer again in {seconds} s");
-        }
     }
     Ok(())
 }
@@ -260,17 +241,12 @@ fn run(cli: Cli) -> Result<()> {
         .map_err(|e| cw_core::Error::io(&cli.repo, e))?;
     let vault = root.join(VAULT_DIR);
     // The settings the backend keeps apply here too, under the environment:
-    // a provider or an embedder chosen in the app is the one this program
-    // uses.
+    // an embedder chosen in the app is the one this program uses.
     let settings = cw_core::settings::Resolved::load(&cw_core::paths::data_dir());
     cw_wiki::semantic::configure(&settings);
     match cli.command {
         Command::Init | Command::Update => {
-            let writer = cw_llm::writer_from(&settings)?;
-            let report = service::update(
-                &root,
-                writer.as_ref().map(|w| w as &dyn cw_wiki::ProseWriter),
-            )?;
+            let report = service::update(&root)?;
             print_report(&report, cli.json)
         }
         Command::Reindex => {

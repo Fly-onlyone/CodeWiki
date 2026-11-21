@@ -59,7 +59,7 @@ fn commit(root: &Path, message: &str, day: u32) {
 fn sync(root: &Path) -> Index {
     let mut index = Index::open_in_memory().unwrap();
     let facts = service::reindex(root, &mut index).unwrap();
-    generate(root, &facts, &analyze(&facts), None, None).unwrap();
+    generate(root, &facts, &analyze(&facts), None).unwrap();
     index
 }
 

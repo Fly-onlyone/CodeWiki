@@ -81,10 +81,9 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         host: cw_server::Host::default(),
     };
     // The settings in effect, so that the first line of the log names the
-    // writer and the embedder the backend really uses.
+    // embedder the backend really uses.
     let settings = Resolved::load(&data_dir);
     cw_wiki::semantic::configure(&settings);
-    let writer = writer_name(&settings);
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -99,7 +98,7 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
             |bound| {
                 publish(&data_dir, bound, &token)?;
                 log::info!(
-                    "codewiki backend listening on http://{bound}; data in {}; writer: {writer}; embedder: {}",
+                    "codewiki backend listening on http://{bound}; data in {}; embedder: {}",
                     data_dir.display(),
                     cw_wiki::semantic::embedder().map_or("none".into(), |e| e.name())
                 );
@@ -113,15 +112,6 @@ pub fn run(host: IpAddr, port: u16) -> Result<()> {
         log::info!("codewiki backend stopped");
         Ok(())
     })
-}
-
-/// The LLM provider the settings in effect choose, by name; never its key.
-fn writer_name(settings: &Resolved) -> String {
-    match cw_llm::from_settings(settings) {
-        Ok(Some(provider)) => provider.name(),
-        Ok(None) => "none".into(),
-        Err(e) => format!("not set up ({e})"),
-    }
 }
 
 #[cfg(test)]

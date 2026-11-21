@@ -70,7 +70,6 @@ pub(crate) fn describe(state: &AppState) -> Value {
             })
         };
     }
-    out["llm"]["provider"]["options"] = json!(cw_llm::PROVIDERS);
     // A choice that cannot work is not offered: the built-in embedder needs a
     // build that can run a model, the graphics card a card and a worker for
     // it. The built-in embedder is offered before a model is installed; it
@@ -99,9 +98,6 @@ pub(crate) fn describe(state: &AppState) -> Value {
         "cuda",
         cw_models::worker::cuda_usable()
     ));
-    let (name, problem) = selected(cw_llm::from_settings(&resolved), |p| p.name());
-    out["llm"]["name"] = json!(name);
-    out["llm"]["problem"] = json!(problem);
     let (name, problem) = selected(cw_embed::from_settings_in(&resolved, data_dir), |e| {
         e.name()
     });
@@ -126,22 +122,6 @@ fn test_result(name: Option<String>, outcome: Result<Value>, started: Instant) -
             result
         }
         Err(error) => json!({ "ok": false, "name": name, "error": message(&error) }),
-    }
-}
-
-/// Send the chosen LLM one very small request. A provider that says no is an
-/// answer, not a failure of this server: `ok` is false and `error` holds the
-/// provider's explanation.
-pub(crate) fn test_llm(state: &AppState) -> Value {
-    let started = Instant::now();
-    match cw_llm::from_settings(&resolved(state)) {
-        Ok(Some(provider)) => test_result(
-            Some(provider.name()),
-            provider.probe().map(|()| json!({})),
-            started,
-        ),
-        Ok(None) => test_result(None, Err(Error::invalid("no provider is chosen")), started),
-        Err(error) => test_result(None, Err(error), started),
     }
 }
 
@@ -180,16 +160,11 @@ fn checked(key: Key, value: &str) -> Result<String> {
             )))
         }
     };
-    if key == settings::LLM_PROVIDER {
-        one_of(&cw_llm::PROVIDERS, "provider")
-    } else if key == settings::EMBED_PROVIDER {
+    if key == settings::EMBED_PROVIDER {
         one_of(&cw_embed::PROVIDERS, "embedder")
     } else if key == settings::EMBED_DEVICE {
         one_of(&cw_embed::DEVICES, "device")
-    } else if key == settings::OPENAI_BASE_URL
-        || key == settings::OLLAMA_HOST
-        || key == settings::CLIPROXY_URL
-    {
+    } else if key == settings::OPENAI_BASE_URL || key == settings::OLLAMA_HOST {
         if value.starts_with("http://") || value.starts_with("https://") {
             Ok(value.trim_end_matches('/').to_string())
         } else {

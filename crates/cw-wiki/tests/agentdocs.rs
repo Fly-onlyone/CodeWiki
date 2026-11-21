@@ -34,7 +34,7 @@ fn fixture() -> (tempfile::TempDir, Index) {
     write(r, "crates/cli/src/main.rs", "fn main() { engine::run() }\n");
     let mut index = Index::open_in_memory().unwrap();
     let facts = service::reindex(r, &mut index).unwrap();
-    generate(r, &facts, &analyze(&facts), None, None).unwrap();
+    generate(r, &facts, &analyze(&facts), None).unwrap();
     (dir, index)
 }
 
@@ -87,7 +87,7 @@ fn apply_writes_both_files_and_preserves_the_authors_text() {
     );
     let mut index = Index::open_in_memory().unwrap();
     let facts = service::reindex(dir.path(), &mut index).unwrap();
-    generate(dir.path(), &facts, &analyze(&facts), None, None).unwrap();
+    generate(dir.path(), &facts, &analyze(&facts), None).unwrap();
     assert_eq!(
         agentdocs::apply(dir.path(), &index).unwrap(),
         ["CLAUDE.md", "AGENTS.md"]

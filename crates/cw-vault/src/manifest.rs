@@ -77,10 +77,6 @@ pub struct NoteEntry {
     /// Vault-relative path of the saved illustration, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub illustration: Option<String>,
-    /// The writer's call failed and the note holds its structural draft:
-    /// the next run with a writer asks again.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub owed: bool,
 }
 
 /// Hash used to tell whether a note changed on disk.
@@ -217,7 +213,6 @@ mod tests {
             commit: Some("abc".into()),
             model: None,
             illustration: None,
-            owed: false,
         }
     }
 

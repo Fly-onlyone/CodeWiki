@@ -41,14 +41,7 @@ fn update(root: &Path) {
     let mut index = Index::open_in_memory().unwrap();
     let facts = service::reindex(root, &mut index).unwrap();
     let metrics = index.metrics().unwrap();
-    cw_wiki::generate(
-        root,
-        &facts,
-        &metrics,
-        cw_wiki::git::head_commit(root),
-        None,
-    )
-    .unwrap();
+    cw_wiki::generate(root, &facts, &metrics, cw_wiki::git::head_commit(root)).unwrap();
 }
 
 #[test]

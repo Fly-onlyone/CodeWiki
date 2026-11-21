@@ -213,7 +213,7 @@ fn a_cycle_is_two_sibling_files_not_a_module_and_its_parent() {
 fn reports_documentation_drift_and_coverage() {
     let dir = fixture();
     let facts = cw_parse::scan_repo(dir.path()).unwrap();
-    generate(dir.path(), &facts, &analyze(&facts), None, None).unwrap();
+    generate(dir.path(), &facts, &analyze(&facts), None).unwrap();
     let vault = dir.path().join("obsidian");
 
     let clean = health::doc_drift(dir.path(), &indexed(dir.path())).unwrap();
@@ -235,7 +235,7 @@ fn reports_documentation_drift_and_coverage() {
         "---\ntags: [pattern]\n---\n\n# Area Pattern\n\n> Mine.\n\n## Source\n\n- `crates/lib/src/lib.rs` — the trait\n- `crates/lib/src/gone.rs` — removed long ago\n- `styles/createTransitions.js` — another project's file\n\n## See also\n\n- [[_index]]\n- [[No Such Note]]\n",
     );
     let facts = cw_parse::scan_repo(dir.path()).unwrap();
-    generate(dir.path(), &facts, &analyze(&facts), None, None).unwrap();
+    generate(dir.path(), &facts, &analyze(&facts), None).unwrap();
     let lib = fs::read_to_string(dir.path().join("crates/lib/src/lib.rs")).unwrap();
     write(
         dir.path(),

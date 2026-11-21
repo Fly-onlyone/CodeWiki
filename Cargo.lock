@@ -1166,7 +1166,6 @@ dependencies = [
  "cw-core",
  "cw-embed-engine",
  "cw-index",
- "cw-llm",
  "cw-models",
  "cw-server",
  "cw-telemetry",
@@ -1708,21 +1707,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cw-llm"
-version = "0.2.0"
-dependencies = [
- "cw-core",
- "cw-illustrate",
- "cw-index",
- "cw-vault",
- "cw-wiki",
- "log",
- "serde_json",
- "tempfile",
- "ureq",
-]
-
-[[package]]
 name = "cw-mermaid"
 version = "0.2.0"
 dependencies = [
@@ -1770,7 +1754,6 @@ dependencies = [
  "cw-core",
  "cw-embed",
  "cw-index",
- "cw-llm",
  "cw-models",
  "cw-telemetry",
  "cw-vault",

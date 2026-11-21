@@ -10,7 +10,7 @@ use cw_parse::{RepoFacts, scan_repo};
 use cw_vault::{Note, VaultMeta};
 
 use crate::analyze::analyze;
-use crate::generate::{ProseWriter, Report, generate_with};
+use crate::generate::{Report, generate_with};
 use crate::git::head_commit;
 use crate::manifests::Machine;
 
@@ -148,60 +148,39 @@ pub fn index_notes(root: &Path, index: &mut Index) -> Result<usize> {
 }
 
 /// Bring index and vault up to date with the working tree.
-pub fn update(root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report> {
-    update_in(&cw_core::paths::data_dir(), root, writer)
+pub fn update(root: &Path) -> Result<Report> {
+    update_in(&cw_core::paths::data_dir(), root)
 }
 
 /// [`update`] with an explicit data directory.
-pub fn update_in(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report> {
+pub fn update_in(data_dir: &Path, root: &Path) -> Result<Report> {
     let started = Instant::now();
-    log::info!(
-        "update of {} started; writer: {}",
-        root.display(),
-        writer.map_or_else(|| "none".to_string(), |w| w.name())
-    );
-    let result = run_update(data_dir, root, writer);
+    log::info!("update of {} started", root.display());
+    let result = run_update(data_dir, root);
     let ms = started.elapsed().as_millis();
     match &result {
         Ok(report) => log::info!(
-            "update of {} done in {ms} ms: {} notes written, {} proposed, {} removed, {} kept, {} in all; {} lint warnings; LLM: {} calls, {} fell back, {} input and {} output tokens",
+            "update of {} done in {ms} ms: {} notes written, {} proposed, {} removed, {} kept, {} in all; {} lint warnings",
             root.display(),
             report.written.len(),
             report.proposed.len(),
             report.removed.len(),
             report.kept,
             report.notes_total,
-            report.lint_warnings,
-            report.llm.calls,
-            report.llm.fallbacks,
-            report.llm.input_tokens,
-            report.llm.output_tokens
+            report.lint_warnings
         ),
         Err(e) => log::warn!("update of {} failed after {ms} ms: {e}", root.display()),
-    }
-    if let Ok(Report {
-        stopped: Some(stopped),
-        waiting,
-        ..
-    }) = &result
-    {
-        log::warn!(
-            "update of {} stopped writing prose; {} notes wait for the next run: {}",
-            root.display(),
-            waiting.len(),
-            stopped.message
-        );
     }
     result
 }
 
-fn run_update(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report> {
+fn run_update(data_dir: &Path, root: &Path) -> Result<Report> {
     let mut index = open_index_in(data_dir, root)?;
     let facts = reindex(root, &mut index)?;
     let metrics = index.metrics()?;
     let started = Instant::now();
     let packages = Machine::new(root);
-    let report = generate_with(root, &facts, &metrics, head_commit(root), writer, &packages)?;
+    let report = generate_with(root, &facts, &metrics, head_commit(root), &packages)?;
     log::info!(
         "generated the notes of {} in {} ms",
         root.display(),

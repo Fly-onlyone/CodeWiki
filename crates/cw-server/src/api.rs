@@ -19,7 +19,7 @@ use cw_wiki::{query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, cliproxy, models, repos, settings, workspace};
+use crate::{AppState, models, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -207,7 +207,6 @@ pub fn routes(state: AppState) -> Router {
         .route("/workspace/contracts", get(workspace_contracts))
         .route("/status", get(backend_status))
         .route("/settings", get(read_settings).put(write_settings))
-        .route("/settings/test/llm", post(test_llm))
         .route("/settings/test/embed", post(test_embedder))
         .route("/models", get(read_models))
         .route("/models/cancel", post(cancel_model_job))
@@ -215,7 +214,6 @@ pub fn routes(state: AppState) -> Router {
         .route("/models/{id}", axum::routing::delete(remove_model))
         .route("/models/{id}/install", post(install_model))
         .route("/models/{id}/use", post(use_model))
-        .route("/cliproxy", get(read_cliproxy))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -278,13 +276,8 @@ async fn write_settings(State(state): State<AppState>, Json(body): Json<Value>) 
         .into_response()
 }
 
-/// Send the chosen LLM one very small request and report whether it
-/// answered. Always 200: a provider that refuses is reported in the body.
-async fn test_llm(State(state): State<AppState>) -> Api<Value> {
-    blocking(move || Ok(settings::test_llm(&state))).await
-}
-
-/// The same for the embedder of semantic search.
+/// Have the embedder of semantic search embed one word and report whether
+/// it answered. Always 200: an embedder that refuses is reported in the body.
 async fn test_embedder(State(state): State<AppState>) -> Api<Value> {
     blocking(move || Ok(settings::test_embedder(&state))).await
 }
@@ -358,31 +351,6 @@ async fn remove_model(State(state): State<AppState>, Path(id): Path<String>) -> 
         return closed;
     }
     blocking(move || models::remove(&state, &id))
-        .await
-        .into_response()
-}
-
-/// The answer of the CLIProxyAPI route on a backend that listens beyond
-/// this machine: its proxy is set up where the backend runs.
-fn proxy_closed(state: &AppState) -> Option<Response> {
-    (!state.0.config.settings_writable).then(|| {
-        (
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "error": "this backend's CLIProxyAPI is set up on its own machine"
-            })),
-        )
-            .into_response()
-    })
-}
-
-/// The proxy the settings name: whether it answers, the models its
-/// accounts serve, its panel. Always 200; a part that cannot be read says why.
-async fn read_cliproxy(State(state): State<AppState>) -> Response {
-    if let Some(closed) = proxy_closed(&state) {
-        return closed;
-    }
-    blocking(move || Ok(cliproxy::describe(&state)))
         .await
         .into_response()
 }
@@ -473,13 +441,7 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     // as far as whoever asked for it can tell.
     let _running = state.0.activity.begin_update(id);
     let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-    // The provider is read per request so a settings change needs no restart.
-    let writer = cw_llm::writer_from(&settings::resolved(state))?;
-    let report = service::update_in(
-        &repo.data_dir,
-        &repo.root,
-        writer.as_ref().map(|w| w as &dyn cw_wiki::ProseWriter),
-    );
+    let report = service::update_in(&repo.data_dir, &repo.root);
     // Still under the lock: a background embedding that stores next sees
     // that the documents changed.
     models::after_update(state, &repo.root);
@@ -885,14 +847,9 @@ async fn ask(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let index = repo.index()?;
-        // With a provider configured the answer is written from the matching
-        // notes; without one it is their summaries.
-        match cw_llm::from_settings(&settings::resolved(&state))? {
-            Some(provider) => {
-                cw_llm::answer::answer(provider.as_ref(), &repo.root, &index, &body.question)
-            }
-            None => query::answer(&repo.root, &index, &body.question),
-        }
+        // The summaries of the notes that match best. Whoever asks is an
+        // agent, which reads on from there.
+        query::answer(&repo.root, &index, &body.question)
     })
     .await
 }

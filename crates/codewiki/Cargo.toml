@@ -29,7 +29,6 @@ required-features = ["cuda"]
 clap = { version = "4.6.7", features = ["derive"] }
 cw-core = { path = "../cw-core" }
 cw-index = { path = "../cw-index" }
-cw-llm = { version = "0.2.0", path = "../cw-llm" }
 cw-models = { version = "0.2.0", path = "../cw-models" }
 cw-server = { version = "0.2.0", path = "../cw-server" }
 cw-telemetry = { path = "../cw-telemetry" }

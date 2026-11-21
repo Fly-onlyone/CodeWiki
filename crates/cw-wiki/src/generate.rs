@@ -25,74 +25,6 @@ use crate::render::RenderCtx;
 /// Bump when rendering changes in a way that should refresh every note.
 pub const TEMPLATE_VERSION: u32 = 2;
 
-/// What a [`ProseWriter`] made of one note.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Rewrite {
-    /// The finished note. It must still pass the linter, or the draft is kept.
-    Text(String),
-    /// The writer answered with nothing usable. The draft is kept until the
-    /// note's inputs change, so the same answer is not paid for again.
-    Rejected,
-    /// The call failed. The draft is kept, and the next run asks again.
-    Failed,
-    /// Nothing can answer for now, for example every account of a provider
-    /// is at its limit. The run writes no more prose; the notes it did not
-    /// reach are left for the next run.
-    Stop(Stopped),
-}
-
-/// Why a run stopped writing prose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Stopped {
-    /// The provider's own words.
-    pub message: String,
-    /// Seconds until the provider expects to answer again, when it said.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retry_after_secs: Option<u64>,
-}
-
-/// Replaces the structural prose of a note, typically with an LLM. Anything
-/// but [`Rewrite::Text`] keeps the structural draft.
-pub trait ProseWriter {
-    /// Identifier recorded in the manifest, for example a model name.
-    fn name(&self) -> String;
-    fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Rewrite;
-    /// An illustration for the finished note, as OpenUI Lang source, or
-    /// `None` to keep the structural one. `structural` is the illustration
-    /// built from facts alone, when the note has one. The result is checked
-    /// against the component library before it is saved.
-    fn illustrate(
-        &self,
-        _note: &Planned,
-        _text: &str,
-        _structural: Option<&str>,
-        _context: &WriterContext,
-    ) -> Option<String> {
-        None
-    }
-    /// Calls and tokens spent so far; reported after each run.
-    fn usage(&self) -> WriterUsage {
-        WriterUsage::default()
-    }
-}
-
-/// What a writer spent during one run.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WriterUsage {
-    pub calls: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    /// Calls whose output was rejected or failed; the structural draft was used.
-    pub fallbacks: u64,
-}
-
-/// Facts handed to a [`ProseWriter`].
-pub struct WriterContext<'a> {
-    pub repo_root: &'a Path,
-    /// Every note name that may be linked.
-    pub note_names: Vec<String>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub written: Vec<String>,
@@ -110,16 +42,7 @@ pub struct Report {
     pub lint_warnings: usize,
     /// Share of wikilinks in CodeWiki-written notes that resolve.
     pub link_rate: f64,
-    /// LLM spend of this run; all zero in keyless mode.
-    #[serde(default)]
-    pub llm: WriterUsage,
     pub commit: Option<String>,
-    /// Set when the writer stopped the run part way.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stopped: Option<Stopped>,
-    /// Notes left for the next run because the run stopped before them.
-    #[serde(default)]
-    pub waiting: Vec<String>,
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -256,7 +179,6 @@ fn adopt_existing(
             commit: None,
             model: None,
             illustration: None,
-            owed: false,
         };
         report.adopted.push(path);
         meta.notes.insert(entry.id.clone(), entry);
@@ -286,9 +208,8 @@ pub fn generate(
     facts: &RepoFacts,
     metrics: &[(String, NodeMetrics)],
     commit: Option<String>,
-    writer: Option<&dyn ProseWriter>,
 ) -> Result<Report> {
-    generate_with(root, facts, metrics, commit, writer, &NoPackageInfo)
+    generate_with(root, facts, metrics, commit, &NoPackageInfo)
 }
 
 /// [`generate`], with `packages` to say what a package from outside the
@@ -298,7 +219,6 @@ pub fn generate_with(
     facts: &RepoFacts,
     metrics: &[(String, NodeMetrics)],
     commit: Option<String>,
-    writer: Option<&dyn ProseWriter>,
     packages: &dyn PackageInfo,
 ) -> Result<Report> {
     let vault = root.join(VAULT_DIR);
@@ -422,25 +342,14 @@ pub fn generate_with(
         .unwrap_or_else(|| "Repository".into());
     let plan = Plan { notes, owner };
     let ctx = RenderCtx::new(&repo, &plan, &registry, &repo_name);
-    let writer_context = WriterContext {
-        repo_root: root,
-        note_names: registry
-            .entries()
-            .filter(|e| !matches!(e.kind, NoteKind::Home | NoteKind::Index))
-            .map(|e| {
-                let stem = e.path.rsplit('/').next().unwrap_or(&e.path);
-                stem.trim_end_matches(".md").to_string()
-            })
-            .collect(),
-    };
     let file_hashes: HashMap<&str, &str> = facts
         .files
         .iter()
         .map(|f| (f.path.as_str(), f.hash.as_str()))
         .collect();
 
-    // Structural drafts must pass the linter on their own: they are both the
-    // keyless output and the fallback when a writer's prose is rejected.
+    // Every draft must pass the linter: it is what the rules write, and what
+    // an agent's explanation is later woven into.
     let mut drafts: BTreeMap<String, String> = BTreeMap::new();
     let mut errors: Vec<String> = Vec::new();
     for note in &plan.notes {
@@ -464,41 +373,6 @@ pub fn generate_with(
         )));
     }
 
-    let writer_name = writer.map(|w| w.name());
-    let is_map = |note: &Planned| matches!(note.kind, NoteKind::Home | NoteKind::Index);
-    // Called only for notes that are about to be written or proposed, so an
-    // unchanged repository costs no LLM calls. Gives the text, the writer
-    // that wrote it, and whether a failed call leaves the note owed to the
-    // next run; or why the writer stopped the run.
-    let finalize = |note: &Planned,
-                    path: &str,
-                    draft: &str|
-     -> std::result::Result<(String, Option<String>, bool), Stopped> {
-        let Some(writer) = writer.filter(|_| !is_map(note)) else {
-            return Ok((draft.to_string(), None, false));
-        };
-        match writer.rewrite(note, draft, &writer_context) {
-            Rewrite::Text(candidate) => {
-                // Prose that breaks the house style is discarded, not repaired by hand.
-                let clean = lint(&candidate, path, note.kind, &registry, Mode::Strict)
-                    .iter()
-                    .all(|i| i.severity != Severity::Error);
-                if clean {
-                    Ok((candidate, writer_name.clone(), false))
-                } else {
-                    Ok((draft.to_string(), None, false))
-                }
-            }
-            Rewrite::Rejected => Ok((draft.to_string(), None, false)),
-            Rewrite::Failed => Ok((draft.to_string(), None, true)),
-            Rewrite::Stop(stopped) => Err(stopped),
-        }
-    };
-    // After a stop, a note that needs prose waits for the next run.
-    let waits = |note: &Planned, report: &Report| {
-        report.stopped.is_some() && writer.is_some() && !is_map(note)
-    };
-
     for note in &plan.notes {
         let path = &paths[&note.id];
         let draft = &drafts[&note.id];
@@ -515,21 +389,9 @@ pub fn generate_with(
                 })
             })
             .collect();
-        // The hash covers generation inputs, never the output, so a writer
-        // that phrases things differently each run does not cause churn.
-        let mut hash_input = format!("v{TEMPLATE_VERSION}\n{draft}");
-        if let Some(name) = &writer_name
-            && !is_map(note)
-        {
-            // A writer reads function bodies, so edits there matter even when
-            // the structural draft is unchanged.
-            hash_input.push_str(&format!("\nwriter:{name}"));
-            for source in &sources {
-                hash_input.push_str(&format!("\n{}:{}", source.path, source.hash));
-            }
-        }
-        let input_hash = sha256_hex(hash_input);
-        let fresh_entry = |text: &str, model: Option<String>, owed: bool| NoteEntry {
+        // The hash covers what the note is written from, never the note.
+        let input_hash = sha256_hex(format!("v{TEMPLATE_VERSION}\n{draft}"));
+        let fresh_entry = |text: &str| NoteEntry {
             id: note.id.clone(),
             path: path.clone(),
             kind: note.kind,
@@ -539,28 +401,14 @@ pub fn generate_with(
             input_hash: input_hash.clone(),
             rejected_inputs: Vec::new(),
             commit: commit.clone(),
-            model,
+            model: None,
             illustration: None,
-            owed,
         };
 
         let Some(entry) = meta.notes.get_mut(&note.id) else {
-            if waits(note, &report) {
-                report.waiting.push(path.clone());
-                continue;
-            }
-            let (text, model, owed) = match finalize(note, path, draft) {
-                Ok(done) => done,
-                Err(stopped) => {
-                    report.stopped = Some(stopped);
-                    report.waiting.push(path.clone());
-                    continue;
-                }
-            };
-            write_note(&full, &text)?;
+            write_note(&full, draft)?;
             report.written.push(path.clone());
-            meta.notes
-                .insert(note.id.clone(), fresh_entry(&text, model, owed));
+            meta.notes.insert(note.id.clone(), fresh_entry(draft));
             continue;
         };
         // First contact with an adopted note: record what a regeneration
@@ -575,32 +423,13 @@ pub fn generate_with(
         }
         let changed = entry.input_hash != input_hash;
         let state = lifecycle::state(entry, disk.as_deref(), changed);
-        // A note whose writer call failed is asked for again, as long as
-        // nobody has edited the draft it fell back to.
-        let owed = entry.owed && writer.is_some() && !is_map(note);
-        let action = match state {
-            NoteState::Generated | NoteState::Stale if owed => Action::Regenerate,
-            _ => lifecycle::action(entry, state, &input_hash),
-        };
-        if action != Action::Keep && waits(note, &report) {
-            report.waiting.push(path.clone());
-            continue;
-        }
-        match action {
+        match lifecycle::action(entry, state, &input_hash) {
             Action::Keep => report.kept += 1,
             Action::Regenerate => {
-                let (text, model, owed) = match finalize(note, path, draft) {
-                    Ok(done) => done,
-                    Err(stopped) => {
-                        report.stopped = Some(stopped);
-                        report.waiting.push(path.clone());
-                        continue;
-                    }
-                };
-                write_note(&full, &text)?;
+                write_note(&full, draft)?;
                 report.written.push(path.clone());
                 let rejected = std::mem::take(&mut entry.rejected_inputs);
-                *entry = fresh_entry(&text, model, owed);
+                *entry = fresh_entry(draft);
                 entry.rejected_inputs = rejected;
             }
             Action::Propose => {
@@ -612,20 +441,12 @@ pub fn generate_with(
                         && p.status == proposal::ProposalStatus::Pending
                 });
                 if !pending_same {
-                    let text = match finalize(note, path, draft) {
-                        Ok((text, _, _)) => text,
-                        Err(stopped) => {
-                            report.stopped = Some(stopped);
-                            report.waiting.push(path.clone());
-                            continue;
-                        }
-                    };
                     proposal::create(
                         &vault,
                         &note.id,
                         path,
                         &current,
-                        &text,
+                        draft,
                         &input_hash,
                         "cited source code changed",
                     )?;
@@ -646,11 +467,11 @@ pub fn generate_with(
             continue;
         };
         let note_text = read_optional(&vault.join(&entry.path))?;
-        let Some(note_text) = note_text
-            .filter(|t| entry.origin == Origin::Generated && body_hash(t) == entry.body_hash)
-        else {
+        if !note_text
+            .is_some_and(|t| entry.origin == Origin::Generated && body_hash(&t) == entry.body_hash)
+        {
             continue;
-        };
+        }
         let relative = illustration_path(&entry.path);
         let full = vault.join(&relative);
         if !drawable {
@@ -667,32 +488,7 @@ pub fn generate_with(
             continue;
         }
         let existing = read_optional(&full)?;
-        // A writer draws a crate's overview and a flow, where the note's
-        // text says more than counts do. The picture of a module, a type or
-        // an integration is its walk-through and its counts, which are
-        // facts: asking for those would cost a call for each note and could
-        // only make them less exact.
-        let redrawn = matches!(note.subject, Subject::Crate(_)) || note.kind == NoteKind::Flow;
-        let source = match writer.filter(|_| redrawn) {
-            // A writer draws only when the note changed in this run or has no
-            // illustration yet; otherwise every sync would pay for a redraw.
-            // After a stop it draws nothing more.
-            Some(writer)
-                if report.stopped.is_none()
-                    && (report.written.contains(&entry.path) || existing.is_none()) =>
-            {
-                writer
-                    .illustrate(note, &note_text, structural.as_deref(), &writer_context)
-                    .filter(|source| cw_illustrate::check(source).is_valid())
-                    .or(structural)
-            }
-            // Keep what an earlier run with a writer drew.
-            Some(_) => existing
-                .clone()
-                .filter(|source| cw_illustrate::check(source).is_valid())
-                .or(structural),
-            None => structural,
-        };
+        let source = structural;
         let Some(source) = source else {
             continue;
         };
@@ -702,10 +498,6 @@ pub fn generate_with(
         }
         entry.illustration = Some(relative);
     }
-    if let Some(writer) = writer {
-        report.llm = writer.usage();
-    }
-
     // Notes CodeWiki wrote whose subject no longer exists.
     let planned_ids: HashSet<&str> = plan.notes.iter().map(|n| n.id.as_str()).collect();
     let stale: Vec<String> = meta
@@ -733,12 +525,8 @@ pub fn generate_with(
     }
 
     write_readme(&vault, &repo_name)?;
-    // A stopped run leaves notes behind, so the wiki is not yet current with
-    // the commit: keep the old one and the wiki still reads as behind.
-    if report.stopped.is_none() {
-        meta.manifest.template_version = TEMPLATE_VERSION;
-        meta.manifest.last_indexed_commit = commit;
-    }
+    meta.manifest.template_version = TEMPLATE_VERSION;
+    meta.manifest.last_indexed_commit = commit;
     meta.save(&vault)?;
 
     let final_registry = meta.registry()?;

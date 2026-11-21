@@ -1,12 +1,11 @@
 //! End-to-end tests of the generation pipeline on a small fixture repository.
 
-use std::cell::Cell;
 use std::fs;
 use std::path::Path;
 
 use cw_parse::scan_repo;
 use cw_vault::{Origin, ProposalStatus, VaultMeta, proposal};
-use cw_wiki::{Planned, ProseWriter, Report, Rewrite, Stopped, WriterContext, analyze, generate};
+use cw_wiki::{Report, analyze, generate};
 
 fn write(root: &Path, rel: &str, text: &str) {
     let path = root.join(rel);
@@ -58,7 +57,7 @@ fn fixture() -> tempfile::TempDir {
 fn run(root: &Path) -> Report {
     let facts = scan_repo(root).unwrap();
     let metrics = analyze(&facts);
-    generate(root, &facts, &metrics, Some("commit-1".into()), None).unwrap()
+    generate(root, &facts, &metrics, Some("commit-1".into())).unwrap()
 }
 
 #[test]
@@ -724,214 +723,6 @@ fn a_java_module_gets_a_full_vault() {
     assert!(ops.contains("- `pom.xml` — Maven build") && ops.contains("mvn package"));
 }
 
-/// What [`Scripted`] answers to each call of `rewrite`.
-#[derive(Clone, Copy)]
-enum Reply {
-    /// The draft back, as a writer that agrees with it would.
-    Text,
-    Rejected,
-    Failed,
-    /// `Text` for this many calls, then `Stop` for every call after.
-    StopAfter(usize),
-}
-
-/// A writer whose every answer the test chooses.
-struct Scripted {
-    reply: Cell<Reply>,
-    calls: Cell<usize>,
-}
-
-impl Scripted {
-    fn new(reply: Reply) -> Self {
-        Scripted {
-            reply: Cell::new(reply),
-            calls: Cell::new(0),
-        }
-    }
-}
-
-impl ProseWriter for Scripted {
-    fn name(&self) -> String {
-        "scripted".into()
-    }
-
-    fn rewrite(&self, _note: &Planned, draft: &str, _context: &WriterContext) -> Rewrite {
-        let done = self.calls.get();
-        self.calls.set(done + 1);
-        match self.reply.get() {
-            Reply::Text => Rewrite::Text(draft.to_string()),
-            Reply::Rejected => Rewrite::Rejected,
-            Reply::Failed => Rewrite::Failed,
-            Reply::StopAfter(n) if done < n => Rewrite::Text(draft.to_string()),
-            Reply::StopAfter(_) => Rewrite::Stop(Stopped {
-                message: "no auth available".into(),
-                retry_after_secs: Some(90),
-            }),
-        }
-    }
-}
-
-fn run_with(root: &Path, commit: &str, writer: &Scripted) -> Report {
-    let facts = scan_repo(root).unwrap();
-    let metrics = analyze(&facts);
-    generate(root, &facts, &metrics, Some(commit.into()), Some(writer)).unwrap()
-}
-
-/// Paths of the notes the manifest says the writer still owes.
-fn owed(root: &Path) -> Vec<String> {
-    let meta = VaultMeta::load(&root.join("obsidian")).unwrap();
-    let mut owed: Vec<String> = meta
-        .notes
-        .values()
-        .filter(|e| e.owed)
-        .map(|e| e.path.clone())
-        .collect();
-    owed.sort();
-    owed
-}
-
-#[test]
-fn a_note_whose_writer_call_failed_is_written_again_next_run() {
-    let dir = fixture();
-    let writer = Scripted::new(Reply::Failed);
-    let first = run_with(dir.path(), "commit-1", &writer);
-    let owed_first = owed(dir.path());
-    assert!(!owed_first.is_empty(), "{first:?}");
-    assert!(
-        owed_first.iter().any(|p| p.ends_with("OrderBook.md")),
-        "{owed_first:?}"
-    );
-
-    writer.reply.set(Reply::Text);
-    writer.calls.set(0);
-    let second = run_with(dir.path(), "commit-1", &writer);
-    let mut written = second.written.clone();
-    written.sort();
-    assert_eq!(written, owed_first, "exactly the owed notes are written");
-    assert_eq!(writer.calls.get(), owed_first.len());
-    assert!(owed(dir.path()).is_empty());
-    let meta = VaultMeta::load(&dir.path().join("obsidian")).unwrap();
-    let book = meta
-        .notes
-        .values()
-        .find(|e| e.path.ends_with("OrderBook.md"))
-        .unwrap();
-    assert!(book.model.is_some(), "{book:?}");
-
-    writer.calls.set(0);
-    let third = run_with(dir.path(), "commit-1", &writer);
-    assert!(third.written.is_empty(), "{:?}", third.written);
-    assert_eq!(writer.calls.get(), 0);
-}
-
-#[test]
-fn a_rejected_reply_is_not_asked_for_again() {
-    let dir = fixture();
-    let writer = Scripted::new(Reply::Rejected);
-    run_with(dir.path(), "commit-1", &writer);
-    assert!(owed(dir.path()).is_empty());
-
-    writer.reply.set(Reply::Text);
-    writer.calls.set(0);
-    let second = run_with(dir.path(), "commit-1", &writer);
-    assert!(second.written.is_empty(), "{:?}", second.written);
-    assert_eq!(writer.calls.get(), 0);
-}
-
-#[test]
-fn a_human_edit_to_an_owed_note_is_kept() {
-    let dir = fixture();
-    let writer = Scripted::new(Reply::Failed);
-    run_with(dir.path(), "commit-1", &writer);
-    let vault = dir.path().join("obsidian");
-    let note = "01-Core/engine/OrderBook.md";
-    let edited = read(&vault, note) + "\n## Gotchas\n\n- Empty books have no best price.\n";
-    write(&vault, note, &edited);
-
-    writer.reply.set(Reply::Text);
-    let second = run_with(dir.path(), "commit-1", &writer);
-    assert!(!second.written.iter().any(|p| p == note));
-    assert!(second.proposed.is_empty(), "{:?}", second.proposed);
-    assert_eq!(read(&vault, note), edited);
-}
-
-#[test]
-fn a_stop_keeps_what_was_written_and_the_next_run_writes_the_rest() {
-    let dir = fixture();
-    let writer = Scripted::new(Reply::StopAfter(2));
-    let first = run_with(dir.path(), "commit-1", &writer);
-    let stopped = first.stopped.clone().expect("the run stopped");
-    assert_eq!(stopped.message, "no auth available");
-    assert_eq!(stopped.retry_after_secs, Some(90));
-    assert_eq!(writer.calls.get(), 3, "no call after the stop");
-    assert!(!first.waiting.is_empty(), "{first:?}");
-    let vault = dir.path().join("obsidian");
-    let meta = VaultMeta::load(&vault).unwrap();
-    for path in &first.waiting {
-        assert!(!vault.join(path).exists(), "{path} is not written");
-        assert!(!meta.notes.values().any(|e| &e.path == path), "{path}");
-    }
-    assert!(first.written.iter().any(|p| p == "_HOME.md"));
-    assert_eq!(
-        meta.manifest.last_indexed_commit, None,
-        "a stopped run does not mark the wiki as current"
-    );
-
-    let writer = Scripted::new(Reply::Text);
-    let second = run_with(dir.path(), "commit-2", &writer);
-    assert!(second.stopped.is_none() && second.waiting.is_empty());
-    let prose: Vec<&String> = first
-        .written
-        .iter()
-        .filter(|p| !p.starts_with('_') && !p.ends_with("/_index.md"))
-        .collect();
-    assert_eq!(prose.len(), 2, "{:?}", first.written);
-    for path in &first.waiting {
-        assert!(
-            second.written.contains(path),
-            "{path}: {:?}",
-            second.written
-        );
-    }
-    for path in prose {
-        assert!(!second.written.contains(path), "{path} was kept");
-    }
-    let meta = VaultMeta::load(&vault).unwrap();
-    assert_eq!(
-        meta.manifest.last_indexed_commit.as_deref(),
-        Some("commit-2")
-    );
-}
-
-#[test]
-fn a_stop_on_an_existing_wiki_keeps_its_commit() {
-    let dir = fixture();
-    run_with(dir.path(), "commit-1", &Scripted::new(Reply::Text));
-    let pricing = read(dir.path(), "crates/engine/src/pricing.rs").replace(
-        "A price in integer ticks.",
-        "A price in integer ticks of one cent.",
-    );
-    write(dir.path(), "crates/engine/src/pricing.rs", &pricing);
-    let report = run_with(dir.path(), "commit-2", &Scripted::new(Reply::StopAfter(0)));
-    assert!(report.stopped.is_some());
-    assert!(
-        report.waiting.iter().any(|p| p.ends_with("Price.md")),
-        "{:?}",
-        report.waiting
-    );
-    let vault = dir.path().join("obsidian");
-    assert!(!read(&vault, "01-Core/engine/Price.md").contains("one cent"));
-    let meta = VaultMeta::load(&vault).unwrap();
-    assert_eq!(
-        meta.manifest.last_indexed_commit.as_deref(),
-        Some("commit-1")
-    );
-
-    let after = run_with(dir.path(), "commit-2", &Scripted::new(Reply::Text));
-    assert!(after.written.iter().any(|p| p.ends_with("Price.md")));
-    assert!(read(&vault, "01-Core/engine/Price.md").contains("one cent"));
-}
-
 /// A repository whose code says enough for a note to explain it: a module
 /// comment of several parts, calls in a known order, items with and without
 /// a comment, and a package from outside.
@@ -1079,7 +870,7 @@ fn an_integration_note_says_what_is_taken_and_at_which_version() {
     let metrics = analyze(&facts);
     let commit = Some("commit-1".to_string());
     let report =
-        cw_wiki::generate_with(root, &facts, &metrics, commit.clone(), None, &KnowsSerde).unwrap();
+        cw_wiki::generate_with(root, &facts, &metrics, commit.clone(), &KnowsSerde).unwrap();
     assert_eq!(report.written, [path]);
     let described = read(&vault, path);
     assert!(
@@ -1087,7 +878,7 @@ fn an_integration_note_says_what_is_taken_and_at_which_version() {
         "{described}"
     );
     // A machine that does not know then writes the same note.
-    let report = generate(root, &facts, &metrics, commit, None).unwrap();
+    let report = generate(root, &facts, &metrics, commit).unwrap();
     assert!(report.written.is_empty(), "{report:?}");
     assert_eq!(read(&vault, path), described);
 }
@@ -1158,58 +949,6 @@ fn module_type_and_integration_notes_get_a_picture_of_facts() {
     assert!(book.contains("Stat(\"Public items\", \"3\")"), "{book}");
     assert!(book.contains("= Step(\"new\", \"Called by main."), "{book}");
     assert!(cw_illustrate::check(&book).errors.is_empty());
-}
-
-/// Writes each note as drafted and records which notes it is asked to draw.
-struct Draws {
-    asked: std::cell::RefCell<Vec<String>>,
-}
-
-impl ProseWriter for Draws {
-    fn name(&self) -> String {
-        "draws".into()
-    }
-
-    fn rewrite(&self, _note: &Planned, draft: &str, _context: &WriterContext) -> Rewrite {
-        Rewrite::Text(draft.to_string())
-    }
-
-    fn illustrate(
-        &self,
-        note: &Planned,
-        _text: &str,
-        _structural: Option<&str>,
-        _context: &WriterContext,
-    ) -> Option<String> {
-        self.asked.borrow_mut().push(note.id.clone());
-        None
-    }
-}
-
-#[test]
-fn a_writer_draws_overviews_and_flows_only() {
-    let dir = explained();
-    let root = dir.path();
-    let facts = scan_repo(root).unwrap();
-    let metrics = analyze(&facts);
-    let writer = Draws {
-        asked: std::cell::RefCell::new(Vec::new()),
-    };
-    generate(root, &facts, &metrics, None, Some(&writer)).unwrap();
-    let asked = writer.asked.borrow();
-    assert!(asked.contains(&"crate:store".to_string()), "{asked:?}");
-    assert!(asked.contains(&"flow:crates".to_string()), "{asked:?}");
-    // A module's picture is its walk-through and its counts. Those are
-    // facts; a call for each module would buy nothing.
-    assert!(
-        asked
-            .iter()
-            .all(|id| id.starts_with("crate:") || id.starts_with("flow:")),
-        "{asked:?}"
-    );
-    // The module still has its picture, drawn from the facts.
-    let vault = root.join("obsidian");
-    assert!(read(&vault, "01-Core/store/Settings Module.openui").contains("Step(\"enabled\""));
 }
 
 #[test]

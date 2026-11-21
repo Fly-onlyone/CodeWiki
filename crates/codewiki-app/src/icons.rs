@@ -46,6 +46,9 @@ app_icons! {
     FOLDER = "folder",
     NOTE = "article",
     BACK = "arrow-back",
+    FORWARD = "arrow-forward",
+    // The view of a note that a coding agent gets.
+    AGENT = "smart-toy",
     EDIT = "edit",
     SAVE = "save",
     CLOSE = "close",
@@ -87,7 +90,6 @@ app_icons! {
     DROP_DOWN = "arrow-drop-down",
     // Categories of the settings that have no page of their own to borrow
     // an icon from.
-    AI_MODEL = "auto-awesome",
     BACKEND = "dns",
     DIAGNOSTICS = "bug-report",
     // The side panes. Material has `ViewSidebar` only with the pane on the

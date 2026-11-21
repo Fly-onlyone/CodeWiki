@@ -1,90 +1,67 @@
-//! CodeWiki's illustration component library and structural builders.
+//! The pictures of a note: which components exist, what a picture may hold,
+//! and the file that keeps a note's pictures.
 //!
-//! An illustration is an OpenUI Lang program saved beside a note as
-//! `<Note>.openui`. The app draws it natively; nothing is fetched or executed.
-//! This crate is the single definition of which components exist, so the
-//! generator, the validator and the renderer cannot drift apart.
+//! A picture explains what a note says: what happens, from a cause to its
+//! result, in plain words. It is written by a coding agent, as an OpenUI
+//! Lang program, and the app draws it natively; nothing is fetched or
+//! executed. Rules draw none: they know counts and calls, not what a thing
+//! is for.
+//!
+//! This crate is the single definition of the components, so the check a
+//! submission must pass, the file the backend keeps and the app's renderer
+//! cannot drift apart.
 
-use openui_lang::{Document, Kind, Library, evaluate, parse};
+use openui_lang::{Document, Kind, Library, Node, Severity, evaluate, parse};
+use serde::{Deserialize, Serialize};
 
-/// File extension of saved illustrations.
+/// File extension of the file that keeps a note's pictures.
 pub const EXTENSION: &str = "openui";
 
-/// The components an illustration may use.
+/// Steps a flow has at least: one box explains nothing.
+pub const MIN_STEPS: usize = 2;
+/// Steps a flow has at most. More do not fit a reader's eye, nor the
+/// note's column.
+pub const MAX_STEPS: usize = 7;
+/// Characters of a step's title.
+pub const MAX_STEP_TITLE: usize = 40;
+/// Characters of a step's text.
+pub const MAX_STEP_TEXT: usize = 160;
+/// Characters of a callout's text.
+pub const MAX_CALLOUT_TEXT: usize = 240;
+/// Callouts in one picture.
+pub const MAX_CALLOUTS: usize = 2;
+/// Bytes of one picture's source.
+pub const MAX_SOURCE: usize = 4000;
+/// Pictures in one note.
+pub const MAX_PICTURES: usize = 4;
+/// What a callout can be marked as.
+pub const TONES: [&str; 4] = ["info", "warning", "success", "danger"];
+
+/// The components a picture may use.
 ///
-/// Layout: `Card`, `Stack`, `Grid`, `Tabs`/`Tab`, `Divider`.
-/// Content: `Header`, `TextContent`, `Stat`, `Badge`, `Steps`/`Step`,
-/// `Table`/`Col`. Charts: `BarChart`, `LineChart`, `PieChart` with `Series`.
+/// - `Picture(children)`: the picture. Its children are at most one `Flow`
+///   and at most [`MAX_CALLOUTS`] `Callout`s.
+/// - `Flow(steps, title?)`: boxes joined by arrows, read in order.
+/// - `Step(title, text?)`: one box of a flow.
+/// - `Callout(text, tone?, title?)`: a marked key point or warning; `tone`
+///   is one of [`TONES`], `info` when left out.
 pub fn library() -> Library {
-    use Kind::{List, Number, Text};
-    Library::new(Some("Card"))
-        .component("Card", &[("children", List, true), ("title", Text, false)])
-        // direction: "row" or "column" (default). gap: "s", "m" (default) or "l".
+    use Kind::{List, Text};
+    Library::new(Some("Picture"))
+        .component("Picture", &[("children", List, true)])
+        .component("Flow", &[("steps", List, true), ("title", Text, false)])
+        .component("Step", &[("title", Text, true), ("text", Text, false)])
         .component(
-            "Stack",
+            "Callout",
             &[
-                ("children", List, true),
-                ("direction", Text, false),
-                ("gap", Text, false),
-            ],
-        )
-        .component(
-            "Grid",
-            &[("children", List, true), ("columns", Number, false)],
-        )
-        .component("Tabs", &[("items", List, true)])
-        .component("Tab", &[("label", Text, true), ("children", List, true)])
-        .component("Divider", &[])
-        .component(
-            "Header",
-            &[("title", Text, true), ("subtitle", Text, false)],
-        )
-        // tone: "default", "muted", "strong", "success", "warning" or "danger".
-        .component(
-            "TextContent",
-            &[("text", Text, true), ("tone", Text, false)],
-        )
-        .component(
-            "Stat",
-            &[
-                ("label", Text, true),
-                ("value", Text, true),
-                ("hint", Text, false),
-            ],
-        )
-        .component("Badge", &[("text", Text, true), ("tone", Text, false)])
-        .component("Steps", &[("items", List, true)])
-        .component("Step", &[("title", Text, true), ("detail", Text, false)])
-        .component("Table", &[("columns", List, true)])
-        .component("Col", &[("label", Text, true), ("values", List, true)])
-        .component(
-            "BarChart",
-            &[
-                ("labels", List, true),
-                ("series", List, true),
+                ("text", Text, true),
+                ("tone", Text, false),
                 ("title", Text, false),
             ],
         )
-        .component(
-            "LineChart",
-            &[
-                ("labels", List, true),
-                ("series", List, true),
-                ("title", Text, false),
-            ],
-        )
-        .component(
-            "PieChart",
-            &[
-                ("labels", List, true),
-                ("values", List, true),
-                ("title", Text, false),
-            ],
-        )
-        .component("Series", &[("name", Text, true), ("values", List, true)])
 }
 
-/// Parse and check an illustration against the library.
+/// Parse a picture and check it against the library.
 pub fn check(source: &str) -> Document {
     evaluate(&parse(source), &library())
 }
@@ -108,325 +85,425 @@ pub fn quote(text: &str) -> String {
     out
 }
 
-fn number(value: f64) -> String {
-    if value.fract() == 0.0 && value.abs() < 1e15 {
-        format!("{}", value as i64)
-    } else {
-        format!("{value}")
+/// The limits of a picture, in words: for whoever writes one.
+pub fn limits() -> String {
+    format!(
+        "At most {MAX_PICTURES} pictures in a note, one for a section. A picture holds at most one Flow and at most {MAX_CALLOUTS} Callouts. A Flow has {MIN_STEPS} to {MAX_STEPS} steps. A step's title has at most {MAX_STEP_TITLE} characters and its text at most {MAX_STEP_TEXT}. A callout's text has at most {MAX_CALLOUT_TEXT} characters; its tone is one of {}. Plain words only: no backticks and no links. A picture's source has at most {MAX_SOURCE} bytes.",
+        TONES.join(", ")
+    )
+}
+
+/// The properties of a component, by name.
+type Props = std::collections::BTreeMap<String, Node>;
+
+fn element(node: &Node) -> Option<(&str, &Props)> {
+    match node {
+        Node::Element { name, props } => Some((name.as_str(), props)),
+        _ => None,
     }
 }
 
-/// One headline figure.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Figure {
-    pub label: String,
-    pub value: String,
-    pub hint: Option<String>,
+/// The text of the property `key`, and nothing for one left out.
+fn text<'a>(props: &'a Props, key: &str) -> &'a str {
+    props.get(key).and_then(Node::as_text).unwrap_or("")
 }
 
-/// The frame of an illustration: a card around the parts named in `body`.
-/// An empty `title` gives a card without one, for an illustration that
-/// stands under its note's own title.
-fn card(body: &[&str], title: &str) -> String {
-    if title.is_empty() {
-        format!("root = Card([{}])\n", body.join(", "))
-    } else {
-        format!("root = Card([{}], {})\n", body.join(", "), quote(title))
-    }
-}
-
-/// The assignments of a row of headline figures, named `figures`.
-fn figure_row(figures: &[Figure]) -> String {
-    let names: Vec<String> = (0..figures.len()).map(|i| format!("f{i}")).collect();
-    // An illustration stands in a note's column, where four figures side
-    // by side are too narrow to read: four make two rows of two.
-    let columns = match figures.len() {
-        4 => 2,
-        n => n.min(3),
-    };
-    let mut out = format!("figures = Grid([{}], {columns})\n", names.join(", "));
-    for (name, figure) in names.iter().zip(figures) {
-        let hint = figure
-            .hint
-            .as_deref()
-            .map(|h| format!(", {}", quote(h)))
-            .unwrap_or_default();
-        out.push_str(&format!(
-            "{name} = Stat({}, {}{hint})\n",
-            quote(&figure.label),
-            quote(&figure.value)
+/// Say what is wrong with `value`, the `what` of a component, when it is
+/// missing where it must stand or longer than `most` characters.
+fn sized(issues: &mut Vec<String>, what: &str, value: &str, required: bool, most: usize) {
+    let length = value.chars().count();
+    if required && value.trim().is_empty() {
+        issues.push(format!("{what} is empty"));
+    } else if length > most {
+        issues.push(format!(
+            "{what} has {length} characters; at most {most}: \"{}…\"",
+            value.chars().take(30).collect::<String>()
         ));
     }
-    out
 }
 
-/// The assignments of a numbered sequence, named `flow`.
-fn step_list(items: &[(String, String)]) -> String {
-    let names: Vec<String> = (0..items.len()).map(|i| format!("s{i}")).collect();
-    let mut out = format!("flow = Steps([{}])\n", names.join(", "));
-    for (name, (step, detail)) in names.iter().zip(items) {
-        if detail.is_empty() {
-            out.push_str(&format!("{name} = Step({})\n", quote(step)));
-        } else {
-            out.push_str(&format!(
-                "{name} = Step({}, {})\n",
-                quote(step),
-                quote(detail)
-            ));
+/// What is wrong with a picture, one line for each fault; empty when the
+/// picture may be kept. It must parse, use only the library's components,
+/// and stay within the limits: a picture is a few boxes of plain words, and
+/// one that is larger explains less.
+pub fn review(source: &str) -> Vec<String> {
+    let mut issues = Vec::new();
+    if source.len() > MAX_SOURCE {
+        issues.push(format!(
+            "the source has {} bytes; at most {MAX_SOURCE}",
+            source.len()
+        ));
+    }
+    // The app draws plain text: a backtick or a link would show as written.
+    if source.contains('`') {
+        issues.push("a picture holds plain words: remove the backticks".to_string());
+    }
+    if source.contains("[[") {
+        issues.push("a picture holds no link: remove the [[...]]".to_string());
+    }
+    // Such a line would start another picture in the file that keeps them.
+    if source
+        .lines()
+        .any(|line| line.trim_start().starts_with(SECTION_MARK.trim_end()))
+    {
+        issues.push(format!(
+            "no line of a picture may start with `{}`",
+            SECTION_MARK.trim_end()
+        ));
+    }
+    let document = check(source);
+    for error in &document.errors {
+        if error.severity == Severity::Error {
+            issues.push(format!("{}: {}", error.code, error.message));
         }
     }
-    out
+    let Some((name, props)) = document.root.as_ref().and_then(element) else {
+        if issues.is_empty() {
+            issues.push("no picture: assign `root = Picture([...])`".to_string());
+        }
+        return issues;
+    };
+    if name != "Picture" {
+        issues.push(format!("`root` must be a Picture, not a {name}"));
+        return issues;
+    }
+    let children = props.get("children").map(Node::as_list).unwrap_or(&[]);
+    if children.is_empty() {
+        issues.push("the picture is empty: give it a Flow or a Callout".to_string());
+    }
+    let (mut flows, mut callouts) = (0, 0);
+    for child in children {
+        match element(child) {
+            Some(("Flow", flow)) => {
+                flows += 1;
+                sized(
+                    &mut issues,
+                    "the flow's title",
+                    text(flow, "title"),
+                    false,
+                    MAX_STEP_TITLE,
+                );
+                let steps = flow.get("steps").map(Node::as_list).unwrap_or(&[]);
+                if !(MIN_STEPS..=MAX_STEPS).contains(&steps.len()) {
+                    issues.push(format!(
+                        "the flow has {} steps; it takes {MIN_STEPS} to {MAX_STEPS}",
+                        steps.len()
+                    ));
+                }
+                for (index, step) in steps.iter().enumerate() {
+                    let what = format!("step {}", index + 1);
+                    match element(step) {
+                        Some(("Step", step)) => {
+                            sized(
+                                &mut issues,
+                                &format!("the title of {what}"),
+                                text(step, "title"),
+                                true,
+                                MAX_STEP_TITLE,
+                            );
+                            sized(
+                                &mut issues,
+                                &format!("the text of {what}"),
+                                text(step, "text"),
+                                false,
+                                MAX_STEP_TEXT,
+                            );
+                        }
+                        _ => issues.push(format!("{what} of the flow is not a Step")),
+                    }
+                }
+            }
+            Some(("Callout", callout)) => {
+                callouts += 1;
+                sized(
+                    &mut issues,
+                    "a callout's text",
+                    text(callout, "text"),
+                    true,
+                    MAX_CALLOUT_TEXT,
+                );
+                sized(
+                    &mut issues,
+                    "a callout's title",
+                    text(callout, "title"),
+                    false,
+                    MAX_STEP_TITLE,
+                );
+                let tone = text(callout, "tone");
+                if !tone.is_empty() && !TONES.contains(&tone) {
+                    issues.push(format!(
+                        "a callout's tone is \"{tone}\"; use {}",
+                        TONES.join(", ")
+                    ));
+                }
+            }
+            Some((other, _)) => issues.push(format!(
+                "a Picture holds Flow and Callout only, not a {other}"
+            )),
+            None => issues.push("a Picture holds Flow and Callout only".to_string()),
+        }
+    }
+    if flows > 1 {
+        issues.push(format!("the picture has {flows} flows; at most one"));
+    }
+    if callouts > MAX_CALLOUTS {
+        issues.push(format!(
+            "the picture has {callouts} callouts; at most {MAX_CALLOUTS}"
+        ));
+    }
+    issues
 }
 
-/// An overview card: headline figures and an optional bar chart, under an
-/// optional title and one-line summary. Built from structural facts only,
-/// so it needs no LLM. Leave `title` and `summary` empty for an illustration
-/// shown under its note's own.
-pub fn overview(
-    title: &str,
-    summary: &str,
-    figures: &[Figure],
-    bars: &[(String, f64)],
-    bars_title: &str,
-) -> String {
-    let mut body = Vec::new();
-    let mut out = String::new();
-    if !summary.is_empty() {
-        out.push_str(&format!(
-            "summary = TextContent({}, \"muted\")\n",
-            quote(summary)
-        ));
-        body.push("summary");
-    }
-    if !figures.is_empty() {
-        out.push_str(&figure_row(figures));
-        body.push("figures");
-    }
-    if bars.len() >= 2 {
-        let labels: Vec<String> = bars.iter().map(|(label, _)| quote(label)).collect();
-        let values: Vec<String> = bars.iter().map(|(_, value)| number(*value)).collect();
-        out.push_str(&format!(
-            "chart = BarChart([{}], [Series({}, [{}])], {})\n",
-            labels.join(", "),
-            quote(bars_title),
-            values.join(", "),
-            quote(bars_title)
-        ));
-        body.push("chart");
-    }
-    format!("{}{out}", card(&body, title))
+/// One picture of a note: the `## ` section it explains, and its source.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Picture {
+    /// Heading of the section the picture stands in, without the `## `.
+    pub section: String,
+    /// The picture, as an OpenUI Lang program.
+    pub source: String,
 }
 
-/// A numbered sequence of steps, for flows, under an optional title and
-/// one-line summary.
-pub fn steps(title: &str, summary: &str, items: &[(String, String)]) -> String {
-    let mut body = Vec::new();
-    let mut out = String::new();
-    if !summary.is_empty() {
-        out.push_str(&format!(
-            "summary = TextContent({}, \"muted\")\n",
-            quote(summary)
-        ));
-        body.push("summary");
+/// What a line that starts a picture in a pictures file begins with. OpenUI
+/// Lang reads a line that starts with `#` as a comment, so each picture of
+/// the file is a program by itself, and so is the file.
+const SECTION_MARK: &str = "# section: ";
+
+/// The pictures a pictures file holds, in its order. Text before the first
+/// mark belongs to no section and is left out.
+pub fn parse_pictures(file: &str) -> Vec<Picture> {
+    let mut pictures: Vec<Picture> = Vec::new();
+    for line in file.lines() {
+        if let Some(section) = line.strip_prefix(SECTION_MARK) {
+            pictures.push(Picture {
+                section: section.trim().to_string(),
+                source: String::new(),
+            });
+        } else if let Some(picture) = pictures.last_mut() {
+            picture.source.push_str(line);
+            picture.source.push('\n');
+        }
     }
-    out.push_str(&step_list(items));
-    body.push("flow");
-    format!("{}{out}", card(&body, title))
+    for picture in &mut pictures {
+        picture.source = format!("{}\n", picture.source.trim());
+    }
+    pictures.retain(|picture| !picture.section.is_empty() && !picture.source.trim().is_empty());
+    pictures
 }
 
-/// What a note is about at a glance: headline figures, then the steps of
-/// its walk-through. It has no title and no summary, since it stands under
-/// the note's own. `None` when there is neither a figure nor a step.
-pub fn brief(figures: &[Figure], steps: &[(String, String)]) -> Option<String> {
-    let mut body = Vec::new();
-    let mut out = String::new();
-    if !figures.is_empty() {
-        out.push_str(&figure_row(figures));
-        body.push("figures");
-    }
-    if !steps.is_empty() {
-        out.push_str(&step_list(steps));
-        body.push("flow");
-    }
-    (!body.is_empty()).then(|| format!("{}{out}", card(&body, "")))
+/// The pictures file of `pictures`: each under a line that names its
+/// section. Empty for no pictures, in which case no file is kept.
+pub fn serialize_pictures(pictures: &[Picture]) -> String {
+    pictures
+        .iter()
+        .map(|picture| {
+            format!(
+                "{SECTION_MARK}{}\n{}\n",
+                picture.section.trim(),
+                picture.source.trim()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use openui_lang::Node;
 
-    fn props(node: &Node) -> &std::collections::BTreeMap<String, Node> {
-        match node {
-            Node::Element { props, .. } => props,
-            other => panic!("expected an element, got {other:?}"),
-        }
-    }
+    /// The picture of a module that starts an app at sign-in.
+    const AUTOSTART: &str = "root = Picture([flow, limit])\nflow = Flow([a, b, c, d])\na = Step(\"You turn it on\", \"The switch Start with Windows in Settings.\")\nb = Step(\"One value is written\", \"The program's path, under the user's Run key.\")\nc = Step(\"You sign in\")\nd = Step(\"The app starts\", \"In the tray, with no window.\")\nlimit = Callout(\"Only an installed copy offers this.\", \"warning\")\n";
 
     #[test]
-    fn overview_builds_a_valid_illustration() {
-        let source = overview(
-            "cw-core",
-            "Shared \"types\" and\nhashing.",
-            &[
-                Figure {
-                    label: "Modules".into(),
-                    value: "4".into(),
-                    hint: None,
-                },
-                Figure {
-                    label: "Used by".into(),
-                    value: "9 crates".into(),
-                    hint: Some("most depended upon".into()),
-                },
-            ],
-            &[("hash".into(), 3.0), ("model".into(), 12.5)],
-            "Symbols per module",
-        );
-        let doc = check(&source);
-        assert!(doc.is_valid(), "{:?}\n{source}", doc.errors);
-        assert!(doc.errors.is_empty(), "{:?}", doc.errors);
-        let card = props(doc.root.as_ref().unwrap());
-        assert_eq!(card["title"].as_text(), Some("cw-core"));
-        let children = card["children"].as_list();
-        assert_eq!(children.len(), 3);
-        assert_eq!(
-            props(&children[0])["text"].as_text(),
-            Some("Shared \"types\" and\nhashing.")
-        );
-        let figures = props(&children[1])["children"].as_list();
-        assert_eq!(
-            props(&figures[1])["hint"].as_text(),
-            Some("most depended upon")
-        );
-        let series = props(&children[2])["series"].as_list();
-        assert_eq!(
-            props(&series[0])["values"].as_list(),
-            [Node::Number(3.0), Node::Number(12.5)]
-        );
-    }
-
-    #[test]
-    fn overview_omits_empty_parts() {
-        let doc = check(&overview(
-            "x",
-            "Only a summary.",
-            &[],
-            &[("one".into(), 1.0)],
-            "n",
-        ));
-        assert!(doc.is_valid());
-        assert_eq!(
-            props(doc.root.as_ref().unwrap())["children"]
-                .as_list()
-                .len(),
-            1
-        );
-    }
-
-    #[test]
-    fn steps_builds_a_valid_illustration() {
-        let source = steps(
-            "Startup",
-            "What happens at launch.",
-            &[
-                ("main".into(), "parses arguments".into()),
-                ("serve".into(), String::new()),
-            ],
-        );
-        let doc = check(&source);
-        assert!(doc.is_valid() && doc.errors.is_empty(), "{:?}", doc.errors);
-        let flow = props(&props(doc.root.as_ref().unwrap())["children"].as_list()[1])["items"]
-            .as_list()
-            .to_vec();
-        assert_eq!(
-            props(&flow[0])["detail"].as_text(),
-            Some("parses arguments")
-        );
-        assert!(!props(&flow[1]).contains_key("detail"));
-    }
-
-    #[test]
-    fn brief_stands_under_a_notes_own_title() {
-        let figure = |label: &str, value: &str| Figure {
-            label: label.into(),
-            value: value.into(),
-            hint: None,
-        };
-        let source = brief(
-            &[figure("Public items", "4"), figure("Used by notes", "1")],
-            &[
-                ("enabled".into(), "Calls installed_dir, then read".into()),
-                ("set".into(), String::new()),
-            ],
-        )
-        .unwrap();
+    fn a_flow_with_a_callout_is_a_picture() {
+        assert_eq!(review(AUTOSTART), Vec::<String>::new());
+        let document = check(AUTOSTART);
+        assert!(document.is_valid(), "{:?}", document.errors);
+        let (name, props) = element(document.root.as_ref().unwrap()).unwrap();
+        assert_eq!(name, "Picture");
+        let children = props["children"].as_list();
+        assert_eq!(children.len(), 2);
+        let (_, flow) = element(&children[0]).unwrap();
+        assert_eq!(flow["steps"].as_list().len(), 4);
+        // A callout alone is a picture too, and so is a flow alone.
+        assert!(review("root = Picture([c])\nc = Callout(\"Mind the order.\")\n").is_empty());
         assert!(
-            source.starts_with("root = Card([figures, flow])\n"),
-            "{source}"
+            review("root = Picture([f])\nf = Flow([Step(\"In\"), Step(\"Out\")], \"The way through\")\n")
+                .is_empty()
         );
-        let doc = check(&source);
-        assert!(doc.is_valid() && doc.errors.is_empty(), "{:?}", doc.errors);
-        let card = props(doc.root.as_ref().unwrap());
-        assert!(!card.contains_key("title"));
-        assert_eq!(card["children"].as_list().len(), 2);
-        // Either part alone, and nothing at all.
-        let only_steps = brief(&[], &[("run".into(), String::new())]).unwrap();
-        assert!(only_steps.starts_with("root = Card([flow])\n"));
-        assert!(check(&only_steps).is_valid());
-        assert!(check(&brief(&[figure("Version", "1")], &[]).unwrap()).is_valid());
-        assert_eq!(brief(&[], &[]), None);
     }
 
     #[test]
-    fn figures_keep_to_the_width_of_a_note() {
-        let figure = |n: usize| Figure {
-            label: format!("Figure {n}"),
-            value: n.to_string(),
-            hint: None,
-        };
-        let columns = |count: usize| {
-            let figures: Vec<Figure> = (0..count).map(figure).collect();
-            let source = brief(&figures, &[]).unwrap();
-            let grid = source.lines().nth(1).unwrap().to_string();
-            grid.rsplit(", ")
-                .next()
-                .unwrap()
-                .trim_end_matches(')')
-                .to_string()
-        };
-        assert_eq!(columns(1), "1");
-        assert_eq!(columns(3), "3");
-        // Never four in a row.
-        assert_eq!(columns(4), "2");
-        assert_eq!(columns(5), "3");
-    }
-
-    #[test]
-    fn a_card_under_a_title_repeats_neither_title_nor_summary() {
-        let source = overview("", "", &[], &[("a".into(), 1.0), ("b".into(), 2.0)], "n");
-        assert!(source.starts_with("root = Card([chart])\n"), "{source}");
-        assert!(check(&source).is_valid());
-        let source = steps("", "", &[("main".into(), String::new())]);
-        assert!(source.starts_with("root = Card([flow])\n"), "{source}");
-        assert!(check(&source).is_valid());
-    }
-
-    #[test]
-    fn check_rejects_components_outside_the_library() {
-        let doc = check("root = Card([x])\nx = Iframe(\"https://example.com\")\n");
-        assert!(!doc.is_valid());
-        assert_eq!(doc.errors[0].code, "unknown-component");
-    }
-
-    #[test]
-    fn library_lists_every_component() {
-        let names: Vec<&str> = library().names().collect();
-        assert_eq!(names.len(), 18);
-        for name in [
-            "Card", "Stat", "Steps", "Table", "BarChart", "PieChart", "Tabs",
-        ] {
+    fn the_library_holds_the_four_components() {
+        let library = library();
+        let names: Vec<&str> = library.names().collect();
+        assert_eq!(names.len(), 4, "{names:?}");
+        for name in ["Picture", "Flow", "Step", "Callout"] {
             assert!(names.contains(&name), "{name}");
         }
+        assert_eq!(library.root, Some("Picture"));
+        // What an earlier version drew is no component any more.
+        for old in ["Card", "Stat", "BarChart", "Table"] {
+            let issues = review(&format!("root = Picture([x])\nx = {old}([])\n"));
+            assert!(
+                issues.iter().any(|i| i.contains("unknown-component")),
+                "{old}: {issues:?}"
+            );
+        }
+    }
+
+    /// The one issue a picture has, which must hold `expected`.
+    fn refused(source: &str, expected: &str) {
+        let issues = review(source);
+        assert!(
+            issues.iter().any(|issue| issue.contains(expected)),
+            "expected `{expected}` for:\n{source}\ngot {issues:?}"
+        );
+    }
+
+    #[test]
+    fn a_picture_stays_within_its_limits() {
+        let step = |n: usize| format!("Step(\"Step {n}\")");
+        let flow = |count: usize| {
+            let steps: Vec<String> = (1..=count).map(step).collect();
+            format!("root = Picture([f])\nf = Flow([{}])\n", steps.join(", "))
+        };
+        assert!(review(&flow(MIN_STEPS)).is_empty());
+        assert!(review(&flow(MAX_STEPS)).is_empty());
+        refused(&flow(1), "the flow has 1 steps; it takes 2 to 7");
+        refused(&flow(MAX_STEPS + 1), "the flow has 8 steps");
+
+        let long = "x".repeat(MAX_STEP_TITLE + 1);
+        refused(
+            &format!("root = Picture([f])\nf = Flow([Step(\"{long}\"), Step(\"b\")])\n"),
+            "the title of step 1 has 41 characters; at most 40",
+        );
+        let long = "x".repeat(MAX_STEP_TEXT + 1);
+        refused(
+            &format!("root = Picture([f])\nf = Flow([Step(\"a\"), Step(\"b\", \"{long}\")])\n"),
+            "the text of step 2 has 161 characters",
+        );
+        refused(
+            "root = Picture([f])\nf = Flow([Step(\" \"), Step(\"b\")])\n",
+            "the title of step 1 is empty",
+        );
+        let long = "x".repeat(MAX_CALLOUT_TEXT + 1);
+        refused(
+            &format!("root = Picture([c])\nc = Callout(\"{long}\")\n"),
+            "a callout's text has 241 characters",
+        );
+        refused(
+            "root = Picture([c])\nc = Callout(\"Mind it.\", \"loud\")\n",
+            "a callout's tone is \"loud\"; use info, warning, success, danger",
+        );
+        refused(
+            "root = Picture([a, b])\na = Flow([Step(\"a\"), Step(\"b\")])\nb = Flow([Step(\"c\"), Step(\"d\")])\n",
+            "the picture has 2 flows; at most one",
+        );
+        refused(
+            "root = Picture([Callout(\"a\"), Callout(\"b\"), Callout(\"c\")])\n",
+            "the picture has 3 callouts; at most 2",
+        );
+        refused("root = Picture([])\n", "the picture is empty");
+        refused(
+            "root = Picture([Step(\"alone\")])\n",
+            "a Picture holds Flow and Callout only, not a Step",
+        );
+        refused(
+            "root = Picture([f])\nf = Flow([Callout(\"a\"), Step(\"b\")])\n",
+            "step 1 of the flow is not a Step",
+        );
+        refused(
+            "root = Flow([Step(\"a\"), Step(\"b\")])\n",
+            "`root` must be a Picture, not a Flow",
+        );
+        // Text that is no program is refused in the parser's own words.
+        refused("just words\n", "parse-failed");
+        refused(
+            &format!(
+                "root = Picture([c])\nc = Callout(\"ok\")\n// {}\n",
+                "x".repeat(MAX_SOURCE)
+            ),
+            "at most 4000",
+        );
+    }
+
+    #[test]
+    fn a_picture_holds_plain_words() {
+        refused(
+            "root = Picture([c])\nc = Callout(\"Call `set` first.\")\n",
+            "remove the backticks",
+        );
+        refused(
+            "root = Picture([c])\nc = Callout(\"See [[Autostart Module]].\")\n",
+            "holds no link",
+        );
+        refused(
+            "root = Picture([c])\n# section: How it works\nc = Callout(\"a\")\n",
+            "no line of a picture may start with `# section:`",
+        );
+    }
+
+    #[test]
+    fn the_limits_are_said_in_words() {
+        let text = limits();
+        for number in [
+            MAX_PICTURES,
+            MAX_CALLOUTS,
+            MIN_STEPS,
+            MAX_STEPS,
+            MAX_STEP_TITLE,
+            MAX_STEP_TEXT,
+            MAX_CALLOUT_TEXT,
+            MAX_SOURCE,
+        ] {
+            assert!(text.contains(&number.to_string()), "{number} in {text}");
+        }
+        for tone in TONES {
+            assert!(text.contains(tone), "{tone}");
+        }
+    }
+
+    #[test]
+    fn a_file_keeps_the_pictures_of_a_note_by_section() {
+        let pictures = vec![
+            Picture {
+                section: "What it does".into(),
+                source: AUTOSTART.into(),
+            },
+            Picture {
+                section: "How it works".into(),
+                source: "root = Picture([c])\nc = Callout(\"Nothing else is stored.\")\n".into(),
+            },
+        ];
+        let file = serialize_pictures(&pictures);
+        assert!(file.starts_with("# section: What it does\nroot = Picture([flow, limit])\n"));
+        assert!(file.contains("\n\n# section: How it works\nroot = Picture([c])\n"));
+        assert_eq!(parse_pictures(&file), pictures);
+        // Each picture of the file passes by itself, and the marks are
+        // comments to the language.
+        for picture in parse_pictures(&file) {
+            assert!(review(&picture.source).is_empty(), "{}", picture.section);
+        }
+        // Text before the first mark, a mark with no name and a mark with
+        // no picture hold nothing.
+        let loose = "root = Picture([])\n# section: \nroot = Picture([])\n# section: Gotchas\n\n# section: Why\nroot = Picture([c])\nc = Callout(\"x\")\n";
+        let kept = parse_pictures(loose);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].section, "Why");
+        assert_eq!(serialize_pictures(&[]), "");
+        assert!(parse_pictures("").is_empty());
+    }
+
+    #[test]
+    fn quotes_text_for_a_program() {
+        let source = format!(
+            "root = Picture([c])\nc = Callout({})\n",
+            quote("He said \"no\"\nand left\\")
+        );
+        let document = check(&source);
+        assert!(document.is_valid(), "{:?}", document.errors);
+        let (_, props) = element(document.root.as_ref().unwrap()).unwrap();
+        let (_, callout) = element(&props["children"].as_list()[0]).unwrap();
+        assert_eq!(text(callout, "text"), "He said \"no\"\nand left\\");
     }
 }

@@ -28,6 +28,7 @@ Modules:
 - [[Decisions Module]] — decision records and the "why" query.
 - [[Doctext Module]] — from a doc comment to text that may stand in a note.
 - [[Explain Module]] — what a note says beyond its subject's own comment: the walk-through of what happens when the code is used, and the list of its items.
+- [[Explanations Module]] — explanations: what a coding agent writes into a note, and how.
 - [[Generate Module]] — the generation pipeline: scan, plan, freeze names, render, lint, write.
 - [[Git Module]] — minimal git access through the `git` command line.
 - [[Gitintel Module]] — Git intelligence: what history says about each file.
@@ -47,14 +48,14 @@ Modules:
 
 ## Depends on
 
+- [[Explanations Module]] — uses `Brief`, `DEFAULT_LIMIT`, `MAX_LIMIT`, `MAX_SECTION_WORDS`
 - [[Ci Module]] — uses `CheckFinding`, `check`, `fails`, `to_junit`
 - [[Gitintel Module]] — uses `blast_radius`, `change_risk`, `file_risk`, `hotspots`
 - [[Service Module]] — uses `DOCUMENT_KINDS`, `is_stale`, `open_existing_index_in`, `open_index_in`
+- [[Proposal Module]] — uses `get`, `list`, `patch_text`, `proposed_text`
 - [[Coverage Module]] — uses `import`, `import_text`, `load`, `report`
-- [[Generate Module]] — uses `Report`, `Rewrite`, `Stopped`, `WriterContext`
 - [[Security Module]] — uses `COMMAND_INJECTION`, `HARDCODED_SECRET`, `INSECURE_HTTP`, `SQL_FORMAT`
 - [[Health Module]] — uses `DriftKind`, `dead_code`, `doc_drift`, `file_health`
-- [[VaultMeta]] — uses `by_path`, `load`, `registry`, `save`
 
 ## See also
 

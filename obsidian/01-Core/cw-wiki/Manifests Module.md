@@ -17,7 +17,7 @@ The first three are read from files of the repository, so every machine reads th
 ## How it works
 
 1. `Repo::at` in [[Repo]] calls `Packages::read`. `Packages::read` calls `locked_versions` in [[Workspace Module]].
-2. `RenderCtx::illustration` and `RenderCtx::render_integration` in [[RenderCtx]] call `declared`. `declared` calls `cargo`, then `other`. `cargo` calls `Declared::bare`, then `dependency_specs` in [[Workspace Module]]. `other` calls `asked_in`, then `Declared::bare`.
+2. `RenderCtx::render_integration` in [[RenderCtx]] calls `declared`. `declared` calls `cargo`, then `other`. `cargo` calls `Declared::bare`, then `dependency_specs` in [[Workspace Module]]. `other` calls `asked_in`, then `Declared::bare`.
 3. `generate_with` in [[Generate Module]] calls `describe`. `describe` calls `load`, then `Language::from_path` in [[Language]], then `declared`, then `saved_path`, then `Error::io`, then `Error::external` (both in [[Error]]). `load` calls `saved_path`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -62,9 +62,9 @@ And 2 more private items with no comment.
 
 - [[Repo]] — from `Repo`, `at`, `build`
 - [[Generate Module]] — from `generate`, `generate_with`
-- [[RenderCtx]] — from `illustration`, `render_integration`
 - [[cw-wiki]] — from `KnowsSerde`
 - [[Machine]] — from `Machine`
+- [[RenderCtx]] — from `render_integration`
 
 ## See also
 

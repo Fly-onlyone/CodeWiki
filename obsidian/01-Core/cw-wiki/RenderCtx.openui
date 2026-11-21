@@ -1,7 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "4")
-f1 = Stat("Used by notes", "2")
-f2 = Stat("Depends on notes", "18")
-flow = Steps([s0])
-s0 = Step("new", "Called by generate_with. Calls name, then summary.")

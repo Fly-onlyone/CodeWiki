@@ -1165,8 +1165,8 @@ dependencies = [
  "clap",
  "cw-core",
  "cw-embed-engine",
+ "cw-illustrate",
  "cw-index",
- "cw-llm",
  "cw-models",
  "cw-server",
  "cw-telemetry",
@@ -1693,6 +1693,7 @@ name = "cw-illustrate"
 version = "0.2.0"
 dependencies = [
  "openui-lang",
+ "serde",
 ]
 
 [[package]]
@@ -1705,21 +1706,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
-]
-
-[[package]]
-name = "cw-llm"
-version = "0.2.0"
-dependencies = [
- "cw-core",
- "cw-illustrate",
- "cw-index",
- "cw-vault",
- "cw-wiki",
- "log",
- "serde_json",
- "tempfile",
- "ureq",
 ]
 
 [[package]]
@@ -1769,8 +1755,8 @@ dependencies = [
  "axum",
  "cw-core",
  "cw-embed",
+ "cw-illustrate",
  "cw-index",
- "cw-llm",
  "cw-models",
  "cw-telemetry",
  "cw-vault",

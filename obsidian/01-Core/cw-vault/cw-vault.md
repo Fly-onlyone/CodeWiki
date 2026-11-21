@@ -23,6 +23,7 @@ What the functions of this crate call:
 
 Modules:
 
+- [[Explanation Module]] — who writes which part of a note, and how the two parts are put together.
 - [[Lifecycle Module]] — note lifecycle: what may be done to a note given its state on disk.
 - [[Lint Module]] — style linter for vault notes.
 - [[Manifest Module]] — machine metadata stored in `obsidian/.codewiki/`.

@@ -1,7 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "5")
-f1 = Stat("Used by notes", "1")
-f2 = Stat("Depends on notes", "8")
-flow = Steps([s0])
-s0 = Step("new", "Called by scan_repo. Calls absolutize.")

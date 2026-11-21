@@ -26,7 +26,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Items
 
 - [[Literal]] — one string literal.
-- `pub(crate) struct TestFn` — A `#[test]`-like function found in a file.
+- [[TestFn]] — A `#[test]`-like function found in a file.
 - [[Scanned]] — struct
 - `pub(crate) fn is_test_path(path: &str) -> bool` — true for paths under a `tests`, `benches` or `examples` directory.
 - `fn is_ident(byte: u8) -> bool` — private function, returns `bool`; called by `Scanned::find`, `classify`, `fn_name`, `mask`.
@@ -44,11 +44,12 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Depends on
 
 - [[Literal]] — uses `Literal`
+- [[TestFn]] — uses `TestFn`
 
 ## Used by
 
-- [[Scanned]] — from `Scanned`, `find`, `matching`, `new`
 - [[Refactor Module]] — from `break_cycles`, `extract_types`, `move_functions`, `split_files`
+- [[Scanned]] — from `find`, `matching`, `new`, `statement_end`
 - [[Contracts Module]] — from `scan`, `scan_source`
 - [[Security Module]] — from `scan`, `scan_source`
 - [[Coverage Module]] — from `report`

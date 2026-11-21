@@ -22,11 +22,8 @@ A page is a column of blocks, as wide as a table needs and no wider. What a link
 
 1. `AppView::diagram_viewer_view` and `AppView::render` in [[codewiki-app]], and 1 more, call `notify_after_draw`.
 2. `AppView::new` in [[codewiki-app]] calls `DocPage::new`. `DocPage::new` calls `strips`, then `factor` in [[Zoom Module]].
-3. `AppView::settings_frame` in [[codewiki-app]] calls `column`. `column` calls `px` in [[Zoom Module]], then `text` in [[Surfaces Module]], then `Enter::card` in [[Enter]], then `draw`. `draw` calls `text` in [[Surfaces Module]], then `px` in [[Zoom Module]], then `line`, then `stat_tile`, then `draw_table`, then `card_content` in [[Surfaces Module]], and 18 more.
+3. `AppView::settings_frame` in [[codewiki-app]] calls `column`. `column` calls `px` in [[Zoom Module]], then `text` in [[Surfaces Module]], then `Enter::card` in [[Motion Module (mui)]], then `draw`. `draw` calls `text` in [[Surfaces Module]], then `px` in [[Zoom Module]], then `line`, then `stat_tile`, then `draw_table`, then `card_content` in [[Surfaces Module]], and 18 more.
 4. `AppView::settings_menu_view` in [[codewiki-app]] calls `choice_tint`. `choice_tint` calls `entries`, then `glyph_tint` (both in [[Themes Module]]), then `tint` in [[Icons Module]].
-5. `render` in [[Illustration Module]] calls `stat_tile`. `stat_tile` calls `card` in [[Surfaces Module]], then `px` in [[Zoom Module]], then `card_content`, then `text` (both in [[Surfaces Module]]), then `count_up` in [[Motion Module (mui)]].
-
-1 more entry point: `plain_table`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -50,27 +47,26 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn choice_tint(choice: &Choice, cx: &App) -> Option<Hsla>` — the color of a choice's icon. A theme's icon is in a color of that theme, as in the theme menu; any other takes the hue its kind has everywhere.
 - `fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement` — A line of spans as one run of text that wraps, with its links live.
 - `pub fn stat_tile(stat: &Stat, id: ElementId, cx: &App) -> Div` — TradingAgent's metric tile: a label, a large figure that counts up when the tile appears, and a note under it. `id` names the tile.
-- `pub fn plain_table(table: &Table, key: &str, window: &mut Window, cx: &mut App) -> AnyElement` — A table outside a page, such as one in an illustration: no links, and named by `key` among the other things drawn that frame.
+- `fn table_cell(table: &Table, index: usize) -> Div` — A cell of column `index`, taking that column's share of the width.
 - `draw_table` — A whole table in one card: for a short table, or one inside a card.
 
-And 23 more items.
+And 22 more items.
 
 ## Depends on
 
+- [[Motion Module (mui)]] — uses `EnterExt`, `GENTLE`, `PAGE`, `STAGGER_CAP`
 - [[Doc Module]] — uses `Cell`, `Choice`, `Row`, `SecretState`
-- [[Motion Module (mui)]] — uses `EnterExt`, `GENTLE`, `STAGGER_CAP`, `count_up`
 - [[Feedback Module]] — uses `alert`, `alert_action`, `chip`, `linear_progress`
 - [[Surfaces Module]] — uses `CARD_PADDING`, `card`, `card_content`, `card_piece`
 - [[Switch Module]] — uses `INSET`, `new`, `on`, `on_change`
 - [[Settings Layout Module]] — uses `CONTROL_WIDTH`, `LABEL_WIDTH`, `ROW_GAP`, `ROW_SPACING`
-- [[Button Module]] — uses `contained`, `error`, `new`
 - [[Text Field Module]] — uses `HEIGHT`, `helper`, `new`
+- [[Button]] — uses `contained`, `error`, `new`
 
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `diagram_viewer_view`, `doc_element`, `graph_view`
 - [[Backdrop Module]] — from `Shell`, `new`, `render`
-- [[Illustration Module]] — from `render`, `table`
 - [[Menu Module]] — from `track`
 - [[Win32 Module]] — from `on_console_stop`
 - [[Zoom Module]] — from `set_factor`

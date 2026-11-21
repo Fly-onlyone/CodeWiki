@@ -1,7 +1,0 @@
-root = Card([figures, chart])
-figures = Grid([f0, f1, f2, f3], 2)
-f0 = Stat("Modules", "8")
-f1 = Stat("Public types", "14")
-f2 = Stat("Functions", "168")
-f3 = Stat("Used by crates", "2")
-chart = BarChart(["typescript", "lang", "rust", "java", "python", "resolve", "workspace", "scan"], [Series("Symbols per module", [41, 40, 37, 24, 24, 20, 13, 7])], "Symbols per module")

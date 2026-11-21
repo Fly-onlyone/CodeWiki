@@ -22,10 +22,9 @@ Members:
 
 ## Used by
 
-- [[Settings Module (cw-core)]] — from `ALL`, `ANTHROPIC_API_KEY`, `CLIPROXY_API_KEY`, `CLIPROXY_URL`
+- [[Settings Module (cw-core)]] — from `ALL`, `EMBED_DEVICE`, `EMBED_MODEL`, `EMBED_PROVIDER`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
 - [[Settings Module (cw-server)]] — from `EMBEDDER_KEYS`, `apply`, `checked`, `describe`
-- [[Provider Module]] — from `from_config`, `missing`, `setting`
 - [[Resolved]] — from `saved_secret`, `secret_state`, `source`
 
 ## See also

@@ -16,7 +16,7 @@ Notes keep the owner's frontmatter convention (tags only), so everything the gen
 
 ## How it works
 
-1. `state` in [[Lifecycle Module]] and `approve` in [[Proposal Module]], and 3 more, call `body_hash`. `body_hash` calls `sha256_hex`, then `normalize_text` (both in [[Hash Module]]).
+1. `state` in [[Lifecycle Module]] and `approve` in [[Proposal Module]], and 7 more, call `body_hash`. `body_hash` calls `sha256_hex`, then `normalize_text` (both in [[Hash Module]]).
 2. `VaultMeta::load` in [[VaultMeta]] calls `Manifest::default`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -26,8 +26,9 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub const MANIFEST_SCHEMA: u32` — public constant; used by `Manifest::default`.
 - `pub struct Manifest` — public struct; used by `VaultMeta`.
 - `pub enum Origin` — public enum; used by `NoteEntry`, `NoteInfo`.
-- `pub struct SourceRef` — A source file a note describes, with the content hash seen at generation.
-- `pub struct NoteEntry` — public struct; used by `VaultMeta`, `VaultMeta::by_path`, `VaultMeta::load`, `VaultMeta::notes_for_source` and 6 more.
+- [[SourceRef]] — A source file a note describes, with the content hash seen at generation.
+- `pub struct Explained` — what a coding agent explained a note from.
+- [[NoteEntry]] — struct
 - `pub fn body_hash(text: &str) -> String` — hash used to tell whether a note changed on disk.
 - [[VaultMeta]] — everything under `.codewiki/`, loaded.
 
@@ -35,15 +36,18 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[Hash Module]] — uses `normalize_text`, `sha256_hex`
 - [[Error Module]] — uses `Result`
-- [[NoteKind]] — uses `NoteKind`
+- [[SourceRef]] — uses `SourceRef`
 
 ## Used by
 
-- [[VaultMeta]] — from `VaultMeta`, `by_path`, `load`, `notes_for_source`
-- [[Generate Module]] — from `adopt_existing`, `cited_sources`, `generate_with`
-- [[Query Module]] — from `NoteInfo`, `info`, `title_of`
-- [[Lifecycle Module]] — from `action`, `state`
-- [[Proposal Module]] — from `approve`, `create`
+- [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_code_change_refreshes_the_facts_and_keeps_the_explanation`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_submission_is_woven_into_the_note_and_recorded`
+- [[Proposal Module]] — from `Offer`, `Proposal`, `approve`, `create_as`
+- [[Explanations Module]] — from `brief`, `record`, `submit`, `untouched`
+- [[VaultMeta]] — from `VaultMeta`, `load`, `save`
+- [[Generate Module]] — from `adopt_existing`, `generate_with`
+- [[Lifecycle Module]] — from `state`
+- [[Query Module]] — from `NoteInfo`
+- [[NoteEntry]] — from `NoteEntry`
 
 ## See also
 

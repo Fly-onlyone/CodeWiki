@@ -4,13 +4,15 @@ tags: [core, cw-illustrate]
 
 # cw-illustrate
 
-> CodeWiki's illustration component library and structural illustration builders.
+> The pictures of a CodeWiki note: their components, their limits and the file that keeps them.
 
 ## What it does
 
-CodeWiki's illustration component library and structural builders.
+The pictures of a note: which components exist, what a picture may hold, and the file that keeps a note's pictures.
 
-An illustration is an OpenUI Lang program saved beside a note as `<Note>.openui`. The app draws it natively; nothing is fetched or executed. This crate is the single definition of which components exist, so the generator, the validator and the renderer cannot drift apart.
+A picture explains what a note says: what happens, from a cause to its result, in plain words. It is written by a coding agent, as an OpenUI Lang program, and the app draws it natively; nothing is fetched or executed. Rules draw none: they know counts and calls, not what a thing is for.
+
+This crate is the single definition of the components, so the check a submission must pass, the file the backend keeps and the app's renderer cannot drift apart.
 
 ## Source
 
@@ -21,10 +23,13 @@ An illustration is an OpenUI Lang program saved beside a note as `<Note>.openui`
 
 Builds a library.
 
-1. `generate_with` in [[Generate Module]] calls `check`. `check` calls `evaluate` in [[Eval Module]], then `parse` in [[Parser Module]], then `library`. `library` calls `Library::new` in [[Library]].
-2. `RenderCtx::illustration` in [[RenderCtx]] calls `overview`. `overview` calls `quote`, then `figure_row`, then `number`, then `card`. `figure_row` calls `quote`. `card` calls `quote`.
-3. `RenderCtx::illustration` in [[RenderCtx]] calls `steps`. `steps` calls `quote`, then `step_list`, then `card`. `step_list` calls `quote`.
-4. `RenderCtx::illustration` in [[RenderCtx]] calls `brief`. `brief` calls `figure_row`, then `step_list`, then `card`.
+1. `get_proposal` in [[Api Module]] and `pictures_of` in [[Explanations Module]], and 2 more, call `parse_pictures`.
+2. `AppView::open_note_as` in [[codewiki-app]] and `submit` in [[Explanations Module]] call `review`. `review` calls `check`, then `element`, then `sized`, then `text`.
+3. `submit` in [[Explanations Module]] and `keep_placed_pictures` in [[Generate Module]] call `serialize_pictures`.
+4. `brief` in [[Explanations Module]] calls `library`. `library` calls `Library::new` in [[Library]].
+5. `AppView::open_note_as` in [[codewiki-app]] calls `check`. `check` calls `evaluate` in [[Eval Module]], then `parse` in [[Parser Module]], then `library`.
+
+1 more entry point: `limits`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -32,32 +37,49 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 Defined at the crate root:
 
-- `pub const EXTENSION: &str` — file extension of saved illustrations.
-- `pub fn library() -> Library` — the components an illustration may use. Layout: `Card`, `Stack`, `Grid`, `Tabs`/`Tab`, `Divider`. Content: `Header`, `TextContent`, `Stat`, `Badge`, `Steps`/`Step`, `Table`/`Col`. Charts: `BarChart`, `LineChart`, `PieChart` with `Series`.
-- `pub fn check(source: &str) -> Document` — parse and check an illustration against the library.
+- `pub const EXTENSION: &str` — file extension of the file that keeps a note's pictures.
+- `pub const MIN_STEPS: usize` — steps a flow has at least: one box explains nothing.
+- `pub const MAX_STEPS: usize` — steps a flow has at most. More do not fit a reader's eye, nor the note's column.
+- `pub const MAX_STEP_TITLE: usize` — characters of a step's title.
+- `pub const MAX_STEP_TEXT: usize` — characters of a step's text.
+- `pub const MAX_CALLOUT_TEXT: usize` — characters of a callout's text.
+- `pub const MAX_CALLOUTS: usize` — callouts in one picture.
+- `pub const MAX_SOURCE: usize` — bytes of one picture's source.
+- `pub const MAX_PICTURES: usize` — pictures in one note.
+- `pub const TONES: [&str; 4]` — what a callout can be marked as.
+- `pub fn library() -> Library` — the components a picture may use.
+  - `Picture(children)`: the picture. Its children are at most one `Flow` and at most `MAX_CALLOUTS` `Callout`s.
+  - `Flow(steps, title?)`: boxes joined by arrows, read in order.
+  - `Step(title, text?)`: one box of a flow.
+  - `Callout(text, tone?, title?)`: a marked key point or warning; `tone` is one of `TONES`, `info` when left out.
+- `pub fn check(source: &str) -> Document` — parse a picture and check it against the library.
 - `pub fn quote(text: &str) -> String` — quote text as an OpenUI Lang string literal.
-- `fn number(value: f64) -> String` — private function, returns `String`; called by `overview`.
-- [[Figure]] — one headline figure.
-- `fn card(body: &[&str], title: &str) -> String` — the frame of an illustration: a card around the parts named in `body`. An empty `title` gives a card without one, for an illustration that stands under its note's own title.
-- `fn figure_row(figures: &[Figure]) -> String` — the assignments of a row of headline figures, named `figures`.
-- `fn step_list(items: &[(String, String)]) -> String` — the assignments of a numbered sequence, named `flow`.
-- `overview` — an overview card: headline figures and an optional bar chart, under an optional title and one-line summary. Built from structural facts only, so it needs no LLM. Leave `title` and `summary` empty for an illustration shown under its note's own.
-- `pub fn steps(title: &str, summary: &str, items: &[(String, String)]) -> String` — A numbered sequence of steps, for flows, under an optional title and one-line summary.
-- `pub fn brief(figures: &[Figure], steps: &[(String, String)]) -> Option<String>` — what a note is about at a glance: headline figures, then the steps of its walk-through. It has no title and no summary, since it stands under the note's own. `None` when there is neither a figure nor a step.
+- `pub fn limits() -> String` — the limits of a picture, in words: for whoever writes one.
+- `fn element(node: &Node) -> Option<(&str, &Props)>` — private function, returns `Option<(&str, &Props)>`; called by `review`.
+- `fn text<'a>(props: &'a Props, key: &str) -> &'a str` — the text of the property `key`, and nothing for one left out.
+- `pub fn review(source: &str) -> Vec<String>` — what is wrong with a picture, one line for each fault; empty when the picture may be kept. It must parse, use only the library's components, and stay within the limits: a picture is a few boxes of plain words, and one that is larger explains less.
+- [[Picture]] — one picture of a note: the `## ` section it explains, and its source.
+- `pub fn parse_pictures(file: &str) -> Vec<Picture>` — the pictures a pictures file holds, in its order. Text before the first mark belongs to no section and is left out.
+- `pub fn serialize_pictures(pictures: &[Picture]) -> String` — the pictures file of `pictures`: each under a line that names its section. Empty for no pictures, in which case no file is kept.
+
+And 3 more items.
 
 ## Depends on
 
+- [[Node]] — uses `Node`, `as_list`, `as_text`
 - [[Eval Module]] — uses `Document`, `evaluate`
 - [[Library]] — uses `Library`, `new`
 - [[Parser Module]] — uses `parse`
-- [[Figure]] — uses `Figure`
+- [[Picture]] — uses `Picture`
 
 ## Used by
 
-- [[cw-wiki]] — from `crate_and_flow_notes_get_valid_illustrations`, `module_type_and_integration_notes_get_a_picture_of_facts`
-- [[Generate Module]] — from `generate_with`, `illustration_path`
-- [[codewiki-app]] — from `open_note`
-- [[RenderCtx]] — from `illustration`
+- [[Explanations Module]] — from `brief`, `pictures_of`, `submit`
+- [[Generate Module]] — from `illustration_path`, `keep_placed_pictures`
+- [[codewiki]] — from `picture_reference_follows_the_library`
+- [[codewiki-app]] — from `open_note_as`
+- [[Api Module]] — from `get_proposal`
+- [[Query Module]] — from `read_note_as`
 
 ## See also
 

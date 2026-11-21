@@ -16,22 +16,22 @@ A page function turns backend data into a `Doc`: a title, and blocks such as tab
 
 ## How it works
 
-1. `home_page` and `offline_page` in [[Live Module]], and 17 more, call `text`.
-2. `table` in [[Illustration Module]] and `file_page` in [[Live Module]], and 13 more, call `Column::new`.
-3. `table` in [[Illustration Module]] and `file_page` in [[Live Module]], and 11 more, call `Cell::text`. `Cell::text` calls `text`.
-4. `table` in [[Illustration Module]] and `file_page` in [[Live Module]], and 13 more, call `Table::new`.
-5. `file_page` and `offline_page` in [[Live Module]], and 13 more, call `code`.
+1. `home_page` and `offline_page` in [[Live Module]], and 15 more, call `text`.
+2. `file_page` and `offline_page` in [[Live Module]], and 12 more, call `code`.
+3. `file_page` and `hotspots_page` in [[Live Module]], and 12 more, call `Column::new`.
+4. `file_page` and `hotspots_page` in [[Live Module]], and 10 more, call `Cell::text`. `Cell::text` calls `text`.
+5. `file_page` and `hotspots_page` in [[Live Module]], and 12 more, call `Table::new`.
 
-12 more entry points: `Stat::new`, `strong`, `file`, `Column::numeric`, `Cell::chip`, `Press::new`, and 6 more.
+12 more entry points: `strong`, `file`, `Stat::new`, `Column::numeric`, `Cell::chip`, `Press::new`, and 6 more.
 
 ## Items
 
 - [[Action]] — what following a link or pressing a row does.
 - [[Span]] — A stretch of text within a line.
 - `pub type Line = Vec<Span>` — A line of text made of spans.
-- `pub fn text(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `Cell::text`, `Doc::text`, `Doc::words`, `ai_model` and 25 more.
+- `pub fn text(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `Cell::text`, `Doc::text`, `Doc::words`, `appearance` and 22 more.
 - `pub fn strong(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `message_page`, `workspace_page`.
-- `pub fn code(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `appearance`, `backend`, `contracts_page`, `decisions_page` and 14 more.
+- `pub fn code(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `appearance`, `backend`, `contracts_page`, `decisions_page` and 12 more.
 - `pub fn rich(source: &str) -> Line` — text from the backend, in which backticks mark code: `like this`.
 - `pub fn file(path: &str) -> Span` — A link to a source file, labelled with its path.
 - `pub fn symbol(qualified: &str) -> Span` — A link to a symbol, labelled with the last part of its name.
@@ -59,12 +59,11 @@ And 2 more items.
 
 ## Used by
 
-- [[Settings Pages Module]] — from `ai_model`, `appearance`, `backend`, `built_in`
+- [[Settings Pages Module]] — from `appearance`, `backend`, `built_in`, `diagnostics`
 - [[Live Module]] — from `file_page`, `file_row`, `home_page`, `hotspots_page`
-- [[Doc View Module]] — from `SelectRequest`, `choice_tint`, `choices_row`, `draw_cell`
 - [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
+- [[Doc View Module]] — from `SelectRequest`, `choice_tint`, `choices_row`, `draw_cell`
 - [[Doc]] — from `tables`, `text`, `words`
-- [[Illustration Module]] — from `render`, `table`
 - [[Settings View Module]] — from `OpenMenu`, `lists_themes`
 - [[Block]] — from `Block`
 

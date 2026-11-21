@@ -1,8 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "13")
-f1 = Stat("Used by notes", "4")
-f2 = Stat("Depends on notes", "5")
-flow = Steps([s0, s1])
-s0 = Step("scan", "Called by run, repo_contracts. Calls is_test_path, then scan_source.")
-s1 = Step("match_workspace", "Called by workspace_contracts. Calls normalize, then same_shape.")

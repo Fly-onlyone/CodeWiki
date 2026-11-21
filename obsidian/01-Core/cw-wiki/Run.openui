@@ -1,7 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "6")
-f1 = Stat("Used by notes", "2")
-f2 = Stat("Depends on notes", "9")
-flow = Steps([s0])
-s0 = Step("plan", "Called by embed_repo, embed_documents_with and 1 more. Calls text_of, then sha256_hex.")

@@ -22,7 +22,7 @@ Like the reports in `pages`, each turns what the backend sent into a `Doc`. Thes
 4. `AppView::open_file` in [[codewiki-app]] calls `file_page`. `file_page` calls `string`, then `Doc::new` in [[Doc]], then `Stat::new` in [[Doc Module]], then `number`, then `code` in [[Doc Module]], then `list`, and 8 more.
 5. `AppView::open_proposal` in [[codewiki-app]] calls `proposal_page`. `proposal_page` calls `Doc::new` in [[Doc]], then `code` in [[Doc Module]], then `string`, then `text` in [[Doc Module]].
 
-5 more entry points: `sync_page`, `message_page`, `model_offer`, `home_page`, `offline_page`.
+7 more entry points: `sync_page`, `agent_view_line`, `explanation_lines`, `message_page`, `model_offer`, `home_page`, and 1 more.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -33,14 +33,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn number(value: &Value) -> String` — private function, returns `String`; called by `file_page`, `hotspots_page`, `symbol_page`, `sync_page`.
 - `fn symbol_row(qualified: &str, detail: impl Into<String>) -> Row` — A row that opens a symbol, with its signature or relation under its name.
 - `fn file_row(path: &str) -> Row` — A row that opens a file.
-- `fn note_rows(paths: &Value) -> Vec<Row>` — rows that open notes, named by the note's file name.
-- `fn section(doc: &mut Doc, title: &str, rows: Vec<Row>)` — A heading over rows, or nothing when there are no rows.
 - `pub fn symbol_page(detail: &Value) -> Doc` — one symbol: what it is, where it is, and what it touches.
 - `pub fn search_page(query: &str, hits: &Value) -> Doc` — search results, grouped by what was found.
 - `pub fn hotspots_page(rows: &Value) -> Doc` — the hotspot ranking.
 - `pub fn file_page(context: &Value, risk: &Value, radius: &Value) -> Doc` — one file: risk, symbols, relations and notes.
 - `pub fn proposal_page(detail: &Value) -> Doc` — one proposal for review.
 - `pub fn sync_page(report: &Value) -> Doc` — what a sync did.
+- `pub fn agent_view_line(left_out: &[String]) -> String` — the line above a note in the agent view: what the view is, and what it leaves out of the note.
+- `pub fn explanation_lines(explanation: &str, by: &str, behind: &[String]) -> Vec<String>` — what the details pane says about a note's explanation, a line for each string: who wrote it, and why it may be behind. `explanation` is the backend's word for where it stands. Nothing for a note no agent explains.
 - `pub fn message_page(message: &str) -> Doc` — A page that only says something, such as that there is no wiki yet.
 - `pub struct Project<'a>` — A registered repository, as Home lists it.
 - `pub struct HomeInput<'a>` — what Home is made from.
@@ -49,7 +49,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
 - `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: where its log is, and a button that tries again. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 2 more items.
+And 4 more items.
 
 ## Depends on
 
@@ -58,7 +58,7 @@ And 2 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `connect`, `home_doc`, `listed`, `open_file`
+- [[codewiki-app]] — from `agent_view_notice`, `connect`, `details`, `home_doc`
 
 ## See also
 

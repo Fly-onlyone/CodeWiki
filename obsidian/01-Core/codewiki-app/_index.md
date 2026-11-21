@@ -28,7 +28,7 @@ tags: [moc, core, codewiki-app]
 - [[Glyph]] — an icon of the app: the path its SVG is served under.
 - [[Graph Module (codewiki-app)]] — geometry of the dependency graph view.
 - [[Icons Module]] — icons, and the asset source that serves them.
-- [[Illustration Module]] — native renderer for illustrations.
+- [[Illustration Module]] — native renderer for the pictures of a note.
 - [[Instance Module]] — one running app for each installed program.
 - [[Live Module]] — the live pages: one symbol, one file, search results, hotspots, the theme picker, a proposal, the result of a sync, and Home, the page the app starts on.
 - [[Markdown Module]] — text preparation for the note viewer.

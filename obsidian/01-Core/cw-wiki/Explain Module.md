@@ -16,7 +16,7 @@ Both are built from facts alone. The walk-through follows resolved calls, in the
 
 ## How it works
 
-1. `RenderCtx::illustration` and `RenderCtx::render_crate` in [[RenderCtx]], and 2 more, call `walk`.
+1. `RenderCtx::render_crate` and `RenderCtx::render_module` in [[RenderCtx]], and 1 more, call `walk`.
 2. `RenderCtx::render_crate` and `RenderCtx::render_module` in [[RenderCtx]], and 1 more, call `items`. `items` calls `first_sentence` in [[Doctext Module]], then `lower_first` in [[Render Module]], then `item_text` in [[Doctext Module]], then `Language::from_path` in [[Language]], then `label`, then `facts`. `label` calls `is_line_ref` in [[Lint Module]]. `facts` calls `return_type`, then `Language::from_path` in [[Language]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -44,7 +44,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn facts(ctx: &RenderCtx, symbol: &Symbol) -> String` — what the code alone says of an item that has no comment: how visible it is, what kind of thing, what it returns, and who uses it.
 - `pub(crate) fn items(ctx: &RenderCtx, parent: &str, walk: &Walk) -> String` — the items directly inside `parent`, one bullet each, in source order: every item that is not private, and the private ones `walk` names. An item with a comment gives the whole comment; one without gives what the code says of it. Past `MAX_ITEMS` the rest is counted in a last line.
 
-And 2 more items.
+And 1 more private item with no comment.
 
 ## Depends on
 
@@ -58,7 +58,7 @@ And 2 more items.
 
 ## Used by
 
-- [[RenderCtx]] — from `illustration`, `render_crate`, `render_module`, `render_type`
+- [[RenderCtx]] — from `render_crate`, `render_module`, `render_type`
 
 ## See also
 

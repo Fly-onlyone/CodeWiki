@@ -224,8 +224,19 @@ enum Page {
         text: String,
         sources: Vec<String>,
         state: String,
-        /// The note's illustration, when it has a valid one.
-        figure: Option<openui_lang::Node>,
+        /// The note's pictures that can be drawn, each with the heading
+        /// of the section it stands in.
+        figures: Vec<(String, openui_lang::Node)>,
+        /// Where the note's explanation stands, in the backend's word, who
+        /// wrote it, and why it may be behind the code.
+        explanation: String,
+        explained_by: String,
+        behind: Vec<String>,
+        /// The note is shown as a coding agent reads it: `text` may lack
+        /// sections, so it must never be edited and saved.
+        agent: bool,
+        /// Headings the agent view leaves out.
+        left_out: Vec<String>,
     },
     /// Symbol detail, search results and other generated pages.
     Generated {
@@ -343,9 +354,9 @@ struct AppView {
     last_frame: std::rc::Rc<std::cell::Cell<Option<std::time::Instant>>>,
     drag_last: Option<(f32, f32)>,
     drag_moved: bool,
-    /// Illustration of the current note, when it has a valid one. It is
-    /// drawn in the note, under the summary.
-    figure: Option<openui_lang::Node>,
+    /// Pictures of the current note, each with the heading of its section.
+    /// They are drawn in the note, under those headings.
+    figures: Vec<(String, openui_lang::Node)>,
     /// Palette diagrams were last drawn with; redrawn when the theme flips.
     palette: cw_mermaid::Palette,
     /// How see-through the surfaces are; worked out again on every frame.
@@ -483,7 +494,7 @@ impl AppView {
             last_frame: Default::default(),
             drag_last: None,
             drag_moved: false,
-            figure: None,
+            figures: Vec::new(),
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
             zoom_seen: zoom::percent(cx),
@@ -1380,6 +1391,10 @@ impl AppView {
             return;
         }
         // Forms used to open the app on a view from a script.
+        if let Some(note) = first.strip_prefix("agent:") {
+            self.open_note_as(note.to_string(), false, true, cx);
+            return;
+        }
         if let Some(note) = first.strip_prefix("edit:") {
             self.pending_edit = true;
             self.open_note(note.to_string(), false, cx);
@@ -1391,7 +1406,7 @@ impl AppView {
             cx.notify();
             return;
         }
-        // `settings:` opens the settings; `settings:ai` one of their
+        // `settings:` opens the settings; `settings:search` one of their
         // categories, by its slug.
         if let Some(slug) = first.strip_prefix("settings:") {
             let category = settings::Category::from_slug(slug);
@@ -1456,7 +1471,14 @@ impl AppView {
     }
 
     fn start_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Page::Note { path, text, .. } = &self.page else {
+        // Not in the agent view: what would be saved is less than the note.
+        let Page::Note {
+            path,
+            text,
+            agent: false,
+            ..
+        } = &self.page
+        else {
             return;
         };
         let (path, original) = (path.clone(), text.clone());
@@ -1539,9 +1561,9 @@ impl AppView {
     /// Rebuild the viewer for `self.page` after it changed.
     fn show_page(&mut self) {
         self.page_serial += 1;
-        self.figure = match &self.page {
-            Page::Note { figure, .. } => figure.clone(),
-            _ => None,
+        self.figures = match &self.page {
+            Page::Note { figures, .. } => figures.clone(),
+            _ => Vec::new(),
         };
         // The diagram in the viewer belongs to the page that was left.
         self.diagram_open = false;
@@ -1894,8 +1916,12 @@ impl AppView {
                 let diagrams = &mut self.diagrams;
                 let sources = &mut self.diagram_sources;
                 let store = &mut self.diagram_store;
-                let figure = self.figure.is_some();
-                markdown::prepare_note_with(text, figure, |source| {
+                let headings: Vec<&str> = self
+                    .figures
+                    .iter()
+                    .map(|(heading, _)| heading.as_str())
+                    .collect();
+                markdown::prepare_note_with(text, &headings, |source| {
                     match store.lookup(source, palette) {
                         diagrams::Lookup::Ready(Some(image)) => {
                             diagrams.push(image);
@@ -1975,25 +2001,58 @@ impl AppView {
     }
 
     fn open_note(&mut self, path_or_name: String, remember: bool, cx: &mut Context<Self>) {
+        self.open_note_as(path_or_name, remember, false, cx);
+    }
+
+    /// Switch the note on the page between the whole note and the view a
+    /// coding agent gets. It is the same page, so Back does not lead to the
+    /// other view.
+    fn toggle_agent_view(&mut self, cx: &mut Context<Self>) {
+        let Page::Note { path, agent, .. } = &self.page else {
+            return;
+        };
+        let (path, agent) = (path.clone(), *agent);
+        self.open_note_as(path, false, !agent, cx);
+    }
+
+    /// Open a note: whole, or with `agent` as a coding agent reads it.
+    fn open_note_as(
+        &mut self,
+        path_or_name: String,
+        remember: bool,
+        agent: bool,
+        cx: &mut Context<Self>,
+    ) {
         let Some(repo) = self.repo.clone() else {
             return;
         };
+        let view = if agent { "&view=agent" } else { "" };
         self.run(
             "Opening note",
             cx,
             move |b| {
                 b.get(&format!(
-                    "/v1/repos/{}/note?path={}",
+                    "/v1/repos/{}/note?path={}{view}",
                     repo.id,
                     encode(&path_or_name)
                 ))
             },
             move |this, content, _| {
-                let figure = content["illustration"]
-                    .as_str()
-                    .map(cw_illustrate::check)
-                    .filter(|doc| doc.is_valid())
-                    .and_then(|doc| doc.root);
+                // A picture that does not pass the library's check is not
+                // drawn; the note reads without it.
+                let figures: Vec<(String, openui_lang::Node)> = content["pictures"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|picture| {
+                        let source = picture["source"].as_str()?;
+                        if !cw_illustrate::review(source).is_empty() {
+                            return None;
+                        }
+                        let root = cw_illustrate::check(source).root?;
+                        Some((picture["section"].as_str()?.to_string(), root))
+                    })
+                    .collect();
                 let info = &content["info"];
                 this.set_page(
                     Page::Note {
@@ -2006,7 +2065,22 @@ impl AppView {
                             .filter_map(|s| s.as_str().map(str::to_string))
                             .collect(),
                         state: info["state"].as_str().unwrap_or("").to_string(),
-                        figure,
+                        figures,
+                        explanation: info["explanation"].as_str().unwrap_or("").to_string(),
+                        explained_by: info["explained_by"].as_str().unwrap_or("").to_string(),
+                        behind: info["behind"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|reason| reason.as_str().map(str::to_string))
+                            .collect(),
+                        agent,
+                        left_out: content["left_out"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|heading| heading.as_str().map(str::to_string))
+                            .collect(),
                     },
                     remember,
                 );
@@ -2601,8 +2675,28 @@ impl AppView {
                         .child(format!("{busy}…")),
                 )
             })
+            .when_some(
+                match &self.page {
+                    Page::Note { agent, .. } if self.editing.is_none() => Some(*agent),
+                    _ => None,
+                },
+                |this, agent| {
+                    this.child(
+                        Button::new("agent-view")
+                            .icon(if agent { icons::NOTE } else { icons::AGENT })
+                            .label(if agent { "Whole note" } else { "Agent view" })
+                            .tooltip(if agent {
+                                "Show the whole note, with its pictures"
+                            } else {
+                                "Show the note as a coding agent reads it"
+                            })
+                            .small()
+                            .on_click(cx.listener(|this, _, _, cx| this.toggle_agent_view(cx))),
+                    )
+                },
+            )
             .when(
-                matches!(self.page, Page::Note { .. }) && self.editing.is_none(),
+                matches!(self.page, Page::Note { agent: false, .. }) && self.editing.is_none(),
                 |this| {
                     this.child(
                         Button::new("edit")
@@ -3163,7 +3257,7 @@ impl AppView {
         let closed = value
             .get(cursor..)
             .is_some_and(|rest| rest.starts_with("]]"));
-        let preview = markdown::prepare_note_with(&value, false, |_| markdown::Diagram::Source);
+        let preview = markdown::prepare_note_with(&value, &[], |_| markdown::Diagram::Source);
         let (border, muted, mono, mono_size) = {
             let theme = cx.theme();
             (
@@ -3268,6 +3362,9 @@ impl AppView {
             .when_some(self.proposal_actions(cx), |this, actions| {
                 this.child(actions)
             })
+            .when_some(self.agent_view_notice(cx), |this, notice| {
+                this.child(notice)
+            })
             .child(page)
     }
 
@@ -3302,25 +3399,26 @@ impl AppView {
                     // The illustration is a block of the note itself: it
                     // keeps the note's column and scrolls with its text.
                     // `prepare_page` put an empty code block where it goes.
-                    if let Some(figure) = self.figure.clone() {
+                    if !self.figures.is_empty() {
+                        let figures = self.figures.clone();
                         note = note
                             .markdown_block_parser(|node, _| match node {
                                 markdown_ast::Node::Code(code)
                                     if code.lang.as_deref() == Some(markdown::FIGURE_BLOCK) =>
                                 {
-                                    Some(MarkdownNode::new(markdown::FIGURE_BLOCK, ()))
+                                    // The block holds its picture's number.
+                                    let index = markdown::figure_index(&code.value)?;
+                                    Some(MarkdownNode::new(markdown::FIGURE_BLOCK, index))
                                 }
                                 _ => None,
                             })
-                            .markdown_block_renderer(
-                                markdown::FIGURE_BLOCK,
-                                move |_, window, cx| {
-                                    div()
-                                        .w_full()
-                                        .py_2()
-                                        .child(illustration::render(&figure, "figure", window, cx))
-                                },
-                            );
+                            .markdown_block_renderer(markdown::FIGURE_BLOCK, move |node, _, cx| {
+                                let picture = node
+                                    .data::<usize>()
+                                    .and_then(|index| figures.get(*index))
+                                    .map(|(_, picture)| illustration::render(picture, cx));
+                                div().w_full().py_2().children(picture)
+                            });
                     }
                     div()
                         .size_full()
@@ -3664,6 +3762,37 @@ impl AppView {
         .into_any_element()
     }
 
+    /// The line above a note in the agent view. It stays in place while
+    /// the note scrolls: what is on the page is not the whole note.
+    fn agent_view_notice(&self, cx: &mut Context<Self>) -> Option<Div> {
+        let Page::Note {
+            agent: true,
+            left_out,
+            ..
+        } = &self.page
+        else {
+            return None;
+        };
+        Some(
+            h_flex()
+                .gap_2()
+                .px_3()
+                .py_2()
+                .items_center()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .text_xs()
+                .text_color(cx.theme().muted_foreground)
+                .child(Icon::new(icons::AGENT).small().text_color(cx.theme().info))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .child(live::agent_view_line(left_out)),
+                ),
+        )
+    }
+
     fn proposal_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
         let Page::Proposal { id, .. } = &self.page else {
             return None;
@@ -3718,6 +3847,9 @@ impl AppView {
                 text,
                 sources,
                 state,
+                explanation,
+                explained_by,
+                behind,
                 ..
             } => {
                 pane = pane
@@ -3730,6 +3862,16 @@ impl AppView {
                     other => other,
                 };
                 pane = pane.child(div().text_xs().text_color(muted).child(label.to_string()));
+                // Who explained the note, and whether the code moved on.
+                let warn = cx.theme().warning;
+                for (index, line) in live::explanation_lines(explanation, explained_by, behind)
+                    .into_iter()
+                    .enumerate()
+                {
+                    // The first line says who; the rest say what is behind.
+                    let color = if index == 0 { muted } else { warn };
+                    pane = pane.child(div().text_xs().text_color(color).child(line));
+                }
                 pane = pane.child(heading("OUTLINE"));
                 // Each section gets a dot in the next chart color, so the
                 // outline carries the theme's palette.

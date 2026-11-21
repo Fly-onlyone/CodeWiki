@@ -935,17 +935,6 @@ pub fn stat_tile(stat: &Stat, id: ElementId, cx: &App) -> Div {
     )
 }
 
-/// A table outside a page, such as one in an illustration: no links, and
-/// named by `key` among the other things drawn that frame.
-pub fn plain_table(table: &Table, key: &str, window: &mut Window, cx: &mut App) -> AnyElement {
-    let page = Page {
-        serial: usize::MAX,
-        on_action: Rc::new(|_, _, _| {}),
-        controls: None,
-    };
-    draw_table(table, key, &page, window, cx)
-}
-
 /// The text style of a table, on whatever holds its rows.
 fn table_text(holder: Div) -> Div {
     let spec = Variant::Body2.spec();

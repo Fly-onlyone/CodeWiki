@@ -19,7 +19,7 @@ MUI paths are relative to `@mui/material`; TradingAgent paths to its `frontend/s
 ## How it works
 
 1. `table_row` in [[Doc View Module]] and `IconButton::render` in [[Button Module]], and 9 more, call `easing`.
-2. `Button::render` and `IconButton::render` in [[Button Module]], and 4 more, call `states`.
+2. `IconButton::render` and `ToggleButtonGroup::render` in [[Button Module]], and 4 more, call `states`.
 3. `paper` in [[Surfaces Module]] and `Switch::render` in [[Switch Module]] call `elevation`. `elevation` calls `elevation_between`. `elevation_between` calls `black`, then `px` in [[Zoom Module]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.

@@ -14,12 +14,12 @@ use cw_core::hash::{constant_time_eq, hmac_sha256};
 use cw_core::{Error, Result, VAULT_DIR};
 use cw_index::Index;
 use cw_telemetry::sentry::{self, SentryFutureExt as _};
-use cw_vault::{VaultMeta, proposal};
-use cw_wiki::{query, service};
+use cw_vault::proposal;
+use cw_wiki::{explanations, query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, cliproxy, models, repos, settings, workspace};
+use crate::{AppState, models, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -169,6 +169,11 @@ pub fn routes(state: AppState) -> Router {
         .route("/repos/{id}/overview", get(repo_overview))
         .route("/repos/{id}/notes", get(list_notes))
         .route("/repos/{id}/note", get(read_note).put(write_note))
+        .route("/repos/{id}/explanations", get(list_explanations))
+        .route(
+            "/repos/{id}/explanation",
+            get(read_explanation).put(write_explanation),
+        )
         .route("/repos/{id}/files", get(list_files))
         .route("/repos/{id}/symbols", get(find_symbols))
         .route("/repos/{id}/symbol", get(symbol_detail))
@@ -207,7 +212,6 @@ pub fn routes(state: AppState) -> Router {
         .route("/workspace/contracts", get(workspace_contracts))
         .route("/status", get(backend_status))
         .route("/settings", get(read_settings).put(write_settings))
-        .route("/settings/test/llm", post(test_llm))
         .route("/settings/test/embed", post(test_embedder))
         .route("/models", get(read_models))
         .route("/models/cancel", post(cancel_model_job))
@@ -215,7 +219,6 @@ pub fn routes(state: AppState) -> Router {
         .route("/models/{id}", axum::routing::delete(remove_model))
         .route("/models/{id}/install", post(install_model))
         .route("/models/{id}/use", post(use_model))
-        .route("/cliproxy", get(read_cliproxy))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -278,13 +281,8 @@ async fn write_settings(State(state): State<AppState>, Json(body): Json<Value>) 
         .into_response()
 }
 
-/// Send the chosen LLM one very small request and report whether it
-/// answered. Always 200: a provider that refuses is reported in the body.
-async fn test_llm(State(state): State<AppState>) -> Api<Value> {
-    blocking(move || Ok(settings::test_llm(&state))).await
-}
-
-/// The same for the embedder of semantic search.
+/// Have the embedder of semantic search embed one word and report whether
+/// it answered. Always 200: an embedder that refuses is reported in the body.
 async fn test_embedder(State(state): State<AppState>) -> Api<Value> {
     blocking(move || Ok(settings::test_embedder(&state))).await
 }
@@ -358,31 +356,6 @@ async fn remove_model(State(state): State<AppState>, Path(id): Path<String>) -> 
         return closed;
     }
     blocking(move || models::remove(&state, &id))
-        .await
-        .into_response()
-}
-
-/// The answer of the CLIProxyAPI route on a backend that listens beyond
-/// this machine: its proxy is set up where the backend runs.
-fn proxy_closed(state: &AppState) -> Option<Response> {
-    (!state.0.config.settings_writable).then(|| {
-        (
-            StatusCode::FORBIDDEN,
-            Json(json!({
-                "error": "this backend's CLIProxyAPI is set up on its own machine"
-            })),
-        )
-            .into_response()
-    })
-}
-
-/// The proxy the settings name: whether it answers, the models its
-/// accounts serve, its panel. Always 200; a part that cannot be read says why.
-async fn read_cliproxy(State(state): State<AppState>) -> Response {
-    if let Some(closed) = proxy_closed(&state) {
-        return closed;
-    }
-    blocking(move || Ok(cliproxy::describe(&state)))
         .await
         .into_response()
 }
@@ -473,13 +446,7 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     // as far as whoever asked for it can tell.
     let _running = state.0.activity.begin_update(id);
     let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-    // The provider is read per request so a settings change needs no restart.
-    let writer = cw_llm::writer_from(&settings::resolved(state))?;
-    let report = service::update_in(
-        &repo.data_dir,
-        &repo.root,
-        writer.as_ref().map(|w| w as &dyn cw_wiki::ProseWriter),
-    );
+    let report = service::update_in(&repo.data_dir, &repo.root);
     // Still under the lock: a background embedding that stores next sees
     // that the documents changed.
     models::after_update(state, &repo.root);
@@ -706,6 +673,75 @@ async fn write_note(
     .await
 }
 
+/// Which waiting notes a coding agent asks for.
+#[derive(Deserialize)]
+struct ExplanationsQuery {
+    /// Only notes in this folder of the vault.
+    #[serde(default)]
+    folder: Option<String>,
+    /// Only notes about one of these repository files, separated by commas.
+    #[serde(default)]
+    files: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// The notes that wait for a coding agent to explain them.
+async fn list_explanations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ExplanationsQuery>,
+) -> Api<explanations::Queue> {
+    blocking(move || {
+        let scope = explanations::Scope {
+            folder: q.folder,
+            files: q
+                .files
+                .as_deref()
+                .unwrap_or("")
+                .split(',')
+                .map(str::trim)
+                .filter(|file| !file.is_empty())
+                .map(str::to_string)
+                .collect(),
+            limit: q.limit,
+        };
+        explanations::queue(&Repo::open(&state, &id)?.root, &scope)
+    })
+    .await
+}
+
+/// What a coding agent needs to explain one note.
+async fn read_explanation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<NoteQuery>,
+) -> Api<explanations::Brief> {
+    blocking(move || explanations::brief(&Repo::open(&state, &id)?.root, &q.path)).await
+}
+
+/// Take what a coding agent wrote for one note. Every outcome is an answer
+/// with status 200, also the one that lists faults: a client keeps the body
+/// of an answer and only one line of an error, and the agent must read each
+/// fault to fix it.
+async fn write_explanation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<NoteQuery>,
+    Json(body): Json<explanations::Submission>,
+) -> Api<explanations::Outcome> {
+    blocking(move || {
+        let repo = Repo::open(&state, &id)?;
+        let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let outcome = explanations::submit(&repo.root, &q.path, &body)?;
+        if matches!(outcome, explanations::Outcome::Saved { .. }) {
+            service::index_notes(&repo.root, &mut repo.index()?)?;
+        }
+        Ok(outcome)
+    })
+    .await
+}
+
 async fn list_files(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -885,14 +921,9 @@ async fn ask(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let index = repo.index()?;
-        // With a provider configured the answer is written from the matching
-        // notes; without one it is their summaries.
-        match cw_llm::from_settings(&settings::resolved(&state))? {
-            Some(provider) => {
-                cw_llm::answer::answer(provider.as_ref(), &repo.root, &index, &body.question)
-            }
-            None => query::answer(&repo.root, &index, &body.question),
-        }
+        // The summaries of the notes that match best. Whoever asks is an
+        // agent, which reads on from there.
+        query::answer(&repo.root, &index, &body.question)
     })
     .await
 }
@@ -902,6 +933,9 @@ struct ProposalDetail {
     proposal: proposal::Proposal,
     patch: String,
     proposed: String,
+    /// The pictures the note would get, for an agent's proposal.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pictures: Vec<cw_illustrate::Picture>,
 }
 
 async fn list_proposals(
@@ -921,6 +955,7 @@ async fn get_proposal(
             proposal: proposal::get(&vault, &pid)?,
             patch: proposal::patch_text(&vault, &pid)?,
             proposed: proposal::proposed_text(&vault, &pid)?,
+            pictures: cw_illustrate::parse_pictures(&proposal::pictures_text(&vault, &pid)?),
         })
     })
     .await
@@ -933,14 +968,7 @@ async fn approve_proposal(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-        let vault = repo.vault();
-        let done = proposal::approve(&vault, &pid)?;
-        let mut meta = VaultMeta::load(&vault)?;
-        if let Some(entry) = meta.notes.get_mut(&done.note_id) {
-            // The human reviewed this input; it needs no further proposal.
-            entry.input_hash = done.input_hash.clone();
-            meta.save(&vault)?;
-        }
+        let done = explanations::approve(&repo.root, &pid)?;
         service::index_notes(&repo.root, &mut repo.index()?)?;
         Ok(done)
     })
@@ -954,14 +982,7 @@ async fn reject_proposal(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-        let vault = repo.vault();
-        let done = proposal::reject(&vault, &pid)?;
-        let mut meta = VaultMeta::load(&vault)?;
-        if let Some(entry) = meta.notes.get_mut(&done.note_id) {
-            entry.rejected_inputs.push(done.input_hash.clone());
-            meta.save(&vault)?;
-        }
-        Ok(done)
+        explanations::reject(&repo.root, &pid)
     })
     .await
 }

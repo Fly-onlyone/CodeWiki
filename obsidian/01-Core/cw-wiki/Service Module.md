@@ -16,7 +16,7 @@ tags: [core, cw-wiki, module]
 2. `run` in [[codewiki]] and `reindex_repo` in [[Api Module]] call `reindex`. `reindex` calls `scan_repo` in [[Scan Module]], then `analyze` in [[Analyze Module]], then `refresh` in [[Semantic Module]], then `head_commit` in [[Git Module]], then `save`, then `mine` (both in [[Gitintel Module]]).
 3. `run` in [[codewiki]] calls `open_index`. `open_index` calls `built`, then `Index::open` in [[Index]], then `index_path` in [[Paths Module]].
 4. `after_update` and `embed_repo` in [[Models Module]], and 1 more, call `open_existing_index_in`. `open_existing_index_in` calls `index_path_in` in [[Paths Module]], then `Index::open` in [[Index]].
-5. `approve_proposal` and `write_note` in [[Api Module]] call `index_notes`. `index_notes` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note]], then `refresh` in [[Semantic Module]].
+5. `approve_proposal` and `write_explanation` in [[Api Module]], and 1 more, call `index_notes`. `index_notes` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `refresh` in [[Semantic Module]].
 
 3 more entry points: `update`, `update_in`, `is_stale`.
 
@@ -34,8 +34,8 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn built(root: &Path, mut index: Index) -> Result<Index>` — fill an index that has never been built. The index is a cache: a new data directory, or a schema change, leaves it empty while the vault already exists, and every query would then answer as if the repository were empty.
 - `pub fn reindex(root: &Path, index: &mut Index) -> Result<RepoFacts>` — scan the repository and rewrite the structural index. Notes are not touched.
 - `pub fn index_notes(root: &Path, index: &mut Index) -> Result<usize>` — load every vault note into the search index.
-- `pub fn update(root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report>` — bring index and vault up to date with the working tree.
-- `pub fn update_in(data_dir: &Path, root: &Path, writer: Option<&dyn ProseWriter>) -> Result<Report>` — `update` with an explicit data directory.
+- `pub fn update(root: &Path) -> Result<Report>` — bring index and vault up to date with the working tree.
+- `pub fn update_in(data_dir: &Path, root: &Path) -> Result<Report>` — `update` with an explicit data directory.
 - `pub fn is_stale(root: &Path) -> Result<bool>` — true when code was committed after the vault was last generated.
 
 And 1 more private item with no comment.

@@ -1,5 +1,5 @@
-//! Settings the backend keeps for its user: which LLM writes prose, which
-//! embedder serves semantic search, and the keys and addresses they need.
+//! Settings the backend keeps for its user: which embedder serves semantic
+//! search, and the keys and addresses it needs.
 //!
 //! They live in `settings.json` in the data directory, which only the backend
 //! writes. Every setting also has an environment variable, and the variable
@@ -52,20 +52,6 @@ impl Key {
     }
 }
 
-pub const LLM_PROVIDER: Key = Key {
-    env: "CODEWIKI_LLM",
-    section: "llm",
-    field: "provider",
-    secret: false,
-    default: Some("none"),
-};
-pub const LLM_MODEL: Key = Key {
-    env: "CODEWIKI_MODEL",
-    section: "llm",
-    field: "model",
-    secret: false,
-    default: None,
-};
 pub const EMBED_PROVIDER: Key = Key {
     env: "CODEWIKI_EMBED",
     section: "embed",
@@ -89,13 +75,6 @@ pub const EMBED_DEVICE: Key = Key {
     secret: false,
     default: Some("auto"),
 };
-pub const ANTHROPIC_API_KEY: Key = Key {
-    env: "ANTHROPIC_API_KEY",
-    section: "anthropic",
-    field: "api_key",
-    secret: true,
-    default: None,
-};
 pub const OPENAI_API_KEY: Key = Key {
     env: "OPENAI_API_KEY",
     section: "openai",
@@ -118,37 +97,30 @@ pub const OLLAMA_HOST: Key = Key {
     default: Some("http://127.0.0.1:11434"),
 };
 
-/// Where a CLIProxyAPI server listens. The user runs it; CodeWiki only
-/// connects. Its default port is 8317.
-pub const CLIPROXY_URL: Key = Key {
-    env: "CODEWIKI_CLIPROXY_URL",
-    section: "cliproxy",
-    field: "url",
-    secret: false,
-    default: Some("http://127.0.0.1:8317"),
-};
-/// A client key from the `access.api-keys` list of the proxy's `config.yaml`.
-pub const CLIPROXY_API_KEY: Key = Key {
-    env: "CODEWIKI_CLIPROXY_KEY",
-    section: "cliproxy",
-    field: "api_key",
-    secret: true,
-    default: None,
-};
-
 /// Every setting, in the order a page shows them.
-pub const ALL: [Key; 11] = [
-    LLM_PROVIDER,
-    LLM_MODEL,
-    ANTHROPIC_API_KEY,
+pub const ALL: [Key; 6] = [
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OLLAMA_HOST,
-    CLIPROXY_URL,
-    CLIPROXY_API_KEY,
     EMBED_PROVIDER,
     EMBED_MODEL,
     EMBED_DEVICE,
+];
+
+/// Sections of `settings.json` that held the settings of the AI writer
+/// CodeWiki once called itself: its provider and model, the Anthropic key,
+/// the CLIProxyAPI address and client key. Nothing reads them any more, and
+/// two of them hold an API key, encrypted. They are taken out of the file,
+/// since a key no program uses should not lie on a disk.
+pub const RETIRED_SECTIONS: [&str; 3] = ["llm", "anthropic", "cliproxy"];
+/// The environment variables of those settings. A program that finds one
+/// set says so in its log: its user expects an effect that no longer comes.
+pub const RETIRED_VARIABLES: [&str; 5] = [
+    "CODEWIKI_LLM",
+    "CODEWIKI_MODEL",
+    "ANTHROPIC_API_KEY",
+    "CODEWIKI_CLIPROXY_URL",
+    "CODEWIKI_CLIPROXY_KEY",
 ];
 
 /// The setting an environment variable names.
@@ -289,6 +261,9 @@ pub fn update(
         }
     };
     change(&mut settings)?;
+    for section in RETIRED_SECTIONS {
+        settings.document.remove(section);
+    }
     settings.document.insert("version".into(), json!(VERSION));
     let text = serde_json::to_string_pretty(&Value::Object(settings.document.clone()))
         .map_err(|e| Error::external("writing the settings", e))?;
@@ -297,6 +272,21 @@ pub fn update(
     std::fs::write(&draft, text).map_err(|e| Error::io(&draft, e))?;
     std::fs::rename(&draft, &path).map_err(|e| Error::io(&path, e))?;
     Ok(settings)
+}
+
+/// Take the settings in [`RETIRED_SECTIONS`] out of the file. Returns
+/// whether it held any. A file without them is not written, and neither is
+/// one that is missing or cannot be read.
+pub fn drop_retired(data_dir: &Path) -> Result<bool> {
+    let held = read(data_dir).is_some_and(|settings| {
+        RETIRED_SECTIONS
+            .iter()
+            .any(|section| settings.document.contains_key(*section))
+    });
+    if held {
+        update(data_dir, |_| Ok(()))?;
+    }
+    Ok(held)
 }
 
 /// Where the value of a setting comes from.
@@ -503,59 +493,54 @@ mod tests {
             }
         }
         assert_eq!(super::key("PATH"), None);
-        assert_eq!(LLM_PROVIDER.path(), "llm.provider");
-    }
-
-    #[test]
-    fn the_proxy_keys_are_secret_and_its_address_is_local() {
-        let secrets: Vec<&str> = ALL
-            .iter()
-            .filter(|key| key.section() == "cliproxy" && key.secret)
-            .map(|key| key.field())
-            .collect();
-        assert_eq!(secrets, ["api_key"]);
-        let resolved = Resolved::from_parts(&Settings::default(), no_env);
-        assert_eq!(
-            resolved.get("CODEWIKI_CLIPROXY_URL").as_deref(),
-            Some("http://127.0.0.1:8317")
-        );
-        assert_eq!(resolved.get("CODEWIKI_CLIPROXY_KEY"), None);
+        assert_eq!(EMBED_PROVIDER.path(), "embed.provider");
     }
 
     #[test]
     fn the_variable_wins_then_the_file_then_the_default() {
         let mut saved = Settings::default();
-        saved.set(LLM_PROVIDER, "ollama").unwrap();
-        saved.set(LLM_MODEL, "saved-model").unwrap();
+        saved.set(EMBED_PROVIDER, "ollama").unwrap();
+        saved.set(EMBED_MODEL, "saved-model").unwrap();
         let env = |name: &str| match name {
-            "CODEWIKI_MODEL" => Some("env-model".to_string()),
+            "CODEWIKI_EMBED_MODEL" => Some("env-model".to_string()),
             // Blank: counts as not set.
-            "CODEWIKI_LLM" => Some("  ".to_string()),
+            "CODEWIKI_EMBED" => Some("  ".to_string()),
             _ => None,
         };
         let resolved = Resolved::from_parts(&saved, env);
-        assert_eq!(resolved.get("CODEWIKI_MODEL").as_deref(), Some("env-model"));
-        assert_eq!(resolved.source(LLM_MODEL), Source::Env);
-        assert_eq!(resolved.get("CODEWIKI_LLM").as_deref(), Some("ollama"));
-        assert_eq!(resolved.source(LLM_PROVIDER), Source::Saved);
+        assert_eq!(
+            resolved.get("CODEWIKI_EMBED_MODEL").as_deref(),
+            Some("env-model")
+        );
+        assert_eq!(resolved.source(EMBED_MODEL), Source::Env);
+        assert_eq!(resolved.get("CODEWIKI_EMBED").as_deref(), Some("ollama"));
+        assert_eq!(resolved.source(EMBED_PROVIDER), Source::Saved);
         assert_eq!(
             resolved.get("OLLAMA_HOST").as_deref(),
             Some("http://127.0.0.1:11434")
         );
         assert_eq!(resolved.source(OLLAMA_HOST), Source::Default);
+        assert_eq!(resolved.get("PATH"), None);
         // No default of its own: it depends on the provider.
+        let resolved = Resolved::from_parts(&saved, no_env);
+        assert_eq!(
+            resolved.get("CODEWIKI_EMBED_MODEL").as_deref(),
+            Some("saved-model")
+        );
+        let resolved = Resolved::from_parts(&Settings::default(), no_env);
         assert_eq!(resolved.get("CODEWIKI_EMBED_MODEL"), None);
         assert_eq!(resolved.source(EMBED_MODEL), Source::Default);
-        assert_eq!(resolved.get("PATH"), None);
     }
 
     #[test]
     fn nothing_saved_and_nothing_set_gives_the_defaults() {
         let resolved = Resolved::from_parts(&Settings::default(), no_env);
-        assert_eq!(resolved.get("CODEWIKI_LLM").as_deref(), Some("none"));
         assert_eq!(resolved.get("CODEWIKI_EMBED").as_deref(), Some("local"));
-        assert_eq!(resolved.get("ANTHROPIC_API_KEY"), None);
-        assert_eq!(resolved.secret_state(ANTHROPIC_API_KEY), SecretState::Unset);
+        assert_eq!(resolved.get("OPENAI_API_KEY"), None);
+        assert_eq!(resolved.secret_state(OPENAI_API_KEY), SecretState::Unset);
+        // A setting CodeWiki once had is no setting.
+        assert_eq!(resolved.get("CODEWIKI_LLM"), None);
+        assert_eq!(super::key("ANTHROPIC_API_KEY"), None);
         for key in ALL {
             assert_eq!(resolved.source(key), Source::Default);
         }
@@ -576,42 +561,36 @@ mod tests {
     #[test]
     fn a_saved_secret_is_encrypted_in_the_file_and_read_back() {
         let dir = temp_dir("secret");
-        update(&dir, |s| s.set(ANTHROPIC_API_KEY, SAMPLE_KEY)).unwrap();
+        update(&dir, |s| s.set(OPENAI_API_KEY, SAMPLE_KEY)).unwrap();
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(!text.contains(SAMPLE_KEY));
         assert!(text.contains("\"hint\": \"0042\""));
 
         let saved = load(&dir);
         // A secret is not readable as a plain value.
-        assert_eq!(saved.value(ANTHROPIC_API_KEY), None);
+        assert_eq!(saved.value(OPENAI_API_KEY), None);
         let resolved = Resolved::from_parts(&saved, no_env);
+        assert_eq!(resolved.get("OPENAI_API_KEY").as_deref(), Some(SAMPLE_KEY));
         assert_eq!(
-            resolved.get("ANTHROPIC_API_KEY").as_deref(),
-            Some(SAMPLE_KEY)
-        );
-        assert_eq!(
-            resolved.secret_state(ANTHROPIC_API_KEY),
+            resolved.secret_state(OPENAI_API_KEY),
             SecretState::Saved {
                 hint: "0042".into()
             }
         );
-        assert_eq!(resolved.source(ANTHROPIC_API_KEY), Source::Saved);
+        assert_eq!(resolved.source(OPENAI_API_KEY), Source::Saved);
 
         // The variable still wins over it.
-        let env = |name: &str| (name == "ANTHROPIC_API_KEY").then(|| "from-env".to_string());
+        let env = |name: &str| (name == "OPENAI_API_KEY").then(|| "from-env".to_string());
         let resolved = Resolved::from_parts(&saved, env);
-        assert_eq!(
-            resolved.get("ANTHROPIC_API_KEY").as_deref(),
-            Some("from-env")
-        );
-        assert_eq!(resolved.secret_state(ANTHROPIC_API_KEY), SecretState::Env);
+        assert_eq!(resolved.get("OPENAI_API_KEY").as_deref(), Some("from-env"));
+        assert_eq!(resolved.secret_state(OPENAI_API_KEY), SecretState::Env);
 
         update(&dir, |s| {
-            s.clear(ANTHROPIC_API_KEY);
+            s.clear(OPENAI_API_KEY);
             Ok(())
         })
         .unwrap();
-        assert_eq!(load(&dir).secret(ANTHROPIC_API_KEY), None);
+        assert_eq!(load(&dir).secret(OPENAI_API_KEY), None);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -636,19 +615,19 @@ mod tests {
         let dir = temp_dir("update");
         std::fs::write(
             dir.join(FILE),
-            r#"{ "version": 1, "llm": { "provider": "ollama", "later": true }, "future": { "x": 1 } }"#,
+            r#"{ "version": 1, "embed": { "provider": "ollama", "later": true }, "future": { "x": 1 } }"#,
         )
         .unwrap();
-        let after = update(&dir, |s| s.set(LLM_MODEL, "  llama  ")).unwrap();
-        assert_eq!(after.value(LLM_MODEL).as_deref(), Some("llama"));
+        let after = update(&dir, |s| s.set(EMBED_MODEL, "  nomic  ")).unwrap();
+        assert_eq!(after.value(EMBED_MODEL).as_deref(), Some("nomic"));
 
         let saved = load(&dir);
         assert_eq!(saved, after);
-        assert_eq!(saved.value(LLM_PROVIDER).as_deref(), Some("ollama"));
+        assert_eq!(saved.value(EMBED_PROVIDER).as_deref(), Some("ollama"));
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         let value: Value = serde_json::from_str(&text).unwrap();
         assert_eq!(value["future"]["x"], 1);
-        assert_eq!(value["llm"]["later"], true);
+        assert_eq!(value["embed"]["later"], true);
         assert!(!dir.join(format!("{FILE}.tmp")).exists());
 
         // A blank value clears; a section left empty goes too.
@@ -661,12 +640,58 @@ mod tests {
     }
 
     #[test]
+    fn the_settings_of_the_writer_codewiki_once_had_leave_the_file() {
+        let dir = temp_dir("retired");
+        // Nothing to take out: no file is made.
+        assert!(!drop_retired(&dir).unwrap());
+        assert!(!dir.join(FILE).exists());
+
+        let old = json!({
+            "version": 1,
+            "llm": { "provider": "anthropic", "model": "claude" },
+            "anthropic": { "api_key": { "dpapi": "00112233445566778899aabbccddeeff", "hint": "1234" } },
+            "cliproxy": { "url": "http://127.0.0.1:8317", "api_key": { "dpapi": "ffee", "hint": "abcd" } },
+            "openai": { "api_key": { "dpapi": "0011", "hint": "5678" } },
+            "embed": { "provider": "ollama" },
+            "future": { "x": 1 },
+        });
+        std::fs::write(dir.join(FILE), old.to_string()).unwrap();
+        assert!(drop_retired(&dir).unwrap());
+
+        let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        for section in RETIRED_SECTIONS {
+            assert_eq!(value.get(section), None, "{section}");
+        }
+        // No key of the old writer is left on the disk, encrypted or not.
+        assert!(!text.contains("00112233445566778899aabbccddeeff"));
+        assert!(!text.contains("ffee"));
+        // What is still a setting stays, and so does what a newer program
+        // may have written.
+        assert_eq!(value["openai"]["api_key"]["hint"], "5678");
+        assert_eq!(value["embed"]["provider"], "ollama");
+        assert_eq!(value["future"]["x"], 1);
+
+        // Done once: the file is not written again.
+        assert!(!drop_retired(&dir).unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join(FILE)).unwrap(), text);
+
+        // Any later change leaves them out too, should an older program
+        // have put them back.
+        std::fs::write(dir.join(FILE), old.to_string()).unwrap();
+        update(&dir, |s| s.set(EMBED_MODEL, "nomic")).unwrap();
+        let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        assert!(!text.contains("anthropic") && !text.contains("cliproxy"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn a_failed_change_writes_nothing() {
         let dir = temp_dir("failed");
-        update(&dir, |s| s.set(LLM_PROVIDER, "ollama")).unwrap();
+        update(&dir, |s| s.set(EMBED_PROVIDER, "ollama")).unwrap();
         let before = std::fs::read_to_string(dir.join(FILE)).unwrap();
         let result = update(&dir, |s| {
-            s.set(LLM_PROVIDER, "openai")?;
+            s.set(EMBED_PROVIDER, "openai")?;
             Err(Error::invalid("no"))
         });
         assert!(result.is_err());
@@ -684,12 +709,12 @@ mod tests {
         assert_eq!(load(&dir), Settings::default());
 
         // The next save keeps the damaged file beside the new one.
-        update(&dir, |s| s.set(LLM_PROVIDER, "ollama")).unwrap();
+        update(&dir, |s| s.set(EMBED_PROVIDER, "ollama")).unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.join(BROKEN_FILE)).unwrap(),
             "[1, 2]"
         );
-        assert_eq!(load(&dir).value(LLM_PROVIDER).as_deref(), Some("ollama"));
+        assert_eq!(load(&dir).value(EMBED_PROVIDER).as_deref(), Some("ollama"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

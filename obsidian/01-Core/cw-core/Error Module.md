@@ -12,7 +12,7 @@ tags: [core, cw-core, module]
 
 ## Items
 
-- `pub type Result<T> = std::result::Result<T, Error>` — public type alias; used by `AgentCli::complete`, `Anthropic::complete`, `Anthropic::probe`, `Anthropic::send` and 202 more.
+- `pub type Result<T> = std::result::Result<T, Error>` — public type alias; used by `BuiltinEmbedder::embed`, `BuiltinEmbedder::embed_query`, `BuiltinEmbedder::new`, `Embedder::embed` and 193 more.
 - [[Error]] — enum
 
 ## Depends on
@@ -22,13 +22,13 @@ tags: [core, cw-core, module]
 ## Used by
 
 - [[Index]] — from `collect`, `crates`, `edges`, `edges_from`
+- [[Proposal Module]] — from `approve`, `check_id`, `create`, `create_agent`
 - [[Query Module]] — from `answer`, `check_vault_path`, `context`, `dependency_path`
 - [[cw-index]] — from `document_opening`, `documents`, `nearest`, `prune_vectors`
-- [[Proposal Module]] — from `approve`, `check_id`, `create`, `get`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`, `open_existing_index_in`
+- [[Generate Module]] — from `adopt_existing`, `generate`, `generate_with`, `keep_placed_pictures`
 - [[Coverage Module]] — from `import`, `import_text`, `load`, `parse`
-- [[Generate Module]] — from `adopt_existing`, `generate`, `generate_with`, `list_notes`
-- [[Semantic Module]] — from `behind`, `built`, `embed_documents`, `embed_documents_with`
+- [[Explanations Module]] — from `approve`, `brief`, `note_text`, `queue`
 
 ## See also
 

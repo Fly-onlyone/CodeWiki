@@ -33,7 +33,6 @@ Modules:
 
 - [[Activity Module]] — what the backend is doing right now, for `GET /v1/status`.
 - [[Api Module]] — routes and handlers.
-- [[Cliproxy Module (cw-server)]] — what the CLIProxyAPI route does: describe the proxy the settings name.
 - [[Models Module]] — the built-in embedding models, as the model routes see them: what there is, what is installed, and the one long job that may run.
 - [[Repos Module]] — the list of repositories this backend manages, stored as `repos.json`.
 - [[Settings Module (cw-server)]] — what the settings routes do: describe the settings in effect, and change the saved ones.

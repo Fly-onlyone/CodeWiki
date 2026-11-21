@@ -13,8 +13,8 @@ workspace = true
 axum = "0.8.9"
 cw-core = { path = "../cw-core" }
 cw-embed = { path = "../cw-embed" }
+cw-illustrate = { path = "../cw-illustrate" }
 cw-index = { path = "../cw-index" }
-cw-llm = { version = "0.2.0", path = "../cw-llm" }
 cw-models = { version = "0.2.0", path = "../cw-models" }
 cw-telemetry = { path = "../cw-telemetry" }
 cw-vault = { path = "../cw-vault" }

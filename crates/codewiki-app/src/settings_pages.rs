@@ -54,7 +54,6 @@ pub struct Model<'a> {
     pub notes: &'a HashMap<FieldId, Note>,
     /// The saved secrets whose input is open to take another in their place.
     pub typing: &'a HashSet<FieldId>,
-    pub llm_test: &'a Tested,
     pub embed_test: &'a Tested,
     /// The backend's built-in embedding models (`GET /v1/models`), once
     /// they have arrived.
@@ -92,15 +91,7 @@ pub struct Model<'a> {
     /// user turned them on.
     pub error_reports: Reporting,
     pub error_reports_on: bool,
-    /// What the backend says of the CLIProxyAPI the settings name
-    /// (`GET /v1/cliproxy`), once it has arrived.
-    pub cliproxy: Option<&'a Value>,
-    /// Why that could not be read.
-    pub cliproxy_error: Option<&'a str>,
 }
-
-/// Where CodeWiki's README says how to set up CLIProxyAPI.
-pub const PROXY_SETUP: &str = "https://github.com/Fly-onlyone/CodeWiki#cliproxyapi";
 
 impl Model<'_> {
     /// Whether the backend runs somewhere else than on this machine.
@@ -114,7 +105,6 @@ pub fn page(category: Category, model: &Model) -> Doc {
     let mut doc = Doc::new(category.label());
     let blocks = match category {
         Category::Appearance => appearance(model),
-        Category::AiModel => ai_model(model),
         Category::Search => search(model),
         Category::Backend => backend(model),
         Category::Repositories => repositories(model),
@@ -391,143 +381,6 @@ fn select(
     }
 }
 
-fn llm_name(provider: &str) -> &str {
-    match provider {
-        "none" => "None: notes keep their structural draft",
-        "anthropic" => "Anthropic",
-        "openai" => "OpenAI-compatible",
-        "ollama" => "Ollama",
-        "claude-cli" => "Claude Code (your own login)",
-        "codex-cli" => "Codex (your own login)",
-        "cliproxy" => "CLIProxyAPI (Claude and Codex subscriptions)",
-        other => other,
-    }
-}
-
-/// The model of a run through CLIProxyAPI, picked from the models its
-/// accounts serve. `None` while the proxy has listed none, so that one can
-/// still be typed.
-fn proxy_model(model: &Model, settings: &Value) -> Option<Block> {
-    let mut models: Vec<&str> = model.cliproxy?["models"]
-        .as_array()?
-        .iter()
-        .filter_map(Value::as_str)
-        .collect();
-    if models.is_empty() {
-        return None;
-    }
-    let entry = &settings["llm"]["model"];
-    let chosen = entry["value"].as_str().unwrap_or("");
-    // A model no account serves now stays visible as the one in effect.
-    if !chosen.is_empty() && !models.contains(&chosen) {
-        models.push(chosen);
-    }
-    Some(Block::Select {
-        label: "Model".into(),
-        help: Some("The models your accounts can serve".into()),
-        options: models
-            .into_iter()
-            .map(|name| Choice {
-                label: name.to_string(),
-                action: Action::SetSetting {
-                    section: "llm".into(),
-                    field: "model".into(),
-                    value: Some(name.to_string()),
-                },
-                selected: name == chosen,
-                icon: None,
-            })
-            .collect(),
-        locked: lock(model, settings, entry),
-        note: model.notes.get(&FieldId::LlmModel).cloned(),
-    })
-}
-
-/// The CLIProxyAPI the settings name: where it is, its client key, and
-/// whether it answers. Its accounts are added and removed in the proxy
-/// itself, so the page only says where.
-fn proxy_section(model: &Model, settings: &Value) -> Vec<Block> {
-    let mut body = vec![
-        field(
-            model,
-            settings,
-            FieldId::CliproxyUrl,
-            "Address",
-            "Where your CLIProxyAPI listens. You start it; CodeWiki only connects",
-        ),
-        secret(
-            model,
-            settings,
-            FieldId::CliproxyKey,
-            "Client key",
-            "One of access.api-keys in its config.yaml",
-        ),
-    ];
-    // A backend elsewhere keeps its proxy to itself; the notice at the top
-    // of the page already says where these settings are changed.
-    if model.remote() {
-        return vec![card("CLIProxyAPI", body)];
-    }
-    let Some(proxy) = model.cliproxy else {
-        body.push(match model.cliproxy_error {
-            Some(error) => Block::Alert {
-                tone: Tone::Error,
-                text: format!("The proxy could not be asked: {error}"),
-                button: Some(("Try again".into(), Action::ReloadProxy)),
-            },
-            None => Block::Empty("Asking the proxy…".into()),
-        });
-        return vec![card("CLIProxyAPI", body)];
-    };
-    if proxy["reachable"] != true {
-        body.push(Block::Alert {
-            tone: Tone::Warning,
-            text: proxy["error"]
-                .as_str()
-                .unwrap_or("CLIProxyAPI does not answer")
-                .to_string(),
-            button: Some(("Try again".into(), Action::ReloadProxy)),
-        });
-        body.push(Block::Text(vec![
-            text("CodeWiki does not start the proxy. "),
-            Span::Link {
-                label: "How to set up CLIProxyAPI".into(),
-                code: false,
-                action: Action::OpenUrl(PROXY_SETUP.into()),
-            },
-        ]));
-        return vec![card("CLIProxyAPI", body)];
-    }
-    if let Some(error) = proxy["models_error"].as_str() {
-        body.push(Block::Alert {
-            tone: Tone::Warning,
-            text: error.to_string(),
-            button: None,
-        });
-    }
-    let mut accounts = vec![text(
-        "Accounts are added and removed in CLIProxyAPI itself: ",
-    )];
-    if let Some(panel) = proxy["panel"].as_str() {
-        accounts.push(Span::Link {
-            label: "open its panel".into(),
-            code: false,
-            action: Action::OpenUrl(panel.to_string()),
-        });
-        accounts.push(text(", or run "));
-    } else {
-        accounts.push(text("run "));
-    }
-    accounts.extend([
-        code("cli-proxy-api -claude-login"),
-        text(" or "),
-        code("-codex-login"),
-        text(". It takes the next ready account for each request and rests one that reached its limit. When none is ready, a sync stops, and the next one goes on."),
-    ]);
-    body.push(Block::Text(accounts));
-    vec![card("CLIProxyAPI", body)]
-}
-
 fn embedder_name(provider: &str) -> &str {
     match provider {
         "local" => "Word forms: no model needed",
@@ -578,87 +431,6 @@ fn remote_notice(model: &Model) -> Option<Block> {
         ),
         button: None,
     })
-}
-
-fn ai_model(model: &Model) -> Vec<Block> {
-    let Some(settings) = model.settings else {
-        return without_settings(model);
-    };
-    let through_proxy = settings["llm"]["provider"]["value"] == "cliproxy";
-    let model_choice = through_proxy
-        .then(|| proxy_model(model, settings))
-        .flatten()
-        .unwrap_or_else(|| {
-            field(
-                model,
-                settings,
-                FieldId::LlmModel,
-                "Model",
-                if through_proxy {
-                    "Add an account in CLIProxyAPI; its models then show here"
-                } else {
-                    "Anthropic has a default; the others need a name"
-                },
-            )
-        });
-    let mut provider_card = vec![
-        provider(
-            model,
-            settings,
-            "llm",
-            "Provider",
-            "Writes the prose of notes and answers questions",
-            llm_name,
-        ),
-        model_choice,
-        in_use(settings, "llm", "No provider is chosen."),
-        Block::Buttons(vec![
-            Press::new("Test", Action::TestLlm).disabled(*model.llm_test == Tested::Running),
-        ]),
-    ];
-    provider_card.extend(tested(model.llm_test));
-    let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
-    blocks.push(card("Provider", provider_card));
-    if through_proxy {
-        blocks.extend(proxy_section(model, settings));
-    }
-    blocks.push(card(
-        "Keys and addresses",
-        vec![
-            secret(
-                model,
-                settings,
-                FieldId::AnthropicKey,
-                "Anthropic API key",
-                "",
-            ),
-            secret(
-                model,
-                settings,
-                FieldId::OpenAiKey,
-                "OpenAI API key",
-                "Also used by the OpenAI embedder",
-            ),
-            field(
-                model,
-                settings,
-                FieldId::OpenAiBaseUrl,
-                "OpenAI address",
-                "Any server that speaks the OpenAI protocol",
-            ),
-            field(
-                model,
-                settings,
-                FieldId::OllamaHost,
-                "Ollama address",
-                "Also used by the Ollama embedder",
-            ),
-            Block::Text(vec![text(
-                "A key is stored encrypted for your Windows user and is never shown again.",
-            )]),
-        ],
-    ));
-    blocks
 }
 
 fn search(model: &Model) -> Vec<Block> {
@@ -721,15 +493,36 @@ fn search(model: &Model) -> Vec<Block> {
     let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
     blocks.push(card("Embedder", embedder));
     blocks.extend(built_in(model, settings));
-    blocks.push(Block::Text(vec![
-        text("The OpenAI key and address and the Ollama address are under "),
-        Span::Link {
-            label: "AI model".into(),
-            code: false,
-            action: Action::Settings(Some(Category::AiModel)),
-        },
-        text("."),
-    ]));
+    // What the OpenAI and Ollama embedders connect with.
+    blocks.push(card(
+        "Keys and addresses",
+        vec![
+            secret(
+                model,
+                settings,
+                FieldId::OpenAiKey,
+                "OpenAI API key",
+                "For the OpenAI embedder",
+            ),
+            field(
+                model,
+                settings,
+                FieldId::OpenAiBaseUrl,
+                "OpenAI address",
+                "Any server that speaks the OpenAI protocol",
+            ),
+            field(
+                model,
+                settings,
+                FieldId::OllamaHost,
+                "Ollama address",
+                "For the Ollama embedder",
+            ),
+            Block::Text(vec![text(
+                "A key is stored encrypted for your Windows user and is never shown again.",
+            )]),
+        ],
+    ));
     blocks
 }
 
@@ -1347,12 +1140,6 @@ mod tests {
         json!({
             "secrets": "dpapi",
             "writable": true,
-            "llm": {
-                "provider": { "value": "none", "source": "default", "env": "CODEWIKI_LLM",
-                    "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli", "cliproxy"] },
-                "model": { "value": null, "source": "default", "env": "CODEWIKI_MODEL" },
-                "name": null, "problem": null,
-            },
             "embed": {
                 "provider": { "value": "local", "source": "default", "env": "CODEWIKI_EMBED",
                     "options": ["local", "ollama", "openai", "none"] },
@@ -1361,39 +1148,11 @@ mod tests {
                     "options": ["auto", "cpu"] },
                 "name": "local-hash-v1:384", "problem": null,
             },
-            "anthropic": { "api_key": { "state": "unset", "hint": "", "env": "ANTHROPIC_API_KEY" } },
             "openai": {
                 "api_key": { "state": "unset", "hint": "", "env": "OPENAI_API_KEY" },
                 "base_url": { "value": "https://api.openai.com/v1", "source": "default", "env": "OPENAI_BASE_URL" },
             },
             "ollama": { "host": { "value": "http://127.0.0.1:11434", "source": "default", "env": "OLLAMA_HOST" } },
-            "cliproxy": {
-                "url": { "value": "http://127.0.0.1:8317", "source": "default", "env": "CODEWIKI_CLIPROXY_URL" },
-                "api_key": { "state": "unset", "hint": "", "env": "CODEWIKI_CLIPROXY_KEY" },
-            },
-        })
-    }
-
-    /// The settings with CLIProxyAPI chosen and both of its keys saved.
-    fn proxy_settings() -> Value {
-        let mut settings = defaults();
-        settings["llm"]["provider"]["value"] = json!("cliproxy");
-        settings["llm"]["model"]["value"] = json!("claude-sonnet-x");
-        settings["llm"]["name"] = json!("cliproxy:claude-sonnet-x");
-        settings["cliproxy"]["api_key"]["state"] = json!("saved");
-        settings["cliproxy"]["api_key"]["hint"] = json!("abcd");
-        settings
-    }
-
-    /// What `GET /v1/cliproxy` says of a proxy on this machine whose
-    /// accounts serve two models.
-    fn proxy() -> Value {
-        json!({
-            "url": "http://127.0.0.1:8317",
-            "panel": "http://127.0.0.1:8317/management.html",
-            "reachable": true,
-            "models": ["claude-sonnet-x", "gpt-5-codex"],
-            "error": null, "models_error": null,
         })
     }
 
@@ -1438,7 +1197,6 @@ mod tests {
         models_note: Option<String>,
         notes: HashMap<FieldId, Note>,
         typing: HashSet<FieldId>,
-        llm_test: Tested,
         embed_test: Tested,
         url: Option<String>,
         origin: Option<Origin>,
@@ -1453,8 +1211,6 @@ mod tests {
         log_level_locked: bool,
         error_reports: Reporting,
         error_reports_on: bool,
-        cliproxy: Option<Value>,
-        cliproxy_error: Option<String>,
     }
 
     impl Fixture {
@@ -1468,7 +1224,6 @@ mod tests {
                 models_note: None,
                 notes: HashMap::new(),
                 typing: HashSet::new(),
-                llm_test: Tested::Not,
                 embed_test: Tested::Not,
                 url: Some("http://127.0.0.1:7411".into()),
                 origin: Some(Origin::Local),
@@ -1483,17 +1238,7 @@ mod tests {
                 log_level_locked: false,
                 error_reports: Reporting::Switch,
                 error_reports_on: false,
-                cliproxy: None,
-                cliproxy_error: None,
             }
-        }
-
-        /// With CLIProxyAPI chosen, and the proxy as [`proxy`] describes it.
-        fn with_proxy() -> Self {
-            let mut fixture = Self::new();
-            fixture.settings = Some(proxy_settings());
-            fixture.cliproxy = Some(proxy());
-            fixture
         }
 
         fn page(&self, category: Category) -> Doc {
@@ -1509,7 +1254,6 @@ mod tests {
                     settings_error: self.error.as_deref(),
                     notes: &self.notes,
                     typing: &self.typing,
-                    llm_test: &self.llm_test,
                     embed_test: &self.embed_test,
                     models: self.models.as_ref(),
                     models_error: self.models_error.as_deref(),
@@ -1530,8 +1274,6 @@ mod tests {
                     data_dir: "C:/data",
                     error_reports: self.error_reports,
                     error_reports_on: self.error_reports_on,
-                    cliproxy: self.cliproxy.as_ref(),
-                    cliproxy_error: self.cliproxy_error.as_deref(),
                 },
             )
         }
@@ -1669,160 +1411,41 @@ mod tests {
     }
 
     #[test]
-    fn the_ai_model_page_offers_the_providers_and_asks_for_what_they_need() {
-        let fixture = Fixture::new();
-        let doc = fixture.page(Category::AiModel);
-        let words = doc.words();
-        assert!(
-            words.contains("Provider: None: notes keep their structural draft (None: notes keep their structural draft / Anthropic / OpenAI-compatible / Ollama / Claude Code (your own login) / Codex (your own login) / CLIProxyAPI (Claude and Codex subscriptions))"),
-            "{words}"
-        );
-        // The proxy's own settings show only once it is chosen.
-        assert!(!words.contains("Management key"), "{words}");
-        assert!(words.contains("No provider is chosen."));
-        assert!(words.contains("Anthropic API key: <typed, hidden>"));
-        assert!(words.contains("Test"));
-        let actions = doc.actions();
-        for name in [
-            "none",
-            "anthropic",
-            "openai",
-            "ollama",
-            "claude-cli",
-            "codex-cli",
-            "cliproxy",
-        ] {
-            assert!(actions.contains(&set("llm", name)), "{name}");
-        }
-        assert!(actions.contains(&Action::TestLlm));
-        assert_eq!(
-            doc.fields(),
-            [
-                FieldId::LlmModel,
-                FieldId::AnthropicKey,
-                FieldId::OpenAiKey,
-                FieldId::OpenAiBaseUrl,
-                FieldId::OllamaHost
-            ]
-        );
-    }
-
-    fn model_choice(model: &str) -> Action {
-        Action::SetSetting {
-            section: "llm".into(),
-            field: "model".into(),
-            value: Some(model.into()),
-        }
-    }
-
-    #[test]
-    fn a_chosen_proxy_offers_its_models_and_points_to_its_panel() {
-        let doc = Fixture::with_proxy().page(Category::AiModel);
-        let words = doc.words();
-        assert!(
-            words.contains("Model: claude-sonnet-x (claude-sonnet-x / gpt-5-codex)"),
-            "{words}"
-        );
-        assert!(words.contains("Client key: Saved, ends in abcd"), "{words}");
-        assert!(
-            words.contains("Accounts are added and removed in CLIProxyAPI itself"),
-            "{words}"
-        );
-        assert!(words.contains("cli-proxy-api -claude-login"), "{words}");
-        let actions = doc.actions();
-        assert!(actions.contains(&model_choice("gpt-5-codex")));
-        assert!(actions.contains(&Action::OpenUrl(
-            "http://127.0.0.1:8317/management.html".into()
-        )));
-        // The model is picked from the list, not typed.
-        let fields = doc.fields();
-        assert!(!fields.contains(&FieldId::LlmModel), "{fields:?}");
-        assert!(fields.contains(&FieldId::CliproxyUrl), "{fields:?}");
-        // Only the client key: the proxy's management key stays with it.
-        assert!(!words.contains("Management key"), "{words}");
-    }
-
-    #[test]
-    fn a_proxy_without_models_takes_a_typed_model_name() {
-        let mut fixture = Fixture::with_proxy();
-        let mut proxy = proxy();
-        proxy["models"] = json!([]);
-        fixture.cliproxy = Some(proxy);
-        let doc = fixture.page(Category::AiModel);
-        assert!(doc.fields().contains(&FieldId::LlmModel));
-        let words = doc.words();
-        assert!(
-            words.contains("Add an account in CLIProxyAPI; its models then show here"),
-            "{words}"
-        );
-    }
-
-    #[test]
-    fn a_proxy_that_does_not_answer_says_where_to_look() {
-        let mut fixture = Fixture::with_proxy();
-        fixture.cliproxy = Some(json!({
-            "url": "http://127.0.0.1:8317", "reachable": false, "models": [],
-            "panel": "http://127.0.0.1:8317/management.html",
-            "error": "CLIProxyAPI not reachable at http://127.0.0.1:8317: start it, or check the address",
-        }));
-        let doc = fixture.page(Category::AiModel);
-        let words = doc.words();
-        assert!(words.contains("CLIProxyAPI not reachable at"), "{words}");
-        let actions = doc.actions();
-        assert!(actions.contains(&Action::ReloadProxy));
-        assert!(actions.contains(&Action::OpenUrl(PROXY_SETUP.into())));
-        // A panel that does not answer is not offered.
-        assert!(!actions.contains(&Action::OpenUrl(
-            "http://127.0.0.1:8317/management.html".into()
-        )));
-    }
-
-    #[test]
-    fn a_proxy_the_backend_could_not_ask_offers_to_try_again() {
-        let mut fixture = Fixture::with_proxy();
-        fixture.cliproxy = None;
-        fixture.cliproxy_error = Some("backend returned 500".into());
-        let doc = fixture.page(Category::AiModel);
-        assert!(
-            doc.words()
-                .contains("The proxy could not be asked: backend returned 500")
-        );
-        assert!(doc.actions().contains(&Action::ReloadProxy));
-    }
-    #[test]
     fn a_saved_key_shows_its_end_and_can_be_replaced_or_removed() {
         let mut fixture = Fixture::new();
         let mut settings = defaults();
-        settings["llm"]["provider"]["value"] = json!("anthropic");
-        settings["llm"]["name"] = json!("anthropic:claude-opus-5-5");
-        settings["anthropic"]["api_key"] =
-            json!({ "state": "saved", "hint": "1234", "env": "ANTHROPIC_API_KEY" });
-        settings["openai"]["api_key"]["state"] = json!("unreadable");
+        settings["openai"]["api_key"] =
+            json!({ "state": "saved", "hint": "1234", "env": "OPENAI_API_KEY" });
         fixture.settings = Some(settings);
-        fixture.notes.insert(FieldId::AnthropicKey, Note::Saved);
+        fixture.notes.insert(FieldId::OpenAiKey, Note::Saved);
 
-        let doc = fixture.page(Category::AiModel);
+        let doc = fixture.page(Category::Search);
         let words = doc.words();
-        assert!(words.contains("Provider: Anthropic ("), "{words}");
-        assert!(words.contains("In use: anthropic:claude-opus-5-5."));
         assert!(
-            words.contains("Anthropic API key: Saved, ends in 1234 (saved)"),
+            words.contains("OpenAI API key: Saved, ends in 1234 (saved)"),
             "{words}"
         );
-        assert!(words.contains("OpenAI API key: Saved, but it cannot be read"));
         let actions = doc.actions();
-        assert!(actions.contains(&Action::ReplaceSecret(FieldId::AnthropicKey)));
-        assert!(actions.contains(&Action::RemoveSecret(FieldId::AnthropicKey)));
         assert!(actions.contains(&Action::ReplaceSecret(FieldId::OpenAiKey)));
+        assert!(actions.contains(&Action::RemoveSecret(FieldId::OpenAiKey)));
         // A saved key has no input until it is to be replaced.
-        assert!(!doc.fields().contains(&FieldId::AnthropicKey));
+        assert!(!doc.fields().contains(&FieldId::OpenAiKey));
 
-        fixture.typing.insert(FieldId::AnthropicKey);
-        let doc = fixture.page(Category::AiModel);
-        assert!(doc.fields().contains(&FieldId::AnthropicKey));
+        fixture.typing.insert(FieldId::OpenAiKey);
+        let doc = fixture.page(Category::Search);
+        assert!(doc.fields().contains(&FieldId::OpenAiKey));
         assert!(
             doc.actions()
-                .contains(&Action::KeepSecret(FieldId::AnthropicKey))
+                .contains(&Action::KeepSecret(FieldId::OpenAiKey))
+        );
+
+        // A key this user cannot decrypt says so.
+        fixture.typing.clear();
+        fixture.settings.as_mut().unwrap()["openai"]["api_key"]["state"] = json!("unreadable");
+        let words = fixture.page(Category::Search).words();
+        assert!(
+            words.contains("OpenAI API key: Saved, but it cannot be read"),
+            "{words}"
         );
     }
 
@@ -1830,33 +1453,37 @@ mod tests {
     fn a_setting_from_the_environment_is_locked_and_says_which_variable() {
         let mut fixture = Fixture::new();
         let mut settings = defaults();
-        settings["llm"]["provider"]["value"] = json!("openai");
-        settings["llm"]["provider"]["source"] = json!("env");
-        settings["llm"]["model"] =
-            json!({ "value": "gpt", "source": "env", "env": "CODEWIKI_MODEL" });
+        settings["embed"]["provider"]["value"] = json!("openai");
+        settings["embed"]["provider"]["source"] = json!("env");
+        settings["embed"]["model"] = json!({
+            "value": "text-embedding-3-small", "source": "env", "env": "CODEWIKI_EMBED_MODEL"
+        });
         settings["openai"]["api_key"]["state"] = json!("env");
-        settings["llm"]["problem"] = json!("the openai provider needs a model");
+        settings["embed"]["name"] = json!(null);
+        settings["embed"]["problem"] = json!("the openai embedder needs a key");
         fixture.settings = Some(settings);
 
-        let doc = fixture.page(Category::AiModel);
+        let doc = fixture.page(Category::Search);
         let words = doc.words();
         assert!(
-            words.contains("[Set by CODEWIKI_LLM in the backend's environment]"),
+            words.contains("[Set by CODEWIKI_EMBED in the backend's environment]"),
             "{words}"
         );
         assert!(
-            words.contains("Model: <typed> [Set by CODEWIKI_MODEL in the backend's environment]")
+            words.contains(
+                "Model: <typed> [Set by CODEWIKI_EMBED_MODEL in the backend's environment]"
+            ),
+            "{words}"
         );
         assert!(words.contains("[Set by OPENAI_API_KEY in the backend's environment]"));
-        assert!(words.contains("the openai provider needs a model"));
+        assert!(words.contains("the openai embedder needs a key"));
         // A locked select offers no choice; what is not locked still does.
         let actions = doc.actions();
-        assert!(
-            !actions
-                .iter()
-                .any(|a| matches!(a, Action::SetSetting { section, .. } if section == "llm"))
-        );
-        assert!(actions.contains(&Action::TestLlm));
+        assert!(!actions.iter().any(|a| matches!(
+            a,
+            Action::SetSetting { section, field, .. } if section == "embed" && field == "provider"
+        )));
+        assert!(actions.contains(&Action::TestEmbedder));
     }
 
     #[test]
@@ -1864,18 +1491,15 @@ mod tests {
         let mut fixture = Fixture::new();
         fixture.origin = Some(Origin::Saved);
         fixture.url = Some("http://nas:7411".into());
-        for category in [Category::AiModel, Category::Search] {
-            let doc = fixture.page(category);
-            let words = doc.words();
-            assert!(words.contains("runs on another machine"), "{words}");
-            assert!(words.contains("[Set on the backend at http://nas:7411]"));
-            assert!(
-                !doc.actions()
-                    .iter()
-                    .any(|a| matches!(a, Action::SetSetting { .. } | Action::ReplaceSecret(_))),
-                "{category:?}"
-            );
-        }
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(words.contains("runs on another machine"), "{words}");
+        assert!(words.contains("[Set on the backend at http://nas:7411]"));
+        assert!(
+            !doc.actions()
+                .iter()
+                .any(|a| matches!(a, Action::SetSetting { .. } | Action::ReplaceSecret(_)))
+        );
     }
 
     #[test]
@@ -1884,29 +1508,25 @@ mod tests {
         let mut settings = defaults();
         settings["secrets"] = json!("env_only");
         fixture.settings = Some(settings);
-        let words = fixture.page(Category::AiModel).words();
+        let words = fixture.page(Category::Search).words();
         assert!(
-            words.contains(
-                "This backend cannot save a key; set ANTHROPIC_API_KEY in its environment"
-            ),
+            words.contains("This backend cannot save a key; set OPENAI_API_KEY in its environment"),
             "{words}"
         );
     }
 
     #[test]
-    fn pages_that_need_the_backend_say_so_while_they_wait_or_fail() {
+    fn a_page_that_needs_the_backend_says_so_while_it_waits_or_fails() {
         let mut fixture = Fixture::new();
         fixture.settings = None;
-        for category in [Category::AiModel, Category::Search] {
-            assert!(
-                fixture
-                    .page(category)
-                    .words()
-                    .contains("Reading the backend's settings")
-            );
-        }
+        assert!(
+            fixture
+                .page(Category::Search)
+                .words()
+                .contains("Reading the backend's settings")
+        );
         fixture.error = Some("backend returned 404".into());
-        let words = fixture.page(Category::AiModel).words();
+        let words = fixture.page(Category::Search).words();
         assert!(
             words.contains("could not be read: backend returned 404"),
             "{words}"
@@ -1942,8 +1562,17 @@ mod tests {
         }
         assert!(actions.contains(&Action::TestEmbedder));
         assert!(actions.contains(&Action::Sync));
-        assert!(actions.contains(&Action::Settings(Some(Category::AiModel))));
-        assert_eq!(doc.fields(), [FieldId::EmbedModel]);
+        // What the OpenAI and Ollama embedders connect with is on the page.
+        assert!(words.contains("OpenAI API key: <typed, hidden>"), "{words}");
+        assert_eq!(
+            doc.fields(),
+            [
+                FieldId::EmbedModel,
+                FieldId::OpenAiKey,
+                FieldId::OpenAiBaseUrl,
+                FieldId::OllamaHost
+            ]
+        );
 
         // While a test runs, it cannot be started again.
         fixture.embed_test = Tested::Running;
@@ -2051,7 +1680,11 @@ mod tests {
         assert!(words.contains(WAITING), "{words}");
         assert!(!words.contains("needs a model"), "{words}");
         // A built-in model is chosen by its button: no model is typed.
-        assert!(doc.fields().is_empty(), "{:?}", doc.fields());
+        assert!(
+            !doc.fields().contains(&FieldId::EmbedModel),
+            "{:?}",
+            doc.fields()
+        );
 
         // Set by the environment, a model chosen here would not be taken:
         // the backend keeps the variable's choice. The page says what the
@@ -2199,7 +1832,11 @@ mod tests {
             value: Some("cpu".into()),
         }));
         // A built-in model is chosen by its button: no model is typed.
-        assert!(doc.fields().is_empty(), "{:?}", doc.fields());
+        assert!(
+            !doc.fields().contains(&FieldId::EmbedModel),
+            "{:?}",
+            doc.fields()
+        );
 
         // A card that failed twice is said.
         fixture.models.as_mut().unwrap()["worker"]["cuda_given_up"] = json!(true);

@@ -32,8 +32,9 @@ Members:
 
 ## Depends on
 
-- [[Rustscan Module]] — uses `TestFn`, `find_tests`, `is_ident`, `mask`
+- [[Rustscan Module]] — uses `find_tests`, `is_ident`, `mask`, `matching`
 - [[Literal]] — uses `Literal`
+- [[TestFn]] — uses `TestFn`
 
 ## Used by
 

@@ -37,7 +37,7 @@ Members:
 
 ## Used by
 
-- [[RenderCtx]] — from `illustration`, `render_crate`, `render_crate_flow`, `render_home`
+- [[RenderCtx]] — from `render_crate`, `render_crate_flow`, `render_home`, `render_operations`
 - [[Repo]] — from `Repo`, `build`, `top_modules`, `unit_index`
 - [[Plan Module]] — from `plan`
 - [[Units Module]] — from `discover`

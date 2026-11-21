@@ -18,7 +18,7 @@ Every detector here is written from first principles against CodeWiki's own inde
 
 1. `run` in [[codewiki]] and `file_health` in [[Api Module]], and 2 more, call `file_health`. `file_health` calls `dead_code`, then `parameter_count`.
 2. `run` in [[codewiki]] and `dead_code` in [[Api Module]], and 1 more, call `dead_code`. `dead_code` calls `is_test_symbol`, then `Language::from_path` in [[Language]].
-3. `run` in [[codewiki]] and `doc_drift` in [[Api Module]], and 1 more, call `doc_drift`. `doc_drift` calls `VaultMeta::load` in [[VaultMeta]], then `state` in [[Lifecycle Module]], then `Note::parse` in [[Note]], then `looks_like_path`.
+3. `run` in [[codewiki]] and `doc_drift` in [[Api Module]], and 1 more, call `doc_drift`. `doc_drift` calls `VaultMeta::load` in [[VaultMeta]], then `state` in [[Lifecycle Module]], then `Note::parse` in [[Note Module]], then `looks_like_path`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -51,7 +51,7 @@ And 7 more private items with no comment.
 - [[Error Module]] — uses `Result`
 - [[Model Module]] — uses `FileRecord`
 - [[Lifecycle Module]] — uses `state`
-- [[Analyze Module]] — uses `DEPENDENCY_KINDS`
+- [[Note Module]] — uses `parse`
 
 ## Used by
 

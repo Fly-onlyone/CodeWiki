@@ -1,7 +1,0 @@
-root = Card([figures, chart])
-figures = Grid([f0, f1, f2, f3], 2)
-f0 = Stat("Modules", "8")
-f1 = Stat("Public types", "15")
-f2 = Stat("Functions", "92")
-f3 = Stat("Used by crates", "15")
-chart = BarChart(["settings", "logs", "model", "secret", "error", "hash", "paths"], [Series("Symbols per module", [48, 37, 23, 14, 6, 5, 5])], "Symbols per module")

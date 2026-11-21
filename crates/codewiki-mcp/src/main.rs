@@ -109,8 +109,8 @@ struct PathParams {
 struct NoteParams {
     /// Note name (`Scan Module`) or vault path (`01-Core/cw-parse/Scan Module.md`).
     note: String,
-    /// Also return `How it works`, the step-by-step walk-through of which
-    /// function calls which. Left out by default: the code shows it.
+    /// Also return a `How it works` that is only the rule-made walk-through
+    /// of which function calls which. Left out by default: the code shows it.
     #[serde(default)]
     full: Option<bool>,
     /// Repository root path. Defaults to the directory the agent runs in.
@@ -173,6 +173,69 @@ struct ContractsParams {
     #[serde(default)]
     workspace: Option<bool>,
     /// Repository root path. Defaults to the directory the agent runs in. Ignored when `workspace` is true.
+    #[serde(default)]
+    repo: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct WaitingParams {
+    /// Only notes in this folder of the wiki, for example `01-Core/cw-parse`.
+    #[serde(default)]
+    folder: Option<String>,
+    /// Only notes about one of these repo-relative files, for example the files you just changed.
+    #[serde(default)]
+    files: Option<Vec<String>>,
+    /// How many notes to list, 1 to 20. Defaults to 5.
+    #[serde(default)]
+    limit: Option<u32>,
+    /// Repository root path. Defaults to the directory the agent runs in.
+    #[serde(default)]
+    repo: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct BriefParams {
+    /// Note name (`Scan Module`) or vault path (`01-Core/cw-parse/Scan Module.md`).
+    note: String,
+    /// Repository root path. Defaults to the directory the agent runs in.
+    #[serde(default)]
+    repo: Option<String>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct WrittenSection {
+    /// One of the headings the brief lists under "Your sections", exactly as written there.
+    heading: String,
+    /// The section's text in Markdown, without its heading. Prose, lists and `###` headings; no `#` or `##` heading.
+    text: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct WrittenPicture {
+    /// Heading of the section the picture stands in. One of your sections that the note has.
+    section: String,
+    /// The picture as a short program: `root = Picture([...])` with a `Flow` of `Step`s and `Callout`s. The brief lists the components and the limits.
+    source: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+struct SubmitParams {
+    /// Note name or vault path, as in the brief.
+    note: String,
+    /// The `base` value of the brief you wrote from.
+    base: String,
+    /// The sections you wrote. A section you leave out stays as it is.
+    sections: Vec<WrittenSection>,
+    /// At most one picture for a section, and only where a picture explains more than the text. A section sent without a picture loses the one it had.
+    #[serde(default)]
+    pictures: Option<Vec<WrittenPicture>>,
+    /// Repo-relative files you read beside the note's sources. A later change to one of them marks the explanation as behind.
+    #[serde(default)]
+    read: Option<Vec<String>>,
+    /// Your name as an agent, for example `claude-code`. Shown with the note.
+    #[serde(default)]
+    model: Option<String>,
+    /// Repository root path. Defaults to the directory the agent runs in.
     #[serde(default)]
     repo: Option<String>,
 }
@@ -1129,7 +1192,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "Read one wiki note, by note name or vault path: what the thing is for, where its source is, what each of its items does, its gotchas and what it depends on. The walk-through of calls under `How it works` is left out, since the code shows it; pass `full: true` to get it too."
+        description = "Read one wiki note, by note name or vault path: what the thing is for, where its source is, what each of its items does, its gotchas and what it depends on. While `How it works` is only the walk-through of calls that CodeWiki makes by rule, it is left out, since the code shows it; pass `full: true` to get it too. Once an agent explained that section, it is always included."
     )]
     async fn read_note(
         &self,
@@ -1162,23 +1225,306 @@ impl Bridge {
                 b.post(&format!("/v1/repos/{id}/update"), &json!({}))
             })
             .await?;
-        let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
-        let mut summary = format!(
-            "Wiki updated: {} notes written, {} unchanged, {} proposals queued for human review, {} removed, {} adopted. Total notes: {}.",
-            count("written"),
-            report["kept"],
-            count("proposed"),
-            count("removed"),
-            count("adopted"),
-            report["notes_total"]
+        text(sync_text(&report))
+    }
+
+    #[tool(
+        description = "List the wiki notes that wait for you to explain them. CodeWiki writes each note's facts from the code; what the thing is for and how it works is yours to write. Notes whose explanation may be behind the code come first, then notes never explained. Narrow the list with `folder` or `files`. Then call get_note_brief for a note."
+    )]
+    async fn list_waiting_notes(
+        &self,
+        Parameters(p): Parameters<WaitingParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let mut query: Vec<String> = Vec::new();
+        if let Some(folder) = p.folder.as_deref().filter(|f| !f.trim().is_empty()) {
+            query.push(format!("folder={}", encode(folder)));
+        }
+        let files = p.files.unwrap_or_default().join(",");
+        if !files.is_empty() {
+            query.push(format!("files={}", encode(&files)));
+        }
+        if let Some(limit) = p.limit {
+            query.push(format!("limit={limit}"));
+        }
+        let queue = self
+            .call(p.repo, move |b, id| {
+                b.get(&format!("/v1/repos/{id}/explanations?{}", query.join("&")))
+            })
+            .await?;
+        text(waiting_text(&queue))
+    }
+
+    #[tool(
+        description = "Get what you need to explain one wiki note: the note as it is, which sections are yours to write, the source files to read first, and the limits. Read every listed file before you write, then call submit_note with the `base` value from this brief."
+    )]
+    async fn get_note_brief(
+        &self,
+        Parameters(p): Parameters<BriefParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let note = p.note;
+        let brief = self
+            .call(p.repo, move |b, id| {
+                b.get(&format!(
+                    "/v1/repos/{id}/explanation?path={}",
+                    encode(&note)
+                ))
+            })
+            .await?;
+        text(brief_text(&brief))
+    }
+
+    #[tool(
+        description = "Send the sections you wrote for one wiki note, with pictures where one explains more than text. Send only your sections; CodeWiki puts them into the note and keeps its facts. The answer is `saved`, or a list of faults to fix and send again, or a request to read the brief again. A note its owner edited is not written: your text is queued for the owner to review."
+    )]
+    async fn submit_note(
+        &self,
+        Parameters(p): Parameters<SubmitParams>,
+    ) -> Result<CallToolResult, McpError> {
+        let note = p.note;
+        let body = json!({
+            "base": p.base,
+            "sections": p
+                .sections
+                .iter()
+                .map(|s| json!({ "heading": s.heading, "text": s.text }))
+                .collect::<Vec<_>>(),
+            "pictures": p
+                .pictures
+                .unwrap_or_default()
+                .iter()
+                .map(|x| json!({ "section": x.section, "source": x.source }))
+                .collect::<Vec<_>>(),
+            "read": p.read.unwrap_or_default(),
+            "model": p.model,
+        });
+        let outcome = self
+            .call(p.repo, move |b, id| {
+                b.put(
+                    &format!("/v1/repos/{id}/explanation?path={}", encode(&note)),
+                    &body,
+                )
+            })
+            .await?;
+        text(outcome_text(&outcome))
+    }
+}
+
+/// How many notes wait for an agent, in words; empty when none does.
+fn waiting_line(waiting: &Value) -> String {
+    let behind = waiting["behind"].as_u64().unwrap_or(0);
+    let unexplained = waiting["unexplained"].as_u64().unwrap_or(0);
+    if behind + unexplained == 0 {
+        return String::new();
+    }
+    format!(
+        "{} notes wait for an explanation: {behind} behind the code, {unexplained} never explained.",
+        behind + unexplained
+    )
+}
+
+/// What a sync did, and what it left for an agent.
+fn sync_text(report: &Value) -> String {
+    let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
+    let mut summary = format!(
+        "Wiki updated: {} notes written, {} unchanged, {} proposals queued for human review, {} removed, {} adopted. Total notes: {}.",
+        count("written"),
+        report["kept"],
+        count("proposed"),
+        count("removed"),
+        count("adopted"),
+        report["notes_total"]
+    );
+    if count("merged") > 0 {
+        summary.push_str(&format!(
+            " {} explained notes got new facts and kept their explanation.",
+            count("merged")
+        ));
+    }
+    let waiting = waiting_line(&json!({
+        "behind": count("behind"),
+        "unexplained": report["unexplained"].as_u64().unwrap_or(0),
+    }));
+    if !waiting.is_empty() {
+        summary.push_str(&format!(" {waiting} Call list_waiting_notes to see them."));
+    }
+    summary
+}
+
+/// The queue of notes that wait, for an agent to read.
+fn waiting_text(queue: &Value) -> String {
+    let notes = rows(queue, "notes");
+    let waiting = waiting_line(&queue["waiting"]);
+    if waiting.is_empty() {
+        return "No note waits for an explanation.\n".to_string();
+    }
+    let mut body = format!("{waiting}\n");
+    if notes.is_empty() {
+        body.push_str("None of them fits what you asked for.\n");
+        return body;
+    }
+    body.push_str(&format!(
+        "{} fit what you asked for; the first {}:\n\n",
+        queue["matching"].as_u64().unwrap_or(0),
+        notes.len()
+    ));
+    for (index, note) in notes.iter().enumerate() {
+        let why = match field(note, "why") {
+            "behind" => "behind the code",
+            _ => "never explained",
+        };
+        body.push_str(&format!(
+            "{}. {}  ({why})\n",
+            index + 1,
+            field(note, "path")
+        ));
+        for reason in rows(note, "behind") {
+            body.push_str(&format!("   - {}\n", reason.as_str().unwrap_or("")));
+        }
+        let sources: Vec<&str> = rows(note, "sources")
+            .into_iter()
+            .filter_map(Value::as_str)
+            .collect();
+        if !sources.is_empty() {
+            body.push_str(&format!("   about: {}\n", sources.join(", ")));
+        }
+    }
+    body.push_str(
+        "\nFor each note: call get_note_brief, read every file it lists, then call submit_note.\n",
+    );
+    body
+}
+
+/// The brief of one note, for an agent to read.
+fn brief_text(brief: &Value) -> String {
+    let mut body = format!(
+        "Note: {}\nbase: {}  (send this value back in submit_note)\n",
+        field(brief, "path"),
+        field(brief, "base")
+    );
+    if brief["sync_first"] == true {
+        body.push_str(
+            "\nSTOP: the code under this note changed since the last sync, so the facts below are old. Call sync_wiki, then get this brief again.\n",
         );
-        if let Some(message) = report["stopped"]["message"].as_str() {
-            summary.push_str(&format!(
-                " The LLM stopped part way ({message}); {} notes wait for the next sync_wiki.",
-                count("waiting")
+    }
+    if brief["edited_by_hand"] == true {
+        body.push_str(
+            "\nThe owner edited this note by hand. What you submit is not written into it: it is queued for the owner to review.\n",
+        );
+    }
+    let behind = rows(brief, "behind");
+    if !behind.is_empty() {
+        body.push_str("\nThe explanation may be behind the code:\n");
+        for reason in behind {
+            body.push_str(&format!("- {}\n", reason.as_str().unwrap_or("")));
+        }
+    }
+    body.push_str("\nYour sections (write these, and only these):\n");
+    for section in rows(brief, "yours") {
+        let state = match field(section, "written_by") {
+            "agent" => "an agent wrote it; rewrite it only if it is wrong or behind",
+            "rules" => "holds text made by rule from the code; replace it with an explanation",
+            _ => "not in the note yet",
+        };
+        body.push_str(&format!("- {}: {state}", field(section, "heading")));
+        if section["prose_only"] == true {
+            body.push_str(
+                ". Its code block is a fact CodeWiki writes: send prose only, it goes under the block",
+            );
+        }
+        body.push('\n');
+    }
+    let rules: Vec<&str> = rows(brief, "rules")
+        .into_iter()
+        .filter_map(Value::as_str)
+        .collect();
+    body.push_str(&format!(
+        "\nCodeWiki writes these sections from the code, and you cannot change them: {}.\n",
+        rules.join(", ")
+    ));
+    body.push_str("\nRead these files before you write:\n");
+    for source in rows(brief, "sources") {
+        body.push_str(&format!(
+            "- {}{}\n",
+            field(source, "path"),
+            if source["changed"] == true {
+                "  (changed since the note was explained)"
+            } else {
+                ""
+            }
+        ));
+    }
+    let limits = &brief["limits"];
+    body.push_str(&format!(
+        "\nText: at most {} words for a section. No `#` or `##` heading inside a text. Link to another note as [[Note Name]]; the note must exist. No Markdown links, no callouts, no checklists, no file names with line numbers.\n",
+        limits["section_words"]
+    ));
+    body.push_str(&format!(
+        "\nPictures: {}\nComponents:\n{}\n",
+        field(limits, "pictures"),
+        field(limits, "components")
+    ));
+    let pictures = rows(brief, "pictures");
+    if !pictures.is_empty() {
+        body.push_str("\nThe note's pictures now:\n");
+        for picture in pictures {
+            body.push_str(&format!(
+                "# section: {}\n{}\n",
+                field(picture, "section"),
+                field(picture, "source").trim_end()
             ));
         }
-        text(summary)
+    }
+    body.push_str(&format!(
+        "\n----- The note as it is -----\n{}",
+        field(brief, "text")
+    ));
+    body
+}
+
+/// What became of a submission, for an agent to act on.
+fn outcome_text(outcome: &Value) -> String {
+    match field(outcome, "outcome") {
+        "saved" => {
+            let sections: Vec<&str> = rows(outcome, "sections")
+                .into_iter()
+                .filter_map(Value::as_str)
+                .collect();
+            let waiting = waiting_line(&outcome["waiting"]);
+            format!(
+                "Saved {}. An agent's text is in: {}. Pictures: {}. {}\n",
+                field(outcome, "path"),
+                sections.join(", "),
+                outcome["pictures"],
+                if waiting.is_empty() {
+                    "No note waits any more.".to_string()
+                } else {
+                    waiting
+                }
+            )
+        }
+        "issues" => {
+            let mut body =
+                "Not saved. Fix each of these, then call submit_note again with the same base:\n"
+                    .to_string();
+            for issue in rows(outcome, "issues") {
+                body.push_str(&format!("- {}\n", issue.as_str().unwrap_or("")));
+            }
+            body
+        }
+        "proposed" => format!(
+            "Not written: {} Proposal {}.\n",
+            field(outcome, "message"),
+            field(outcome, "proposal")
+        ),
+        "sync_first" => format!(
+            "Not saved: {}. Call sync_wiki, then get_note_brief again.\n",
+            field(outcome, "message")
+        ),
+        "changed" => format!(
+            "Not saved: {}. Call get_note_brief again.\n",
+            field(outcome, "message")
+        ),
+        other => format!("Unknown answer '{other}': {outcome}\n"),
     }
 }
 
@@ -1207,7 +1553,7 @@ fn note_text(content: &Value) -> String {
 
 #[tool_handler(
     name = "codewiki",
-    instructions = "CodeWiki serves a maintained wiki and a structural index of the repository. Call get_overview first in an unfamiliar codebase. Before editing a file or symbol, call get_context on it. Use search_codebase to locate things and read_note for a note; read_note leaves out the walk-through of calls unless you pass full: true. After editing, call get_impacted_tests to learn which tests to run. Call sync_wiki after substantial code changes."
+    instructions = "CodeWiki serves a maintained wiki and a structural index of the repository. Call get_overview first in an unfamiliar codebase. Before editing a file or symbol, call get_context on it. Use search_codebase to locate things and read_note for a note; read_note leaves out the walk-through of calls unless you pass full: true. After editing, call get_impacted_tests to learn which tests to run. Call sync_wiki after substantial code changes. CodeWiki writes each note's facts and you write its explanation: list_waiting_notes shows the notes that wait, get_note_brief gives one note with the sections that are yours, submit_note sends what you wrote."
 )]
 impl ServerHandler for Bridge {}
 
@@ -1271,6 +1617,139 @@ mod tests {
         let whole = note_text(&json!({ "text": "# Crate Dependency Flow\n" }));
         assert_eq!(whole, "# Crate Dependency Flow\n");
         assert_eq!(note_text(&json!({})), "");
+    }
+
+    #[test]
+    fn a_sync_says_what_waits_for_an_agent() {
+        let quiet = sync_text(&json!({
+            "written": ["a.md"], "kept": 4, "proposed": [], "removed": [], "adopted": [],
+            "notes_total": 5, "merged": [], "behind": [], "unexplained": 0,
+        }));
+        assert_eq!(
+            quiet,
+            "Wiki updated: 1 notes written, 4 unchanged, 0 proposals queued for human review, 0 removed, 0 adopted. Total notes: 5."
+        );
+        // A report of an older backend has no such fields.
+        assert!(!sync_text(&json!({ "kept": 1, "notes_total": 1 })).contains("wait"));
+        let busy = sync_text(&json!({
+            "written": [], "kept": 4, "proposed": [], "removed": [], "adopted": [],
+            "notes_total": 5, "merged": ["a.md"], "behind": ["a.md", "b.md"], "unexplained": 3,
+        }));
+        assert!(
+            busy.ends_with(
+                "Total notes: 5. 1 explained notes got new facts and kept their explanation. 5 notes wait for an explanation: 2 behind the code, 3 never explained. Call list_waiting_notes to see them."
+            ),
+            "{busy}"
+        );
+    }
+
+    #[test]
+    fn the_queue_reads_as_a_list_of_work() {
+        let body = waiting_text(&json!({
+            "waiting": { "behind": 1, "unexplained": 7 },
+            "matching": 3,
+            "notes": [
+                { "path": "01-Core/app/Tray Module.md", "why": "behind",
+                  "behind": ["src/tray.rs changed"], "sources": ["src/tray.rs"] },
+                { "path": "01-Core/app/Autostart Module.md", "why": "unexplained",
+                  "sources": ["src/autostart.rs", "src/main.rs"] },
+            ],
+        }));
+        assert!(
+            body.starts_with(
+                "8 notes wait for an explanation: 1 behind the code, 7 never explained.\n3 fit what you asked for; the first 2:\n\n1. 01-Core/app/Tray Module.md  (behind the code)\n   - src/tray.rs changed\n   about: src/tray.rs\n2. 01-Core/app/Autostart Module.md  (never explained)\n   about: src/autostart.rs, src/main.rs\n"
+            ),
+            "{body}"
+        );
+        assert!(body.contains("call get_note_brief"), "{body}");
+        assert_eq!(
+            waiting_text(&json!({ "waiting": { "behind": 0, "unexplained": 0 }, "notes": [] })),
+            "No note waits for an explanation.\n"
+        );
+        let none = waiting_text(&json!({
+            "waiting": { "behind": 0, "unexplained": 2 }, "matching": 0, "notes": [],
+        }));
+        assert!(
+            none.ends_with("None of them fits what you asked for.\n"),
+            "{none}"
+        );
+    }
+
+    #[test]
+    fn a_brief_tells_an_agent_what_is_its_own() {
+        let body = brief_text(&json!({
+            "path": "00-Architecture/app Startup Flow.md",
+            "base": "abc123",
+            "text": "# app Startup Flow\n\n> Call sequence.\n",
+            "yours": [
+                { "heading": "How it works", "text": "", "written_by": "rules", "prose_only": true },
+                { "heading": "Gotchas", "text": "", "written_by": "nobody" },
+            ],
+            "rules": ["Source", "See also"],
+            "sources": [{ "path": "src/main.rs", "changed": true }, { "path": "src/app.rs" }],
+            "behind": ["src/main.rs changed"],
+            "pictures": [{ "section": "Gotchas", "source": "root = Picture([c])\nc = Callout(\"x\")\n" }],
+            "limits": { "section_words": 300, "pictures": "At most 4 pictures.", "components": "Picture(children: array)" },
+        }));
+        for expected in [
+            "Note: 00-Architecture/app Startup Flow.md\nbase: abc123  (send this value back in submit_note)\n",
+            "The explanation may be behind the code:\n- src/main.rs changed\n",
+            "- How it works: holds text made by rule from the code; replace it with an explanation. Its code block is a fact CodeWiki writes: send prose only, it goes under the block\n",
+            "- Gotchas: not in the note yet\n",
+            "you cannot change them: Source, See also.\n",
+            "- src/main.rs  (changed since the note was explained)\n- src/app.rs\n",
+            "at most 300 words for a section",
+            "Pictures: At most 4 pictures.\nComponents:\nPicture(children: array)\n",
+            "# section: Gotchas\nroot = Picture([c])\nc = Callout(\"x\")\n",
+            "----- The note as it is -----\n# app Startup Flow\n\n> Call sequence.\n",
+        ] {
+            assert!(body.contains(expected), "missing `{expected}` in:\n{body}");
+        }
+        assert!(!body.contains("STOP") && !body.contains("by hand"));
+        let warned = brief_text(&json!({ "sync_first": true, "edited_by_hand": true }));
+        assert!(warned.contains("STOP: the code under this note changed"));
+        assert!(warned.contains("queued for the owner to review"));
+    }
+
+    #[test]
+    fn each_answer_to_a_submission_says_what_to_do_next() {
+        assert_eq!(
+            outcome_text(&json!({
+                "outcome": "saved", "path": "01-Core/app/Tray Module.md",
+                "sections": ["What it does", "Gotchas"], "pictures": 1,
+                "waiting": { "behind": 0, "unexplained": 2 },
+            })),
+            "Saved 01-Core/app/Tray Module.md. An agent's text is in: What it does, Gotchas. Pictures: 1. 2 notes wait for an explanation: 0 behind the code, 2 never explained.\n"
+        );
+        let last = outcome_text(&json!({
+            "outcome": "saved", "path": "a.md", "sections": ["Gotchas"], "pictures": 0,
+            "waiting": { "behind": 0, "unexplained": 0 },
+        }));
+        assert!(
+            last.ends_with("Pictures: 0. No note waits any more.\n"),
+            "{last}"
+        );
+        assert_eq!(
+            outcome_text(
+                &json!({ "outcome": "issues", "issues": ["`Items` is not yours", "too long"] })
+            ),
+            "Not saved. Fix each of these, then call submit_note again with the same base:\n- `Items` is not yours\n- too long\n"
+        );
+        let proposed = outcome_text(&json!({
+            "outcome": "proposed", "proposal": "note-agent-abc", "message": "it waits in the review queue.",
+        }));
+        assert_eq!(
+            proposed,
+            "Not written: it waits in the review queue. Proposal note-agent-abc.\n"
+        );
+        assert!(
+            outcome_text(&json!({ "outcome": "sync_first", "message": "the code changed" }))
+                .ends_with("Call sync_wiki, then get_note_brief again.\n")
+        );
+        assert!(
+            outcome_text(&json!({ "outcome": "changed", "message": "the note changed" }))
+                .ends_with("Call get_note_brief again.\n")
+        );
     }
 
     #[test]

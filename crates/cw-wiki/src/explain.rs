@@ -22,8 +22,6 @@ const MAX_CALLS: usize = 6;
 const MAX_CALLERS: usize = 2;
 /// Functions of the note itself that a step goes on to describe.
 const MAX_HELPERS: usize = 2;
-/// Calls named in one step of an illustration, which has less room.
-const OUTLINE_CALLS: usize = 4;
 /// Entry points named after the steps.
 const MAX_MORE: usize = 6;
 /// Items listed in a note.
@@ -127,45 +125,6 @@ impl<'a> Walk<'a> {
             }
         }
         names
-    }
-
-    /// The walk-through for an illustration: each step's name, and one line
-    /// of plain text on who calls it and what it calls. An illustration
-    /// draws no code span and no link, so names stand bare.
-    pub fn outline(&self, subject: &str) -> Vec<(String, String)> {
-        let listed = |names: Vec<String>, shown: usize, joint: &str, more: usize| {
-            let more = more + names.len().saturating_sub(shown);
-            let mut text = names[..names.len().min(shown)].join(joint);
-            if more > 0 {
-                text.push_str(&format!(" and {more} more"));
-            }
-            text
-        };
-        self.steps
-            .iter()
-            .map(|step| {
-                let mut parts: Vec<String> = Vec::new();
-                if step.started {
-                    parts.push("The program starts here".to_string());
-                } else if !step.callers.is_empty() {
-                    let names = step.callers.iter().map(|(s, _)| short_name(s)).collect();
-                    parts.push(format!("Called by {}", listed(names, MAX_CALLERS, ", ", 0)));
-                }
-                if !step.calls.is_empty() {
-                    let names = step.calls.iter().map(|s| name_in(s, subject)).collect();
-                    parts.push(format!(
-                        "Calls {}",
-                        listed(names, OUTLINE_CALLS, ", then ", step.more_calls)
-                    ));
-                }
-                let detail = if parts.is_empty() {
-                    String::new()
-                } else {
-                    format!("{}.", parts.join(". "))
-                };
-                (name_in(step.entry, subject), detail)
-            })
-            .collect()
     }
 
     /// The walk-through as numbered steps, for the note `note_id` about

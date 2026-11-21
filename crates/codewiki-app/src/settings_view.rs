@@ -75,7 +75,6 @@ pub struct State {
     notes: HashMap<FieldId, Note>,
     /// Saved secrets whose input is open to take another in their place.
     typing: HashSet<FieldId>,
-    llm_test: Tested,
     embed_test: Tested,
     /// The backend's built-in embedding models (`GET /v1/models`), once
     /// they have arrived. Home reads it too, for its offer.
@@ -90,11 +89,6 @@ pub struct State {
     pub(crate) model_hint_dismissed: bool,
     /// The news about the last try to connect to a backend elsewhere.
     connect: Option<Note>,
-    /// What the backend says of the CLIProxyAPI the settings name
-    /// (`GET /v1/cliproxy`), once it has arrived.
-    cliproxy: Option<Value>,
-    /// Why that could not be read.
-    cliproxy_error: Option<String>,
     menu: Option<OpenMenu>,
     /// Holds the focus while the list of a select is open.
     menu_focus: FocusHandle,
@@ -135,7 +129,6 @@ impl State {
             pending: HashMap::new(),
             notes: HashMap::new(),
             typing: HashSet::new(),
-            llm_test: Tested::Not,
             embed_test: Tested::Not,
             models: None,
             models_error: None,
@@ -143,8 +136,6 @@ impl State {
             models_watched: false,
             model_hint_dismissed: prefs::read(MODEL_HINT).is_some(),
             connect: None,
-            cliproxy: None,
-            cliproxy_error: None,
             menu: None,
             menu_focus,
         };
@@ -281,10 +272,6 @@ impl AppView {
         self.settings.last = category;
         self.page = Page::Settings(category);
         self.page_serial += 1;
-        if category == Category::AiModel {
-            // Accounts come and go outside the app.
-            self.load_cliproxy(cx);
-        }
         cx.notify();
     }
 
@@ -411,49 +398,13 @@ impl AppView {
         });
     }
 
-    /// Whether the settings choose CLIProxyAPI and its page is open.
-    fn shows_proxy(&self) -> bool {
-        matches!(self.page, Page::Settings(Category::AiModel))
-            && self
-                .settings
-                .backend
-                .as_ref()
-                .is_some_and(|settings| settings["llm"]["provider"]["value"] == "cliproxy")
-    }
-
-    /// Ask the backend about the CLIProxyAPI the settings name, when its
-    /// page shows it. A backend on another machine keeps the proxy's
-    /// accounts to itself, and is not asked.
-    pub(crate) fn load_cliproxy(&mut self, cx: &mut Context<Self>) {
-        if !self.shows_proxy() || self.backend.as_ref().is_none_or(Backend::is_remote) {
-            return;
-        }
-        self.settings_request(
-            cx,
-            |backend| backend.get("/v1/cliproxy"),
-            |this, result, _| match result {
-                Ok(proxy) => {
-                    this.settings.cliproxy = Some(proxy);
-                    this.settings.cliproxy_error = None;
-                }
-                Err(error) => {
-                    log::warn!("could not ask about the CLIProxyAPI: {error}");
-                    this.settings.cliproxy_error = Some(error);
-                }
-            },
-        );
-    }
-
     /// Ask the backend for its settings.
     fn load_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_request(
             cx,
             |backend| backend.get("/v1/settings"),
-            |this, result, cx| match result {
-                Ok(settings) => {
-                    this.take_settings(settings);
-                    this.load_cliproxy(cx);
-                }
+            |this, result, _| match result {
+                Ok(settings) => this.take_settings(settings),
                 Err(error) => {
                     log::warn!("could not read the backend's settings: {error}");
                     this.settings.backend = None;
@@ -577,15 +528,12 @@ impl AppView {
             move |this, result, cx| match (result, field) {
                 (Ok(settings), field) => {
                     this.take_settings(settings);
-                    // A new address, key or provider may name another proxy.
-                    this.load_cliproxy(cx);
                     if embedder {
                         // The model shown in use may no longer be.
                         this.load_models(cx);
                     }
-                    // What the provider or the embedder was tested as may no
-                    // longer be what is chosen.
-                    this.settings.llm_test = Tested::Not;
+                    // What the embedder was tested as may no longer be what
+                    // is chosen.
                     this.settings.embed_test = Tested::Not;
                     if let Some(id) = field {
                         this.settings.notes.insert(id, Note::Saved);
@@ -619,27 +567,14 @@ impl AppView {
         .detach();
     }
 
-    /// Send the chosen provider or embedder one small request.
-    fn test_setting(&mut self, embedder: bool, cx: &mut Context<Self>) {
-        let route = if embedder {
-            self.settings.embed_test = Tested::Running;
-            "/v1/settings/test/embed"
-        } else {
-            self.settings.llm_test = Tested::Running;
-            "/v1/settings/test/llm"
-        };
+    /// Send the chosen embedder one small request.
+    fn test_embedder(&mut self, cx: &mut Context<Self>) {
+        self.settings.embed_test = Tested::Running;
         cx.notify();
         self.settings_request(
             cx,
-            move |backend| backend.post(route, &json!({})),
-            move |this, result, _| {
-                let line = test_line(result);
-                if embedder {
-                    this.settings.embed_test = line;
-                } else {
-                    this.settings.llm_test = line;
-                }
-            },
+            |backend| backend.post("/v1/settings/test/embed", &json!({})),
+            |this, result, _| this.settings.embed_test = test_line(result),
         );
     }
 
@@ -761,8 +696,7 @@ impl AppView {
                     );
                 }
             }
-            Action::TestLlm => self.test_setting(false, cx),
-            Action::TestEmbedder => self.test_setting(true, cx),
+            Action::TestEmbedder => self.test_embedder(cx),
             Action::ConnectRemote => self.connect_remote(cx),
             Action::UseLocalBackend => match cw_client::use_local() {
                 Ok(()) => {
@@ -816,11 +750,6 @@ impl AppView {
                 self.settings.model_hint_dismissed = true;
                 cx.notify();
             }
-            Action::ReloadProxy => {
-                self.settings.cliproxy_error = None;
-                self.load_cliproxy(cx);
-            }
-            Action::OpenUrl(url) => cx.open_url(url),
             Action::OpenDataFolder => {
                 let dir = cw_core::paths::data_dir();
                 log::info!("opening the data folder {}", dir.display());
@@ -1002,7 +931,6 @@ impl AppView {
                     settings_error: self.settings.error.as_deref(),
                     notes: &self.settings.notes,
                     typing: &self.settings.typing,
-                    llm_test: &self.settings.llm_test,
                     embed_test: &self.settings.embed_test,
                     models: self.settings.models.as_ref(),
                     models_error: self.settings.models_error.as_deref(),
@@ -1023,8 +951,6 @@ impl AppView {
                     data_dir: &data_dir,
                     error_reports: cw_telemetry::reporting(),
                     error_reports_on: cw_telemetry::consent(),
-                    cliproxy: self.settings.cliproxy.as_ref(),
-                    cliproxy_error: self.settings.cliproxy_error.as_deref(),
                 },
             )
         };
@@ -1198,10 +1124,11 @@ mod tests {
             "device",
             json!("cpu")
         )));
+        // An address it may read is not the embedder itself.
         assert!(!changes_the_embedder(&change(
-            "llm",
-            "provider",
-            json!("none")
+            "ollama",
+            "host",
+            json!("http://nas:11434")
         )));
     }
 
@@ -1276,16 +1203,16 @@ mod tests {
     #[test]
     fn a_change_names_one_field_of_one_section() {
         assert_eq!(
-            change("llm", "provider", json!("ollama")),
-            json!({ "llm": { "provider": "ollama" } })
+            change("embed", "provider", json!("ollama")),
+            json!({ "embed": { "provider": "ollama" } })
         );
         assert_eq!(
             change("openai", "api_key", json!({ "remove": true })),
             json!({ "openai": { "api_key": { "remove": true } } })
         );
         assert_eq!(
-            change("llm", "model", Value::Null),
-            json!({ "llm": { "model": null } })
+            change("embed", "model", Value::Null),
+            json!({ "embed": { "model": null } })
         );
     }
 }

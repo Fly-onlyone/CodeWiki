@@ -1,7 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "1")
-f1 = Stat("Used by notes", "1")
-f2 = Stat("Depends on notes", "10")
-flow = Steps([s0])
-s0 = Step("render", "Called by AppView::page_content. Calls text, then label, then card_content, then text_of and 15 more.")

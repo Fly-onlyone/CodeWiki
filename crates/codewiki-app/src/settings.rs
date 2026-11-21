@@ -10,7 +10,6 @@ use crate::icons::{self, Glyph};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Category {
     Appearance,
-    AiModel,
     Search,
     Backend,
     Repositories,
@@ -20,9 +19,8 @@ pub enum Category {
 }
 
 impl Category {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 7] = [
         Self::Appearance,
-        Self::AiModel,
         Self::Search,
         Self::Backend,
         Self::Repositories,
@@ -34,7 +32,6 @@ impl Category {
     pub fn label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
-            Self::AiModel => "AI model",
             Self::Search => "Semantic search",
             Self::Backend => "Backend",
             Self::Repositories => "Repositories",
@@ -47,7 +44,6 @@ impl Category {
     pub fn icon(self) -> Glyph {
         match self {
             Self::Appearance => icons::THEME,
-            Self::AiModel => icons::AI_MODEL,
             Self::Search => icons::SEARCH,
             Self::Backend => icons::BACKEND,
             Self::Repositories => icons::REPOSITORY,
@@ -61,7 +57,6 @@ impl Category {
     pub fn slug(self) -> &'static str {
         match self {
             Self::Appearance => "appearance",
-            Self::AiModel => "ai",
             Self::Search => "search",
             Self::Backend => "backend",
             Self::Repositories => "repositories",
@@ -85,27 +80,19 @@ impl Category {
 /// the app does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FieldId {
-    LlmModel,
-    AnthropicKey,
     OpenAiKey,
     OpenAiBaseUrl,
     OllamaHost,
-    CliproxyUrl,
-    CliproxyKey,
     EmbedModel,
     RemoteUrl,
     RemoteToken,
 }
 
 impl FieldId {
-    pub const ALL: [Self; 10] = [
-        Self::LlmModel,
-        Self::AnthropicKey,
+    pub const ALL: [Self; 6] = [
         Self::OpenAiKey,
         Self::OpenAiBaseUrl,
         Self::OllamaHost,
-        Self::CliproxyUrl,
-        Self::CliproxyKey,
         Self::EmbedModel,
         Self::RemoteUrl,
         Self::RemoteToken,
@@ -116,13 +103,9 @@ impl FieldId {
     /// address and token of a backend on another machine.
     pub fn place(self) -> Option<(&'static str, &'static str)> {
         match self {
-            Self::LlmModel => Some(("llm", "model")),
-            Self::AnthropicKey => Some(("anthropic", "api_key")),
             Self::OpenAiKey => Some(("openai", "api_key")),
             Self::OpenAiBaseUrl => Some(("openai", "base_url")),
             Self::OllamaHost => Some(("ollama", "host")),
-            Self::CliproxyUrl => Some(("cliproxy", "url")),
-            Self::CliproxyKey => Some(("cliproxy", "api_key")),
             Self::EmbedModel => Some(("embed", "model")),
             Self::RemoteUrl | Self::RemoteToken => None,
         }
@@ -130,21 +113,15 @@ impl FieldId {
 
     /// Whether what is typed is hidden, and never shown again once saved.
     pub fn secret(self) -> bool {
-        matches!(
-            self,
-            Self::AnthropicKey | Self::OpenAiKey | Self::CliproxyKey | Self::RemoteToken
-        )
+        matches!(self, Self::OpenAiKey | Self::RemoteToken)
     }
 
     /// What an empty input shows.
     pub fn placeholder(self) -> &'static str {
         match self {
-            Self::LlmModel => "Model name",
-            Self::AnthropicKey | Self::OpenAiKey => "Paste the key",
+            Self::OpenAiKey => "Paste the key",
             Self::OpenAiBaseUrl => "https://api.openai.com/v1",
             Self::OllamaHost => "http://127.0.0.1:11434",
-            Self::CliproxyUrl => "http://127.0.0.1:8317",
-            Self::CliproxyKey => "One of access.api-keys",
             Self::EmbedModel => "The provider's default",
             Self::RemoteUrl => "http://host:7411",
             Self::RemoteToken => "The backend's token",
@@ -167,13 +144,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_categories_are_the_eight_in_their_order() {
+    fn the_categories_are_the_seven_in_their_order() {
         let labels: Vec<&str> = Category::ALL.iter().map(|c| c.label()).collect();
         assert_eq!(
             labels,
             [
                 "Appearance",
-                "AI model",
                 "Semantic search",
                 "Backend",
                 "Repositories",
@@ -189,8 +165,10 @@ mod tests {
         for category in Category::ALL {
             assert_eq!(Category::from_slug(category.slug()), category);
         }
-        assert_eq!(Category::from_slug(" AI "), Category::AiModel);
-        // `settings:` alone, and a name nobody knows, open the first.
+        assert_eq!(Category::from_slug(" Search "), Category::Search);
+        // `settings:` alone, a name nobody knows, and the page of the AI
+        // model that CodeWiki once had, open the first.
+        assert_eq!(Category::from_slug("ai"), Category::Appearance);
         assert_eq!(Category::from_slug(""), Category::Appearance);
         assert_eq!(Category::from_slug("colours"), Category::Appearance);
     }
@@ -222,15 +200,7 @@ mod tests {
         }
         // The keys and the token are the secrets.
         let secrets: Vec<FieldId> = FieldId::ALL.into_iter().filter(|f| f.secret()).collect();
-        assert_eq!(
-            secrets,
-            [
-                FieldId::AnthropicKey,
-                FieldId::OpenAiKey,
-                FieldId::CliproxyKey,
-                FieldId::RemoteToken
-            ]
-        );
+        assert_eq!(secrets, [FieldId::OpenAiKey, FieldId::RemoteToken]);
         for field in secrets.iter().filter_map(|f| f.place()) {
             assert_eq!(field.1, "api_key");
         }

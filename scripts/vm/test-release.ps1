@@ -1196,10 +1196,10 @@ foreach ($window in $open) { "path: $($window.Document.Folder.Self.Path)"; $wind
     Stop-GuestApp
 }
 
-# The Settings page fills the window: a list of eight categories on the left,
+# The Settings page fills the window: a list of seven categories on the left,
 # the open one on the right. The rows are at x 92, y 109 + 36 n of the
 # window's client area at 100 percent (settings_layout.rs), anchored to its
-# top left corner. Each is clicked and photographed; the provider and the
+# top left corner. Each is clicked and photographed; the embedder and the
 # keys are left alone, so nothing is sent anywhere.
 Test-Case "ST1" "The Settings page and its categories" "each row of the list opens its category" {
     Start-GuestApp -Arguments $guestRepo, "settings:"
@@ -1208,7 +1208,7 @@ Test-Case "ST1" "The Settings page and its categories" "each row of the list ope
     if (-not $info) { throw "the app has no window" }
     $taken = @()
     $row = 0
-    foreach ($name in "appearance", "ai-model", "semantic-search", "backend", "repositories", "updates", "keyboard", "diagnostics") {
+    foreach ($name in "appearance", "semantic-search", "backend", "repositories", "updates", "keyboard", "diagnostics") {
         $x = $info.Left + [int](92 * $info.Scale)
         $y = $info.Top + [int]((109 + 36 * $row) * $info.Scale)
         Send-RestedClick -X $x -Y $y -RestSeconds 0.6
@@ -1216,8 +1216,8 @@ Test-Case "ST1" "The Settings page and its categories" "each row of the list ope
         $taken += Shot "settings-$name"
         $row += 1
     }
-    Add-Result -Id "ST1" -Title "The Settings page and its categories" -Expect "eight categories, each opened by its row" -Status note -Shots $taken `
-        -Observed "started on 'settings:' and clicked the eight rows of the list; read the screenshots: each must show its own heading (Appearance, AI model, Semantic search, Backend, Repositories, Updates, Keyboard, Diagnostics) with its row marked, cards on the right, and no sidebar or tabs. Updates must have the 'Daily check' switch, Appearance the 'Start with Windows' switch"
+    Add-Result -Id "ST1" -Title "The Settings page and its categories" -Expect "seven categories, each opened by its row" -Status note -Shots $taken `
+        -Observed "started on 'settings:' and clicked the seven rows of the list; read the screenshots: each must show its own heading (Appearance, Semantic search, Backend, Repositories, Updates, Keyboard, Diagnostics) with its row marked, cards on the right, and no sidebar or tabs. No row is named AI model. Semantic search must have the card 'Keys and addresses'. Updates must have the 'Daily check' switch, Appearance the 'Start with Windows' switch"
     Stop-GuestApp
 }
 
@@ -1449,7 +1449,7 @@ Test-Case "TR6" "The tray icon comes back when Explorer restarts" "Explorer is e
         -Observed "tray icons named CodeWiki before Explorer was ended: $before; after it started again: $($after.Count), tooltip '$(($after | Select-Object -First 1).Name)'"
 }
 
-Test-Case "D3" "MCP bridge over stdio" "initialize and tools/list answer; 24 tools" {
+Test-Case "D3" "MCP bridge over stdio" "initialize and tools/list answer; 27 tools" {
     $run = Invoke-GuestScript -TimeoutSec 120 -Script @"
 Set-Location '$guestRepo'
 `$requests = @(
@@ -1467,8 +1467,8 @@ foreach (`$line in `$answers) {
 `$global:LASTEXITCODE = 0
 "@
     $tools = if ($run.Output -match "tools: (\d+)") { [int]$Matches[1] } else { 0 }
-    Add-Result -Id "D3" -Title "MCP bridge over stdio" -Expect "initialize and tools/list answer; 24 tools" `
-        -Status $(if ($tools -eq 24) { "pass" } elseif ($tools -gt 0) { "note" } else { "fail" }) -Output $run.Output -Observed "tools listed: $tools"
+    Add-Result -Id "D3" -Title "MCP bridge over stdio" -Expect "initialize and tools/list answer; 27 tools" `
+        -Status $(if ($tools -eq 27) { "pass" } elseif ($tools -gt 0) { "note" } else { "fail" }) -Output $run.Output -Observed "tools listed: $tools"
 }
 
 # Each program keeps a log of its own. By now the app, a backend and the MCP
@@ -1841,7 +1841,7 @@ $global:LASTEXITCODE = 0
     # events say which servers connected, which tools were offered, what was
     # called, and what the session-start hook added.
     $session = ""
-    Test-Case "CC5" "Claude calls a CodeWiki tool" "the 24 tools are offered, get_overview is called without a permission prompt and answers from the wiki" {
+    Test-Case "CC5" "Claude calls a CodeWiki tool" "the 27 tools are offered, get_overview is called without a permission prompt and answers from the wiki" {
         if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
         $run = Invoke-GuestScript -TimeoutSec 600 -Script (@'
 Set-Location '{{REPO}}'
@@ -1881,9 +1881,9 @@ $global:LASTEXITCODE = 0
         $script:session = $run.Output
         $tools = if ($run.Output -match "codewiki tools offered: (\d+)") { [int]$Matches[1] } else { 0 }
         $answer = if ($run.Output -match "(?m)^answer: (.+)$") { $Matches[1].Trim() } else { "" }
-        $ok = $run.Output -match "codewiki server: plugin:codewiki:codewiki=connected" -and $tools -eq 24 -and
+        $ok = $run.Output -match "codewiki server: plugin:codewiki:codewiki=connected" -and $tools -eq 27 -and
             $run.Output -match "tool call: mcp__plugin_codewiki_codewiki__get_overview" -and $run.Output -match "result: error False, turns \d+, denials 0"
-        Add-Result -Id "CC5" -Title "Claude calls a CodeWiki tool" -Expect "24 tools offered; get_overview called and answered" `
+        Add-Result -Id "CC5" -Title "Claude calls a CodeWiki tool" -Expect "27 tools offered; get_overview called and answered" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
             -Observed "tools offered: $tools; get_overview called: $($run.Output -match 'tool call: mcp__plugin_codewiki_codewiki__get_overview'); Claude's answer: '$answer' (the home note's title is expected)"
     }

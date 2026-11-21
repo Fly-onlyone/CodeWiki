@@ -39,7 +39,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 ## Used by
 
-- [[cw-wiki]] — from `a_writer_draws_overviews_and_flows_only`, `an_integration_note_says_what_is_taken_and_at_which_version`, `reports_documentation_drift_and_coverage`, `run`
+- [[cw-wiki]] — from `an_integration_note_says_what_is_taken_and_at_which_version`, `reports_documentation_drift_and_coverage`, `run`, `sync`
 - [[Repo]] — from `Repo`, `at`, `build`, `new`
 - [[Generate Module]] — from `adopt_existing`, `generate`, `generate_with`
 - [[Analyze Module]] — from `analyze`, `dependency_graph`

@@ -1,7 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "3")
-f1 = Stat("Used by notes", "1")
-f2 = Stat("Depends on notes", "9")
-flow = Steps([s0])
-s0 = Step("run", "Called by run. Calls data_dir, then Error::invalid, then random_token, then Host::default and 8 more.")

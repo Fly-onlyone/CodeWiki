@@ -16,7 +16,7 @@ Agent instruction files are loaded into every session, so the briefing is short:
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `apply`. `apply` calls `render`, then `Error::io` in [[Error]], then `merge`. `render` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note]], then `load`, then `hotspots` (both in [[Gitintel Module]]).
+1. `run` in [[codewiki]] calls `apply`. `apply` calls `render`, then `Error::io` in [[Error]], then `merge`. `render` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `load`, then `hotspots` (both in [[Gitintel Module]]).
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -36,10 +36,10 @@ And 2 more private items with no comment.
 - [[Gitintel Module]] — uses `hotspots`, `load`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[Error Module]] — uses `Result`
+- [[Note Module]] — uses `parse`
 - [[Error]] — uses `io`
 - [[Index]] — uses `Index`
 - [[VaultMeta]] — uses `load`
-- [[Note]] — uses `parse`
 
 ## Used by
 

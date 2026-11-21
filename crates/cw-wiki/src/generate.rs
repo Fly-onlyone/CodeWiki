@@ -25,101 +25,32 @@ use crate::render::RenderCtx;
 /// Bump when rendering changes in a way that should refresh every note.
 pub const TEMPLATE_VERSION: u32 = 2;
 
-/// What a [`ProseWriter`] made of one note.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Rewrite {
-    /// The finished note. It must still pass the linter, or the draft is kept.
-    Text(String),
-    /// The writer answered with nothing usable. The draft is kept until the
-    /// note's inputs change, so the same answer is not paid for again.
-    Rejected,
-    /// The call failed. The draft is kept, and the next run asks again.
-    Failed,
-    /// Nothing can answer for now, for example every account of a provider
-    /// is at its limit. The run writes no more prose; the notes it did not
-    /// reach are left for the next run.
-    Stop(Stopped),
-}
-
-/// Why a run stopped writing prose.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Stopped {
-    /// The provider's own words.
-    pub message: String,
-    /// Seconds until the provider expects to answer again, when it said.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub retry_after_secs: Option<u64>,
-}
-
-/// Replaces the structural prose of a note, typically with an LLM. Anything
-/// but [`Rewrite::Text`] keeps the structural draft.
-pub trait ProseWriter {
-    /// Identifier recorded in the manifest, for example a model name.
-    fn name(&self) -> String;
-    fn rewrite(&self, note: &Planned, draft: &str, context: &WriterContext) -> Rewrite;
-    /// An illustration for the finished note, as OpenUI Lang source, or
-    /// `None` to keep the structural one. `structural` is the illustration
-    /// built from facts alone, when the note has one. The result is checked
-    /// against the component library before it is saved.
-    fn illustrate(
-        &self,
-        _note: &Planned,
-        _text: &str,
-        _structural: Option<&str>,
-        _context: &WriterContext,
-    ) -> Option<String> {
-        None
-    }
-    /// Calls and tokens spent so far; reported after each run.
-    fn usage(&self) -> WriterUsage {
-        WriterUsage::default()
-    }
-}
-
-/// What a writer spent during one run.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct WriterUsage {
-    pub calls: u64,
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    /// Calls whose output was rejected or failed; the structural draft was used.
-    pub fallbacks: u64,
-}
-
-/// Facts handed to a [`ProseWriter`].
-pub struct WriterContext<'a> {
-    pub repo_root: &'a Path,
-    /// Every note name that may be linked.
-    pub note_names: Vec<String>,
-}
-
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct Report {
     pub written: Vec<String>,
     pub proposed: Vec<String>,
     pub removed: Vec<String>,
     pub adopted: Vec<String>,
-    /// Illustration files written this run.
-    #[serde(default)]
-    pub illustrated: Vec<String>,
     /// Notes left unmanaged because another note already has the same name.
     #[serde(default)]
     pub skipped: Vec<String>,
+    /// Notes an agent explained whose facts changed: rules wrote their own
+    /// sections anew and the agent's sections stayed.
+    #[serde(default)]
+    pub merged: Vec<String>,
+    /// Notes whose explanation may be behind the code: a file it was
+    /// written from changed since.
+    #[serde(default)]
+    pub behind: Vec<String>,
+    /// Notes rules wrote that no agent has explained yet.
+    #[serde(default)]
+    pub unexplained: usize,
     pub kept: usize,
     pub notes_total: usize,
     pub lint_warnings: usize,
     /// Share of wikilinks in CodeWiki-written notes that resolve.
     pub link_rate: f64,
-    /// LLM spend of this run; all zero in keyless mode.
-    #[serde(default)]
-    pub llm: WriterUsage,
     pub commit: Option<String>,
-    /// Set when the writer stopped the run part way.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub stopped: Option<Stopped>,
-    /// Notes left for the next run because the run stopped before them.
-    #[serde(default)]
-    pub waiting: Vec<String>,
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -256,7 +187,8 @@ fn adopt_existing(
             commit: None,
             model: None,
             illustration: None,
-            owed: false,
+            explained: None,
+            behind: Vec::new(),
         };
         report.adopted.push(path);
         meta.notes.insert(entry.id.clone(), entry);
@@ -286,9 +218,8 @@ pub fn generate(
     facts: &RepoFacts,
     metrics: &[(String, NodeMetrics)],
     commit: Option<String>,
-    writer: Option<&dyn ProseWriter>,
 ) -> Result<Report> {
-    generate_with(root, facts, metrics, commit, writer, &NoPackageInfo)
+    generate_with(root, facts, metrics, commit, &NoPackageInfo)
 }
 
 /// [`generate`], with `packages` to say what a package from outside the
@@ -298,7 +229,6 @@ pub fn generate_with(
     facts: &RepoFacts,
     metrics: &[(String, NodeMetrics)],
     commit: Option<String>,
-    writer: Option<&dyn ProseWriter>,
     packages: &dyn PackageInfo,
 ) -> Result<Report> {
     let vault = root.join(VAULT_DIR);
@@ -422,25 +352,14 @@ pub fn generate_with(
         .unwrap_or_else(|| "Repository".into());
     let plan = Plan { notes, owner };
     let ctx = RenderCtx::new(&repo, &plan, &registry, &repo_name);
-    let writer_context = WriterContext {
-        repo_root: root,
-        note_names: registry
-            .entries()
-            .filter(|e| !matches!(e.kind, NoteKind::Home | NoteKind::Index))
-            .map(|e| {
-                let stem = e.path.rsplit('/').next().unwrap_or(&e.path);
-                stem.trim_end_matches(".md").to_string()
-            })
-            .collect(),
-    };
     let file_hashes: HashMap<&str, &str> = facts
         .files
         .iter()
         .map(|f| (f.path.as_str(), f.hash.as_str()))
         .collect();
 
-    // Structural drafts must pass the linter on their own: they are both the
-    // keyless output and the fallback when a writer's prose is rejected.
+    // Every draft must pass the linter: it is what the rules write, and what
+    // an agent's explanation is later woven into.
     let mut drafts: BTreeMap<String, String> = BTreeMap::new();
     let mut errors: Vec<String> = Vec::new();
     for note in &plan.notes {
@@ -464,39 +383,25 @@ pub fn generate_with(
         )));
     }
 
-    let writer_name = writer.map(|w| w.name());
-    let is_map = |note: &Planned| matches!(note.kind, NoteKind::Home | NoteKind::Index);
-    // Called only for notes that are about to be written or proposed, so an
-    // unchanged repository costs no LLM calls. Gives the text, the writer
-    // that wrote it, and whether a failed call leaves the note owed to the
-    // next run; or why the writer stopped the run.
-    let finalize = |note: &Planned,
-                    path: &str,
-                    draft: &str|
-     -> std::result::Result<(String, Option<String>, bool), Stopped> {
-        let Some(writer) = writer.filter(|_| !is_map(note)) else {
-            return Ok((draft.to_string(), None, false));
-        };
-        match writer.rewrite(note, draft, &writer_context) {
-            Rewrite::Text(candidate) => {
-                // Prose that breaks the house style is discarded, not repaired by hand.
-                let clean = lint(&candidate, path, note.kind, &registry, Mode::Strict)
-                    .iter()
-                    .all(|i| i.severity != Severity::Error);
-                if clean {
-                    Ok((candidate, writer_name.clone(), false))
-                } else {
-                    Ok((draft.to_string(), None, false))
-                }
-            }
-            Rewrite::Rejected => Ok((draft.to_string(), None, false)),
-            Rewrite::Failed => Ok((draft.to_string(), None, true)),
-            Rewrite::Stop(stopped) => Err(stopped),
+    // Notes CodeWiki wrote whose subject no longer exists go at the end of
+    // this run, unless their owner changed them. They are known now, since
+    // a link to one of them is dead already.
+    let planned_ids: HashSet<&str> = plan.notes.iter().map(|n| n.id.as_str()).collect();
+    let mut leaving: HashSet<String> = HashSet::new();
+    for entry in meta
+        .notes
+        .values()
+        .filter(|e| e.origin == Origin::Generated && !planned_ids.contains(e.id.as_str()))
+    {
+        let untouched = read_optional(&vault.join(&entry.path))?
+            .is_none_or(|text| body_hash(&text) == entry.body_hash);
+        if untouched {
+            leaving.insert(entry.id.clone());
         }
-    };
-    // After a stop, a note that needs prose waits for the next run.
-    let waits = |note: &Planned, report: &Report| {
-        report.stopped.is_some() && writer.is_some() && !is_map(note)
+    }
+    let links = Links {
+        registry: &registry,
+        leaving: &leaving,
     };
 
     for note in &plan.notes {
@@ -515,21 +420,9 @@ pub fn generate_with(
                 })
             })
             .collect();
-        // The hash covers generation inputs, never the output, so a writer
-        // that phrases things differently each run does not cause churn.
-        let mut hash_input = format!("v{TEMPLATE_VERSION}\n{draft}");
-        if let Some(name) = &writer_name
-            && !is_map(note)
-        {
-            // A writer reads function bodies, so edits there matter even when
-            // the structural draft is unchanged.
-            hash_input.push_str(&format!("\nwriter:{name}"));
-            for source in &sources {
-                hash_input.push_str(&format!("\n{}:{}", source.path, source.hash));
-            }
-        }
-        let input_hash = sha256_hex(hash_input);
-        let fresh_entry = |text: &str, model: Option<String>, owed: bool| NoteEntry {
+        // The hash covers what the note is written from, never the note.
+        let input_hash = sha256_hex(format!("v{TEMPLATE_VERSION}\n{draft}"));
+        let fresh_entry = |text: &str| NoteEntry {
             id: note.id.clone(),
             path: path.clone(),
             kind: note.kind,
@@ -539,28 +432,17 @@ pub fn generate_with(
             input_hash: input_hash.clone(),
             rejected_inputs: Vec::new(),
             commit: commit.clone(),
-            model,
+            model: None,
             illustration: None,
-            owed,
+            explained: None,
+            behind: Vec::new(),
         };
 
         let Some(entry) = meta.notes.get_mut(&note.id) else {
-            if waits(note, &report) {
-                report.waiting.push(path.clone());
-                continue;
-            }
-            let (text, model, owed) = match finalize(note, path, draft) {
-                Ok(done) => done,
-                Err(stopped) => {
-                    report.stopped = Some(stopped);
-                    report.waiting.push(path.clone());
-                    continue;
-                }
-            };
-            write_note(&full, &text)?;
+            write_note(&full, draft)?;
             report.written.push(path.clone());
-            meta.notes
-                .insert(note.id.clone(), fresh_entry(&text, model, owed));
+            report.unexplained += usize::from(note.kind.explainable());
+            meta.notes.insert(note.id.clone(), fresh_entry(draft));
             continue;
         };
         // First contact with an adopted note: record what a regeneration
@@ -575,32 +457,37 @@ pub fn generate_with(
         }
         let changed = entry.input_hash != input_hash;
         let state = lifecycle::state(entry, disk.as_deref(), changed);
-        // A note whose writer call failed is asked for again, as long as
-        // nobody has edited the draft it fell back to.
-        let owed = entry.owed && writer.is_some() && !is_map(note);
-        let action = match state {
-            NoteState::Generated | NoteState::Stale if owed => Action::Regenerate,
-            _ => lifecycle::action(entry, state, &input_hash),
-        };
-        if action != Action::Keep && waits(note, &report) {
-            report.waiting.push(path.clone());
-            continue;
-        }
-        match action {
+        // Reasons the explanation is behind that this run itself gives.
+        let mut moved: Vec<String> = Vec::new();
+        match lifecycle::action(entry, state, &input_hash) {
             Action::Keep => report.kept += 1,
+            Action::Merge => {
+                // The facts are the fresh draft's; the explanation is the
+                // agent's, as it stands in the note.
+                let current = disk.clone().unwrap_or_default();
+                let woven = weave_kept(entry, &current, draft, note.kind, &links, false);
+                write_note(&full, &woven.text)?;
+                report.merged.push(path.clone());
+                for heading in &woven.folded {
+                    moved.push(format!(
+                        "{MOVED}`{heading}` is no section of this kind of note any more; its text was moved"
+                    ));
+                }
+                entry.kind = note.kind;
+                entry.sources = sources.clone();
+                entry.body_hash = body_hash(&woven.text);
+                entry.input_hash = input_hash.clone();
+                entry.commit = commit.clone();
+                if let Some(explained) = entry.explained.as_mut() {
+                    explained.sections = woven.written;
+                }
+                keep_placed_pictures(&vault, entry, &woven.text)?;
+            }
             Action::Regenerate => {
-                let (text, model, owed) = match finalize(note, path, draft) {
-                    Ok(done) => done,
-                    Err(stopped) => {
-                        report.stopped = Some(stopped);
-                        report.waiting.push(path.clone());
-                        continue;
-                    }
-                };
-                write_note(&full, &text)?;
+                write_note(&full, draft)?;
                 report.written.push(path.clone());
                 let rejected = std::mem::take(&mut entry.rejected_inputs);
-                *entry = fresh_entry(&text, model, owed);
+                *entry = fresh_entry(draft);
                 entry.rejected_inputs = rejected;
             }
             Action::Propose => {
@@ -612,20 +499,16 @@ pub fn generate_with(
                         && p.status == proposal::ProposalStatus::Pending
                 });
                 if !pending_same {
-                    let text = match finalize(note, path, draft) {
-                        Ok((text, _, _)) => text,
-                        Err(stopped) => {
-                            report.stopped = Some(stopped);
-                            report.waiting.push(path.clone());
-                            continue;
-                        }
-                    };
+                    // The proposal is about the facts. What an agent
+                    // wrote stays in what is proposed, and so does a
+                    // section the owner added that rules do not write.
+                    let proposed = weave_kept(entry, &current, draft, note.kind, &links, true).text;
                     proposal::create(
                         &vault,
                         &note.id,
                         path,
                         &current,
-                        &text,
+                        &proposed,
                         &input_hash,
                         "cited source code changed",
                     )?;
@@ -633,112 +516,81 @@ pub fn generate_with(
                 report.proposed.push(path.clone());
             }
         }
-    }
-    // Illustrations sit beside their note as `<Note>.openui`. They follow the
-    // note's ownership: only notes CodeWiki still owns get theirs refreshed.
-    for note in &plan.notes {
-        // An illustration that fails its own library check is never saved.
-        let structural = ctx
-            .illustration(note)
-            .filter(|source| cw_illustrate::check(source).is_valid());
-        let drawable = structural.is_some() || note.kind == NoteKind::Flow;
-        let Some(entry) = meta.notes.get_mut(&note.id) else {
+
+        let Some(explained) = &entry.explained else {
+            entry.behind.clear();
+            // A note its owner changed is not in the agents' queue: what
+            // an agent wrote for it would only be a proposal.
+            let untouched = state != NoteState::HumanEdited && state != NoteState::HumanEditedStale;
+            report.unexplained += usize::from(note.kind.explainable() && untouched);
             continue;
         };
-        let note_text = read_optional(&vault.join(&entry.path))?;
-        let Some(note_text) = note_text
-            .filter(|t| entry.origin == Origin::Generated && body_hash(t) == entry.body_hash)
-        else {
-            continue;
-        };
-        let relative = illustration_path(&entry.path);
-        let full = vault.join(&relative);
-        if !drawable {
-            // The note may have had a picture once and has nothing to show
-            // now: a file left behind would still be served with the note.
-            // The manifest cannot say whether there is one, since a note
-            // written anew starts with a fresh entry.
-            entry.illustration = None;
-            match std::fs::remove_file(&full) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(Error::io(&full, e)),
-            }
-            continue;
+        // The explanation was written from files. One that reads otherwise
+        // now may have made it wrong; only an agent can tell.
+        let mut behind: Vec<String> = explained
+            .sources
+            .iter()
+            .filter_map(|source| {
+                let now = file_hashes
+                    .get(source.path.as_str())
+                    .map(|hash| hash.to_string())
+                    .or_else(|| file_hash(root, &source.path));
+                match now {
+                    Some(hash) if hash == source.hash => None,
+                    Some(_) => Some(format!("{} changed", source.path)),
+                    None => Some(format!("{} is gone", source.path)),
+                }
+            })
+            .collect();
+        // A section that moved stays a reason until an agent writes again.
+        behind.extend(
+            entry
+                .behind
+                .iter()
+                .filter(|l| l.starts_with(MOVED))
+                .cloned(),
+        );
+        behind.extend(moved);
+        if !behind.is_empty() {
+            report.behind.push(path.clone());
         }
-        let existing = read_optional(&full)?;
-        // A writer draws a crate's overview and a flow, where the note's
-        // text says more than counts do. The picture of a module, a type or
-        // an integration is its walk-through and its counts, which are
-        // facts: asking for those would cost a call for each note and could
-        // only make them less exact.
-        let redrawn = matches!(note.subject, Subject::Crate(_)) || note.kind == NoteKind::Flow;
-        let source = match writer.filter(|_| redrawn) {
-            // A writer draws only when the note changed in this run or has no
-            // illustration yet; otherwise every sync would pay for a redraw.
-            // After a stop it draws nothing more.
-            Some(writer)
-                if report.stopped.is_none()
-                    && (report.written.contains(&entry.path) || existing.is_none()) =>
-            {
-                writer
-                    .illustrate(note, &note_text, structural.as_deref(), &writer_context)
-                    .filter(|source| cw_illustrate::check(source).is_valid())
-                    .or(structural)
-            }
-            // Keep what an earlier run with a writer drew.
-            Some(_) => existing
-                .clone()
-                .filter(|source| cw_illustrate::check(source).is_valid())
-                .or(structural),
-            None => structural,
-        };
-        let Some(source) = source else {
-            continue;
-        };
-        if existing.as_deref() != Some(source.as_str()) {
-            write_note(&full, &source)?;
-            report.illustrated.push(relative.clone());
-        }
-        entry.illustration = Some(relative);
+        entry.behind = behind;
     }
-    if let Some(writer) = writer {
-        report.llm = writer.usage();
+    // A picture explains what a note says, and rules cannot tell what a
+    // thing is for: they draw none. Only an agent that explained a note
+    // gives it pictures, in `<Note>.openui` beside it. A picture file of a
+    // note no agent explained is one that rules drew before; it goes.
+    for entry in meta.notes.values_mut().filter(|e| e.explained.is_none()) {
+        entry.illustration = None;
+        let full = vault.join(illustration_path(&entry.path));
+        match std::fs::remove_file(&full) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::io(&full, e)),
+        }
     }
 
-    // Notes CodeWiki wrote whose subject no longer exists.
-    let planned_ids: HashSet<&str> = plan.notes.iter().map(|n| n.id.as_str()).collect();
-    let stale: Vec<String> = meta
-        .notes
-        .values()
-        .filter(|e| e.origin == Origin::Generated && !planned_ids.contains(e.id.as_str()))
-        .map(|e| e.id.clone())
-        .collect();
-    for id in stale {
-        let entry = &meta.notes[&id];
+    // The notes whose subject no longer exists.
+    let mut leaving: Vec<String> = leaving.into_iter().collect();
+    leaving.sort();
+    for id in leaving {
+        let Some(entry) = meta.notes.remove(&id) else {
+            continue;
+        };
         let full = vault.join(&entry.path);
-        let disk = read_optional(&full)?;
-        let untouched = disk
-            .as_deref()
-            .is_none_or(|t| body_hash(t) == entry.body_hash);
-        if untouched {
-            if disk.is_some() {
-                std::fs::remove_file(&full).map_err(|e| Error::io(&full, e))?;
-            }
-            // The illustration has no meaning without its note.
-            let _ = std::fs::remove_file(vault.join(illustration_path(&entry.path)));
-            report.removed.push(entry.path.clone());
-            meta.notes.remove(&id);
+        match std::fs::remove_file(&full) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::io(&full, e)),
         }
+        // Pictures have no meaning without their note.
+        let _ = std::fs::remove_file(vault.join(illustration_path(&entry.path)));
+        report.removed.push(entry.path);
     }
 
     write_readme(&vault, &repo_name)?;
-    // A stopped run leaves notes behind, so the wiki is not yet current with
-    // the commit: keep the old one and the wiki still reads as behind.
-    if report.stopped.is_none() {
-        meta.manifest.template_version = TEMPLATE_VERSION;
-        meta.manifest.last_indexed_commit = commit;
-    }
+    meta.manifest.template_version = TEMPLATE_VERSION;
+    meta.manifest.last_indexed_commit = commit;
     meta.save(&vault)?;
 
     let final_registry = meta.registry()?;
@@ -756,7 +608,101 @@ pub fn generate_with(
     Ok(report)
 }
 
-/// Vault path of the illustration that belongs to the note at `note_path`.
+/// How a line of [`NoteEntry::behind`] starts that says a section of the
+/// agent's lost its place.
+const MOVED: &str = "the section ";
+
+/// The hash of the repository file `path` as it is now, made as a scan
+/// makes it; nothing for a file that is gone or leaves the repository.
+pub(crate) fn file_hash(root: &Path, path: &str) -> Option<String> {
+    let inside = !path.is_empty()
+        && !path.contains(':')
+        && !path.starts_with(['/', '\\'])
+        && path.split(['/', '\\']).all(|part| part != "..");
+    if !inside {
+        return None;
+    }
+    std::fs::read(root.join(path)).ok().map(sha256_hex)
+}
+
+/// Which links of a note lead to a note once this run is over.
+struct Links<'a> {
+    registry: &'a Registry,
+    /// Ids of the notes this run removes.
+    leaving: &'a HashSet<String>,
+}
+
+impl Links<'_> {
+    fn alive(&self, target: &str, from_path: &str) -> bool {
+        self.registry
+            .resolve(target, from_path)
+            .is_some_and(|entry| !self.leaving.contains(&entry.id))
+    }
+}
+
+/// The fresh `draft` of a note with the sections an agent wrote, as they
+/// stand in `current`, the note on disk. A link of the agent's to a note
+/// that is gone becomes plain words.
+///
+/// With `owners_too`, for a note its owner edited: a section that rules do
+/// not write at all, such as `Gotchas`, is kept as well. It can only be the
+/// owner's, and the draft has nothing to put in its place.
+fn weave_kept(
+    entry: &NoteEntry,
+    current: &str,
+    draft: &str,
+    kind: NoteKind,
+    links: &Links,
+    owners_too: bool,
+) -> cw_vault::Woven {
+    let mut headings: Vec<String> = entry
+        .explained
+        .as_ref()
+        .map(|explained| explained.sections.clone())
+        .unwrap_or_default();
+    if owners_too {
+        let (_, drafted) = cw_vault::note::split(draft);
+        for heading in kind.agent_sections() {
+            let by_rules = drafted.iter().any(|s| s.heading == *heading);
+            if !by_rules && !headings.iter().any(|h| h == heading) {
+                headings.push(heading.to_string());
+            }
+        }
+    }
+    let mut agent = cw_vault::extract(current, kind, &headings);
+    for section in &mut agent {
+        section.body =
+            cw_vault::unlink_dead(&section.body, |target| links.alive(target, &entry.path));
+    }
+    cw_vault::weave(draft, &agent, kind)
+}
+
+/// Keep the pictures of a note whose section the note `text` still has. A
+/// picture stands inside a section and has no place without it.
+fn keep_placed_pictures(vault: &Path, entry: &mut NoteEntry, text: &str) -> Result<()> {
+    let relative = illustration_path(&entry.path);
+    let full = vault.join(&relative);
+    let Some(file) = read_optional(&full)? else {
+        entry.illustration = None;
+        return Ok(());
+    };
+    let (_, sections) = cw_vault::note::split(text);
+    let mut pictures = cw_illustrate::parse_pictures(&file);
+    let before = pictures.len();
+    pictures.retain(|picture| sections.iter().any(|s| s.heading == picture.section));
+    if pictures.is_empty() {
+        std::fs::remove_file(&full).map_err(|e| Error::io(&full, e))?;
+        entry.illustration = None;
+    } else {
+        if pictures.len() != before {
+            write_note(&full, &cw_illustrate::serialize_pictures(&pictures))?;
+        }
+        entry.illustration = Some(relative);
+    }
+    Ok(())
+}
+
+/// Vault path of the file that holds the pictures of the note at `note_path`.
 pub fn illustration_path(note_path: &str) -> String {
     format!(
         "{}.{}",

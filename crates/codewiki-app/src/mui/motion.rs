@@ -46,8 +46,6 @@ pub const PAGE_RISE: f32 = 30.0;
 pub const CARD_RISE: f32 = 40.0;
 /// Travel of a `listStagger` item, from the left.
 pub const ROW_SLIDE: f32 = 20.0;
-/// Travel of `tabSwitch`.
-pub const TAB_RISE: f32 = 10.0;
 
 /// `staggerCascade`: time between two cards.
 pub const CARD_STAGGER: Duration = Duration::from_millis(80);
@@ -205,8 +203,6 @@ pub struct Enter {
 impl Enter {
     /// `pageEntrance`.
     pub const PAGE: Self = Self::rise(PAGE_RISE, PAGE);
-    /// `tabSwitch`.
-    pub const TAB: Self = Self::rise(TAB_RISE, SNAPPY);
     /// `scaleIn`, without the scale: a short drop on the bouncy spring.
     pub const DIALOG: Self = Self::rise(-12.0, BOUNCY);
     /// A menu under its button. MUI grows a menu out of its anchor
@@ -386,13 +382,7 @@ mod tests {
 
     #[test]
     fn an_entrance_ends_in_place_and_fully_visible() {
-        for enter in [
-            Enter::PAGE,
-            Enter::TAB,
-            Enter::MENU,
-            Enter::card(4),
-            Enter::row(2),
-        ] {
+        for enter in [Enter::PAGE, Enter::MENU, Enter::card(4), Enter::row(2)] {
             let (x, y, opacity) = enter.at(0.0);
             assert_eq!((x, y), enter.from);
             assert_eq!(opacity, 0.0);

@@ -12,7 +12,7 @@ tags: [core, cw-core, module]
 
 ## How it works
 
-1. `repo_id` in [[Paths Module]] and `scan_repo` in [[Scan Module]], and 3 more, call `sha256_hex`.
+1. `repo_id` in [[Paths Module]] and `scan_repo` in [[Scan Module]], and 4 more, call `sha256_hex`.
 2. `webhook_signed` in [[Api Module]] calls `hmac_sha256`.
 3. `require_token` and `webhook_signed` in [[Api Module]] call `constant_time_eq`.
 4. `body_hash` in [[Manifest Module]] calls `normalize_text`.
@@ -28,11 +28,12 @@ tags: [core, cw-core, module]
 ## Used by
 
 - [[Api Module]] — from `require_token`, `webhook_signed`
+- [[Generate Module]] — from `file_hash`, `generate_with`
 - [[cw-server]] — from `signature`
 - [[Paths Module]] — from `repo_id`
 - [[Scan Module]] — from `scan_repo`
 - [[Manifest Module]] — from `body_hash`
-- [[Generate Module]] — from `generate_with`
+- [[Proposal Module]] — from `create_agent`
 - [[Run]] — from `plan`
 
 ## See also

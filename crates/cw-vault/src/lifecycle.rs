@@ -26,6 +26,9 @@ pub enum Action {
     Keep,
     /// Write fresh content directly.
     Regenerate,
+    /// Write the fresh content of the rules' sections and keep the sections
+    /// an agent wrote.
+    Merge,
     /// Write fresh content as a proposal for human review.
     Propose,
 }
@@ -54,6 +57,9 @@ pub fn action(entry: &NoteEntry, state: NoteState, new_input_hash: &str) -> Acti
         NoteState::Generated | NoteState::Stale => {
             if entry.input_hash == new_input_hash {
                 Action::Keep
+            } else if entry.explained.is_some() {
+                // An agent's explanation is not the rules' to overwrite.
+                Action::Merge
             } else {
                 Action::Regenerate
             }
@@ -89,7 +95,8 @@ mod tests {
             commit: None,
             model: None,
             illustration: None,
-            owed: false,
+            explained: None,
+            behind: Vec::new(),
         }
     }
 
@@ -123,6 +130,28 @@ mod tests {
                 assert_ne!(action(&e, s, input), Action::Regenerate);
             }
         }
+    }
+
+    #[test]
+    fn an_explained_note_is_merged_and_never_written_over() {
+        let mut e = entry(Origin::Generated, "# N\n");
+        e.explained = Some(crate::manifest::Explained {
+            sections: vec!["How it works".into()],
+            sources: vec![],
+            commit: None,
+        });
+        // As the agent left it: the rules' sections follow the code.
+        assert_eq!(action(&e, NoteState::Stale, "in-2"), Action::Merge);
+        assert_eq!(action(&e, NoteState::Generated, "in-2"), Action::Merge);
+        assert_eq!(action(&e, NoteState::Stale, "in-1"), Action::Keep);
+        // Changed by hand after the agent: a proposal, as for any note.
+        assert_eq!(
+            action(&e, NoteState::HumanEditedStale, "in-2"),
+            Action::Propose
+        );
+        assert_eq!(action(&e, NoteState::HumanEdited, "in-2"), Action::Keep);
+        // The file is gone: rules write the note again.
+        assert_eq!(action(&e, NoteState::Missing, "in-1"), Action::Regenerate);
     }
 
     #[test]

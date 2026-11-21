@@ -37,7 +37,7 @@ pub fn decode(value: &str) -> String {
 /// Code spans and fenced blocks are left untouched.
 #[cfg(test)]
 pub fn prepare_note(text: &str) -> String {
-    prepare_note_with(text, false, |_| Diagram::Source)
+    prepare_note_with(text, &[], |_| Diagram::Source)
 }
 
 /// What the viewer shows in place of one Mermaid block.
@@ -53,18 +53,26 @@ pub enum Diagram {
 /// Line shown where a diagram is still being drawn.
 pub const DRAWING: &str = "*Drawing diagram…*";
 
-/// Language of the empty code block that stands where a note's illustration
-/// is drawn. The viewer draws the illustration in place of such a block.
+/// Language of the code block that stands where one of a note's pictures
+/// is drawn. The block holds the picture's number among the note's
+/// pictures, and the viewer draws that picture in its place.
 pub const FIGURE_BLOCK: &str = "codewiki-figure";
 
+/// The number of the picture a [`FIGURE_BLOCK`] with this text stands for.
+pub fn figure_index(block: &str) -> Option<usize> {
+    block.trim().parse().ok()
+}
+
 /// [`prepare_note`] with diagram support. `diagram` receives the source of
-/// each Mermaid block and says what to show in its place. With `figure`, a
-/// [`FIGURE_BLOCK`] is put under the note's summary, or under its title when
-/// it has no summary: the reader meets what the note is about, then the
-/// picture of it, then the text.
+/// each Mermaid block and says what to show in its place.
+///
+/// `figures` are the headings of the sections that have a picture. A
+/// [`FIGURE_BLOCK`] is put directly under each such heading: a picture
+/// stands inside the section it explains, and the reader meets it before
+/// the text it makes easier.
 pub fn prepare_note_with(
     text: &str,
-    figure: bool,
+    figures: &[&str],
     mut diagram: impl FnMut(&str) -> Diagram,
 ) -> String {
     let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -84,13 +92,8 @@ pub fn prepare_note_with(
     let mut out = String::with_capacity(text.len() + 64);
     let mut in_fence = false;
     let mut tags_placed = tags.is_empty();
-    // Where the illustration goes: nowhere yet, after the summary that is
-    // still to come or is being read, or placed.
-    let mut figure = if figure {
-        Figure::BeforeTitle
-    } else {
-        Figure::Placed
-    };
+    // The pictures that have their block already.
+    let mut placed: Vec<usize> = Vec::new();
     // Source of the Mermaid block being collected, with its opening fence.
     let mut mermaid: Option<(String, String)> = None;
     for line in lines {
@@ -113,25 +116,6 @@ pub fn prepare_note_with(
             }
             continue;
         }
-        // The summary is the quote directly under the title. The first
-        // line after it, or the first line of anything else, comes after
-        // the illustration.
-        match figure {
-            Figure::AfterTitle if line.starts_with('>') => figure = Figure::InSummary,
-            Figure::AfterTitle if line.trim().is_empty() => {}
-            Figure::AfterTitle | Figure::InSummary if !line.starts_with('>') => {
-                if !out.ends_with("\n\n") {
-                    out.push('\n');
-                }
-                out.push_str(&format!("```{FIGURE_BLOCK}\n```\n"));
-                // A blank line follows by itself when this line is one.
-                if !line.trim().is_empty() {
-                    out.push('\n');
-                }
-                figure = Figure::Placed;
-            }
-            _ => {}
-        }
         if !in_fence && line.trim_start().starts_with("```mermaid") {
             mermaid = Some((line.to_string(), String::new()));
             continue;
@@ -152,27 +136,18 @@ pub fn prepare_note_with(
             out.push_str(&format!("\n{}\n", rendered.join(" ")));
             tags_placed = true;
         }
-        if figure == Figure::BeforeTitle && line.starts_with("# ") {
-            figure = Figure::AfterTitle;
+        // The picture of a section, under its heading. A `## ` line inside
+        // a code block is code, and a heading met twice gets one picture.
+        if !in_fence
+            && let Some(heading) = line.strip_prefix("## ")
+            && let Some(index) = figures.iter().position(|f| *f == heading.trim())
+            && !placed.contains(&index)
+        {
+            out.push_str(&format!("\n```{FIGURE_BLOCK}\n{index}\n```\n"));
+            placed.push(index);
         }
-    }
-    // A note that ends with its title or its summary, or has no title.
-    if figure != Figure::Placed {
-        if !out.ends_with("\n\n") {
-            out.push('\n');
-        }
-        out.push_str(&format!("```{FIGURE_BLOCK}\n```\n"));
     }
     out
-}
-
-/// How far [`prepare_note_with`] is with placing the illustration.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Figure {
-    BeforeTitle,
-    AfterTitle,
-    InSummary,
-    Placed,
 }
 
 /// Replace wikilinks in one line of prose.
@@ -227,45 +202,33 @@ pub fn outline(text: &str) -> Vec<String> {
 mod tests {
     use super::*;
 
-    /// Where the illustration's block stands in the prepared note.
-    fn with_figure(note: &str) -> String {
-        prepare_note_with(note, true, |_| Diagram::Source)
-    }
-
     #[test]
-    fn the_illustration_stands_under_the_summary() {
-        let block = "```codewiki-figure\n```";
-        let note = "---\ntags: [core, module]\n---\n\n# Autostart Module\n\n> Starting the app\n> at sign-in.\n\n## What it does\n\nText.\n";
+    fn a_picture_stands_under_the_heading_of_its_section() {
+        let note = "---\ntags: [core, module]\n---\n\n# Autostart Module\n\n> Starting the app at sign-in.\n\n## What it does\n\nText.\n\n## Source\n\n- `a.rs`\n\n## How it works\n\nSteps.\n";
+        let out = prepare_note_with(note, &["How it works", "What it does"], |_| Diagram::Source);
         assert_eq!(
-            with_figure(note),
-            format!(
-                "\n# Autostart Module\n\n`core` `module`\n\n> Starting the app\n> at sign-in.\n\n{block}\n\n## What it does\n\nText.\n"
-            )
+            out,
+            "\n# Autostart Module\n\n`core` `module`\n\n> Starting the app at sign-in.\n\n## What it does\n\n```codewiki-figure\n1\n```\n\nText.\n\n## Source\n\n- `a.rs`\n\n## How it works\n\n```codewiki-figure\n0\n```\n\nSteps.\n"
         );
-        // Without a summary, under the title and its tags.
-        assert_eq!(
-            with_figure("---\ntags: [core]\n---\n\n# T\n\n## Source\n\n- `a`\n"),
-            format!("\n# T\n\n`core`\n\n{block}\n\n## Source\n\n- `a`\n")
-        );
-        // A quote further down is not the summary.
-        let later = with_figure("# T\n\nBody.\n\n> Quote.\n");
-        assert_eq!(later, format!("# T\n\n{block}\n\nBody.\n\n> Quote.\n"));
-        // A note that ends with its summary, and one with no title at all.
-        assert_eq!(
-            with_figure("# T\n\n> S.\n"),
-            format!("# T\n\n> S.\n\n{block}\n")
-        );
-        assert_eq!(with_figure("Body.\n"), format!("Body.\n\n{block}\n"));
-        // Exactly one block, and none for a note without an illustration.
-        for text in [
-            note,
-            "# T\n",
-            "",
-            "# T\n\n> S.\n\n```rust\n> not a quote\n```\n",
-        ] {
-            assert_eq!(with_figure(text).matches(FIGURE_BLOCK).count(), 1, "{text}");
-            assert!(!prepare_note(text).contains(FIGURE_BLOCK), "{text}");
-        }
+        // The block names its picture by number.
+        assert_eq!(figure_index("1\n"), Some(1));
+        assert_eq!(figure_index(" 0 "), Some(0));
+        assert_eq!(figure_index(""), None);
+        assert_eq!(figure_index("one"), None);
+
+        // No picture, no block; a picture of a section the note lacks has
+        // no place.
+        assert!(!prepare_note(note).contains(FIGURE_BLOCK));
+        let none = prepare_note_with(note, &["Gotchas"], |_| Diagram::Source);
+        assert_eq!(none, prepare_note(note));
+        // A heading in a code block is code, and a heading met twice gets
+        // the picture once.
+        let tricky = "# T\n\n```md\n## Gotchas\n```\n\n## Gotchas\n\nA.\n\n## Gotchas\n\nB.\n";
+        let out = prepare_note_with(tricky, &["Gotchas"], |_| Diagram::Source);
+        assert_eq!(out.matches(FIGURE_BLOCK).count(), 1);
+        assert!(out.contains(
+            "```md\n## Gotchas\n```\n\n## Gotchas\n\n```codewiki-figure\n0\n```\n\nA.\n"
+        ));
     }
 
     #[test]
@@ -284,7 +247,7 @@ mod tests {
     fn replaces_renderable_diagrams_and_keeps_the_rest() {
         let note = "# T\n\n```mermaid\nflowchart LR\n    A --> B\n```\n\ntext\n\n```mermaid\nbroken\n```\n\n```rust\nlet x = 1;\n```\n";
         let mut seen = Vec::new();
-        let out = prepare_note_with(note, false, |source| {
+        let out = prepare_note_with(note, &[], |source| {
             seen.push(source.to_string());
             if source.starts_with("flowchart") {
                 Diagram::Image(0)
@@ -303,7 +266,7 @@ mod tests {
     fn a_diagram_being_drawn_leaves_a_line_in_its_place() {
         let note =
             "# T\n\nbefore\n\n```mermaid\nflowchart LR\n    A --> B\n```\n\nafter [[Other]]\n";
-        let out = prepare_note_with(note, false, |_| Diagram::Drawing);
+        let out = prepare_note_with(note, &[], |_| Diagram::Drawing);
         assert!(out.contains(&format!("before\n\n{DRAWING}\n\nafter ")));
         assert!(!out.contains("flowchart LR"));
         assert!(!out.contains("```"));

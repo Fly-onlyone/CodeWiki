@@ -20,7 +20,7 @@ A change takes effect when it is made. A switch, a select or a choice acts on it
 
 1. `AppView::new` in [[codewiki-app]] calls `State::new`. `State::new` calls `read` in [[Prefs Module]].
 2. `AppView::take_settings` in [[codewiki-app]] calls `shown_value`.
-3. `AppView::test_setting` in [[codewiki-app]] calls `test_line`.
+3. `AppView::test_embedder` in [[codewiki-app]] calls `test_line`.
 4. `AppView::settings_menu_view` in [[codewiki-app]] calls `lists_themes`.
 5. `AppView::commit_settings_field` and `AppView::run_settings_action` in [[codewiki-app]] call `change`.
 

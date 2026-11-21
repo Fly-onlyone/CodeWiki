@@ -2,15 +2,15 @@
 tags: [moc, home]
 ---
 
-# note-style — Knowledge Vault
+# agent-writer — Knowledge Vault
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **note-style** is a Rust codebase of 20 crates and 339 source files. This vault maps its architecture, modules and conventions.
+> **agent-writer** is a Rust codebase of 19 crates and 335 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
-- [[Crate Dependency Flow]] — how the 20 workspace crates depend on each other, from entry points down to shared foundations.
+- [[Crate Dependency Flow]] — how the 19 workspace crates depend on each other, from entry points down to shared foundations.
 - [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 11 parts of the codebase.
 - [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 11 parts of the codebase.
 - [[codewiki-mcp Startup Flow]] — call sequence from the `main` entry point of `codewiki-mcp` across 4 parts of the codebase.
@@ -27,9 +27,8 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 - [[01-Core/cw-embed-engine/_index|cw-embed-engine/]] — runs CodeWiki's built-in embedding models with candle, in the hidden worker process.
 - [[01-Core/cw-embed/_index|cw-embed/]] — text embeddings for CodeWiki's semantic search: a built-in local embedder and HTTP providers.
 - [[01-Core/cw-graph/_index|cw-graph/]] — graph construction, metrics, community detection and layout for CodeWiki.
-- [[01-Core/cw-illustrate/_index|cw-illustrate/]] — CodeWiki's illustration component library and structural illustration builders.
+- [[01-Core/cw-illustrate/_index|cw-illustrate/]] — the pictures of a CodeWiki note: their components, their limits and the file that keeps them.
 - [[01-Core/cw-index/_index|cw-index/]] — SQLite index: files, symbols, edges, metrics and full-text search for CodeWiki.
-- [[01-Core/cw-llm/_index|cw-llm/]] — LLM providers and the prose writer for CodeWiki.
 - [[01-Core/cw-mermaid/_index|cw-mermaid/]] — Mermaid diagram rendering for CodeWiki.
 - [[01-Core/cw-models/_index|cw-models/]] — Built-in embedding models of CodeWiki: the catalog, the machine's hardware, the recommendation and the model files on disk.
 - [[01-Core/cw-parse/_index|cw-parse/]] — source parsing and symbol extraction for CodeWiki.
@@ -46,7 +45,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 
 ## 🧩 Patterns
 
-→ [[04-Patterns/_index|All patterns]] — Implementing Embedder Pattern, Implementing LlmProvider Pattern, Implementing PackageInfo Pattern, Implementing ProseWriter Pattern.
+→ [[04-Patterns/_index|All patterns]] — Implementing Embedder Pattern, Implementing PackageInfo Pattern.
 
 ## 🛠️ Operations
 

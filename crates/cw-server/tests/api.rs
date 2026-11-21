@@ -312,22 +312,15 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
         if cfg!(windows) { "dpapi" } else { "env_only" }
     );
     assert_eq!(
-        settings["llm"]["provider"],
-        json!({
-            "value": "none",
-            "source": "default",
-            "env": "CODEWIKI_LLM",
-            "default": "none",
-            "options": ["none", "anthropic", "openai", "ollama", "claude-cli", "codex-cli", "cliproxy"],
-        })
+        settings["embed"]["model"],
+        json!({ "value": null, "source": "default", "env": "CODEWIKI_EMBED_MODEL", "default": null })
     );
-    assert_eq!(
-        settings["llm"]["model"],
-        json!({ "value": null, "source": "default", "env": "CODEWIKI_MODEL", "default": null })
-    );
-    // No provider is chosen, which is not a problem.
-    assert_eq!(settings["llm"]["name"], Value::Null);
-    assert_eq!(settings["llm"]["problem"], Value::Null);
+    // CodeWiki calls no AI model: the settings of the writer it once had
+    // are no settings.
+    for retired in ["llm", "anthropic", "cliproxy"] {
+        assert_eq!(settings.get(retired), None, "{retired}");
+    }
+    assert_eq!(settings["embed"]["problem"], Value::Null);
     assert_eq!(settings["embed"]["provider"]["value"], "local");
     // The built-in embedder is listed wherever the build can run a model,
     // before any model is installed.
@@ -346,10 +339,9 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
             .starts_with("local")
     );
     assert_eq!(
-        settings["anthropic"]["api_key"],
-        json!({ "state": "unset", "hint": "", "env": "ANTHROPIC_API_KEY" })
+        settings["openai"]["api_key"],
+        json!({ "state": "unset", "hint": "", "env": "OPENAI_API_KEY" })
     );
-    assert_eq!(settings["openai"]["api_key"]["state"], "unset");
     assert_eq!(
         settings["openai"]["base_url"]["value"],
         "https://api.openai.com/v1"
@@ -366,41 +358,36 @@ async fn a_saved_setting_is_reported_and_takes_effect() {
         .put(
             "/v1/settings",
             json!({
-                "llm": { "provider": "Ollama", "model": " llama " },
+                "embed": { "provider": "Ollama", "model": " nomic " },
                 "ollama": { "host": "http://box:11434/" },
             }),
         )
         .await;
-    assert_eq!(settings["llm"]["provider"]["value"], "ollama");
-    assert_eq!(settings["llm"]["provider"]["source"], "saved");
-    assert_eq!(settings["llm"]["model"]["value"], "llama");
+    assert_eq!(settings["embed"]["provider"]["value"], "ollama");
+    assert_eq!(settings["embed"]["provider"]["source"], "saved");
+    assert_eq!(settings["embed"]["model"]["value"], "nomic");
     assert_eq!(settings["ollama"]["host"]["value"], "http://box:11434");
-    assert_eq!(settings["llm"]["name"], "ollama:llama");
-    assert_eq!(settings["llm"]["problem"], Value::Null);
+    assert_eq!(settings["embed"]["name"], "ollama:nomic");
+    assert_eq!(settings["embed"]["problem"], Value::Null);
     assert_eq!(h.get("/v1/settings").await, settings);
 
     // A field that is not named stays; `null` clears one.
     let settings = h
-        .put("/v1/settings", json!({ "llm": { "model": null } }))
+        .put("/v1/settings", json!({ "embed": { "model": null } }))
         .await;
-    assert_eq!(settings["llm"]["provider"]["value"], "ollama");
-    assert_eq!(settings["llm"]["model"]["value"], Value::Null);
-    assert_eq!(settings["llm"]["model"]["source"], "default");
-    // The provider now lacks its model, and the description says so.
-    assert_eq!(settings["llm"]["name"], Value::Null);
-    let problem = settings["llm"]["problem"].as_str().unwrap();
-    assert!(
-        problem.contains("a model") && problem.contains("CODEWIKI_MODEL"),
-        "{problem}"
-    );
+    assert_eq!(settings["embed"]["provider"]["value"], "ollama");
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    assert_eq!(settings["embed"]["model"]["source"], "default");
+    // The embedder then takes its own default model.
+    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
 
     // Blank text clears as well.
     let settings = h
-        .put("/v1/settings", json!({ "llm": { "provider": "  " } }))
+        .put("/v1/settings", json!({ "embed": { "provider": "  " } }))
         .await;
-    assert_eq!(settings["llm"]["provider"]["value"], "none");
-    assert_eq!(settings["llm"]["provider"]["source"], "default");
-    assert_eq!(settings["llm"]["problem"], Value::Null);
+    assert_eq!(settings["embed"]["provider"]["value"], "local");
+    assert_eq!(settings["embed"]["provider"]["source"], "default");
+    assert_eq!(settings["embed"]["problem"], Value::Null);
 }
 
 #[cfg(windows)]
@@ -413,20 +400,20 @@ async fn a_saved_key_is_never_shown() {
         .put(
             "/v1/settings",
             json!({
-                "llm": { "provider": "anthropic" },
-                "anthropic": { "api_key": { "set": KEY } },
+                "embed": { "provider": "openai" },
+                "openai": { "api_key": { "set": KEY } },
             }),
         )
         .await;
     assert_eq!(
-        settings["anthropic"]["api_key"],
-        json!({ "state": "saved", "hint": "0042", "env": "ANTHROPIC_API_KEY" })
+        settings["openai"]["api_key"],
+        json!({ "state": "saved", "hint": "0042", "env": "OPENAI_API_KEY" })
     );
     assert!(
-        settings["llm"]["name"]
+        settings["embed"]["name"]
             .as_str()
             .unwrap()
-            .starts_with("anthropic:")
+            .starts_with("openai:")
     );
     assert!(!settings.to_string().contains(KEY));
     assert!(!h.get("/v1/settings").await.to_string().contains(KEY));
@@ -436,42 +423,45 @@ async fn a_saved_key_is_never_shown() {
     let settings = h
         .put(
             "/v1/settings",
-            json!({ "anthropic": { "api_key": { "remove": true } } }),
+            json!({ "openai": { "api_key": { "remove": true } } }),
         )
         .await;
-    assert_eq!(settings["anthropic"]["api_key"]["state"], "unset");
-    let problem = settings["llm"]["problem"].as_str().unwrap();
-    assert!(problem.contains("ANTHROPIC_API_KEY"), "{problem}");
+    assert_eq!(settings["openai"]["api_key"]["state"], "unset");
+    let problem = settings["embed"]["problem"].as_str().unwrap();
+    assert!(problem.contains("OPENAI_API_KEY"), "{problem}");
+    h.put("/v1/settings", json!({ "embed": { "provider": null } }))
+        .await;
 }
 
 #[tokio::test]
 async fn a_change_that_cannot_be_applied_changes_nothing() {
     let h = Harness::new();
-    h.put("/v1/settings", json!({ "llm": { "provider": "ollama" } }))
+    h.put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
         .await;
     for (body, expected) in [
-        (
-            json!({ "llm": { "provider": "gpt" } }),
-            "unknown provider 'gpt'",
-        ),
         (
             json!({ "embed": { "provider": "bert" } }),
             "unknown embedder 'bert'",
         ),
         (
-            json!({ "llm": { "colour": "red" } }),
-            "unknown setting 'llm.colour'",
+            json!({ "embed": { "colour": "red" } }),
+            "unknown setting 'embed.colour'",
         ),
         (
             json!({ "paint": { "colour": "red" } }),
             "unknown setting 'paint.colour'",
         ),
+        // The writer CodeWiki once had is no setting any more.
         (
-            json!({ "llm": { "model": 7 } }),
-            "llm.model must be text or null",
+            json!({ "llm": { "provider": "ollama" } }),
+            "unknown setting 'llm.provider'",
         ),
-        (json!({ "llm": "ollama" }), "'llm' must be an object"),
-        (json!(["llm"]), "must be a JSON object"),
+        (
+            json!({ "embed": { "model": 7 } }),
+            "embed.model must be text or null",
+        ),
+        (json!({ "embed": "ollama" }), "'embed' must be an object"),
+        (json!(["embed"]), "must be a JSON object"),
         (
             json!({ "openai": { "base_url": "api.openai.com" } }),
             "starts with http://",
@@ -482,8 +472,8 @@ async fn a_change_that_cannot_be_applied_changes_nothing() {
         ),
         // One field that can be applied beside one that cannot.
         (
-            json!({ "llm": { "model": "llama", "provider": "gpt" } }),
-            "unknown provider 'gpt'",
+            json!({ "embed": { "model": "nomic", "provider": "bert" } }),
+            "unknown embedder 'bert'",
         ),
     ] {
         let (status, error) = h.refused(body.clone()).await;
@@ -491,9 +481,10 @@ async fn a_change_that_cannot_be_applied_changes_nothing() {
         assert!(error.contains(expected), "{body}: {error}");
     }
     let settings = h.get("/v1/settings").await;
-    assert_eq!(settings["llm"]["provider"]["value"], "ollama");
-    assert_eq!(settings["llm"]["model"]["value"], Value::Null);
-    assert_eq!(settings["embed"]["provider"]["value"], "local");
+    assert_eq!(settings["embed"]["provider"]["value"], "ollama");
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    h.put("/v1/settings", json!({ "embed": { "provider": null } }))
+        .await;
 }
 
 /// Put a model of the catalog under the data directory as an install leaves
@@ -669,9 +660,9 @@ async fn pending_builtin_does_not_check_the_device() {
     );
 }
 
-/// An environment in which only the model is set.
+/// An environment in which only the embedder's model is set.
 fn model_from_env(name: &str) -> Option<String> {
-    (name == "CODEWIKI_MODEL").then(|| "env-model".to_string())
+    (name == "CODEWIKI_EMBED_MODEL").then(|| "env-model".to_string())
 }
 
 #[tokio::test]
@@ -679,34 +670,38 @@ async fn a_setting_given_by_the_environment_cannot_be_changed() {
     let h = Harness::with_config(Some(SECRET), true, model_from_env);
     let settings = h.get("/v1/settings").await;
     assert_eq!(
-        settings["llm"]["model"],
-        json!({ "value": "env-model", "source": "env", "env": "CODEWIKI_MODEL", "default": null })
+        settings["embed"]["model"],
+        json!({ "value": "env-model", "source": "env", "env": "CODEWIKI_EMBED_MODEL", "default": null })
     );
-    let (status, error) = h.refused(json!({ "llm": { "model": "other" } })).await;
+    let (status, error) = h.refused(json!({ "embed": { "model": "other" } })).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(
-        error.contains("llm.model is set by the environment variable CODEWIKI_MODEL"),
+        error.contains("embed.model is set by the environment variable CODEWIKI_EMBED_MODEL"),
         "{error}"
     );
     // The settings beside it can still be changed, and work with it.
     let settings = h
-        .put("/v1/settings", json!({ "llm": { "provider": "ollama" } }))
+        .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
         .await;
-    assert_eq!(settings["llm"]["name"], "ollama:env-model");
+    assert_eq!(settings["embed"]["name"], "ollama:env-model");
+    h.put("/v1/settings", json!({ "embed": { "provider": null } }))
+        .await;
 }
 
 #[tokio::test]
 async fn a_server_that_listens_beyond_this_machine_takes_no_changes() {
     let h = Harness::with_config(Some(SECRET), false, no_env);
     assert_eq!(h.get("/v1/settings").await["writable"], false);
-    let (status, error) = h.refused(json!({ "llm": { "provider": "ollama" } })).await;
+    let (status, error) = h
+        .refused(json!({ "embed": { "provider": "ollama" } }))
+        .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert!(error.contains("environment variables"), "{error}");
     assert!(!h.data.path().join("settings.json").exists());
 }
 
-/// Answer one HTTP request with `status` and `reply`, in place of a
-/// provider. Returns the address to point a setting at.
+/// Answer one HTTP request with `status` and `reply`, in place of an
+/// embedder's server. Returns the address to point a setting at.
 fn stand_in(status: u16, reply: Value) -> String {
     use std::io::{BufRead, BufReader, Read, Write};
 
@@ -744,212 +739,41 @@ fn stand_in(status: u16, reply: Value) -> String {
     url
 }
 
-/// One answer of [`stand_in_many`]: status, extra headers, JSON body.
-type Answer = (u16, Vec<(&'static str, &'static str)>, Value);
-
-/// Answer one request per connection with `answers`, in order, as a
-/// CLIProxyAPI would. Returns the address, and the method and target
-/// (path with query) of each request once all are answered.
-fn stand_in_many(answers: Vec<Answer>) -> (String, std::thread::JoinHandle<Vec<String>>) {
-    use std::io::{BufRead, BufReader, Read, Write};
-
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", listener.local_addr().unwrap());
-    let handle = std::thread::spawn(move || {
-        let mut asked = Vec::new();
-        for (status, headers, reply) in answers {
-            let (stream, _) = listener.accept().unwrap();
-            let mut reader = BufReader::new(stream);
-            let mut request_line = String::new();
-            reader.read_line(&mut request_line).unwrap();
-            let mut parts = request_line.split_whitespace();
-            asked.push(format!(
-                "{} {}",
-                parts.next().unwrap_or(""),
-                parts.next().unwrap_or("")
-            ));
-            let mut length = 0usize;
-            loop {
-                let mut line = String::new();
-                reader.read_line(&mut line).unwrap();
-                let line = line.trim_end();
-                if line.is_empty() {
-                    break;
-                }
-                if let Some((key, value)) = line.split_once(':')
-                    && key.eq_ignore_ascii_case("content-length")
-                {
-                    length = value.trim().parse().unwrap_or(0);
-                }
-            }
-            let mut body = vec![0; length];
-            reader.read_exact(&mut body).unwrap();
-            let text = reply.to_string();
-            let mut head = format!("HTTP/1.1 {status} X\r\nContent-Type: application/json\r\n");
-            for (key, value) in headers {
-                head.push_str(&format!("{key}: {value}\r\n"));
-            }
-            let mut stream = reader.into_inner();
-            write!(
-                stream,
-                "{head}Content-Length: {}\r\nConnection: close\r\n\r\n{text}",
-                text.len()
-            )
-            .unwrap();
-            stream.flush().unwrap();
-        }
-        asked
-    });
-    (url, handle)
-}
-
-/// Point the settings at a CLIProxyAPI at `url`, with its client key.
-/// Made-up key: not a real one.
-async fn use_proxy(h: &Harness, url: &str) {
-    h.put(
-        "/v1/settings",
-        json!({ "cliproxy": {
-            "url": url,
-            "api_key": { "set": "client-key-for-tests" },
-        }}),
-    )
-    .await;
-}
-
-#[cfg(windows)]
 #[tokio::test]
-async fn the_proxy_page_lists_its_models_and_its_panel() {
+async fn a_test_reports_whether_the_embedder_answers() {
     let h = Harness::new();
-    let (url, proxy) = stand_in_many(vec![
-        // Is anything there: any answer will do.
-        (401, vec![], json!({ "error": "missing api key" })),
-        (
-            200,
-            vec![],
-            json!({ "data": [{ "id": "gpt-5-codex" }, { "id": "claude-sonnet-x" }] }),
-        ),
-    ]);
-    use_proxy(&h, &url).await;
-    let page = h.get("/v1/cliproxy").await;
-    assert_eq!(page["url"], url.as_str());
-    assert_eq!(page["reachable"], true);
-    assert_eq!(page["models"], json!(["claude-sonnet-x", "gpt-5-codex"]));
-    assert_eq!(page["panel"], format!("{url}/management.html"));
-    assert_eq!(page["error"], Value::Null);
-    assert_eq!(page["models_error"], Value::Null);
-    // The accounts are the proxy's business: nothing else is asked of it.
-    let asked = proxy.join().unwrap();
-    assert_eq!(asked, ["GET /v1/models", "GET /v1/models"]);
-}
-
-#[tokio::test]
-async fn a_proxy_that_is_away_or_misnamed_is_reported() {
-    let h = Harness::new();
-    let closed = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        format!("http://{}", listener.local_addr().unwrap())
-    };
-    h.put("/v1/settings", json!({ "cliproxy": { "url": closed } }))
-        .await;
-    let page = h.get("/v1/cliproxy").await;
-    assert_eq!(page["reachable"], false);
-    let error = page["error"].as_str().unwrap();
-    assert!(error.contains("not reachable"), "{error}");
-
-    // An address that is not one is refused when saved.
-    let (status, error) = h
-        .refused(json!({ "cliproxy": { "url": "127.0.0.1:8317" } }))
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error.contains("http://"), "{error}");
-}
-
-#[tokio::test]
-async fn a_backend_that_listens_beyond_this_machine_keeps_the_proxy_to_itself() {
-    let h = Harness::with_config(Some(SECRET), false, no_env);
-    let (status, _) = h.call("GET", "/v1/cliproxy", Some(TOKEN), None).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-}
-
-#[cfg(windows)]
-#[tokio::test]
-async fn an_update_stops_when_the_proxy_has_no_account_left() {
-    let h = Harness::new();
-    let (id, _) = h.register(h.repo.path()).await;
-    let (url, proxy) = stand_in_many(vec![
-        (
-            200,
-            vec![],
-            json!({ "choices": [{ "message": { "content": "not a note" } }] }),
-        ),
-        (
-            503,
-            vec![("Retry-After", "60")],
-            json!({ "error": {
-                "message": "no auth available (providers=claude, model=claude-x)",
-                "code": "auth_unavailable",
-            }}),
-        ),
-    ]);
-    use_proxy(&h, &url).await;
-    h.put(
-        "/v1/settings",
-        json!({ "llm": { "provider": "cliproxy", "model": "claude-x" } }),
-    )
-    .await;
-    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
-    let stopped = &report["stopped"];
-    assert!(
-        stopped["message"]
-            .as_str()
-            .unwrap()
-            .contains("no auth available"),
-        "{report}"
-    );
-    assert_eq!(stopped["retry_after_secs"], 60);
-    assert!(
-        !report["waiting"].as_array().unwrap().is_empty(),
-        "{report}"
-    );
-    assert_eq!(proxy.join().unwrap().len(), 2, "no request after the stop");
-}
-
-#[tokio::test]
-async fn a_test_reports_whether_the_provider_answers() {
-    let h = Harness::new();
-    let (status, _) = h.call("POST", "/v1/settings/test/llm", None, None).await;
+    let (status, _) = h.call("POST", "/v1/settings/test/embed", None, None).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    // Nothing is chosen: that is an answer, not an error of the server.
-    let result = h.post("/v1/settings/test/llm", None).await;
-    assert_eq!(result["ok"], false);
-    assert_eq!(result["name"], Value::Null);
-    assert_eq!(result["error"], "no provider is chosen");
+    // The embedder that needs no server.
+    let result = h.post("/v1/settings/test/embed", None).await;
+    assert_eq!(result["ok"], true, "{result}");
+    assert!(result["name"].as_str().unwrap().starts_with("local"));
+    assert!(result["dimensions"].as_u64().unwrap() > 0);
+    assert!(result["ms"].is_u64(), "{result}");
 
-    let provider = stand_in(
-        200,
-        json!({ "message": { "role": "assistant", "content": "OK" }, "done": true }),
-    );
+    let server = stand_in(200, json!({ "embeddings": [[0.1, 0.2, 0.3]] }));
     h.put(
         "/v1/settings",
         json!({
-            "llm": { "provider": "ollama", "model": "llama" },
-            "ollama": { "host": provider },
+            "embed": { "provider": "ollama", "model": "nomic" },
+            "ollama": { "host": server },
         }),
     )
     .await;
-    let result = h.post("/v1/settings/test/llm", None).await;
+    let result = h.post("/v1/settings/test/embed", None).await;
     assert_eq!(result["ok"], true, "{result}");
-    assert_eq!(result["name"], "ollama:llama");
-    assert!(result["ms"].is_u64(), "{result}");
+    assert_eq!(result["name"], "ollama:nomic");
+    assert_eq!(result["dimensions"], 3);
 
-    // The provider says no: its own explanation comes back.
-    let provider = stand_in(404, json!({ "error": "model \"llama\" not found" }));
-    h.put("/v1/settings", json!({ "ollama": { "host": provider } }))
+    // The server says no: its own explanation comes back. That is an
+    // answer, not an error of this backend.
+    let server = stand_in(404, json!({ "error": "model \"nomic\" not found" }));
+    h.put("/v1/settings", json!({ "ollama": { "host": server } }))
         .await;
-    let result = h.post("/v1/settings/test/llm", None).await;
+    let result = h.post("/v1/settings/test/embed", None).await;
     assert_eq!(result["ok"], false, "{result}");
-    assert_eq!(result["name"], "ollama:llama");
+    assert_eq!(result["name"], "ollama:nomic");
     let error = result["error"].as_str().unwrap();
     assert!(
         error.contains("404") && error.contains("not found"),
@@ -957,9 +781,9 @@ async fn a_test_reports_whether_the_provider_answers() {
     );
 
     // Settings that select nothing usable say what is missing.
-    h.put("/v1/settings", json!({ "llm": { "provider": "openai" } }))
+    h.put("/v1/settings", json!({ "embed": { "provider": "openai" } }))
         .await;
-    let result = h.post("/v1/settings/test/llm", None).await;
+    let result = h.post("/v1/settings/test/embed", None).await;
     assert_eq!(result["ok"], false);
     assert_eq!(result["name"], Value::Null);
     assert!(
@@ -967,55 +791,26 @@ async fn a_test_reports_whether_the_provider_answers() {
         "{result}"
     );
 
-    // The embedder that needs no server.
+    // Semantic search turned off is said too.
+    h.put("/v1/settings", json!({ "embed": { "provider": "none" } }))
+        .await;
     let result = h.post("/v1/settings/test/embed", None).await;
-    assert_eq!(result["ok"], true, "{result}");
-    assert!(result["name"].as_str().unwrap().starts_with("local"));
-    assert!(result["dimensions"].as_u64().unwrap() > 0);
+    assert_eq!(result["ok"], false);
+    assert_eq!(result["error"], "semantic search is turned off");
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "provider": null, "model": null }, "ollama": { "host": null } }),
+    )
+    .await;
 }
 
 #[tokio::test]
-async fn an_update_and_a_question_use_the_saved_provider() {
+async fn the_routes_of_the_built_in_writer_are_gone() {
     let h = Harness::new();
-    let (id, _) = h.register(h.repo.path()).await;
-    // A provider that lacks its key: both requests must find that out from
-    // the settings file, since the environment of the test holds nothing.
-    h.put(
-        "/v1/settings",
-        json!({ "llm": { "provider": "openai", "model": "some-model" } }),
-    )
-    .await;
-    let (status, body) = h
-        .call("POST", &format!("/v1/repos/{id}/update"), Some(TOKEN), None)
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(
-        body["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
-        "{body}"
-    );
-    let (status, body) = h
-        .call(
-            "POST",
-            &format!("/v1/repos/{id}/ask"),
-            Some(TOKEN),
-            Some(json!({ "question": "What does run do?" })),
-        )
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-    assert!(
-        body["error"].as_str().unwrap().contains("OPENAI_API_KEY"),
-        "{body}"
-    );
-
-    // With no provider chosen both work again, with no restart between.
-    h.put("/v1/settings", json!({ "llm": { "provider": null } }))
-        .await;
-    h.post(&format!("/v1/repos/{id}/update"), None).await;
-    h.post(
-        &format!("/v1/repos/{id}/ask"),
-        Some(json!({ "question": "What does run do?" })),
-    )
-    .await;
+    for (method, uri) in [("POST", "/v1/settings/test/llm"), ("GET", "/v1/cliproxy")] {
+        let (status, _) = h.call(method, uri, Some(TOKEN), None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{method} {uri}");
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1671,4 +1466,252 @@ async fn workspace_view_and_contracts() {
         .call("GET", "/v1/repos/unknown/contracts", Some(TOKEN), None)
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn an_agent_explains_a_note_through_the_routes() {
+    const NOTE: &str = "01-Core/demo/Math%20Module.md";
+    const PICTURE: &str =
+        "root = Picture([f])\nf = Flow([Step(\"A number\"), Step(\"Twice the number\")])\n";
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let unexplained = report["unexplained"].as_u64().unwrap();
+    assert!(unexplained >= 2, "{report}");
+
+    for (method, uri) in [
+        ("GET", format!("/v1/repos/{id}/explanations")),
+        ("GET", format!("/v1/repos/{id}/explanation?path={NOTE}")),
+        ("PUT", format!("/v1/repos/{id}/explanation?path={NOTE}")),
+    ] {
+        let (status, _) = h
+            .call(method, &uri, None, Some(json!({ "base": "" })))
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+
+    // What waits, narrowed to a file and to a number.
+    let queue = h.get(&format!("/v1/repos/{id}/explanations")).await;
+    assert_eq!(
+        queue["waiting"],
+        json!({ "behind": 0, "unexplained": unexplained })
+    );
+    assert_eq!(queue["matching"], unexplained);
+    let queue = h
+        .get(&format!(
+            "/v1/repos/{id}/explanations?files=src/nothing.rs,%20src/math.rs&limit=1"
+        ))
+        .await;
+    assert_eq!(queue["notes"].as_array().unwrap().len(), 1, "{queue}");
+    assert!(queue["matching"].as_u64().unwrap() < unexplained, "{queue}");
+    assert_eq!(queue["notes"][0]["why"], "unexplained");
+    assert_eq!(queue["notes"][0]["sources"], json!(["src/math.rs"]));
+    let none = h
+        .get(&format!(
+            "/v1/repos/{id}/explanations?folder=05-Operations/nothing"
+        ))
+        .await;
+    assert_eq!(none["notes"], json!([]));
+
+    // The brief of one note.
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={NOTE}"))
+        .await;
+    assert_eq!(brief["path"], "01-Core/demo/Math Module.md");
+    assert_eq!(brief["kind"], "concept");
+    let yours: Vec<&str> = brief["yours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|y| y["heading"].as_str().unwrap())
+        .collect();
+    assert_eq!(yours, ["What it does", "How it works", "Gotchas"]);
+    assert_eq!(brief["sources"], json!([{ "path": "src/math.rs" }]));
+    assert_eq!(brief["limits"]["section_words"], 300);
+    let base = brief["base"].as_str().unwrap().to_string();
+    let (status, _) = h
+        .call(
+            "GET",
+            &format!("/v1/repos/{id}/explanation?path=_HOME.md"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = h
+        .call(
+            "GET",
+            &format!("/v1/repos/{id}/explanation?path=No%20Such%20Note"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Faults come back as an answer the agent can read, not as an error.
+    let uri = format!("/v1/repos/{id}/explanation?path={NOTE}");
+    let outcome = h
+        .put(
+            &uri,
+            json!({
+                "base": base,
+                "sections": [{ "heading": "Items", "text": "Mine." }],
+                "pictures": [{ "section": "Gotchas", "source": "root = Chart([])" }],
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "issues");
+    assert!(
+        outcome["issues"].as_array().unwrap().len() >= 2,
+        "{outcome}"
+    );
+    let outcome = h
+        .put(
+            &uri,
+            json!({ "base": "older", "sections": [{ "heading": "Gotchas", "text": "x" }] }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "changed");
+
+    let outcome = h
+        .put(
+            &uri,
+            json!({
+                "base": base,
+                "sections": [
+                    { "heading": "How it works", "text": "Each helper is one multiplication, so none can fail or overflowzebra quietly." },
+                    { "heading": "Gotchas", "text": "- A result above the largest number wraps in a release build." },
+                ],
+                "pictures": [{ "section": "How it works", "source": PICTURE }],
+                "read": ["src/lib.rs"],
+                "model": "claude-code",
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "saved", "{outcome}");
+    assert_eq!(outcome["sections"], json!(["How it works", "Gotchas"]));
+    assert_eq!(outcome["pictures"], 1);
+    assert_eq!(outcome["waiting"]["unexplained"], unexplained - 1);
+
+    let note = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    assert_eq!(note["info"]["state"], "generated");
+    assert_eq!(note["info"]["explanation"], "explained");
+    assert_eq!(note["info"]["explained_by"], "claude-code");
+    assert_eq!(
+        note["pictures"],
+        json!([{ "section": "How it works", "source": PICTURE }])
+    );
+    assert!(
+        note["text"]
+            .as_str()
+            .unwrap()
+            .contains("wraps in a release build")
+    );
+    // The view for an agent has no picture.
+    let cut = h
+        .get(&format!("/v1/repos/{id}/note?path={NOTE}&view=agent"))
+        .await;
+    assert!(cut.get("pictures").is_none(), "{cut}");
+    // `How it works` is the agent's now, and says what the code does not
+    // say in one place: it is no longer left out.
+    assert!(cut.get("left_out").is_none(), "{cut}");
+    assert!(cut["text"].as_str().unwrap().contains("overflowzebra"));
+    // The new words are found by a search at once.
+    let hits = h
+        .get(&format!("/v1/repos/{id}/search?q=overflowzebra"))
+        .await;
+    assert!(
+        hits.as_array()
+            .unwrap()
+            .iter()
+            .any(|hit| hit["key"] == "01-Core/demo/Math Module.md"),
+        "{hits}"
+    );
+    // An update leaves the explained note alone.
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    assert_eq!(report["written"], json!([]));
+    assert_eq!(report["proposed"], json!([]));
+    assert_eq!(report["unexplained"], unexplained - 1);
+
+    // A file the agent read changes: the explanation is behind.
+    let lib = fs::read_to_string(h.repo.path().join("src/lib.rs")).unwrap();
+    write(
+        h.repo.path(),
+        "src/lib.rs",
+        &format!("{lib}\n// A later line.\n"),
+    );
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    assert_eq!(
+        report["behind"],
+        json!(["01-Core/demo/Math Module.md"]),
+        "{report}"
+    );
+    let queue = h.get(&format!("/v1/repos/{id}/explanations")).await;
+    assert_eq!(queue["notes"][0]["why"], "behind");
+    assert_eq!(queue["notes"][0]["behind"], json!(["src/lib.rs changed"]));
+    let note = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    assert_eq!(note["info"]["explanation"], "behind");
+
+    // The owner edits the note: what an agent sends now is a proposal.
+    let edited = note["text"]
+        .as_str()
+        .unwrap()
+        .replace("wraps in", "wraps around in");
+    h.put(
+        &format!("/v1/repos/{id}/note?path={NOTE}"),
+        json!({ "text": edited }),
+    )
+    .await;
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={NOTE}"))
+        .await;
+    assert_eq!(brief["edited_by_hand"], true);
+    let outcome = h
+        .put(
+            &uri,
+            json!({
+                "base": brief["base"],
+                "sections": [{ "heading": "What it does", "text": "It holds the arithmetic the demo needs." }],
+                "pictures": [{ "section": "What it does", "source": PICTURE }],
+                "model": "claude-code",
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "proposed", "{outcome}");
+    let pid = outcome["proposal"].as_str().unwrap().to_string();
+    let after = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    assert_eq!(after["text"], json!(edited));
+    assert_eq!(after["pictures"].as_array().unwrap().len(), 1);
+
+    let detail = h.get(&format!("/v1/repos/{id}/proposals/{pid}")).await;
+    assert_eq!(detail["proposal"]["kind"], "agent");
+    assert_eq!(detail["proposal"]["model"], "claude-code");
+    assert_eq!(
+        detail["proposal"]["reason"],
+        "claude-code explained this note"
+    );
+    let offered: Vec<&str> = detail["pictures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["section"].as_str().unwrap())
+        .collect();
+    assert_eq!(offered, ["What it does", "How it works"]);
+    assert!(
+        detail["patch"]
+            .as_str()
+            .unwrap()
+            .contains("+It holds the arithmetic")
+    );
+
+    let approved = h
+        .post(&format!("/v1/repos/{id}/proposals/{pid}/approve"), None)
+        .await;
+    assert_eq!(approved["status"], "approved");
+    let after = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    let text = after["text"].as_str().unwrap();
+    assert!(text.contains("It holds the arithmetic") && text.contains("wraps around in"));
+    assert_eq!(after["pictures"].as_array().unwrap().len(), 2);
+    assert_eq!(after["info"]["explanation"], "explained");
+    assert_eq!(after["info"]["state"], "human_edited");
 }

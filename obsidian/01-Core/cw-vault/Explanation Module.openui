@@ -1,0 +1,8 @@
+# section: How it works
+root = Picture([flow])
+flow = Flow([change, draft, read, links, woven], "When code under an explanation changes")
+change = Step("The code under the note changes", "A sync sees new inputs for a note an agent explained, and merges instead of writing it anew.")
+draft = Step("Rules write a fresh draft", "New facts, and rule text in every section, the agent's ones too.")
+read = Step("The agent's text is read back", "From the note on disk, only under the headings the manifest records as the agent's.")
+links = Step("Dead links turn into plain words", "A note the agent linked to may be removed in this same sync.")
+woven = Step("The text is woven into the draft", "Facts come from the draft, the explanation from the old note. A section that moved marks the note behind.")

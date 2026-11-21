@@ -16,9 +16,13 @@ Sizes and paddings are MUI's (`Button/Button.js`, `IconButton/IconButton.js`). T
 
 ## How it works
 
-1. `AppView::details` and `AppView::diagram_viewer_view` in [[codewiki-app]], and 6 more, call `Button::new`.
-2. `AppView::diagram_viewer_view` and `AppView::tab_bar` in [[codewiki-app]], and 2 more, call `IconButton::new`.
-3. `choices_row` in [[Doc View Module]] calls `ToggleButtonGroup::new`.
+1. `Button::render` in [[Button]] calls `Metrics::of`.
+2. `Button::render` in [[Button]] calls `glow`. `glow` calls `px` in [[Zoom Module]].
+3. `Button::render` in [[Button]] calls `ease`. `ease` calls `scaled` in [[Motion Module (mui)]], then `easing` in [[Tokens Module]].
+4. `AppView::diagram_viewer_view` and `AppView::tab_bar` in [[codewiki-app]], and 2 more, call `IconButton::new`.
+5. `choices_row` in [[Doc View Module]] calls `ToggleButtonGroup::new`.
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
 ## Items
 
@@ -34,20 +38,21 @@ Sizes and paddings are MUI's (`Button/Button.js`, `IconButton/IconButton.js`). T
 - `pub fn icon_button_metrics(scale: Scale) -> (f32, f32)` — `IconButton.js`: padding around the icon, and the icon's size.
 - `struct Palette` — the colors one tone gives a button.
 - `fn glow(tint: Hsla, hover: f32, press: f32) -> Vec<BoxShadow>` — the shadow of a filled button, `hover` of the way to its hovered state and `press` of the way to its pressed one. TradingAgent, `MuiButton`, `contained`.
-- `pub struct Button` — A button with a label, and optionally an icon before it.
+- `fn ease(time: Duration) -> kit::Transition` — private function, returns `kit::Transition`; called by `Button::render`, `ToggleButtonGroup::render`.
+- [[Button]] — A button with a label, and optionally an icon before it.
 - `pub struct IconButton` — A round button that is only an icon.
 - `const TOGGLE_PADDING: f32` — `ToggleButton.js`, `size: 'small'`: 7 px of padding around 13 px text.
 - `type OnSelect = std::rc::Rc<dyn Fn(usize, &mut Window, &mut App)>` — what choosing the button at an index does.
 - `pub struct ToggleButtonGroup` — A few buttons side by side, one of them chosen: MUI's exclusive `ToggleButtonGroup` in the primary color.
 
-And 3 more private items with no comment.
+And 2 more private items with no comment.
 
 ## Depends on
 
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
 - [[Tokens Module]] — uses `easing`, `spec`, `states`
-- [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
 - [[Feedback Module]] — uses `tooltip`
+- [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`
 - [[Zoom Module]] — uses `px`
@@ -55,8 +60,9 @@ And 3 more private items with no comment.
 
 ## Used by
 
-- [[codewiki-app]] — from `details`, `diagram_viewer_view`, `edit_view`, `proposal_actions`
-- [[Doc View Module]] — from `choices_row`, `draw`, `secret_control`
+- [[codewiki-app]] — from `diagram_viewer_view`, `settings_frame`, `tab_bar`, `toolbar`
+- [[Button]] — from `Button`, `render`
+- [[Doc View Module]] — from `choices_row`
 
 ## See also
 

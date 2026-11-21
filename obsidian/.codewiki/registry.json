@@ -15,11 +15,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_llm::provider::AgentCli",
-    "path": "01-Core/cw-llm/AgentCli.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:cw_wiki::agentdocs",
     "path": "01-Core/cw-wiki/Agentdocs Module.md",
     "kind": "concept"
@@ -27,16 +22,6 @@
   {
     "id": "mod:cw_wiki::analyze",
     "path": "01-Core/cw-wiki/Analyze Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_llm::answer",
-    "path": "01-Core/cw-llm/Answer Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_llm::provider::Anthropic",
-    "path": "01-Core/cw-llm/Anthropic.md",
     "kind": "concept"
   },
   {
@@ -100,6 +85,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_app::mui::button::Button",
+    "path": "01-Core/codewiki-app/mui/Button.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::mui::button",
     "path": "01-Core/codewiki-app/mui/Button Module.md",
     "kind": "concept"
@@ -117,21 +107,6 @@
   {
     "id": "mod:cw_wiki::ci",
     "path": "01-Core/cw-wiki/Ci Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_llm::cliproxy::CliProxy",
-    "path": "01-Core/cw-llm/CliProxy.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_llm::cliproxy",
-    "path": "01-Core/cw-llm/Cliproxy Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_server::cliproxy",
-    "path": "01-Core/cw-server/Cliproxy Module (cw-server).md",
     "kind": "concept"
   },
   {
@@ -185,6 +160,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_wiki::explanations::Counts",
+    "path": "01-Core/cw-wiki/Counts.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::coverage",
     "path": "01-Core/cw-wiki/Coverage Module.md",
     "kind": "concept"
@@ -232,11 +212,6 @@
   {
     "id": "crate:cw_index",
     "path": "01-Core/cw-index/cw-index.md",
-    "kind": "concept"
-  },
-  {
-    "id": "crate:cw_llm",
-    "path": "01-Core/cw-llm/cw-llm.md",
     "kind": "concept"
   },
   {
@@ -355,11 +330,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:codewiki_app::mui::motion::Enter",
-    "path": "01-Core/codewiki-app/mui/Enter.md",
-    "kind": "concept"
-  },
-  {
     "id": "type:cw_models::catalog::Entry",
     "path": "01-Core/cw-models/Entry.md",
     "kind": "concept"
@@ -385,6 +355,16 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_vault::explanation",
+    "path": "01-Core/cw-vault/Explanation Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::explanations",
+    "path": "01-Core/cw-wiki/Explanations Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::mui::feedback",
     "path": "01-Core/codewiki-app/mui/Feedback Module.md",
     "kind": "concept"
@@ -392,11 +372,6 @@
   {
     "id": "type:codewiki_app::settings::FieldId",
     "path": "01-Core/codewiki-app/FieldId.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_illustrate::Figure",
-    "path": "01-Core/cw-illustrate/Figure.md",
     "kind": "concept"
   },
   {
@@ -485,11 +460,6 @@
     "kind": "concept"
   },
   {
-    "id": "mod:cw_llm::illustrate",
-    "path": "01-Core/cw-llm/Illustrate Module.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:codewiki_app::illustration",
     "path": "01-Core/codewiki-app/Illustration Module.md",
     "kind": "concept"
@@ -500,18 +470,8 @@
     "kind": "pattern"
   },
   {
-    "id": "pattern:cw_llm::provider::LlmProvider",
-    "path": "04-Patterns/Implementing LlmProvider Pattern.md",
-    "kind": "pattern"
-  },
-  {
     "id": "pattern:cw_wiki::manifests::PackageInfo",
     "path": "04-Patterns/Implementing PackageInfo Pattern.md",
-    "kind": "pattern"
-  },
-  {
-    "id": "pattern:cw_wiki::generate::ProseWriter",
-    "path": "04-Patterns/Implementing ProseWriter Pattern.md",
     "kind": "pattern"
   },
   {
@@ -615,16 +575,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_llm::provider::LlmProvider",
-    "path": "01-Core/cw-llm/LlmProvider.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_llm::writer::LlmWriter",
-    "path": "01-Core/cw-llm/LlmWriter.md",
-    "kind": "concept"
-  },
-  {
     "id": "type:cw_embed::LocalEmbedder",
     "path": "01-Core/cw-embed/LocalEmbedder.md",
     "kind": "concept"
@@ -710,13 +660,13 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_vault::note::Note",
-    "path": "01-Core/cw-vault/Note.md",
+    "id": "mod:cw_vault::note",
+    "path": "01-Core/cw-vault/Note Module.md",
     "kind": "concept"
   },
   {
-    "id": "mod:cw_vault::note",
-    "path": "01-Core/cw-vault/Note Module.md",
+    "id": "type:cw_vault::manifest::NoteEntry",
+    "path": "01-Core/cw-vault/NoteEntry.md",
     "kind": "concept"
   },
   {
@@ -730,18 +680,8 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_llm::provider::Ollama",
-    "path": "01-Core/cw-llm/Ollama.md",
-    "kind": "concept"
-  },
-  {
     "id": "type:cw_embed::OllamaEmbedder",
     "path": "01-Core/cw-embed/OllamaEmbedder.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_llm::provider::OpenAiCompatible",
-    "path": "01-Core/cw-llm/OpenAiCompatible.md",
     "kind": "concept"
   },
   {
@@ -790,13 +730,13 @@
     "kind": "concept"
   },
   {
-    "id": "mod:cw_wiki::plan",
-    "path": "01-Core/cw-wiki/Plan Module.md",
+    "id": "type:cw_illustrate::Picture",
+    "path": "01-Core/cw-illustrate/Picture.md",
     "kind": "concept"
   },
   {
-    "id": "type:cw_wiki::plan::Planned",
-    "path": "01-Core/cw-wiki/Planned.md",
+    "id": "mod:cw_wiki::plan",
+    "path": "01-Core/cw-wiki/Plan Module.md",
     "kind": "concept"
   },
   {
@@ -812,16 +752,6 @@
   {
     "id": "mod:cw_vault::proposal",
     "path": "01-Core/cw-vault/Proposal Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_wiki::generate::ProseWriter",
-    "path": "01-Core/cw-wiki/ProseWriter.md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_llm::provider",
-    "path": "01-Core/cw-llm/Provider Module.md",
     "kind": "concept"
   },
   {
@@ -857,11 +787,6 @@
   {
     "id": "mod:cw_vault::registry",
     "path": "01-Core/cw-vault/Registry Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_vault::registry::RegistryEntry",
-    "path": "01-Core/cw-vault/RegistryEntry.md",
     "kind": "concept"
   },
   {
@@ -975,6 +900,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_vault::note::Section",
+    "path": "01-Core/cw-vault/Section.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::security",
     "path": "01-Core/cw-wiki/Security Module.md",
     "kind": "concept"
@@ -1070,6 +1000,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_vault::manifest::SourceRef",
+    "path": "01-Core/cw-vault/SourceRef.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:codewiki_app::doc::Span",
     "path": "01-Core/codewiki-app/Span.md",
     "kind": "concept"
@@ -1150,6 +1085,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_wiki::rustscan::TestFn",
+    "path": "01-Core/cw-wiki/TestFn.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::testmap",
     "path": "01-Core/cw-wiki/Testmap Module.md",
     "kind": "concept"
@@ -1225,6 +1165,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_core::model::Visibility",
+    "path": "01-Core/cw-core/Visibility.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::win32",
     "path": "01-Core/codewiki-app/Win32 Module.md",
     "kind": "concept"
@@ -1257,11 +1202,6 @@
   {
     "id": "mod:cw_server::workspace",
     "path": "01-Core/cw-server/Workspace Module (cw-server).md",
-    "kind": "concept"
-  },
-  {
-    "id": "mod:cw_llm::writer",
-    "path": "01-Core/cw-llm/Writer Module.md",
     "kind": "concept"
   },
   {
@@ -1347,11 +1287,6 @@
   {
     "id": "index:01-Core/cw-index",
     "path": "01-Core/cw-index/_index.md",
-    "kind": "index"
-  },
-  {
-    "id": "index:01-Core/cw-llm",
-    "path": "01-Core/cw-llm/_index.md",
     "kind": "index"
   },
   {

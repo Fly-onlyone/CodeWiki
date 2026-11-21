@@ -11,7 +11,7 @@ tags: [moc, architecture]
 - [[codewiki Startup Flow]] — call sequence from the `main` entry point of `codewiki` across 11 parts of the codebase.
 - [[codewiki-app Startup Flow]] — call sequence from the `main` entry point of `codewiki-app` across 11 parts of the codebase.
 - [[codewiki-mcp Startup Flow]] — call sequence from the `main` entry point of `codewiki-mcp` across 4 parts of the codebase.
-- [[Crate Dependency Flow]] — how the 20 workspace crates depend on each other, from entry points down to shared foundations.
+- [[Crate Dependency Flow]] — how the 19 workspace crates depend on each other, from entry points down to shared foundations.
 
 ## See also
 

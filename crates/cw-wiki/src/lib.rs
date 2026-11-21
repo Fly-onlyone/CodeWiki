@@ -9,6 +9,7 @@ pub mod coverage;
 pub mod decisions;
 pub mod doctext;
 mod explain;
+pub mod explanations;
 pub mod generate;
 pub mod git;
 pub mod gitintel;
@@ -27,8 +28,5 @@ pub mod testmap;
 pub mod units;
 
 pub use analyze::{analyze, dependency_graph};
-pub use generate::{
-    ProseWriter, Report, Rewrite, Stopped, TEMPLATE_VERSION, WriterContext, WriterUsage, generate,
-    generate_with,
-};
+pub use generate::{Report, TEMPLATE_VERSION, generate, generate_with};
 pub use plan::{Plan, Planned, Repo, Subject};

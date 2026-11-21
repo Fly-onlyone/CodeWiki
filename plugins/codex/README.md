@@ -2,7 +2,7 @@
 
 Gives Codex the repository's wiki and structural index. The plugin adds:
 
-- **The `codewiki` MCP server.** It runs `codewiki-mcp`, the same bridge Claude Code uses, and gives Codex the 24 tools listed in `plugins/claude-code/README.md`.
+- **The `codewiki` MCP server.** It runs `codewiki-mcp`, the same bridge Claude Code uses, and gives Codex the 27 tools listed in `plugins/claude-code/README.md`.
 - **A session-start briefing.** On `startup`, `resume`, `clear` and `compact`, a hook runs `codewiki hook session-start`. Codex adds what it prints to the session as developer context: whether the repository has a wiki, whether the wiki is stale against `HEAD`, how many proposals wait for review, and which tools to call first.
 - **Two skills.** `using-codewiki` says which tool to call at each step of a change, and when to write or refresh the wiki with `sync_wiki`. `wiki-note-style` holds the house style of CodeWiki's notes, for when Codex edits a note in `obsidian/` by hand.
 

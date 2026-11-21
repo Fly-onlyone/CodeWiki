@@ -219,3 +219,147 @@ fn note_style_skill_follows_the_lint() {
     }
     assert_eq!(cw_vault::lint::max_words(Flow), cw_vault::lint::MAX_WORDS);
 }
+
+/// The fenced blocks of `text` that are marked with `language`.
+fn fenced(text: &str, language: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut open: Option<String> = None;
+    for line in text.lines() {
+        match open.take() {
+            Some(block) if line.trim() == "```" => blocks.push(block),
+            Some(block) => open = Some(format!("{block}{line}\n")),
+            None if line.trim() == format!("```{language}") => open = Some(String::new()),
+            None => {}
+        }
+    }
+    blocks
+}
+
+#[test]
+fn claude_skills_are_named_after_their_folders() {
+    let mut names = Vec::new();
+    for entry in std::fs::read_dir(repo().join(CLAUDE).join("skills")).unwrap() {
+        let folder = entry.unwrap().file_name().to_string_lossy().into_owned();
+        let text = read(&format!("{CLAUDE}/skills/{folder}/SKILL.md"));
+        assert_eq!(
+            frontmatter(&text, "name").as_deref(),
+            Some(folder.as_str()),
+            "{folder}"
+        );
+        assert!(
+            frontmatter(&text, "description").is_some_and(|d| !d.is_empty()),
+            "{folder} has no description"
+        );
+        names.push(folder);
+    }
+    // Claude Code makes a skill a slash command by its folder's name:
+    // `/codewiki:write-notes`.
+    assert_eq!(names, ["write-notes"]);
+}
+
+#[test]
+fn write_notes_skill_follows_the_tools_and_the_limits() {
+    use NoteKind::*;
+    let skill = read(&format!("{CLAUDE}/skills/write-notes/SKILL.md"));
+    // Every tool it tells an agent to call is one the bridge has.
+    let bridge = read("crates/codewiki-mcp/src/main.rs");
+    for tool in [
+        "sync_wiki",
+        "list_waiting_notes",
+        "get_note_brief",
+        "submit_note",
+    ] {
+        assert!(skill.contains(&format!("`{tool}`")), "{tool}");
+        assert!(
+            bridge.contains(&format!("async fn {tool}(")),
+            "the bridge has no tool {tool}"
+        );
+    }
+    // The arguments of those tools that the skill names.
+    for argument in ["folder", "files", "limit", "base", "read", "model"] {
+        assert!(skill.contains(&format!("`{argument}`")), "{argument}");
+        assert!(
+            bridge.contains(&format!("    {argument}: ")),
+            "no tool takes {argument}"
+        );
+    }
+    // The words of an answer that the skill tells an agent to act on.
+    for answer in [
+        "Not saved. Fix each of these",
+        "Call get_note_brief again",
+        "Call sync_wiki",
+        "Not written",
+        "STOP",
+    ] {
+        assert!(skill.contains(answer), "the skill lacks `{answer}`");
+        assert!(bridge.contains(answer), "the bridge never says `{answer}`");
+    }
+
+    // Each section an agent writes, of every kind of note, is described.
+    for kind in [Flow, Concept, Pattern, Integration, Operations] {
+        for heading in kind.agent_sections() {
+            assert!(
+                skill.contains(&format!("| {heading} |")),
+                "{kind:?}: the skill does not describe `{heading}`"
+            );
+        }
+    }
+    // The numbers it states are the ones the backend holds an agent to.
+    use cw_wiki::explanations::{DEFAULT_LIMIT, MAX_LIMIT, MAX_SECTION_WORDS};
+    assert!(skill.contains(&format!("At most {MAX_SECTION_WORDS} words in a section")));
+    assert!(skill.contains(&format!("{DEFAULT_LIMIT} unless a number is given")));
+    assert!(skill.contains(&format!("Never more than {MAX_LIMIT} in one run")));
+    // It sends the agent to the reference beside it, which exists.
+    assert!(skill.contains("`pictures.md`"));
+    assert!(
+        repo()
+            .join(CLAUDE)
+            .join("skills/write-notes/pictures.md")
+            .is_file()
+    );
+}
+
+#[test]
+fn picture_reference_follows_the_library() {
+    use cw_illustrate::{
+        MAX_CALLOUT_TEXT, MAX_CALLOUTS, MAX_PICTURES, MAX_SOURCE, MAX_STEP_TEXT, MAX_STEP_TITLE,
+        MAX_STEPS, MIN_STEPS, TONES,
+    };
+    let reference = read(&format!("{CLAUDE}/skills/write-notes/pictures.md"));
+    let library = cw_illustrate::library();
+    let mut components = 0;
+    for name in library.names() {
+        assert!(
+            reference.contains(&format!("| `{name}` |")),
+            "the reference does not list {name}"
+        );
+        components += 1;
+    }
+    assert!(reference.contains("## The four components"));
+    assert_eq!(components, 4);
+    for tone in TONES {
+        assert!(reference.contains(&format!("`{tone}`")), "{tone}");
+    }
+    for limit in [
+        format!("at most {MAX_PICTURES} pictures"),
+        format!("at most {MAX_CALLOUTS} `Callout`s"),
+        format!("{MIN_STEPS} to {MAX_STEPS} steps"),
+        format!("title has at most {MAX_STEP_TITLE} characters, its text at most {MAX_STEP_TEXT}"),
+        format!(
+            "text has at most {MAX_CALLOUT_TEXT} characters, its title at most {MAX_STEP_TITLE}"
+        ),
+        format!("at most {MAX_SOURCE} bytes"),
+    ] {
+        assert!(reference.contains(&limit), "the reference lacks `{limit}`");
+    }
+    // An example that would be refused teaches the wrong thing.
+    let examples = fenced(&reference, "openui");
+    assert_eq!(examples.len(), 2);
+    for example in examples {
+        assert_eq!(
+            cw_illustrate::review(&example),
+            Vec::<String>::new(),
+            "{example}"
+        );
+    }
+}

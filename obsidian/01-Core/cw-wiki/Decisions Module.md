@@ -16,9 +16,9 @@ Decisions are read from two places: notes tagged `decision` in the vault, and AD
 
 ## How it works
 
-1. `run` in [[codewiki]] and `list_decisions` in [[Api Module]], and 1 more, call `list`. `list` calls `load` in [[Gitintel Module]], then `is_adr_path`, then `build`, then `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note]]. `build` calls `Note::parse` in [[Note]], then `cited_paths`, then `status_of`.
+1. `run` in [[codewiki]] and `list_decisions` in [[Api Module]], and 1 more, call `list`. `list` calls `load` in [[Gitintel Module]], then `is_adr_path`, then `build`, then `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]]. `build` calls `Note::parse` in [[Note Module]], then `cited_paths`, then `status_of`.
 2. `run` in [[codewiki]] and `create_decision` in [[Api Module]] call `create`. `create` calls `sanitize_name` in [[Registry Module]], then `Error::invalid`, then `Error::io` (both in [[Error]]).
-3. `run` in [[codewiki]] and `why` in [[Api Module]] call `why`. `why` calls `Error::not_found` in [[Error]], then `list`, then `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note]], then `recent_commits`.
+3. `run` in [[codewiki]] and `why` in [[Api Module]] call `why`. `why` calls `Error::not_found` in [[Error]], then `list`, then `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `recent_commits`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -42,9 +42,9 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[Error]] — uses `invalid`, `io`, `not_found`
 - [[Index]] — uses `Index`, `files`, `find_symbols`
+- [[Note Module]] — uses `Note`, `parse`
 - [[Gitintel Module]] — uses `GitIntel`, `load`
 - [[VaultMeta]] — uses `load`, `notes_for_source`
-- [[Note]] — uses `Note`, `parse`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[Error Module]] — uses `Result`
 - [[Registry Module]] — uses `sanitize_name`

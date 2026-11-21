@@ -12,7 +12,7 @@ tags: [core, codewiki, module]
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[Host]], then `Resolved::load` in [[Resolved]], then `configure` in [[Semantic Module]], and 6 more. `random_token` calls `Error::external` in [[Error]].
+1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[Host]], then `drop_retired`, then `key` (both in [[Settings Module (cw-core)]]), and 7 more. `random_token` calls `Error::external` in [[Error]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -25,18 +25,17 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn names_process(text: &str, pid: u32) -> bool` — whether the connection file `text` was written by the process `pid`.
 - `fn withdraw(data_dir: &Path)` — delete the connection file, if it is still this backend's. A backend asked to stop first finishes its running requests; a client that finds it not listening may by then have started the next backend, whose file must stay.
 - `pub fn run(host: IpAddr, port: u16) -> Result<()>` — public function, returns `Result<()>`; called by `run`.
-- `fn writer_name(settings: &Resolved) -> String` — the LLM provider the settings in effect choose, by name; never its key.
 
 ## Depends on
 
+- [[Settings Module (cw-core)]] — uses `RETIRED_VARIABLES`, `drop_retired`, `key`, `process_env`
 - [[cw-server]] — uses `ServerConfig`, `WEBHOOK_SECRET_ENV`, `serve`
 - [[Error]] — uses `external`, `invalid`, `io`
 - [[Semantic Module]] — uses `configure`, `embedder`
-- [[Resolved]] — uses `Resolved`, `load`
 - [[Error Module]] — uses `Result`
 - [[Paths Module]] — uses `data_dir`
-- [[Settings Module (cw-core)]] — uses `process_env`
-- [[Provider Module]] — uses `from_settings`
+- [[Resolved]] — uses `load`
+- [[Host]] — uses `default`
 
 ## Used by
 

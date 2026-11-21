@@ -18,14 +18,6 @@ pub enum Error {
     NotFound(String),
     #[error("{context}: {message}")]
     External { context: String, message: String },
-    /// A provider has nothing left to answer with for now, for example every
-    /// account behind a proxy is at its limit. Asking again soon is useless.
-    #[error("{message}")]
-    Exhausted {
-        message: String,
-        /// Seconds until the provider expects to answer again, when it said.
-        retry_after: Option<u64>,
-    },
 }
 
 impl Error {

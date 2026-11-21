@@ -1,6 +1,0 @@
-root = Card([flow])
-flow = Steps([s0, s1, s2, s3])
-s0 = Step("init()", "codewiki-mcp calls into cw-telemetry")
-s1 = Step("init_with()", "cw-telemetry calls into Logs Module")
-s2 = Step("event()", "cw-telemetry calls into Scrub Module")
-s3 = Step("breadcrumb()", "cw-telemetry calls into Scrub Module")

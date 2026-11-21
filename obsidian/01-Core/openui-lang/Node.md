@@ -16,8 +16,8 @@ Declared as `pub enum Node`.
 
 Members:
 
-- `pub fn as_text(&self) -> Option<&str>` — public method, returns `Option<&str>`.
-- `pub fn as_list(&self) -> &[Node]` — public method, returns `&[Node]`; called by `list_of`.
+- `pub fn as_text(&self) -> Option<&str>` — public method, returns `Option<&str>`; called by `text`.
+- `pub fn as_list(&self) -> &[Node]` — public method, returns `&[Node]`; called by `list_of`, `review`.
 - `fn display(&self) -> String` — text form used by string concatenation.
 
 And 1 more private item with no comment.
@@ -29,8 +29,9 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[Eval Module]] — from `Document`, `binary`, `component`, `eval`
-- [[Illustration Module]] — from `Props`, `children`, `label`, `list_of`
-- [[codewiki-app]] — from `AppView`, `Page`
+- [[cw-illustrate]] — from `Props`, `element`, `review`, `text`
+- [[codewiki-app]] — from `AppView`, `Page`, `open_note_as`
+- [[Illustration Module]] — from `Props`, `list_of`, `render`
 
 ## See also
 

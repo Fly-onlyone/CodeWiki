@@ -68,9 +68,8 @@ pub enum Action {
     KeepSecret(FieldId),
     /// Forget the saved secret.
     RemoveSecret(FieldId),
-    /// Send the chosen LLM one small request and show whether it answered.
-    TestLlm,
-    /// The same for the embedder of semantic search.
+    /// Send the chosen embedder of semantic search one small request and
+    /// show whether it answered.
     TestEmbedder,
     /// Check the backend typed into the fields and, when it answers, use it.
     ConnectRemote,
@@ -91,10 +90,6 @@ pub enum Action {
     CancelModelJob,
     /// Take the offer of a built-in model off Home for good.
     DismissModelHint,
-    /// Ask the CLIProxyAPI the settings name about itself again.
-    ReloadProxy,
-    /// Open a web page in the browser.
-    OpenUrl(String),
 }
 
 /// A stretch of text within a line.

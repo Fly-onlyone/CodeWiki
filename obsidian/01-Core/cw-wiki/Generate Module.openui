@@ -1,8 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "10")
-f1 = Stat("Used by notes", "8")
-f2 = Stat("Depends on notes", "23")
-flow = Steps([s0, s1])
-s0 = Step("generate_with", "Called by run_update. Calls Error::io, then VaultMeta::load, then adopt_existing, then Repo::at and 20 more.")
-s1 = Step("illustration_path", "Called by read_note_as.")

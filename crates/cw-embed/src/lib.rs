@@ -17,7 +17,10 @@
 //! `CODEWIKI_EMBED` selects one: `local` (default), `builtin`, `lmstudio`,
 //! `ollama`, `llamacpp`, `lemonade`, `mistralrs`, `openai` or `none`.
 
+pub mod list;
 pub mod prefix;
+
+pub use list::{Listed, list_models};
 
 use std::borrow::Cow;
 use std::path::Path;
@@ -305,18 +308,38 @@ fn post_json(
     body: &Value,
     timeout: Duration,
 ) -> Result<Posted> {
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(timeout))
-        .http_status_as_error(false)
-        .build()
-        .into();
-    let mut request = agent.post(url);
+    let mut request = agent(timeout).post(url);
     if let Some(token) = bearer {
         request = request.header("Authorization", &format!("Bearer {token}"));
     }
-    let mut response = request
+    let response = request
         .send_json(body)
         .map_err(|e| Error::external(format!("calling {provider}"), e))?;
+    finish(provider, response)
+}
+
+/// A GET with the same error handling as [`post_json`].
+fn get_json(provider: &str, url: &str, bearer: Option<&str>, timeout: Duration) -> Result<Posted> {
+    let mut request = agent(timeout).get(url);
+    if let Some(token) = bearer {
+        request = request.header("Authorization", &format!("Bearer {token}"));
+    }
+    let response = request
+        .call()
+        .map_err(|e| Error::external(format!("calling {provider}"), e))?;
+    finish(provider, response)
+}
+
+fn agent(timeout: Duration) -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(timeout))
+        .http_status_as_error(false)
+        .build()
+        .into()
+}
+
+/// Read a response's body and tell success from an HTTP error status.
+fn finish(provider: &str, mut response: ureq::http::Response<ureq::Body>) -> Result<Posted> {
     let status = response.status();
     let text = response
         .body_mut()
@@ -547,6 +570,13 @@ impl Server {
             Self::Lemonade => Some("CODEWIKI_LEMONADE_KEY"),
             Self::MistralRs => None,
         }
+    }
+
+    /// The address and API token set for this server, the address falling
+    /// back to the default.
+    fn address(self, lookup: &impl Fn(&str) -> Option<String>) -> (String, Option<String>) {
+        let url = lookup(self.url_env()).unwrap_or_else(|| self.default_url().into());
+        (url, self.key_env().and_then(lookup))
     }
 
     /// The address a server listens on when nothing else is set.
@@ -816,6 +846,9 @@ impl Embedder for BuiltinEmbedder {
     }
 }
 
+/// Where Ollama listens when nothing else is set.
+const OLLAMA_DEFAULT_URL: &str = "http://127.0.0.1:11434";
+
 fn env(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|v| !v.trim().is_empty())
 }
@@ -840,8 +873,7 @@ fn local_server(
             server.label()
         ))
     })?;
-    let url = lookup(server.url_env()).unwrap_or_else(|| server.default_url().into());
-    let key = server.key_env().and_then(lookup);
+    let (url, key) = server.address(lookup);
     Ok(OpenAiEmbedder::new(server, &url, key.as_deref(), &model))
 }
 
@@ -866,7 +898,7 @@ pub fn from_config_in(
             Some(Box::new(BuiltinEmbedder::new(&id, &device, data_dir)?))
         }
         Some("ollama") => Some(Box::new(OllamaEmbedder::new(
-            &lookup("OLLAMA_HOST").unwrap_or_else(|| "http://127.0.0.1:11434".into()),
+            &lookup("OLLAMA_HOST").unwrap_or_else(|| OLLAMA_DEFAULT_URL.into()),
             &model("embeddinggemma"),
         ))),
         Some("openai") => {
@@ -891,6 +923,11 @@ pub fn from_config_in(
             )));
         }
     })
+}
+
+/// The models the provider chosen by the settings in effect offers.
+pub fn list_models_in(resolved: &cw_core::settings::Resolved) -> Result<Option<Vec<Listed>>> {
+    list_models(|name| resolved.get(name))
 }
 
 /// The embedder chosen by the environment; `None` turns semantic search off.

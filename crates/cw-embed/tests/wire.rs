@@ -2,13 +2,14 @@
 //!
 //! These check the request each embedder sends and that it reads a response
 //! in its service's documented shape. They do not replace a run against the
-//! real service.
+//! real service. The model-list fixtures follow the shapes in each server's
+//! documentation (URLs in `src/list.rs`).
 
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::TcpListener;
 use std::thread::JoinHandle;
 
-use cw_embed::{Embedder, OllamaEmbedder, OpenAiEmbedder, Server, server_root};
+use cw_embed::{Embedder, OllamaEmbedder, OpenAiEmbedder, Server, list_models, server_root};
 use serde_json::{Value, json};
 
 struct Received {
@@ -82,6 +83,114 @@ fn serve_many(replies: Vec<(u16, Value)>) -> (String, JoinHandle<Vec<Received>>)
             .collect()
     });
     (url, handle)
+}
+
+fn settings(pairs: &'static [(&'static str, &'static str)]) -> impl Fn(&str) -> Option<String> {
+    move |name| {
+        pairs
+            .iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value.to_string())
+    }
+}
+
+#[test]
+fn ollama_lists_each_model_with_its_capabilities() {
+    let (url, server) = serve_many(vec![
+        (
+            200,
+            json!({ "models": [{ "name": "embeddinggemma:latest" }, { "name": "nomic-embed-text:latest" }] }),
+        ),
+        (200, json!({ "capabilities": ["embedding"] })),
+        (200, json!({ "capabilities": ["embedding"] })),
+    ]);
+    let url: &'static str = Box::leak(url.into_boxed_str());
+    let pairs: &'static [(&str, &str)] = Box::leak(Box::new([
+        ("CODEWIKI_EMBED", "ollama"),
+        ("OLLAMA_HOST", url),
+    ]));
+    let listed = list_models(settings(pairs)).unwrap().unwrap();
+    let got: Vec<(&str, Option<bool>)> = listed
+        .iter()
+        .map(|m| (m.id.as_str(), m.embedding))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            ("embeddinggemma:latest", Some(true)),
+            ("nomic-embed-text:latest", Some(true))
+        ]
+    );
+    let requests = server.join().unwrap();
+    assert_eq!(requests[0].path, "/api/tags");
+    assert_eq!(requests[1].path, "/api/show");
+    assert_eq!(requests[1].body["model"], "embeddinggemma:latest");
+    assert_eq!(requests[2].body["model"], "nomic-embed-text:latest");
+}
+
+#[test]
+fn an_ollama_model_whose_details_fail_is_still_listed() {
+    let (url, server) = serve_many(vec![
+        (200, json!({ "models": [{ "name": "a" }, { "name": "b" }] })),
+        (200, json!({ "capabilities": ["embedding"] })),
+        (500, json!({ "error": "boom" })),
+    ]);
+    let url: &'static str = Box::leak(url.into_boxed_str());
+    let pairs: &'static [(&str, &str)] = Box::leak(Box::new([
+        ("CODEWIKI_EMBED", "ollama"),
+        ("OLLAMA_HOST", url),
+    ]));
+    let listed = list_models(settings(pairs)).unwrap().unwrap();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(
+        (listed[0].id.as_str(), listed[0].embedding),
+        ("a", Some(true))
+    );
+    assert_eq!((listed[1].id.as_str(), listed[1].embedding), ("b", None));
+    server.join().unwrap();
+}
+
+#[test]
+fn a_server_lists_with_its_token_and_path() {
+    let (url, server) = serve_once(
+        200,
+        json!({ "data": [{ "id": "m", "type": "embeddings", "state": "loaded" }] }),
+    );
+    let url: &'static str = Box::leak(format!("{url}/v1").into_boxed_str());
+    let pairs: &'static [(&str, &str)] = Box::leak(Box::new([
+        ("CODEWIKI_EMBED", "lmstudio"),
+        ("CODEWIKI_LMSTUDIO_URL", url),
+        ("CODEWIKI_LMSTUDIO_KEY", "tok"),
+    ]));
+    let listed = list_models(settings(pairs)).unwrap().unwrap();
+    assert_eq!(listed[0].loaded, Some(true));
+    let got = server.join().unwrap();
+    assert_eq!(got.path, "/api/v0/models");
+    assert_eq!(got.authorization.as_deref(), Some("Bearer tok"));
+}
+
+#[test]
+fn providers_without_a_list_give_none() {
+    for chosen in ["local", "none"] {
+        let pairs: &'static [(&str, &str)] = Box::leak(Box::new([("CODEWIKI_EMBED", chosen)]));
+        assert!(list_models(settings(pairs)).unwrap().is_none());
+    }
+}
+
+#[test]
+fn a_server_that_does_not_answer_is_an_error_naming_it() {
+    // Bind, note the port, then close it.
+    let closed = {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    let url: &'static str = Box::leak(closed.into_boxed_str());
+    let pairs: &'static [(&str, &str)] = Box::leak(Box::new([
+        ("CODEWIKI_EMBED", "lmstudio"),
+        ("CODEWIKI_LMSTUDIO_URL", url),
+    ]));
+    let error = list_models(settings(pairs)).unwrap_err().to_string();
+    assert!(error.contains("LM Studio"), "{error}");
 }
 
 fn texts() -> Vec<String> {

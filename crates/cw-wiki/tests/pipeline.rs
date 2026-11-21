@@ -96,66 +96,6 @@ fn first_run_writes_a_linked_vault() {
 }
 
 #[test]
-fn crate_and_flow_notes_get_valid_illustrations() {
-    let dir = fixture();
-    let report = run(dir.path());
-    let vault = dir.path().join("obsidian");
-    assert!(
-        report
-            .illustrated
-            .contains(&"01-Core/engine/engine.openui".to_string()),
-        "{:?}",
-        report.illustrated
-    );
-    let source = read(&vault, "01-Core/engine/engine.openui");
-    // The card stands under the note's title and summary and repeats
-    // neither.
-    assert!(
-        source.starts_with("root = Card([figures, chart])\n"),
-        "{source}"
-    );
-    assert!(source.contains("Stat(\"Modules\", \"2\")"), "{source}");
-    assert!(
-        source.contains("BarChart([\"book\", \"pricing\"]"),
-        "{source}"
-    );
-    assert!(cw_illustrate::check(&source).errors.is_empty());
-    let meta = VaultMeta::load(&vault).unwrap();
-    assert_eq!(
-        meta.by_path("01-Core/engine/engine.md")
-            .unwrap()
-            .illustration
-            .as_deref(),
-        Some("01-Core/engine/engine.openui")
-    );
-
-    // Unchanged facts rewrite nothing; a hand-edited note keeps its illustration as is.
-    assert!(run(dir.path()).illustrated.is_empty());
-    let note = "01-Core/engine/engine.md";
-    write(&vault, note, &(read(&vault, note) + "\nMine.\n"));
-    write(
-        dir.path(),
-        "crates/engine/src/extra.rs",
-        "pub fn extra() {}\n",
-    );
-    write(
-        dir.path(),
-        "crates/engine/src/lib.rs",
-        "//! Order matching engine.\npub mod book;\npub mod extra;\npub mod pricing;\n",
-    );
-    let later = run(dir.path());
-    assert!(
-        !later
-            .illustrated
-            .iter()
-            .any(|p| p.ends_with("engine.openui")),
-        "{:?}",
-        later.illustrated
-    );
-    assert_eq!(read(&vault, "01-Core/engine/engine.openui"), source);
-}
-
-#[test]
 fn second_run_changes_nothing() {
     let dir = fixture();
     let first = run(dir.path());
@@ -437,7 +377,6 @@ fn run_settled(root: &Path) -> Report {
 
     let second = run(root);
     assert!(second.written.is_empty(), "{:?}", second.written);
-    assert!(second.illustrated.is_empty(), "{:?}", second.illustrated);
     assert_eq!(second.kept, first.written.len());
     first
 }
@@ -884,96 +823,41 @@ fn an_integration_note_says_what_is_taken_and_at_which_version() {
 }
 
 #[test]
-fn module_type_and_integration_notes_get_a_picture_of_facts() {
-    let dir = explained();
-    let report = run(dir.path());
+fn rules_draw_no_picture_and_remove_the_ones_they_drew_before() {
+    let dir = fixture();
+    run(dir.path());
     let vault = dir.path().join("obsidian");
-
-    // A module: what there is to count, then its walk-through in short.
-    // The picture stands under the note's title, so it has none.
-    let module = read(&vault, "01-Core/store/Settings Module.openui");
-    assert!(
-        module.starts_with("root = Card([figures, flow])\n"),
-        "{module}"
-    );
-    for part in [
-        "Stat(\"Public items\", \"2\")",
-        "Stat(\"Used by notes\", \"1\")",
-        "s0 = Step(\"enabled\", \"Called by main. Calls parse, then read.\")",
-        "s1 = Step(\"set\", \"Called by main. Calls write, then remove.\")",
-    ] {
-        assert!(module.contains(part), "no {part} in\n{module}");
-    }
-    assert!(cw_illustrate::check(&module).errors.is_empty());
-
-    // An integration: the version asked for and what is taken.
-    let package = read(&vault, "03-Integrations/serde.openui");
-    assert!(package.starts_with("root = Card([figures])\n"), "{package}");
-    for part in [
-        "Stat(\"Version\", \"1\")",
-        "Stat(\"Imported by files\", \"2\")",
-        "Stat(\"Names imported\", \"2\")",
-        "Stat(\"Features\", \"1\")",
-    ] {
-        assert!(package.contains(part), "no {part} in\n{package}");
-    }
-    assert!(cw_illustrate::check(&package).errors.is_empty());
-
-    for path in [
-        "01-Core/store/Settings Module.openui",
-        "03-Integrations/serde.openui",
-    ] {
-        assert!(
-            report.illustrated.contains(&path.to_string()),
-            "{:?}",
-            report.illustrated
-        );
-    }
-    let meta = VaultMeta::load(&vault).unwrap();
-    assert_eq!(
-        meta.by_path("01-Core/store/Settings Module.md")
+    // A picture explains what a note says, which rules cannot know.
+    let pictures = |folder: &str| {
+        fs::read_dir(vault.join(folder))
             .unwrap()
-            .illustration
-            .as_deref(),
-        Some("01-Core/store/Settings Module.openui")
-    );
-    assert!(run(dir.path()).illustrated.is_empty());
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().is_some_and(|e| e == "openui"))
+            .count()
+    };
+    assert_eq!(pictures("01-Core/engine"), 0);
+    assert_eq!(pictures("00-Architecture"), 0);
 
-    // A type: its methods that other notes call.
-    let types = fixture();
-    run(types.path());
-    let book = read(
-        &types.path().join("obsidian"),
-        "01-Core/engine/OrderBook.openui",
-    );
-    assert!(book.contains("Stat(\"Public items\", \"3\")"), "{book}");
-    assert!(book.contains("= Step(\"new\", \"Called by main."), "{book}");
-    assert!(cw_illustrate::check(&book).errors.is_empty());
-}
-
-#[test]
-fn a_picture_goes_when_its_note_has_nothing_left_to_show() {
-    let dir = explained();
-    run(dir.path());
-    let vault = dir.path().join("obsidian");
-    let picture = vault.join("01-Core/store/Many Module.openui");
-    assert!(picture.exists());
-
-    // Nothing public, nothing used, nothing to walk.
+    // An earlier version drew tiles and charts for every note. Such a file
+    // would still be served with its note, drawn with components the app
+    // no longer has.
+    let old = "01-Core/engine/engine.openui";
     write(
-        dir.path(),
-        "crates/store/src/many.rs",
-        "//! Many steps.\nconst A: u8 = 1;\nconst B: u8 = 2;\nconst C: u8 = 3;\n",
+        &vault,
+        old,
+        "root = Card([f0])\nf0 = Stat(\"Modules\", \"2\")\n",
     );
-    run(dir.path());
-    assert!(vault.join("01-Core/store/Many Module.md").exists());
-    assert!(
-        !picture.exists(),
-        "the app would still show the old picture"
-    );
+    let mut meta = VaultMeta::load(&vault).unwrap();
+    let id = meta.by_path("01-Core/engine/engine.md").unwrap().id.clone();
+    meta.notes.get_mut(&id).unwrap().illustration = Some(old.to_string());
+    meta.save(&vault).unwrap();
+
+    let report = run(dir.path());
+    assert!(report.written.is_empty(), "{report:?}");
+    assert!(!vault.join(old).exists());
     let meta = VaultMeta::load(&vault).unwrap();
     assert_eq!(
-        meta.by_path("01-Core/store/Many Module.md")
+        meta.by_path("01-Core/engine/engine.md")
             .unwrap()
             .illustration,
         None

@@ -31,9 +31,6 @@ pub struct Report {
     pub proposed: Vec<String>,
     pub removed: Vec<String>,
     pub adopted: Vec<String>,
-    /// Illustration files written this run.
-    #[serde(default)]
-    pub illustrated: Vec<String>,
     /// Notes left unmanaged because another note already has the same name.
     #[serde(default)]
     pub skipped: Vec<String>,
@@ -455,49 +452,20 @@ pub fn generate_with(
             }
         }
     }
-    // Illustrations sit beside their note as `<Note>.openui`. They follow the
-    // note's ownership: only notes CodeWiki still owns get theirs refreshed.
-    for note in &plan.notes {
-        // An illustration that fails its own library check is never saved.
-        let structural = ctx
-            .illustration(note)
-            .filter(|source| cw_illustrate::check(source).is_valid());
-        let drawable = structural.is_some() || note.kind == NoteKind::Flow;
-        let Some(entry) = meta.notes.get_mut(&note.id) else {
-            continue;
-        };
-        let note_text = read_optional(&vault.join(&entry.path))?;
-        if !note_text
-            .is_some_and(|t| entry.origin == Origin::Generated && body_hash(&t) == entry.body_hash)
-        {
-            continue;
+    // A picture explains what a note says, and rules cannot tell what a
+    // thing is for: they draw none. Only an agent that explained a note
+    // gives it pictures, in `<Note>.openui` beside it. A picture file of a
+    // note no agent explained is one that rules drew before; it goes.
+    for entry in meta.notes.values_mut().filter(|e| e.model.is_none()) {
+        entry.illustration = None;
+        let full = vault.join(illustration_path(&entry.path));
+        match std::fs::remove_file(&full) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::io(&full, e)),
         }
-        let relative = illustration_path(&entry.path);
-        let full = vault.join(&relative);
-        if !drawable {
-            // The note may have had a picture once and has nothing to show
-            // now: a file left behind would still be served with the note.
-            // The manifest cannot say whether there is one, since a note
-            // written anew starts with a fresh entry.
-            entry.illustration = None;
-            match std::fs::remove_file(&full) {
-                Ok(()) => {}
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(Error::io(&full, e)),
-            }
-            continue;
-        }
-        let existing = read_optional(&full)?;
-        let source = structural;
-        let Some(source) = source else {
-            continue;
-        };
-        if existing.as_deref() != Some(source.as_str()) {
-            write_note(&full, &source)?;
-            report.illustrated.push(relative.clone());
-        }
-        entry.illustration = Some(relative);
     }
+
     // Notes CodeWiki wrote whose subject no longer exists.
     let planned_ids: HashSet<&str> = plan.notes.iter().map(|n| n.id.as_str()).collect();
     let stale: Vec<String> = meta
@@ -544,7 +512,7 @@ pub fn generate_with(
     Ok(report)
 }
 
-/// Vault path of the illustration that belongs to the note at `note_path`.
+/// Vault path of the file that holds the pictures of the note at `note_path`.
 pub fn illustration_path(note_path: &str) -> String {
     format!(
         "{}.{}",

@@ -91,6 +91,24 @@ fn reports_a_missing_wiki_then_its_state() {
     );
     assert!(!service::is_stale(r).unwrap());
     assert!(fresh.contains("Pending proposals: 0.\n"), "{fresh}");
+    // Rules wrote the notes; none has an explanation yet.
+    let waiting = cw_wiki::explanations::waiting_counts(r).unwrap();
+    assert!(
+        waiting.unexplained >= 2 && waiting.behind == 0,
+        "{waiting:?}"
+    );
+    assert!(
+        fresh.contains(&format!(
+            "Notes waiting for an explanation: {} (0 whose explanation may be behind the code, {} never explained).",
+            waiting.unexplained, waiting.unexplained
+        )),
+        "{fresh}"
+    );
+    assert!(
+        fresh.contains("`list_waiting_notes`, `get_note_brief` and `submit_note`")
+            && fresh.contains("write notes when the user asks"),
+        "{fresh}"
+    );
     assert!(fresh.contains("`get_overview`") && fresh.contains("`get_context`"));
     assert!(
         fresh.lines().count() <= 5,
@@ -115,6 +133,34 @@ fn reports_a_missing_wiki_then_its_state() {
     let stale = briefing::session_start(r).unwrap();
     assert!(stale.contains("The wiki is stale"), "{stale}");
     assert!(stale.contains("Pending proposals: 1 ("), "{stale}");
+}
+
+#[test]
+fn the_line_about_waiting_notes_goes_when_none_waits() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[package]\nname = \"demo\"\n");
+    write(r, "src/lib.rs", "//! Demo crate.\npub fn run() {}\n");
+    update(r);
+    assert!(
+        briefing::session_start(r)
+            .unwrap()
+            .contains("Notes waiting for an explanation:")
+    );
+    // Every note is explained, as after an agent wrote them all.
+    let vault = r.join("obsidian");
+    let mut meta = cw_vault::VaultMeta::load(&vault).unwrap();
+    for entry in meta.notes.values_mut().filter(|e| e.kind.explainable()) {
+        entry.explained = Some(cw_vault::Explained {
+            sections: vec![],
+            sources: vec![],
+            commit: None,
+        });
+    }
+    meta.save(&vault).unwrap();
+    let text = briefing::session_start(r).unwrap();
+    assert!(!text.contains("waiting for an explanation"), "{text}");
+    assert!(text.contains("Pending proposals: 0.\n"), "{text}");
 }
 
 #[test]

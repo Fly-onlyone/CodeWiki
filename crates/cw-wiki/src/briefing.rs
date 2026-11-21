@@ -28,9 +28,13 @@ fn short(commit: &str) -> &str {
 
 /// Plain-text briefing for an agent starting work in the repository at
 /// `root`: whether a wiki exists, where its home note is, whether it is
-/// behind `HEAD`, how many proposals wait for review, and which tools read it.
+/// behind `HEAD`, how many proposals wait for review, how many notes wait
+/// for an explanation, and which tools read it.
 ///
 /// The lines state facts; an agent host adds them to the session as context.
+/// The line about waiting notes is a fact too, and says so: an agent that
+/// took it as an order would spend its user's allowance on notes at the
+/// start of every session.
 pub fn session_start(root: &Path) -> Result<String> {
     let vault = root.join(VAULT_DIR);
     let meta = VaultMeta::load(&vault)?;
@@ -71,6 +75,15 @@ pub fn session_start(root: &Path) -> Result<String> {
             " (changes to human-edited notes that wait for review; those notes may lag behind the code)"
         }
     ));
+    let waiting = crate::explanations::waiting_counts(root)?;
+    if waiting.total() > 0 {
+        out.push_str(&format!(
+            "Notes waiting for an explanation: {} ({} whose explanation may be behind the code, {} never explained). CodeWiki writes each note's facts from the code; what the thing is for and how it works is written by a coding agent, with the MCP tools `list_waiting_notes`, `get_note_brief` and `submit_note`. This line says what waits; write notes when the user asks, or for files you changed.\n",
+            waiting.total(),
+            waiting.behind,
+            waiting.unexplained
+        ));
+    }
     out.push_str(
         "The CodeWiki MCP tools `get_overview` (architecture and index status) and `get_context` (what to know before touching a file or symbol) answer from this wiki. Call them before exploring the code by hand.\n",
     );

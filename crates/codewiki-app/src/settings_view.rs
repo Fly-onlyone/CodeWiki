@@ -341,12 +341,17 @@ impl AppView {
             self.settings.embed_models = None;
             return;
         }
+        // The list of the server before is not the list of this one.
+        self.settings.embed_models = None;
         self.settings_request(
             cx,
             |backend| backend.get("/v1/settings/embed/models"),
             |this, result, _| match result {
                 Ok(body) => this.settings.embed_models = Some(body),
-                Err(error) => log::warn!("could not read the embedding models: {error}"),
+                Err(error) => {
+                    this.settings.embed_models = None;
+                    log::warn!("could not read the embedding models: {error}");
+                }
             },
         );
     }

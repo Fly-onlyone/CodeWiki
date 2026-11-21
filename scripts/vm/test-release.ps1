@@ -2136,6 +2136,12 @@ Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and setting
 }
 
 # ---------------------------------------------------------------- U2, self-update
+# Ends the app and removes the installation U2 made, data included.
+function Remove-UpdateTestInstall {
+    Stop-GuestApp
+    Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+}
+
 if ($OldZip) {
     Test-Case "U2" "The app updates itself" "an older installed version is offered the newer one, installs it and comes back as it" {
         $oldVersion = Get-ZipVersion $OldZip
@@ -2151,6 +2157,32 @@ if ($OldZip) {
         # judges each file by itself.
         $oldStart = if ($Hardened) { Resolve-GuestRefusal } else { $null }
         $was = (Invoke-GuestScript -Script $version).Output.Trim()
+        # What 0.2.0 left in the data folder of a user of its AI writer and of its
+        # built-in model: the sections `llm`, `anthropic` and `cliproxy` of
+        # settings.json (a secret is {dpapi, hint}; these two are not keys), other
+        # settings, a section no version knows, and the `cuda` folder of the
+        # built-in model's worker. The 0.3.0 backend and updater must clean the
+        # first and last and leave the rest (case U3).
+        $legacy = @'
+{
+  "version": 1,
+  "llm": { "provider": "anthropic", "model": "vm-test-model" },
+  "anthropic": { "api_key": { "dpapi": "dm10ZXN0LW5vdC1hLWtleQ==", "hint": "-key" } },
+  "cliproxy": { "url": "http://127.0.0.1:8317", "api_key": { "dpapi": "dm10ZXN0LW5vdC1hLWtleQ==", "hint": "-key" } },
+  "embed": { "provider": "local" },
+  "ollama": { "host": "http://127.0.0.1:11999" },
+  "future": { "kept": true }
+}
+'@
+        $encodedLegacy = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($legacy))
+        Invoke-GuestScript -Script (@'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+New-Item -ItemType Directory -Force $data | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $data 'settings.json'), [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{JSON}}')))
+New-Item -ItemType Directory -Force '{{TARGET}}\cuda' | Out-Null
+Set-Content '{{TARGET}}\cuda\vmtest.dll' 'not a library'
+'@).Replace('{{JSON}}', $encodedLegacy).Replace('{{TARGET}}', $guestTarget) | Out-Null
+        $script:legacySeeded = $true
         $serve = "$($script:Vm.GuestDir)\update"
         if (-not $RealRelease) {
             # The stand-in for GitHub: it serves the package under test.
@@ -2192,8 +2224,79 @@ if ($OldZip) {
         Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) -Output ("requests the stand-in saw:`n" + $asked + "`n--- app.log`n" + $log).Trim() `
             -Observed "installed $oldVersion (exit $($install.ExitCode))$(if ($oldStart -and $oldStart.Status -ne 'started') { ", which Windows refused to start until the rules $($oldStart.Rules -join '; ') were in audit" }), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
-        Stop-GuestApp
-        Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+        $script:updatedInstall = $ok
+        # U3 looks at what the update left, then clears up.
+        if ($Only -and $Only -notcontains "U3") { Remove-UpdateTestInstall }
+    }
+
+    # What 0.3.0 did to the data folder and the install folder that 0.2.0 left
+    # (commits 9b57fc9 and b2744d9: retired writer settings and the built-in
+    # model). Two parts. The update has just started the new backend on the
+    # seeded settings.json: the writer's sections must be gone, the rest kept.
+    # Then the app is quit, a built-in embedder choice as 0.2.0 saved it and
+    # downloaded model files are put in place, and the next start must move the
+    # choice to `local` and delete the models.
+    Test-Case "U3" "The update cleans up what the old version left" "the retired writer settings, the cuda folder and the built-in model are gone; other settings stay; the app runs" {
+        if (-not $script:legacySeeded) { throw "U2 did not seed the old settings; run U2 and U3 together" }
+        try {
+            $read = (Invoke-GuestScript -Script (@'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+'cuda folder: ' + (Test-Path '{{TARGET}}\cuda')
+'settings.json: ' + (Test-Path (Join-Path $data 'settings.json'))
+'--- file'
+Get-Content (Join-Path $data 'settings.json') -Raw -ErrorAction SilentlyContinue
+'--- backend.log'
+Get-Content (Join-Path $env:LOCALAPPDATA 'CodeWiki\logs\backend.log') -ErrorAction SilentlyContinue | Select-String 'retired|settings|built-in|embedder' | Select-Object -Last 6 | ForEach-Object { $_.Line }
+'@).Replace('{{TARGET}}', $guestTarget)).Output
+            $file = if ($read -match "(?s)--- file\r?\n(.*?)\r?\n--- backend\.log") { $Matches[1] } else { "" }
+            $doc = try { $file | ConvertFrom-Json } catch { $null }
+            $names = if ($doc) { @($doc.PSObject.Properties.Name) } else { @() }
+            $retiredLeft = @("llm", "anthropic", "cliproxy" | Where-Object { $names -contains $_ })
+            $keyLeft = $file -match "dm10ZXN0|vm-test-model|8317"
+            $kept = $doc -and $doc.ollama.host -eq "http://127.0.0.1:11999" -and $doc.embed.provider -eq "local" -and $doc.future.kept -eq $true
+            $cudaGone = $read -match "cuda folder: False"
+            $probe = Get-Probe "after-update" -Quick
+            $running = (Get-App $probe).Count -eq 1 -and [bool]($probe.backend -and $probe.backend.health -eq 200)
+            $first = $doc -and -not $retiredLeft -and -not $keyLeft -and $kept -and $cudaGone -and $running
+
+            # Part two: the built-in model's choice and files.
+            [void](Show-GuestWindow -ProcessName "codewiki-app")
+            $quit = Exit-GuestApp
+            $builtin = '{ "version": 1, "embed": { "provider": "builtin", "model": "gte-modernbert-base", "device": "cuda" }, "ollama": { "host": "http://127.0.0.1:11999" } }'
+            $encodedBuiltin = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($builtin))
+            Invoke-GuestScript -Script (@'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+[System.IO.File]::WriteAllText((Join-Path $data 'settings.json'), [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{JSON}}')))
+New-Item -ItemType Directory -Force (Join-Path $data 'models\vmtest-model'), (Join-Path $data 'models\.partial') | Out-Null
+Set-Content (Join-Path $data 'models\vmtest-model\manifest.json') '{}'
+Set-Content (Join-Path $data 'models\vmtest-model\weights.bin') 'not a model'
+Set-Content (Join-Path $data 'models\.partial\download.bin') 'not a model'
+Set-Content (Join-Path $data 'models\keep.txt') 'a file the built-in store did not write'
+'@).Replace('{{JSON}}', $encodedBuiltin) | Out-Null
+            Start-GuestApp -Arguments $guestRepo
+            Wait-For 25
+            $shot = Shot "after-builtin-migration"
+            $after = (Invoke-GuestScript -Script @'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+'--- file'
+Get-Content (Join-Path $data 'settings.json') -Raw -ErrorAction SilentlyContinue
+'--- models'
+(Get-ChildItem (Join-Path $data 'models') -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '
+'--- backend.log'
+Get-Content (Join-Path $data 'logs\backend.log') -ErrorAction SilentlyContinue | Select-String 'built-in|embedder' | Select-Object -Last 4 | ForEach-Object { $_.Line }
+'@).Output
+            $file2 = if ($after -match "(?s)--- file\r?\n(.*?)\r?\n--- models") { $Matches[1] } else { "" }
+            $doc2 = try { $file2 | ConvertFrom-Json } catch { $null }
+            $models = if ($after -match "(?m)^--- models\r?\n(.*)$") { $Matches[1].Trim() } else { "?" }
+            $moved = $doc2 -and $doc2.embed.provider -eq "local" -and $null -eq $doc2.embed.model -and $null -eq $doc2.embed.device -and $doc2.ollama.host -eq "http://127.0.0.1:11999"
+            $deleted = $models -notmatch "vmtest-model|\.partial" -and $models -match "keep\.txt"
+            $ok2 = $quit -and $moved -and $deleted
+            Add-Result -Id "U3" -Title "The update cleans up what the old version left" -Expect "writer sections, cuda folder, built-in choice and models are gone; other settings stay; the app runs" `
+                -Status $(if ($first -and $ok2) { "pass" } else { "fail" }) -Shots @($shot) -Output ($read + "`n=== after the built-in choice`n" + $after) `
+                -Observed "after the update from 0.2.0: sections left of llm/anthropic/cliproxy: $(if ($retiredLeft) { $retiredLeft -join ', ' } else { 'none' }); seeded values left in the file: $([bool]$keyLeft); ollama.host, embed.provider and the unknown section kept: $([bool]$kept); cuda folder removed: $([bool]$cudaGone); app running with a healthy backend: $running. Then Quit (ended by itself: $quit), a saved built-in choice (provider builtin, model, device cuda) and model files written, and a plain start: embed.provider is '$($doc2.embed.provider)', model '$($doc2.embed.model)', device '$($doc2.embed.device)', ollama.host kept: $([bool]($doc2.ollama.host)); files left in models: '$models' (keep.txt is not the built-in store's and stays)"
+        } finally {
+            Remove-UpdateTestInstall
+        }
     }
 }
 

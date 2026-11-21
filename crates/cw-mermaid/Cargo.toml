@@ -11,4 +11,4 @@ workspace = true
 
 [dependencies]
 # Default features are off on purpose: they pull in the EPL-2.0 ELK layout.
-merman = { version = "0.9.3", default-features = false, features = ["svg", "png", "diagram-flowchart", "diagram-sequence", "diagram-state"] }
+merman = { version = "0.10.0", default-features = false, features = ["svg", "png", "diagram-flowchart", "diagram-sequence", "diagram-state"] }

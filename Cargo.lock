@@ -1455,7 +1455,6 @@ dependencies = [
  "cssparser-macros",
  "dtoa-short",
  "itoa",
- "phf 0.14.0",
  "smallvec",
 ]
 
@@ -1670,6 +1669,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "data-encoding"
+version = "2.11.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4583a4551df46e2792f82ceeac45e850d2e2d5debba0b91f102385cda5b11f06"
+
+[[package]]
 name = "data-url"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1852,9 +1857,9 @@ dependencies = [
 
 [[package]]
 name = "dugong"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4994fa1094ddf0d95bdf4c6615367779fc2af7ae1d4d8e336334cf07245ace7a"
+checksum = "7e73195173b1a7575c33d3504223334700c59ca842bc895b8ee4d64707143b39"
 dependencies = [
  "dugong-graphlib",
  "rustc-hash 2.1.3",
@@ -1864,9 +1869,9 @@ dependencies = [
 
 [[package]]
 name = "dugong-graphlib"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eb6a3100cd9ceabcec9e7e6345e30c63e72f65423316314707c5c070a003d751"
+checksum = "533189757c8b5ba83e739bad85c91a4846aa1c6d538f4982e9f9e9e04b1bbeae"
 dependencies = [
  "hashbrown 0.17.1",
  "rustc-hash 2.1.3",
@@ -4415,41 +4420,44 @@ dependencies = [
 
 [[package]]
 name = "merman"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e95a601a95395f286f1f7775ba00c352a11c85ab4debe3bdbef5fa0426a21809"
+checksum = "93988c6bd2dc53a422d020835a3f547a63a7ed671568ca63bcd6814063176346"
 dependencies = [
  "merman-analysis",
  "merman-ascii",
  "merman-core",
  "merman-editor-core",
  "merman-export",
+ "merman-markup",
+ "merman-model",
  "merman-render",
+ "merman-theme-contract",
  "serde_json",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "merman-analysis"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "882ce663eb2f27f327204e46beeb0cbe69952eff735119a8cc189ffa339a27cc"
+checksum = "eb246a18d406c959612bad1f2d5e98e83e0fde5184afcbe2c9730a2aeb8431df"
 dependencies = [
  "merman-core",
+ "merman-model",
  "serde",
- "serde-saphyr 2.1.1",
  "serde_json",
  "thiserror 2.0.21",
 ]
 
 [[package]]
 name = "merman-ascii"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ef6776b79df107d266f5dd2f5227c4e4549a5c36533550e45bf73848bb31cb3"
+checksum = "837360a821ed73efe39298b9663a5fc17fade8c2ea3f8696227a5a13aba37c62"
 dependencies = [
  "dugong",
- "merman-core",
+ "merman-model",
  "rustc-hash 2.1.3",
  "serde",
  "serde_json",
@@ -4460,48 +4468,44 @@ dependencies = [
 
 [[package]]
 name = "merman-core"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9c65e0018fccd603956d97daf22c76f9877513d49aea9655a91240e503c5d17b"
+checksum = "f0804cc914fa0850509423bc2ca0ac26c14c7bf6c5bd17be6db0c88cf7b020b4"
 dependencies = [
  "cssparser",
- "euclid",
  "granit-parser 2.1.0",
- "html5ever 0.40.1",
- "htmlize",
  "indexmap",
  "json5",
  "lalrpop-util",
+ "merman-markup",
+ "merman-model",
  "rustc-hash 2.1.3",
- "ryu-js",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
- "unicode-segmentation",
- "unicode-width",
- "url",
 ]
 
 [[package]]
 name = "merman-editor-core"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97e3cdc39dfdc5dd88e76e66566a75f4935cfad28fe4776e18067daa1aa11647"
+checksum = "d8fb46be6927e9b81990e635026d0c7780c8351be8768fbb432414372ab7016f"
 dependencies = [
  "merman-analysis",
  "merman-core",
+ "merman-model",
  "serde",
 ]
 
 [[package]]
 name = "merman-export"
-version = "0.9.3"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0906c39b0c37047d2ae3d7d2ce59d033ce9dc23a82ae3be618fdb494e0f466b0"
+checksum = "2d15c4faa86dacb463b7ca54323654edbf5ede89acb59698c69284214f8f8d8a"
 dependencies = [
  "cssparser",
  "data-url",
- "merman-core",
+ "merman-model",
  "merman-render",
  "quick-xml 0.42.0",
  "resvg 0.47.0",
@@ -4514,28 +4518,63 @@ dependencies = [
 ]
 
 [[package]]
-name = "merman-render"
-version = "0.9.3"
+name = "merman-markup"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cf1f994f9fe91cd7f5e0fbb4f7c9982585813c79aacad50d9351a23ee4d1520"
+checksum = "32d88fb230a4468263334b7855838b017104d0bc19f6b2f4f9105709181c0a84"
+dependencies = [
+ "html5ever 0.40.1",
+ "htmlize",
+ "merman-model",
+ "ryu-js",
+ "serde_json",
+ "url",
+]
+
+[[package]]
+name = "merman-model"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "556fb9f241be9774cc559910efc321f9f1729ed6f2df95a8c0736b10a0c89f92"
+dependencies = [
+ "htmlize",
+ "indexmap",
+ "rustc-hash 2.1.3",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "unicode-segmentation",
+ "unicode-width",
+]
+
+[[package]]
+name = "merman-render"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39e7aa2f5a70da01c564a50dfde940dbdd9dac1e1913e44cccc617818c07c060"
 dependencies = [
  "base64 0.23.1",
  "cssparser",
+ "data-encoding",
  "data-url",
  "dugong",
+ "euclid",
  "indexmap",
  "kurbo 0.13.1",
  "libm",
- "merman-core",
+ "memchr",
+ "merman-markup",
+ "merman-model",
+ "merman-theme-contract",
  "merman-unicode-linebreak",
  "pulldown-cmark",
  "quick-xml 0.42.0",
  "roughr-merman",
- "roxmltree 0.21.2",
  "rustc-hash 2.1.3",
  "ryu-js",
  "serde",
  "serde_json",
+ "sha2 0.11.1",
  "svgtypes 0.16.2",
  "thiserror 2.0.21",
  "unicode-segmentation",
@@ -4543,10 +4582,22 @@ dependencies = [
 ]
 
 [[package]]
-name = "merman-unicode-linebreak"
-version = "0.9.3"
+name = "merman-theme-contract"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5a3f1647028ecc1f9e0c6bafd851d8915a38ce8f93877f46b5157d35ad3903c3"
+checksum = "7cee9500467a9c953ee9d694075603262f542c1fd78f58271bd9032cf8a63845"
+dependencies = [
+ "serde",
+ "serde_json",
+ "serde_json_canonicalizer",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "merman-unicode-linebreak"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c96582eadcdcc0283f3e019b6daace2eec0bd6f58bd8133c3549c9459b4a2670"
 
 [[package]]
 name = "mime"
@@ -5543,7 +5594,7 @@ version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c1562dc717473dbaa4c1f85a36410e03c047b2e7df7f45ee938fbef64ae7fadf"
 dependencies = [
- "phf_macros 0.13.1",
+ "phf_macros",
  "phf_shared 0.13.1",
  "serde",
 ]
@@ -5554,7 +5605,6 @@ version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "010378780309880b08997fae13be7834dba947d36393bd372f2b1556deb2a2f6"
 dependencies = [
- "phf_macros 0.14.0",
  "phf_shared 0.14.0",
  "serde",
 ]
@@ -5627,19 +5677,6 @@ checksum = "812f032b54b1e759ccd5f8b6677695d5268c588701effba24601f6932f8269ef"
 dependencies = [
  "phf_generator 0.13.1",
  "phf_shared 0.13.1",
- "proc-macro2",
- "quote",
- "syn 2.0.119",
-]
-
-[[package]]
-name = "phf_macros"
-version = "0.14.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5fa8d0ca26d424d27630da600c6624696e7dec8bf7b3b492b383c5dc49e5e085"
-dependencies = [
- "phf_generator 0.14.0",
- "phf_shared 0.14.0",
  "proc-macro2",
  "quote",
  "syn 2.0.119",
@@ -6579,7 +6616,7 @@ dependencies = [
  "itertools 0.11.0",
  "normpath",
  "serde",
- "serde-saphyr 1.3.0",
+ "serde-saphyr",
  "serde_json",
  "siphasher",
  "toml 0.8.23",
@@ -7019,19 +7056,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "serde-saphyr"
-version = "2.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d43fb82d550b07e6f929a58d7d0935182602f48ddead875f5ee313c41c8f07fe"
-dependencies = [
- "base64 0.23.1",
- "nohash-hasher",
- "num-traits",
- "serde_core",
- "zmij",
-]
-
-[[package]]
 name = "serde_bytes"
 version = "0.11.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7085,6 +7109,17 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "serde_json_canonicalizer"
+version = "0.4.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87f7bb64f8c7e9f783fdfe883b5fe93a90bee1597c63705baa91842c5f698620"
+dependencies = [
+ "ryu-js",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

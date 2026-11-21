@@ -999,6 +999,98 @@ foreach ($view in $views) {
     }
 }
 
+# ---------------------------------------------------------------- helpers for the cases below
+# End the app the way a user does: palette, "Quit CodeWiki", Enter. The app
+# and its backend must be gone afterwards; one that stays is ended by force.
+# Returns whether Quit ended them by itself. The window must have the focus.
+function Exit-GuestApp {
+    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Text "quit codewiki"; Wait-For 2
+    Send-Keys "enter"
+    $deadline = (Get-Date).AddSeconds(60)
+    do {
+        Start-Sleep -Seconds 3
+        $probe = Get-Probe "quit" -Quick
+        $left = (Get-App $probe).Count + (Get-Backend $probe).Count
+    } while ($left -gt 0 -and (Get-Date) -lt $deadline)
+    if ($left) { Stop-GuestApp }
+    $left -eq 0
+}
+
+# The share of a screenshot's pixels (sampled) that differ clearly from
+# another's. A diagram viewer over the window changes a large part of it.
+function Get-ImageChange {
+    param([string]$A, [string]$B)
+    Add-Type -AssemblyName System.Drawing
+    $first = New-Object System.Drawing.Bitmap $A
+    $second = New-Object System.Drawing.Bitmap $B
+    try {
+        $width = [math]::Min($first.Width, $second.Width)
+        $height = [math]::Min($first.Height, $second.Height)
+        $changed = 0
+        $total = 0
+        for ($y = 0; $y -lt $height; $y += 8) {
+            for ($x = 0; $x -lt $width; $x += 8) {
+                $p = $first.GetPixel($x, $y)
+                $q = $second.GetPixel($x, $y)
+                if ([math]::Abs($p.R - $q.R) + [math]::Abs($p.G - $q.G) + [math]::Abs($p.B - $q.B) -gt 24) { $changed += 1 }
+                $total += 1
+            }
+        }
+        if ($total) { $changed / $total } else { 0 }
+    } finally {
+        $first.Dispose()
+        $second.Dispose()
+    }
+}
+
+# What a script that talks to the backend in the guest starts with: the
+# address and token of the running backend (backend.json) and Invoke-Backend,
+# which returns the answer's text, or "HTTP error: ..." with the body of a
+# refusal. Get-RepoId finds a registered repository by its name.
+$backendPrelude = @'
+$ErrorActionPreference = 'Stop'
+$info = Get-Content (Join-Path $env:LOCALAPPDATA 'CodeWiki\backend.json') -Raw | ConvertFrom-Json
+function Invoke-Backend {
+    param([string]$Method, [string]$Path, $Body = $null, [int]$Wait = 120)
+    $request = @{ UseBasicParsing = $true; Method = $Method; Uri = ($info.url + $Path); TimeoutSec = $Wait
+        Headers = @{ Authorization = ('Bearer ' + $info.token) } }
+    if ($null -ne $Body) { $request.Body = ($Body | ConvertTo-Json -Depth 8 -Compress); $request.ContentType = 'application/json' }
+    try { (Invoke-WebRequest @request).Content }
+    catch {
+        $detail = ''
+        if ($_.Exception.Response) { try { $detail = (New-Object System.IO.StreamReader($_.Exception.Response.GetResponseStream())).ReadToEnd() } catch { } }
+        "HTTP error: $($_.Exception.Message) $detail"
+    }
+}
+function Get-RepoId {
+    param([string]$Name)
+    $list = @(Invoke-Backend GET '/v1/repos' | ConvertFrom-Json)
+    ($list | Where-Object { $_.name -eq $Name } | Select-Object -First 1).id
+}
+'@
+function Invoke-GuestBackendScript {
+    param([Parameter(Mandatory)][string]$Script, [int]$TimeoutSec = 300)
+    Invoke-GuestScript -TimeoutSec $TimeoutSec -Script ($backendPrelude + "`n" + $Script)
+}
+
+# ---------------------------------------------------------------- AV1, the agent view
+# `agent:<note>` starts the app on the note's agent view, the note as the MCP
+# tool read_note gives it to a coding agent (main.rs, open_startup_view).
+Test-Case "AV1" "The agent view of a note" "the window opens on the note's agent view, with the page drawn" {
+    if (-not $noteName) { throw "D2 produced no note to open" }
+    Start-GuestApp -Arguments $guestRepo, "agent:$noteName"
+    Wait-For 15
+    $shot = Shot "view-agent"
+    $probe = Get-Probe "view-agent" -Quick
+    $app = Get-App $probe
+    $window = @($app | Where-Object { $_.hasWindow })
+    Add-Result -Id "AV1" -Title "The agent view of a note" -Expect "the window opens on the note's agent view" `
+        -Status $(if ($window) { "pass" } else { "fail" }) -Shots @($shot) `
+        -Observed "started on 'agent:$noteName'; app processes $($app.Count), with a window $($window.Count); read the screenshot: the note is drawn, a line above it says what is left out (the walk-through of calls that rules wrote) and stays while the note scrolls, and the toolbar offers no Edit"
+    Stop-GuestApp
+}
+
 # A page must appear without any input. Start-GuestApp clicks the window to
 # give it the focus, which hid this: here the app is started and left alone.
 # With motion reduced, a page once stayed a lone "CodeWiki" heading until the
@@ -1209,6 +1301,92 @@ Test-Case "ST1" "The Settings page and its categories" "each row of the list ope
     Stop-GuestApp
 }
 
+# ---------------------------------------------------------------- Z1, zoom
+# The whole app zooms with Ctrl+wheel (zoom.rs): 100, 110, 125 ... percent,
+# kept in zoom.txt under %APPDATA%\CodeWiki. The wheel is the VM's own mouse
+# device and Ctrl is held on its keyboard device, as a hand does: the app
+# reads the modifier from the keyboard's state, which a message posted to the
+# window with MK_CONTROL would not change.
+function Send-CtrlWheel {
+    param([Parameter(Mandatory)][int]$Notches)
+    Invoke-Device Keyboard PressKey @{ KeyCode = [uint32]0x11 }
+    Start-Sleep -Milliseconds 150
+    Send-Scroll -Notches $Notches
+    Start-Sleep -Milliseconds 150
+    Invoke-Device Keyboard ReleaseKey @{ KeyCode = [uint32]0x11 }
+    Start-Sleep -Milliseconds 300
+}
+
+Test-Case "Z1" "Zoom the whole app with Ctrl+wheel" "two notches up zoom in, two down return to 100 percent, Ctrl+0 resets, and zoom.txt follows" {
+    $read = "if (Test-Path `$env:APPDATA\CodeWiki\zoom.txt) { (Get-Content `$env:APPDATA\CodeWiki\zoom.txt -Raw).Trim() } else { '(not set)' }"
+    Invoke-GuestScript -Script 'Remove-Item (Join-Path $env:APPDATA "CodeWiki\zoom.txt") -ErrorAction SilentlyContinue' | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    # The pointer rests in the middle of the page, where the wheel is read.
+    Move-Pointer -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int]($info.Height / 2))
+    Wait-For 1
+    $a = Shot "zoom-100"
+    $start = (Invoke-GuestScript -Script $read).Output.Trim()
+    Send-CtrlWheel 1; Wait-For 1
+    Send-CtrlWheel 1; Wait-For 3
+    $zoomed = (Invoke-GuestScript -Script $read).Output.Trim()
+    $b = Shot "zoom-in"
+    Send-CtrlWheel -1; Wait-For 1
+    Send-CtrlWheel -1; Wait-For 3
+    $back = (Invoke-GuestScript -Script $read).Output.Trim()
+    $c = Shot "zoom-back"
+    Send-CtrlWheel 1; Wait-For 2
+    Send-Keys "ctrl+0"; Wait-For 3
+    $reset = (Invoke-GuestScript -Script $read).Output.Trim()
+    $d = Shot "zoom-reset"
+    $level = 0
+    $up = [int]::TryParse($zoomed, [ref]$level) -and $level -gt 100
+    $ok = $up -and $back -eq "100" -and $reset -eq "100"
+    Add-Result -Id "Z1" -Title "Zoom the whole app with Ctrl+wheel" -Expect "zoom.txt: above 100 after two notches up, 100 after two down, 100 after Ctrl+0" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c, $d) `
+        -Observed "zoom.txt at the start '$start'; after two notches up with Ctrl held '$zoomed'; after two down '$back'; after one up and Ctrl+0 '$reset'; read the screenshots: the second is larger than the first and shows the level chip in the title bar, the third and fourth look like the first (the title bar never changes size)"
+    Stop-GuestApp
+}
+
+# ---------------------------------------------------------------- LR1, open the last repository
+# Settings > Appearance > Startup > "Open the last repository" is kept in
+# open_last.txt ("on") under %APPDATA%\CodeWiki (startup.rs). On, a start with
+# no repository and no view opens the wiki map of the last repository; off, it
+# opens Home. The switch is turned on through its file (the click's position is
+# not read off a screenshot) and photographed in Settings.
+Test-Case "LR1" "Open the last repository, on and off" "off: a plain start shows Home; on: after Quit a plain start shows cw-core's wiki map" {
+    $file = "`$env:APPDATA\CodeWiki\open_last.txt"
+    Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
+    # Starting with the folder makes it the last repository.
+    Start-GuestApp -Arguments $guestRepo, "settings:appearance"
+    Wait-For 15
+    $a = Shot "open-last-switch-off"
+    $ended = Exit-GuestApp
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null; Set-Content $file 'on' -NoNewline" | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "settings:appearance"
+    Wait-For 15
+    $b = Shot "open-last-switch-on"
+    $endedOn = Exit-GuestApp
+    # A plain start: no folder, no view, a working folder that is no repository.
+    Start-GuestApp
+    Wait-For 25
+    $c = Shot "open-last-on-plain-start"
+    $opened = Get-OpenedRepo
+    $exitedAgain = Exit-GuestApp
+    Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestApp
+    Wait-For 25
+    $d = Shot "open-last-off-plain-start"
+    $openedOff = Get-OpenedRepo
+    Stop-GuestApp
+    $ok = $ended -and $endedOn -and $exitedAgain -and $opened -eq "cw-core"
+    Add-Result -Id "LR1" -Title "Open the last repository, on and off" -Expect "after Quit, a plain start opens cw-core with the switch on, and Home with it off" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c, $d) `
+        -Observed "Settings > Appearance photographed with the switch off, then on (open_last.txt written); Quit ended the app and its backend by itself: $ended, $endedOn, $exitedAgain; plain start with the switch on opened '$opened'; off, '$openedOff'; read the screenshots: the third is cw-core's wiki map, the fourth Home. open_last.txt removed again"
+}
+
 Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the file" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
@@ -1323,6 +1501,117 @@ Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes
     Add-Result -Id "HM2" -Title "Remove a project whose folder is gone" -Expect "gone-demo is no longer registered; cw-core is" `
         -Status $(if ($left.Count -eq 0 -and (Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })) { "pass" } else { "fail" }) -Shots @($shot) `
         -Observed "clicked Remove at ($x,$y); the backend now lists: $((Get-Registered $probe | ForEach-Object { $_.name }) -join ', ')"
+}
+
+# ---------------------------------------------------------------- DV1, the diagram viewer
+# A drawn Mermaid diagram in a note is a link, and a click on it opens the
+# diagram viewer over the window; Escape closes it (main.rs, open_diagram). The
+# wiki of cw-core has no diagram: its notes are rules' notes of a single crate,
+# and only a flow note has one (a "Crate Dependency Flow" needs two crates). So
+# this case builds a small Rust workspace of three crates in the guest, writes
+# its wiki, and opens the flow note. Where the diagram is on the page is not
+# known to the script; it clicks down the column and tells the viewer by the
+# change in the picture (Get-ImageChange).
+Test-Case "DV1" "Open a diagram in the viewer, and close it" "a click on the flow note's diagram opens the viewer; Escape closes it and the note is as before" {
+    $demo = "$guestHome\repos\diagram-demo"
+    # The workspace's files, sent as one JSON text so that no quote has to be escaped twice.
+    $demoFiles = [ordered]@{
+        "Cargo.toml"              = "[workspace]`nmembers = [`"crates/*`"]`nresolver = `"2`"`n"
+        "crates/alpha/Cargo.toml" = "[package]`nname = `"alpha`"`nversion = `"0.1.0`"`nedition = `"2021`"`n"
+        "crates/alpha/src/lib.rs" = "/// The base of the other two crates.`npub fn base() -> u32 { 1 }`n"
+        "crates/beta/Cargo.toml"  = "[package]`nname = `"beta`"`nversion = `"0.1.0`"`nedition = `"2021`"`n`n[dependencies]`nalpha = { path = `"../alpha`" }`n"
+        "crates/beta/src/lib.rs"  = "/// Builds on alpha.`npub fn middle() -> u32 { alpha::base() + 1 }`n"
+        "crates/gamma/Cargo.toml" = "[package]`nname = `"gamma`"`nversion = `"0.1.0`"`nedition = `"2021`"`n`n[dependencies]`nalpha = { path = `"../alpha`" }`nbeta = { path = `"../beta`" }`n"
+        "crates/gamma/src/lib.rs" = "/// Builds on alpha and beta.`npub fn top() -> u32 { beta::middle() + alpha::base() }`n"
+    }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($demoFiles | ConvertTo-Json -Compress)))
+    $setup = Invoke-GuestScript -TimeoutSec 300 -Script (@'
+$demo = '{{DEMO}}'
+Remove-Item -Recurse -Force $demo -ErrorAction SilentlyContinue
+$files = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{FILES}}')) | ConvertFrom-Json
+foreach ($property in $files.PSObject.Properties) {
+    $path = Join-Path $demo ($property.Name -replace '/', '\')
+    New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
+    [System.IO.File]::WriteAllText($path, $property.Value)
+}
+Set-Location $demo
+& '{{CODEWIKI}}' init 2>&1
+"init exit: $LASTEXITCODE"
+& '{{CODEWIKI}}' update 2>&1
+"update exit: $LASTEXITCODE"
+$flow = Get-ChildItem (Join-Path $demo 'obsidian') -Recurse -Filter '*Dependency Flow.md' | Select-Object -First 1
+"flow note: $(if ($flow) { $flow.BaseName } else { 'none' })"
+$fence = [string][char]96 * 3 + 'mermaid'
+"has diagram: $(if ($flow) { (Get-Content $flow.FullName -Raw).Contains($fence) } else { $false })"
+$global:LASTEXITCODE = 0
+'@).Replace('{{DEMO}}', $demo).Replace('{{FILES}}', $encoded).Replace('{{CODEWIKI}}', "$guestTarget\codewiki.exe")
+    $flowName = if ($setup.Output -match "flow note: (.+)") { $Matches[1].Trim() } else { "none" }
+    if ($flowName -eq "none" -or $setup.Output -notmatch "has diagram: True") {
+        Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "the demo wiki has a flow note with a diagram" -Status fail -Output $setup.Output `
+            -Observed "the demo workspace's wiki has no flow note with a Mermaid diagram; see the output"
+        return
+    }
+    # With both side panes hidden, the note's column is in the middle of the window.
+    Invoke-GuestScript -Script 'New-Item -ItemType Directory -Force "$env:APPDATA\CodeWiki" | Out-Null; Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" hidden -NoNewline' | Out-Null
+    Start-GuestApp -Arguments $demo, $flowName
+    # The diagram is drawn off the UI thread: a placeholder shows first.
+    Wait-For 25
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $note = Shot "diagram-note"
+    $base = Join-Path $shots $note
+    $probeShot = Join-Path $logs "diagram-scan.png"
+    $found = $null
+    $attempts = 0
+    $step = [int](40 * $info.Scale)
+    foreach ($offset in -100, -250, 60) {
+        $x = $info.Left + [int]($info.Width / 2) + [int]($offset * $info.Scale)
+        for ($y = $info.Top + [int]($info.Height * 0.25); $y -lt $info.Bottom - $step; $y += $step) {
+            Send-Click -X $x -Y $y
+            $attempts += 1
+            Wait-For 2.5
+            Save-Screenshot $probeShot | Out-Null
+            if ((Get-ImageChange $base $probeShot) -gt 0.02) {
+                # Something opened. The viewer closes with Escape and leaves
+                # the note as it was; a page that was navigated to does not.
+                Send-Keys "esc"; Wait-For 2.5
+                Save-Screenshot $probeShot | Out-Null
+                if ((Get-ImageChange $base $probeShot) -lt 0.005) { $found = @($x, $y); break }
+                # A link of the note was followed: start the note again.
+                Stop-GuestApp
+                Start-GuestApp -Arguments $demo, $flowName
+                Wait-For 25
+                Save-Screenshot $base | Out-Null
+            }
+        }
+        if ($found) { break }
+    }
+    if (-not $found) {
+        Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "a click on the diagram opens the viewer" -Status note -Shots @($note) `
+            -Observed "$attempts clicks down the note's column found nothing that opens over the window and closes with Escape; read the screenshot: whether the note shows a drawn diagram (a placeholder or the source means it was not drawn in time)"
+    } else {
+        Send-Click -X $found[0] -Y $found[1]
+        Wait-For 8
+        $open = Shot "diagram-viewer-open"
+        Send-Keys "esc"; Wait-For 3
+        $closed = Shot "diagram-viewer-closed"
+        $after = Get-ImageChange $base (Join-Path $shots $closed)
+        Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "the viewer opens over the note and Escape closes it" `
+            -Status $(if ($after -lt 0.005) { "pass" } else { "fail" }) -Shots @($note, $open, $closed) `
+            -Observed "the flow note '$flowName' of a three-crate workspace built in the guest; a click at ($($found[0]),$($found[1])) after $attempts tries opened something that covers the window, and Escape brought back the note (change from before: $([math]::Round($after * 100, 2)) percent of sampled pixels); read the screenshots: the second must be the diagram viewer (header 'Scroll to zoom, drag to move', a percentage, zoom buttons), sharp after the wait, the third the note"
+    }
+    Stop-GuestApp
+    # Put the guest back as the cases after this one expect: the panes shown,
+    # cw-core the last repository, the demo not registered.
+    Invoke-GuestScript -Script 'Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" shown -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" shown -NoNewline' | Out-Null
+    Start-GuestApp -Arguments $guestRepo
+    Wait-For 12
+    Invoke-GuestBackendScript -Script (@'
+$id = Get-RepoId 'diagram-demo'
+if ($id) { Invoke-Backend DELETE "/v1/repos/$id" | Out-Null }
+Remove-Item -Recurse -Force '{{DEMO}}' -ErrorAction SilentlyContinue
+'@).Replace('{{DEMO}}', $demo) | Out-Null
+    Stop-GuestApp
 }
 
 # ---------------------------------------------------------------- IC, icon
@@ -1457,6 +1746,28 @@ foreach (`$line in `$answers) {
     $tools = if ($run.Output -match "tools: (\d+)") { [int]$Matches[1] } else { 0 }
     Add-Result -Id "D3" -Title "MCP bridge over stdio" -Expect "initialize and tools/list answer; 27 tools" `
         -Status $(if ($tools -eq 27) { "pass" } elseif ($tools -gt 0) { "note" } else { "fail" }) -Output $run.Output -Observed "tools listed: $tools"
+}
+
+# D2 wrote the wiki and D3 showed that the bridge answers. The three tools that
+# let a coding agent write a note are called here the way an agent calls them,
+# over stdio, with no agent: guest\mcp-write.ps1 asks which note waits, reads
+# its brief, tries a submission on an old base and one for a section that is
+# not the agent's (both refused), then submits the explanation and reads the
+# note's file. The note stays changed for the cases after it.
+Test-Case "D4" "Write a note through the MCP bridge" "list_waiting_notes, get_note_brief and submit_note over stdio save an explanation into the note's file" {
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\mcp-write.ps1") -GuestDirectory $script:Vm.GuestDir
+    $run = Invoke-GuestScript -TimeoutSec 600 -Script "& '$powershell' -NoProfile -ExecutionPolicy Bypass -File '$($script:Vm.GuestDir)\mcp-write.ps1' -Mcp '$guestTarget\codewiki-mcp.exe' -Repo '$guestRepo'"
+    $line = { param($key) if ($run.Output -match "(?m)^${key}: (.*)$") { $Matches[1].Trim() } else { "" } }
+    $note = & $line "note"
+    $stale = & $line "stale base"
+    $wrong = & $line "wrong section"
+    $submit = & $line "submit"
+    $held = (& $line "file holds the text") -eq "True"
+    $again = (& $line "brief again, section written by an agent") -eq "True"
+    $ok = $note -and $stale -match "Not saved" -and $wrong -match "Not saved" -and $submit -match "^Saved " -and $held -and $again
+    Add-Result -Id "D4" -Title "Write a note through the MCP bridge" -Expect "a stale base and a section that is not the agent's are refused; the submission is saved; the note's file holds the text" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "note '$note'; old base: '$stale'; wrong section: '$wrong'; submission: '$submit'; the vault file holds the submitted text: $held; the brief now shows the section as written by an agent: $again"
 }
 
 # Each program keeps a log of its own. By now the app, a backend and the MCP
@@ -1810,6 +2121,287 @@ $global:LASTEXITCODE = 0
     Remove-ClaudeLogin
 }
 
+# ---------------------------------------------------------------- SE, a stand-in embedding server
+# CodeWiki runs no model: it asks a server for vectors (README, Search). The
+# stand-in is guest\embed-server.ps1, which lists one model and answers
+# POST /v1/embeddings with small deterministic vectors. It is chosen as the
+# llama.cpp server (llamacpp.url), because that is the embedder that refuses a
+# model its list does not hold (cw-embed, check_listed). The settings are
+# changed through PUT /v1/settings, the call the Settings page makes; the page
+# is photographed with them in force.
+$stubPort = 9931
+$stubModel = "vm-embed-stub"
+$stubUrl = "http://localhost:$stubPort"
+$stubFolder = "$($script:Vm.GuestDir)\embed"
+$stubUp = $false
+
+function Start-EmbedStub {
+    New-GuestDirectory $stubFolder
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\embed-server.ps1") -GuestDirectory $script:Vm.GuestDir
+    Invoke-GuestScript -Script "Remove-Item '$stubFolder\requests.log' -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\embed-server.ps1", "-Folder", $stubFolder, "-Port", "$stubPort", "-Model", $stubModel
+    Wait-For 6
+    $script:stubUp = $true
+    (Invoke-GuestScript -Script "try { (Invoke-WebRequest -UseBasicParsing '$stubUrl/v1/models').Content } catch { 'no answer: ' + `$_.Exception.Message }").Output
+}
+
+function Stop-EmbedStub {
+    Invoke-GuestScript -Script "try { Invoke-WebRequest -UseBasicParsing '$stubUrl/stop' | Out-Null } catch { }" | Out-Null
+    $script:stubUp = $false
+}
+
+# How many embeddings requests the stand-in has answered, and with how many texts.
+function Get-EmbedStubCount {
+    $run = Invoke-GuestScript -Script "`$lines = @(Get-Content '$stubFolder\requests.log' -ErrorAction SilentlyContinue | Where-Object { `$_ -match 'POST /v1/embeddings -> 200' }); `$texts = 0; foreach (`$l in `$lines) { if (`$l -match 'texts=(\d+)') { `$texts += [int]`$Matches[1] } }; `"posts=`$(`$lines.Count) texts=`$texts`""
+    if ($run.Output -match "posts=(\d+) texts=(\d+)") { [pscustomobject]@{ Posts = [int]$Matches[1]; Texts = [int]$Matches[2] } } else { throw "could not read the stand-in's log: $($run.Output)" }
+}
+
+# Choose an embedder through the backend, as the Settings page does, and
+# leave the app open on Settings > Semantic search with it in force. The app
+# is started first, to have a backend that knows cw-core; it is started again
+# afterwards so that its page is drawn from the new settings. Returns the
+# backend's answer to the change.
+function Set-GuestEmbedder {
+    param([Parameter(Mandatory)][string]$Provider, [string]$Model, [string]$Url)
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "settings:search"
+    Wait-For 20
+    $body = @{ embed = @{ provider = $Provider } }
+    if ($Model) { $body.embed.model = $Model }
+    if ($Url) { $body[$Provider] = @{ url = $Url } }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Depth 5 -Compress)))
+    $set = Invoke-GuestBackendScript -Script (@'
+$body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{BODY}}')) | ConvertFrom-Json
+Invoke-Backend PUT '/v1/settings' $body
+'@).Replace('{{BODY}}', $encoded)
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "settings:search"
+    Wait-For 20
+    $set.Output
+}
+
+# Guest text for a job that is waited for: starts nothing, only polls.
+$jobWait = @'
+$deadline = (Get-Date).AddSeconds({{SECONDS}})
+do {
+    Start-Sleep -Seconds 3
+    $job = (Invoke-Backend GET '/v1/embed/job' | ConvertFrom-Json).job
+} while ($job -and $job.phase -eq 'embedding' -and (Get-Date) -lt $deadline)
+'job: ' + ($job | ConvertTo-Json -Compress)
+'@
+
+# The job object of a "job: {...}" line.
+function Get-JobLine {
+    param([string]$Output)
+    if ($Output -match "(?m)^job: (\{.*\})\s*$") { $Matches[1] | ConvertFrom-Json } else { $null }
+}
+
+Test-Case "SE1" "A stand-in embedding server: models and vectors" "Settings shows the server's model, a test answers, a reembed stores vectors for every document, and a search embeds the query" {
+    $listing = Start-EmbedStub
+    $set = Set-GuestEmbedder -Provider "llamacpp" -Model $stubModel -Url $stubUrl
+    $shot = Shot "settings-search-stand-in"
+    $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
+'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
+'test: ' + (Invoke-Backend POST '/v1/settings/test/embed')
+'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
+'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "300"))
+    $job = Get-JobLine $run.Output
+    $before = Get-EmbedStubCount
+    $search = Invoke-GuestBackendScript -Script @'
+$id = Get-RepoId 'cw-core'
+$hits = @(Invoke-Backend GET "/v1/repos/$id/search?q=settings&limit=5" | ConvertFrom-Json)
+"hits: $($hits.Count)"
+'@
+    $after = Get-EmbedStubCount
+    $listed = $run.Output -match '"reachable":\s*true' -and $run.Output -match [regex]::Escape($stubModel)
+    $tested = $run.Output -match '"ok":\s*true' -and $run.Output -match '"dimensions":\s*16'
+    $stored = $job -and $job.phase -eq "done" -and $job.docs_total -gt 0 -and $job.docs_done -eq $job.docs_total -and $before.Texts -ge $job.docs_done
+    $hits = if ($search.Output -match "hits: (\d+)") { [int]$Matches[1] } else { 0 }
+    $queried = $after.Posts -gt $before.Posts
+    $ok = $listed -and $tested -and $stored -and $hits -gt 0 -and $queried
+    Add-Result -Id "SE1" -Title "A stand-in embedding server: models and vectors" -Expect "the model is listed; the test answers with 16 dimensions; the job is done with every document embedded; a search sends the query to the server" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("stand-in's /v1/models: $listing`nsettings change: $set`n" + $run.Output + "`n" + $search.Output) `
+        -Observed "llama.cpp chosen with the model '$stubModel' at $stubUrl; the server's list shows the model: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }), the stand-in answered $($before.Posts) requests with $($before.Texts) texts; a search for 'settings' gave $hits hits and the stand-in then had $($after.Posts) requests (a query is embedded): $queried; read the screenshot: Settings > Semantic search names llama.cpp and $stubModel with no warning"
+    if ($Only -and $Only -notcontains "SE2") {
+        Set-GuestEmbedder -Provider "local" | Out-Null
+        Stop-EmbedStub
+        Stop-GuestApp
+    }
+}
+
+Test-Case "SE2" "A model the server does not list is refused" "llama.cpp does not list the chosen model: the test, the job and the page say so, and no embeddings request is sent" {
+    if (-not $stubUp) { Start-EmbedStub | Out-Null }
+    $missing = "vm-embed-missing"
+    $set = Set-GuestEmbedder -Provider "llamacpp" -Model $missing -Url $stubUrl
+    $shot = Shot "settings-search-model-not-listed"
+    $before = Get-EmbedStubCount
+    $run = Invoke-GuestBackendScript -TimeoutSec 300 -Script (@'
+'test: ' + (Invoke-Backend POST '/v1/settings/test/embed')
+'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
+'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "120"))
+    $after = Get-EmbedStubCount
+    $job = Get-JobLine $run.Output
+    $message = "llama.cpp does not list $missing; choose a model it serves"
+    $tested = $run.Output -match '"ok":\s*false' -and $run.Output.Contains($message)
+    $failed = $job -and $job.phase -eq "failed" -and "$($job.error)".Contains($message)
+    $quiet = $after.Posts -eq $before.Posts
+    Add-Result -Id "SE2" -Title "A model the server does not list is refused" -Expect "'$message' from the test and the job; no embeddings request reaches the server" `
+        -Status $(if ($tested -and $failed -and $quiet) { "pass" } else { "fail" }) -Shots @($shot) -Output ("settings change: $set`n" + $run.Output) `
+        -Observed "chose '$missing', which the stand-in does not list; Test refused with the message: $tested; the job ended $(if ($job) { $job.phase } else { 'unread' }) with it: $failed; embeddings requests at the stand-in before $($before.Posts), after $($after.Posts); read the screenshot: the page shows a warning that llama.cpp does not list $missing, and keeps it selected"
+    Set-GuestEmbedder -Provider "local" | Out-Null
+    Stop-EmbedStub
+    Stop-GuestApp
+}
+
+# ---------------------------------------------------------------- OL, a real Ollama
+# README names Ollama and `ollama pull embeddinggemma` as one way to serve
+# embeddings. These cases do exactly that in the guest, which has a network.
+$ollamaExe = "$guestHome\AppData\Local\Programs\Ollama\ollama.exe"
+$ollamaDownload = "https://ollama.com/download/OllamaSetup.exe"
+
+# Ask the guest which Ollama version answers on its port; empty when none does.
+function Get-OllamaVersion {
+    (Invoke-GuestScript -TimeoutSec 60 -Script "try { (Invoke-RestMethod -TimeoutSec 5 'http://localhost:11434/api/version').version } catch { }").Output.Trim()
+}
+
+# OllamaSetup.exe is an Inno Setup installer that needs no administrator
+# (github.com/ollama/ollama, app/ollama.iss: PrivilegesRequired=lowest,
+# DefaultDirName={localappdata}\Programs\Ollama; docs/windows.mdx: "The Ollama
+# install does not require Administrator, and installs in your home directory
+# by default", and the installer takes /DIR). The download is
+# https://ollama.com/download/OllamaSetup.exe, which redirects to the newest
+# release's asset on GitHub (about 1.8 GB). Inno Setup's own switches make it
+# silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-. The docs name no
+# silent switch of Ollama's own. When the installer ends it starts the tray
+# app, which serves on http://localhost:11434.
+Test-Case "OL1" "Install Ollama silently" "OllamaSetup.exe from ollama.com installs for the user, and the server answers on port 11434" {
+    $download = Invoke-GuestScript -Background -TimeoutSec 2400 -Script (@'
+$ProgressPreference = 'SilentlyContinue'
+$free = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+"free disk GB: $free"
+if ($free -lt 8) { 'result: not enough disk'; return }
+$folder = '{{HOME}}\Downloads\ollama'
+New-Item -ItemType Directory -Force $folder | Out-Null
+$setup = Join-Path $folder 'OllamaSetup.exe'
+$watch = Get-Date
+Invoke-WebRequest -UseBasicParsing '{{URL}}' -OutFile $setup
+"downloaded: $([math]::Round((Get-Item $setup).Length / 1MB)) MB in $([int]((Get-Date) - $watch).TotalSeconds) s"
+$signature = Get-AuthenticodeSignature $setup
+"signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+'result: downloaded'
+'@).Replace('{{HOME}}', $guestHome).Replace('{{URL}}', $ollamaDownload)
+    if ($download.Output -notmatch "result: downloaded") {
+        Add-Result -Id "OL1" -Title "Install Ollama silently" -Expect "the installer downloads" -Status fail -Output $download.Output `
+            -Observed "the installer was not downloaded: $(($download.Output -split "`n" | Select-Object -Last 2) -join '; ')"
+        return
+    }
+    $setup = "$guestHome\Downloads\ollama\OllamaSetup.exe"
+    $watch = Get-Date
+    # Not Invoke-GuestExe: the installer starts the tray app, which would keep
+    # the output pipe it waits on open for as long as the app runs.
+    Start-GuestExe -Exe $setup -Arguments "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"
+    $installed = $false
+    $deadline = (Get-Date).AddMinutes(15)
+    while ((Get-Date) -lt $deadline -and -not $installed) {
+        Start-Sleep -Seconds 10
+        $state = (Invoke-GuestScript -TimeoutSec 60 -Script "`"setup running: `$(@(Get-Process 'OllamaSetup*' -ErrorAction SilentlyContinue).Count)`"; `"exe: `$(Test-Path '$ollamaExe')`"").Output
+        $installed = $state -match "setup running: 0" -and $state -match "exe: True"
+    }
+    Wait-For 15
+    $seconds = [int]((Get-Date) - $watch).TotalSeconds
+    $version = Get-OllamaVersion
+    $facts = (Invoke-GuestScript -TimeoutSec 120 -Script (@'
+$exe = '{{EXE}}'
+"file version: $((Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion)"
+"on user PATH: $(([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains (Split-Path $exe))"
+"processes: $((Get-Process | Where-Object { $_.ProcessName -like '*ollama*' } | ForEach-Object { $_.ProcessName }) -join ', ')"
+$events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1121, 1122, 1116, 1117 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'ollama' })
+"Defender events naming Ollama: $($events.Count)"
+foreach ($event in $events | Select-Object -First 4) { "  event $($event.Id): $(($event.Message -split "`r?`n" | Where-Object { $_ -match '^\s*(ID|Path|Name):' } | ForEach-Object { $_.Trim() }) -join ' | ')" }
+'@).Replace('{{EXE}}', $ollamaExe)).Output
+    $shot = Shot "ollama-installed"
+    Add-Result -Id "OL1" -Title "Install Ollama silently" -Expect "the installer runs with /VERYSILENT as the user, ollama.exe is in place and the server answers on 11434" `
+        -Status $(if ($installed -and $version) { "pass" } elseif ($installed) { "note" } else { "fail" }) -Shots @($shot) -Output ($download.Output + "`n--- after the install`n" + $facts) `
+        -Observed "$ollamaDownload; $(($download.Output -split "`n" | Where-Object { $_ -match '^(downloaded|signature)' }) -join '; '); /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- ended after $seconds s with ollama.exe in place: $installed; the server answers on 11434 with version '$version' (empty: it did not start by itself; see the output for what runs and for any Defender event that names Ollama)"
+}
+
+Test-Case "OL2" "ollama pull embeddinggemma" "the model is pulled as README says and the server lists it" {
+    if (-not (Get-OllamaVersion)) {
+        # The tray app did not start, or the guest was restored since OL1.
+        Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $ollamaExe, "serve"
+        Wait-For 15
+    }
+    if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 first" }
+    $run = Invoke-GuestScript -Background -TimeoutSec 2700 -Script (@'
+$watch = Get-Date
+$text = & '{{EXE}}' pull embeddinggemma 2>&1 | Out-String
+$seconds = [int]((Get-Date) - $watch).TotalSeconds
+"pull exit: $LASTEXITCODE after $seconds s"
+$clean = ($text -replace '[^\x20-\x7E\r\n]', '') -split "`r?`n|`r" | Where-Object { $_.Trim() } | Select-Object -Last 4
+"pull output ends: $($clean -join ' | ')"
+$tags = (Invoke-RestMethod -TimeoutSec 20 'http://localhost:11434/api/tags').models | Where-Object { $_.name -like 'embeddinggemma*' }
+foreach ($tag in $tags) { "model: $($tag.name), $([math]::Round($tag.size / 1MB)) MB" }
+$folder = Join-Path $env:USERPROFILE '.ollama\models'
+"models folder: $([math]::Round(((Get-ChildItem $folder -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB)) MB"
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', $ollamaExe)
+    $ok = $run.Output -match "pull exit: 0" -and $run.Output -match "model: embeddinggemma"
+    Add-Result -Id "OL2" -Title "ollama pull embeddinggemma" -Expect "pull exits 0 and /api/tags lists embeddinggemma" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|model:|models folder)' }) -join '; ')"
+}
+
+Test-Case "OL3" "Semantic search through Ollama" "Ollama and embeddinggemma chosen: the page lists the model, a reembed stores every document's vector, and a search by meaning answers" {
+    if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 and OL2 first" }
+    $set = Set-GuestEmbedder -Provider "ollama" -Model "embeddinggemma"
+    $shot = Shot "settings-search-ollama"
+    $watch = Get-Date
+    $run = Invoke-GuestBackendScript -TimeoutSec 1500 -Script (@'
+'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
+'test: ' + (Invoke-Backend POST '/v1/settings/test/embed' $null 600)
+'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
+'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "900"))
+    $seconds = [int]((Get-Date) - $watch).TotalSeconds
+    $job = Get-JobLine $run.Output
+    # A search by meaning: the words of the query are not the words of the
+    # code's notes. `codewiki search` is full text alone; the backend's route
+    # adds the vectors. A hit that only the route finds comes from them.
+    $query = "protecting stored credentials"
+    $meaning = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
+$id = Get-RepoId 'cw-core'
+$hits = @(Invoke-Backend GET "/v1/repos/$id/search?q={{QUERYURL}}&limit=10" | ConvertFrom-Json)
+"hybrid hits: $(@($hits | ForEach-Object { $_.key }) -join ' ; ')"
+Set-Location '{{REPO}}'
+$lexical = @(& '{{CODEWIKI}}' search '{{QUERY}}' --limit 10 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^\[' } | ForEach-Object { ($_ -replace '^\[[^\]]*\]\s*', '') -split ' . ' | Select-Object -First 1 })
+"lexical hits: $($lexical -join ' ; ')"
+$global:LASTEXITCODE = 0
+'@).Replace("{{QUERYURL}}", ($query -replace " ", "%20")).Replace("{{QUERY}}", $query).Replace('{{REPO}}', $guestRepo).Replace('{{CODEWIKI}}', "$guestTarget\codewiki.exe")
+    $hybrid = if ($meaning.Output -match "(?m)^hybrid hits: (.*)$") { @($Matches[1] -split " ; " | Where-Object { $_.Trim() }) } else { @() }
+    $lexical = if ($meaning.Output -match "(?m)^lexical hits: (.*)$") { @($Matches[1] -split " ; " | Where-Object { $_.Trim() }) } else { @() }
+    $onlyVectors = @($hybrid | Where-Object { $lexical -notcontains $_ })
+    $memory = (Invoke-GuestScript -TimeoutSec 120 -Script @'
+$processes = @(Get-Process | Where-Object { $_.ProcessName -like '*ollama*' -or $_.ProcessName -eq 'runner' })
+foreach ($p in $processes) { "process: $($p.ProcessName) $([math]::Round($p.WorkingSet64 / 1MB)) MB" }
+"total: $([math]::Round((($processes | Measure-Object WorkingSet64 -Sum).Sum) / 1MB)) MB of $([math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1KB)) MB"
+"loaded: $((Invoke-RestMethod -TimeoutSec 10 'http://localhost:11434/api/ps').models | ForEach-Object { $_.name + ' ' + [math]::Round($_.size / 1MB) + ' MB' })"
+'@).Output
+    # Back to what the other cases expect: no Ollama, search by words alone.
+    Set-GuestEmbedder -Provider "local" | Out-Null
+    Stop-GuestApp
+    $stopped = (Invoke-GuestScript -TimeoutSec 120 -Script @'
+Get-Process | Where-Object { $_.ProcessName -like '*ollama*' -or $_.ProcessName -eq 'runner' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep 3
+"left: $(@(Get-Process | Where-Object { $_.ProcessName -like '*ollama*' }).Count)"
+'@).Output
+    $listed = $run.Output -match '"reachable":\s*true' -and $run.Output -match 'embeddinggemma'
+    $tested = $run.Output -match '"ok":\s*true'
+    $stored = $job -and $job.phase -eq "done" -and $job.docs_total -gt 0 -and $job.docs_done -eq $job.docs_total
+    $ok = $listed -and $tested -and $stored -and $hybrid.Count -gt 0
+    Add-Result -Id "OL3" -Title "Semantic search through Ollama" -Expect "the model is listed; the test answers; the job is done with every document embedded; the route finds hits" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("settings change: $set`n" + $run.Output + "`n" + $meaning.Output + "`n--- memory while the model was loaded`n$memory`n--- after stopping Ollama`n$stopped") `
+        -Observed "Ollama chosen with embeddinggemma; the server's list shows it: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }) in $seconds s (test, reembed and wait); search '$query': $($hybrid.Count) hits with vectors, $($lexical.Count) by words alone, $($onlyVectors.Count) found only with the vectors$(if ($onlyVectors) { ': ' + ($onlyVectors -join ', ') }); Ollama's memory with the model loaded: $(($memory -split "`n" | Where-Object { $_ -match '^total:' }) -join ''); $stopped; read the screenshot: Settings > Semantic search names Ollama and embeddinggemma"
+}
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run and
 # the start with Windows is on (AS3).
@@ -1847,6 +2439,12 @@ Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and setting
 }
 
 # ---------------------------------------------------------------- U2, self-update
+# Ends the app and removes the installation U2 made, data included.
+function Remove-UpdateTestInstall {
+    Stop-GuestApp
+    Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+}
+
 if ($OldZip) {
     Test-Case "U2" "The app updates itself" "an older installed version is offered the newer one, installs it and comes back as it" {
         $oldVersion = Get-ZipVersion $OldZip
@@ -1862,6 +2460,32 @@ if ($OldZip) {
         # judges each file by itself.
         $oldStart = if ($Hardened) { Resolve-GuestRefusal } else { $null }
         $was = (Invoke-GuestScript -Script $version).Output.Trim()
+        # What 0.2.0 left in the data folder of a user of its AI writer and of its
+        # built-in model: the sections `llm`, `anthropic` and `cliproxy` of
+        # settings.json (a secret is {dpapi, hint}; these two are not keys), other
+        # settings, a section no version knows, and the `cuda` folder of the
+        # built-in model's worker. The 0.3.0 backend and updater must clean the
+        # first and last and leave the rest (case U3).
+        $legacy = @'
+{
+  "version": 1,
+  "llm": { "provider": "anthropic", "model": "vm-test-model" },
+  "anthropic": { "api_key": { "dpapi": "dm10ZXN0LW5vdC1hLWtleQ==", "hint": "-key" } },
+  "cliproxy": { "url": "http://127.0.0.1:8317", "api_key": { "dpapi": "dm10ZXN0LW5vdC1hLWtleQ==", "hint": "-key" } },
+  "embed": { "provider": "local" },
+  "ollama": { "host": "http://127.0.0.1:11999" },
+  "future": { "kept": true }
+}
+'@
+        $encodedLegacy = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($legacy))
+        Invoke-GuestScript -Script (@'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+New-Item -ItemType Directory -Force $data | Out-Null
+[System.IO.File]::WriteAllText((Join-Path $data 'settings.json'), [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{JSON}}')))
+New-Item -ItemType Directory -Force '{{TARGET}}\cuda' | Out-Null
+Set-Content '{{TARGET}}\cuda\vmtest.dll' 'not a library'
+'@).Replace('{{JSON}}', $encodedLegacy).Replace('{{TARGET}}', $guestTarget) | Out-Null
+        $script:legacySeeded = $true
         $serve = "$($script:Vm.GuestDir)\update"
         if (-not $RealRelease) {
             # The stand-in for GitHub: it serves the package under test.
@@ -1903,8 +2527,79 @@ if ($OldZip) {
         Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) -Output ("requests the stand-in saw:`n" + $asked + "`n--- app.log`n" + $log).Trim() `
             -Observed "installed $oldVersion (exit $($install.ExitCode))$(if ($oldStart -and $oldStart.Status -ne 'started') { ", which Windows refused to start until the rules $($oldStart.Rules -join '; ') were in audit" }), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
-        Stop-GuestApp
-        Invoke-GuestExe -Exe $cmd -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+        $script:updatedInstall = $ok
+        # U3 looks at what the update left, then clears up.
+        if ($Only -and $Only -notcontains "U3") { Remove-UpdateTestInstall }
+    }
+
+    # What 0.3.0 did to the data folder and the install folder that 0.2.0 left
+    # (commits 9b57fc9 and b2744d9: retired writer settings and the built-in
+    # model). Two parts. The update has just started the new backend on the
+    # seeded settings.json: the writer's sections must be gone, the rest kept.
+    # Then the app is quit, a built-in embedder choice as 0.2.0 saved it and
+    # downloaded model files are put in place, and the next start must move the
+    # choice to `local` and delete the models.
+    Test-Case "U3" "The update cleans up what the old version left" "the retired writer settings, the cuda folder and the built-in model are gone; other settings stay; the app runs" {
+        if (-not $script:legacySeeded) { throw "U2 did not seed the old settings; run U2 and U3 together" }
+        try {
+            $read = (Invoke-GuestScript -Script (@'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+'cuda folder: ' + (Test-Path '{{TARGET}}\cuda')
+'settings.json: ' + (Test-Path (Join-Path $data 'settings.json'))
+'--- file'
+Get-Content (Join-Path $data 'settings.json') -Raw -ErrorAction SilentlyContinue
+'--- backend.log'
+Get-Content (Join-Path $env:LOCALAPPDATA 'CodeWiki\logs\backend.log') -ErrorAction SilentlyContinue | Select-String 'retired|settings|built-in|embedder' | Select-Object -Last 6 | ForEach-Object { $_.Line }
+'@).Replace('{{TARGET}}', $guestTarget)).Output
+            $file = if ($read -match "(?s)--- file\r?\n(.*?)\r?\n--- backend\.log") { $Matches[1] } else { "" }
+            $doc = try { $file | ConvertFrom-Json } catch { $null }
+            $names = if ($doc) { @($doc.PSObject.Properties.Name) } else { @() }
+            $retiredLeft = @("llm", "anthropic", "cliproxy" | Where-Object { $names -contains $_ })
+            $keyLeft = $file -match "dm10ZXN0|vm-test-model|8317"
+            $kept = $doc -and $doc.ollama.host -eq "http://127.0.0.1:11999" -and $doc.embed.provider -eq "local" -and $doc.future.kept -eq $true
+            $cudaGone = $read -match "cuda folder: False"
+            $probe = Get-Probe "after-update" -Quick
+            $running = (Get-App $probe).Count -eq 1 -and [bool]($probe.backend -and $probe.backend.health -eq 200)
+            $first = $doc -and -not $retiredLeft -and -not $keyLeft -and $kept -and $cudaGone -and $running
+
+            # Part two: the built-in model's choice and files.
+            [void](Show-GuestWindow -ProcessName "codewiki-app")
+            $quit = Exit-GuestApp
+            $builtin = '{ "version": 1, "embed": { "provider": "builtin", "model": "gte-modernbert-base", "device": "cuda" }, "ollama": { "host": "http://127.0.0.1:11999" } }'
+            $encodedBuiltin = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($builtin))
+            Invoke-GuestScript -Script (@'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+[System.IO.File]::WriteAllText((Join-Path $data 'settings.json'), [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{JSON}}')))
+New-Item -ItemType Directory -Force (Join-Path $data 'models\vmtest-model'), (Join-Path $data 'models\.partial') | Out-Null
+Set-Content (Join-Path $data 'models\vmtest-model\manifest.json') '{}'
+Set-Content (Join-Path $data 'models\vmtest-model\weights.bin') 'not a model'
+Set-Content (Join-Path $data 'models\.partial\download.bin') 'not a model'
+Set-Content (Join-Path $data 'models\keep.txt') 'a file the built-in store did not write'
+'@).Replace('{{JSON}}', $encodedBuiltin) | Out-Null
+            Start-GuestApp -Arguments $guestRepo
+            Wait-For 25
+            $shot = Shot "after-builtin-migration"
+            $after = (Invoke-GuestScript -Script @'
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+'--- file'
+Get-Content (Join-Path $data 'settings.json') -Raw -ErrorAction SilentlyContinue
+'--- models'
+(Get-ChildItem (Join-Path $data 'models') -Force -ErrorAction SilentlyContinue | ForEach-Object { $_.Name }) -join ', '
+'--- backend.log'
+Get-Content (Join-Path $data 'logs\backend.log') -ErrorAction SilentlyContinue | Select-String 'built-in|embedder' | Select-Object -Last 4 | ForEach-Object { $_.Line }
+'@).Output
+            $file2 = if ($after -match "(?s)--- file\r?\n(.*?)\r?\n--- models") { $Matches[1] } else { "" }
+            $doc2 = try { $file2 | ConvertFrom-Json } catch { $null }
+            $models = if ($after -match "(?m)^--- models\r?\n(.*)$") { $Matches[1].Trim() } else { "?" }
+            $moved = $doc2 -and $doc2.embed.provider -eq "local" -and $null -eq $doc2.embed.model -and $null -eq $doc2.embed.device -and $doc2.ollama.host -eq "http://127.0.0.1:11999"
+            $deleted = $models -notmatch "vmtest-model|\.partial" -and $models -match "keep\.txt"
+            $ok2 = $quit -and $moved -and $deleted
+            Add-Result -Id "U3" -Title "The update cleans up what the old version left" -Expect "writer sections, cuda folder, built-in choice and models are gone; other settings stay; the app runs" `
+                -Status $(if ($first -and $ok2) { "pass" } else { "fail" }) -Shots @($shot) -Output ($read + "`n=== after the built-in choice`n" + $after) `
+                -Observed "after the update from 0.2.0: sections left of llm/anthropic/cliproxy: $(if ($retiredLeft) { $retiredLeft -join ', ' } else { 'none' }); seeded values left in the file: $([bool]$keyLeft); ollama.host, embed.provider and the unknown section kept: $([bool]$kept); cuda folder removed: $([bool]$cudaGone); app running with a healthy backend: $running. Then Quit (ended by itself: $quit), a saved built-in choice (provider builtin, model, device cuda) and model files written, and a plain start: embed.provider is '$($doc2.embed.provider)', model '$($doc2.embed.model)', device '$($doc2.embed.device)', ollama.host kept: $([bool]($doc2.ollama.host)); files left in models: '$models' (keep.txt is not the built-in store's and stays)"
+        } finally {
+            Remove-UpdateTestInstall
+        }
     }
 }
 

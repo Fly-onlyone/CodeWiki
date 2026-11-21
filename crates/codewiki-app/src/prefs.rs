@@ -26,6 +26,14 @@ pub fn write(name: &str, value: &str) {
     }
 }
 
+/// Forget the setting `name`. A setting that was never written is already
+/// forgotten.
+pub fn remove(name: &str) {
+    if let Some(dir) = dir() {
+        remove_in(&dir, name);
+    }
+}
+
 fn file(dir: &Path, name: &str) -> PathBuf {
     dir.join(format!("{name}.txt"))
 }
@@ -40,6 +48,10 @@ fn write_in(dir: &Path, name: &str, value: &str) {
     if std::fs::create_dir_all(dir).is_ok() {
         let _ = std::fs::write(file(dir, name), value);
     }
+}
+
+fn remove_in(dir: &Path, name: &str) {
+    let _ = std::fs::remove_file(file(dir, name));
 }
 
 #[cfg(test)]
@@ -106,6 +118,16 @@ mod tests {
         write_in(&scratch.0, "motion", "reduced");
         write_in(&scratch.0, "motion", "full");
         assert_eq!(read_in(&scratch.0, "motion").as_deref(), Some("full"));
+    }
+
+    #[test]
+    fn a_removed_setting_is_not_set_and_a_missing_one_is_no_error() {
+        let scratch = Scratch::new("remove");
+        write_in(&scratch.0, "theme", "Nord");
+        remove_in(&scratch.0, "theme");
+        assert_eq!(read_in(&scratch.0, "theme"), None);
+        remove_in(&scratch.0, "theme");
+        remove_in(&scratch.0.join("nowhere"), "theme");
     }
 
     #[test]

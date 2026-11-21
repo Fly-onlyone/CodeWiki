@@ -79,17 +79,8 @@ pub enum Action {
     ForgetRemote,
     /// Show the data folder in Explorer.
     OpenDataFolder,
-    /// Download the built-in embedding model with this id, make it the
-    /// embedder, and embed every repository's documents again.
-    InstallModel(String),
-    /// Make the installed built-in model with this id the embedder.
-    UseModel(String),
-    /// Delete the built-in model with this id from the disk.
-    RemoveModel(String),
-    /// Stop the job that installs a model or embeds with one.
-    CancelModelJob,
-    /// Take the offer of a built-in model off Home for good.
-    DismissModelHint,
+    /// Stop the job that embeds every repository's documents.
+    CancelEmbedJob,
 }
 
 /// A stretch of text within a line.

@@ -887,8 +887,6 @@ impl AppView {
                     Ok((backend, repos, missing, opened)) => {
                         this.backend = Some(backend);
                         this.take_repos(repos, missing);
-                        // For Home's offer of a built-in model.
-                        this.load_models(cx);
                         let first = opened
                             .and_then(|id| this.repos.iter().find(|r| r.id == id).cloned())
                             .or_else(|| this.newest_recent());
@@ -3467,11 +3465,6 @@ impl AppView {
             .as_ref()
             .filter(|_| self.notes_loaded && self.notes.is_empty())
             .map(|repo| repo.name.as_str());
-        let offer = self
-            .settings
-            .models
-            .as_ref()
-            .and_then(|models| live::model_offer(models, self.settings.model_hint_dismissed));
         live::home_page(&live::HomeInput {
             projects: &projects,
             recent: &self.recent,
@@ -3479,7 +3472,6 @@ impl AppView {
             no_wiki,
             missing: &missing,
             update: update.as_deref(),
-            model_offer: offer.as_ref(),
         })
     }
 

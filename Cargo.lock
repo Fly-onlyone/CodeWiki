@@ -1692,6 +1692,7 @@ name = "cw-illustrate"
 version = "0.2.0"
 dependencies = [
  "openui-lang",
+ "serde",
 ]
 
 [[package]]

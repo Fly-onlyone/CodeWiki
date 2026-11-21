@@ -3055,6 +3055,123 @@ Test-Case "LS3" "Semantic search through LM Studio" "LM Studio's server and nomi
         -Note "llmster headless; runtime as LM Studio chose it. The model's quantization is what lms get picked, see LS2."
 }
 
+# ---------------------------------------------------------------- LM, Lemonade Server
+# Run `-Only D2,LM1,LM2,LM3`. Sources (read 2026-11-21):
+#  - https://github.com/lemonade-sdk/lemonade/blob/main/docs/guide/install/windows.md:
+#    "Download and run the latest Lemonade MSI installer",
+#    https://github.com/lemonade-sdk/lemonade/releases/latest/download/lemonade.msi (11 MB).
+#  - src/cpp/installer/Product.wxs.in and .github/actions/install-lemonade-server-msi/action.yml
+#    in that repository: `msiexec /i <msi> /qn /norestart` installs per user to
+#    %LOCALAPPDATA%\lemonade_server (bin\lemonade.exe, bin\LemonadeServer.exe,
+#    which embeds the server and a tray icon), adds bin to the user's PATH, and
+#    the installer starts LemonadeServer.exe when it ends (AutoLaunchLemonade).
+#  - docs/guide/cli.md: the CLI is `lemonade` (README's `lemonade-server pull` is the
+#    older name), `lemonade pull <model>`, `lemonade load <model>`, `lemonade status`,
+#    `lemonade unload`, port 13305 by default.
+#  - src/cpp/resources/server_models.json: "nomic-embed-text-v1-GGUF" is
+#    nomic-ai/nomic-embed-text-v1-GGUF:Q4_K_S, recipe llamacpp, about 80 MB. It is
+#    v1, not v1.5: another model than the llama.cpp, LM Studio and Ollama cases.
+# Not verified: that LemonadeServer.exe answers without a click after the
+# install (LM2 starts it when `lemonade status` fails), the folder Lemonade
+# keeps models in (LM2 looks for the file), and that loading the model fetches
+# a llama.cpp backend (it is timed as "load" in LM2's output).
+$lemonadeExe = "$guestHome\AppData\Local\lemonade_server\bin\lemonade.exe"
+$lemonadeServerExe = "$guestHome\AppData\Local\lemonade_server\bin\LemonadeServer.exe"
+$lemonadePattern = 'lemonade|lemond|\\llama-server\.exe$'
+
+Test-Case "LM1" "Install Lemonade Server silently" "lemonade.msi installs for the user with /qn, and lemonade.exe reports its version" {
+    $download = Invoke-GuestScript -Background -TimeoutSec 1200 -Script ((Get-GuestFreeDiskText 2) + "`n" + (Get-GuestDownloadText "https://github.com/lemonade-sdk/lemonade/releases/latest/download/lemonade.msi" "$guestHome\Downloads\lemonade\lemonade.msi") + @'
+
+$signature = Get-AuthenticodeSignature '{{HOME}}\Downloads\lemonade\lemonade.msi'
+"signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+'result: downloaded'
+'@.Replace('{{HOME}}', $guestHome))
+    if ($download.Output -notmatch "result: downloaded") {
+        Add-Result -Id "LM1" -Title "Install Lemonade Server silently" -Expect "the installer downloads" -Status fail -Output $download.Output `
+            -Observed "the installer was not downloaded: $(($download.Output -split "`n" | Select-Object -Last 2) -join '; ')"
+        return
+    }
+    $msi = "$guestHome\Downloads\lemonade\lemonade.msi"
+    $watch = Get-Date
+    # Not Invoke-GuestExe: the installer starts the server, which would keep the output pipe open.
+    Start-GuestExe -Exe "C:\Windows\System32\msiexec.exe" -Arguments "/i", $msi, "/qn", "/norestart", "/L*V", "$guestHome\Downloads\lemonade\install.log"
+    $installed = $false
+    $deadline = (Get-Date).AddMinutes(10)
+    while ((Get-Date) -lt $deadline -and -not $installed) {
+        Start-Sleep -Seconds 10
+        $state = (Invoke-GuestScript -TimeoutSec 60 -Script "`"msi running: `$(@(Get-CimInstance Win32_Process -Filter `"Name = 'msiexec.exe'`" | Where-Object { `$_.CommandLine -match 'lemonade.msi' }).Count)`"; `"exe: `$(Test-Path '$lemonadeExe')`"").Output
+        $installed = $state -match "msi running: 0" -and $state -match "exe: True"
+    }
+    $seconds = [int]((Get-Date) - $watch).TotalSeconds
+    Wait-For 10
+    $facts = (Invoke-GuestScript -TimeoutSec 180 -Script (@'
+$exe = '{{EXE}}'
+$ErrorActionPreference = 'Continue'
+"version: $((@(& $exe --version 2>&1 | ForEach-Object { "$_" })) -join ' | ')"
+"installed MB: $([math]::Round(((Get-ChildItem (Split-Path -Parent (Split-Path -Parent $exe)) -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB, 1))"
+"on user PATH: $(([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains (Split-Path $exe))"
+"status: $((@(& $exe status 2>&1 | ForEach-Object { "$_" }) | Select-Object -First 3) -join ' | ')"
+"processes: $((Get-Process | Where-Object { $_.ProcessName -match 'lemon' } | ForEach-Object { $_.ProcessName }) -join ', ')"
+Remove-Item '{{HOME}}\Downloads\lemonade\lemonade.msi' -Force -ErrorAction SilentlyContinue
+"msi deleted: $(-not (Test-Path '{{HOME}}\Downloads\lemonade\lemonade.msi'))"
+'@.Replace('{{EXE}}', $lemonadeExe).Replace('{{HOME}}', $guestHome) + "`n" + (Get-GuestDefenderText "lemonade"))).Output
+    $shot = Shot "lemonade-installed"
+    Set-EmbedFact "lemonade" "version" $(if ($facts -match "(?m)^version: (.+)$") { $Matches[1].Trim() } else { $null })
+    Set-EmbedFact "lemonade" "installMb" (Get-OutputNumber $facts "installed MB: ([\d\.]+)")
+    Set-EmbedFact "lemonade" "downloadS" (Get-OutputNumber $download.Output "downloaded: [\d\.]+ MB in (\d+) s")
+    Set-EmbedFact "lemonade" "installS" $seconds
+    Add-Result -Id "LM1" -Title "Install Lemonade Server silently" -Expect "msiexec /i lemonade.msi /qn /norestart ends with lemonade.exe in place and a version" `
+        -Status $(if ($installed -and $facts -match "version: \S") { "pass" } elseif ($installed) { "note" } else { "fail" }) -Shots @($shot) -Output ($download.Output + "`n--- after the install`n" + $facts) `
+        -Observed "https://github.com/lemonade-sdk/lemonade/releases/latest/download/lemonade.msi; $(($download.Output -split "`n" | Where-Object { $_ -match '^(downloaded|signature)' }) -join '; '); msiexec /qn ended after $seconds s with lemonade.exe in place: $installed; $(($facts -split "`n" | Where-Object { $_ -match '^(version|installed MB|on user PATH|status|processes|msi deleted|Defender)' }) -join '; ')"
+}
+
+Test-Case "LM2" "lemonade pull nomic-embed-text-v1-GGUF" "the model is pulled as README says and loaded" {
+    $up = (Invoke-GuestScript -TimeoutSec 120 -Script "`$ErrorActionPreference = 'Continue'; (@(& '$lemonadeExe' status 2>&1 | ForEach-Object { `"`$_`" }) -join ' | '); `"status exit: `$LASTEXITCODE`"; `$global:LASTEXITCODE = 0").Output
+    if ($up -notmatch "status exit: 0") {
+        # The installer's own start did not happen or did not last.
+        Start-GuestExe -Exe $lemonadeServerExe
+        Wait-For 25
+    }
+    $run = Invoke-GuestScript -Background -TimeoutSec 3000 -Script (@'
+$ErrorActionPreference = 'Continue'
+$lemonade = '{{EXE}}'
+$watch = Get-Date
+$text = @(& $lemonade pull nomic-embed-text-v1-GGUF 2>&1 | ForEach-Object { "$_" })
+"pull exit: $LASTEXITCODE after $([int]((Get-Date) - $watch).TotalSeconds) s"
+"pull output ends: $((($text | Where-Object { $_.Trim() }) | Select-Object -Last 4) -join ' | ')"
+$watch = Get-Date
+$text = @(& $lemonade load nomic-embed-text-v1-GGUF 2>&1 | ForEach-Object { "$_" })
+"load exit: $LASTEXITCODE after $([int]((Get-Date) - $watch).TotalSeconds) s"
+"load output ends: $((($text | Where-Object { $_.Trim() }) | Select-Object -Last 4) -join ' | ')"
+"--- lemonade list (nomic lines)"
+@(& $lemonade list 2>&1 | ForEach-Object { "$_" }) | Where-Object { $_ -match 'nomic' }
+"--- lemonade backends"
+@(& $lemonade backends 2>&1 | ForEach-Object { "$_" }) | Select-Object -First 12
+foreach ($root in '{{HOME}}\.cache', '{{HOME}}\AppData\Local\lemonade_server', '{{HOME}}\.lemonade') {
+    foreach ($file in Get-ChildItem $root -Recurse -File -Filter '*nomic-embed-text-v1*.gguf' -ErrorAction SilentlyContinue) { "model file: $($file.FullName), $([math]::Round($file.Length / 1MB, 1)) MB" }
+}
+$global:LASTEXITCODE = 0
+'@.Replace('{{EXE}}', $lemonadeExe).Replace('{{HOME}}', $guestHome))
+    Set-EmbedFact "lemonade/nomic-embed-text-v1-GGUF" "pullS" (Get-OutputNumber $run.Output "pull exit: \d+ after (\d+) s")
+    Set-EmbedFact "lemonade/nomic-embed-text-v1-GGUF" "modelMb" (Get-OutputNumber $run.Output "model file: [^\n]*, ([\d\.]+) MB")
+    $ok = $run.Output -match "pull exit: 0" -and $run.Output -match "load exit: 0"
+    Add-Result -Id "LM2" -Title "lemonade pull nomic-embed-text-v1-GGUF" -Expect "pull and load exit 0" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output ("status before: $up`n" + $run.Output) `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|load exit|model file)' }) -join '; ') (the load may fetch a llama.cpp backend: its time is in the load figure)"
+}
+
+Test-Case "LM3" "Semantic search through Lemonade" "Lemonade and nomic-embed-text-v1-GGUF chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {
+    $resolved = Resolve-GuestModelId -Url "http://127.0.0.1:13305/v1/models", "http://127.0.0.1:13305/api/v1/models" -Match "nomic"
+    if (-not $resolved.Id) { throw "Lemonade lists no nomic model on port 13305; run LM1 and LM2 first. $($resolved.Output)" }
+    Set-EmbedFact "lemonade/$($resolved.Id)" "modelMb" (Get-EmbedFact "lemonade/nomic-embed-text-v1-GGUF" "modelMb")
+    Set-EmbedFact "lemonade/$($resolved.Id)" "pullS" (Get-EmbedFact "lemonade/nomic-embed-text-v1-GGUF" "pullS")
+    Measure-RealEmbedder -Id "LM3" -Title "Semantic search through Lemonade" -Provider lemonade -Model $resolved.Id `
+        -ServerProcess $lemonadePattern -Port 13305 -ModelFamily "nomic-embed-text v1 (not v1.5)" -Quantisation "Q4_K_S (GGUF)" `
+        -InstallFolder @("$guestHome\AppData\Local\lemonade_server") `
+        -StopScript ("& '$lemonadeExe' unload 2>&1 | Out-Null") `
+        -Note "README's model for Lemonade: v1, Q4_K_S, not the model of the llama.cpp, LM Studio and Ollama cases."
+}
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run and
 # the start with Windows is on (AS3).

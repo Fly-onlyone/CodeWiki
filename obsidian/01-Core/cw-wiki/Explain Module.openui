@@ -1,8 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "5")
-f1 = Stat("Used by notes", "1")
-f2 = Stat("Depends on notes", "7")
-flow = Steps([s0, s1])
-s0 = Step("walk", "Called by RenderCtx::illustration, RenderCtx::render_crate and 2 more.")
-s1 = Step("items", "Called by RenderCtx::render_crate, RenderCtx::render_module and 1 more. Calls first_sentence, then lower_first, then item_text, then Language::from_path and 2 more.")

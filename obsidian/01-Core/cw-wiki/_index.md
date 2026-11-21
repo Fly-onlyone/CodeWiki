@@ -4,7 +4,7 @@ tags: [moc, core, cw-wiki]
 
 # Core / cw-wiki — Map of Content
 
-> Notes for `cw-wiki`: 38 concepts.
+> Notes for `cw-wiki`: 39 concepts.
 
 ## Notes
 
@@ -13,11 +13,13 @@ tags: [moc, core, cw-wiki]
 - [[Briefing Module]] — the briefing a coding agent is given when it starts a session.
 - [[Ci Module]] — findings for continuous integration, as text, SARIF or JUnit.
 - [[Contracts Module]] — HTTP contracts: the endpoints a repository provides and the ones it calls.
+- [[Counts]] — how many notes wait for an agent.
 - [[Coverage Module]] — test coverage imported from LCOV (`lcov.info`) and Cobertura XML reports.
 - [[cw-wiki]] — concept selection and wiki generation pipeline for CodeWiki.
 - [[Decisions Module]] — decision records and the "why" query.
 - [[Doctext Module]] — from a doc comment to text that may stand in a note.
 - [[Explain Module]] — what a note says beyond its subject's own comment: the walk-through of what happens when the code is used, and the list of its items.
+- [[Explanations Module]] — explanations: what a coding agent writes into a note, and how.
 - [[Generate Module]] — the generation pipeline: scan, plan, freeze names, render, lint, write.
 - [[Git Module]] — minimal git access through the `git` command line.
 - [[Gitintel Module]] — Git intelligence: what history says about each file.
@@ -28,12 +30,10 @@ tags: [moc, core, cw-wiki]
 - [[Machine]] — reads the files a build on this machine left behind: the sources cargo unpacked into its registry cache, and `node_modules`.
 - [[Manifests Module]] — what a repository's build files say about a package from outside it: the version asked for, the version locked, the features turned on, and what the package is.
 - [[Plan Module]] — concept selection: decide which notes a repository gets.
-- [[Planned]] — `Planned` struct defined in `cw_wiki::plan`.
-- [[ProseWriter]] — replaces the structural prose of a note, typically with an LLM.
 - [[Query Module]] — Read-side queries served to the app and to agents.
 - [[Refactor Module]] — refactoring plan: suggestions derived from facts the index already holds.
 - [[Render Module]] — rendering of planned notes into Markdown in the vault's house style.
-- [[RenderCtx]] — `RenderCtx` struct defined in `cw_wiki::render` with 21 methods.
+- [[RenderCtx]] — `RenderCtx` struct defined in `cw_wiki::render` with 20 methods.
 - [[Repo]] — lookup tables over the scanned facts.
 - [[Run]] — one pass that brings the stored vectors of some kinds in line with their documents, a batch at a time.
 - [[Rustscan Module]] — A light lexical scan of Rust source, shared by the test map and the security rules.
@@ -42,6 +42,7 @@ tags: [moc, core, cw-wiki]
 - [[Semantic Module]] — semantic search: embeds search documents and blends vector matches with full-text matches.
 - [[Service Module]] — High-level operations shared by the CLI, the server and the MCP tools.
 - [[Slot]] — the place that holds the embedder in use.
+- [[TestFn]] — A `#[test]`-like function found in a file.
 - [[Testmap Module]] — test map: which tests exist, what they exercise, and which to run after a change.
 - [[Unit]] — one top-level part of the repository.
 - [[Units]] — every unit of a repository and the lookup from code to unit.

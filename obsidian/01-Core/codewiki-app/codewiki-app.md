@@ -40,7 +40,7 @@ Modules:
 - [[Glass Module]] — glass: how see-through each surface is.
 - [[Graph Module (codewiki-app)]] — geometry of the dependency graph view.
 - [[Icons Module]] — icons, and the asset source that serves them.
-- [[Illustration Module]] — native renderer for illustrations.
+- [[Illustration Module]] — native renderer for the pictures of a note.
 - [[Instance Module]] — one running app for each installed program.
 - [[Live Module]] — the live pages: one symbol, one file, search results, hotspots, the theme picker, a proposal, the result of a sync, and Home, the page the app starts on.
 - [[Markdown Module]] — text preparation for the note viewer.
@@ -92,8 +92,8 @@ And 19 more items.
 ## Depends on
 
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
+- [[Live Module]] — uses `HomeInput`, `Project`, `agent_view_line`, `explanation_lines`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
-- [[Live Module]] — uses `HomeInput`, `Project`, `file_page`, `home_page`
 - [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Settings View Module]] — uses `LOG_LEVEL_PREF`, `MODELS_PAUSE`, `MODEL_HINT`, `OpenMenu`
 - [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`

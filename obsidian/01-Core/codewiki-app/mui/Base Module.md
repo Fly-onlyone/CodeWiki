@@ -18,8 +18,8 @@ GPUI switches `.hover()` and `.active()` styles instantly. So that a control can
 
 ## How it works
 
-1. `Button::render` and `IconButton::render` in [[Button Module]], and 5 more, call `Base::new`.
-2. `Button::render` and `IconButton::render` in [[Button Module]], and 5 more, call `focus_ring`. `focus_ring` calls `px` in [[Zoom Module]].
+1. `IconButton::render` and `ToggleButtonGroup::render` in [[Button Module]], and 5 more, call `Base::new`.
+2. `IconButton::render` and `ToggleButtonGroup::render` in [[Button Module]], and 5 more, call `focus_ring`. `focus_ring` calls `px` in [[Zoom Module]].
 3. `table_row` in [[Doc View Module]] and `TextField::render` in [[Text Field Module]] call `Hover::new`.
 
 ## Items
@@ -38,8 +38,9 @@ GPUI switches `.hover()` and `.active()` styles instantly. So that a control can
 
 ## Used by
 
-- [[Button Module]] — from `Button`, `IconButton`, `render`
+- [[Button Module]] — from `IconButton`, `render`
 - [[Select Module]] — from `Select`, `render`
+- [[Button]] — from `Button`, `render`
 - [[ListItemButton]] — from `ListItemButton`, `render`
 - [[Doc View Module]] — from `table_row`
 - [[Switch Module]] — from `render`

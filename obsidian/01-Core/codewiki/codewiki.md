@@ -39,6 +39,7 @@ And 4 more private items with no comment.
 
 ## Depends on
 
+- [[cw-illustrate]] — uses `MAX_CALLOUTS`, `MAX_CALLOUT_TEXT`, `MAX_PICTURES`, `MAX_SOURCE`
 - [[Lint Module]] — uses `CONCEPT_MAX_WORDS`, `INTEGRATION_MAX_WORDS`, `MAX_WORDS`, `MIN_WORDS`
 - [[Ci Module]] — uses `check`, `fails`, `to_junit`, `to_sarif`
 - [[Gitintel Module]] — uses `change_risk`, `file_risk`, `hotspots`, `load`
@@ -46,7 +47,6 @@ And 4 more private items with no comment.
 - [[Coverage Module]] — uses `import`, `load`, `report`, `save`
 - [[Service Module]] — uses `is_stale`, `open_index`, `reindex`, `update`
 - [[Error]] — uses `external`, `invalid`, `io`, `not_found`
-- [[Proposal Module]] — uses `approve`, `list`, `reject`
 
 ## See also
 

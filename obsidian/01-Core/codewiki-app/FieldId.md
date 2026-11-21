@@ -16,7 +16,7 @@ Declared as `pub enum FieldId`.
 
 Members:
 
-- `pub const ALL: [Self; 10]` — public constant; used by `AppView::commit_settings_fields`, `AppView::take_settings`, `State::new`.
+- `pub const ALL: [Self; 6]` — public constant; used by `AppView::commit_settings_fields`, `AppView::take_settings`, `State::new`.
 - `pub fn place(self) -> Option<(&'static str, &'static str)>` — where the backend keeps the setting: its section and field in `GET /v1/settings`. `None` for the two the app keeps itself, the address and token of a backend on another machine.
 - `pub fn secret(self) -> bool` — whether what is typed is hidden, and never shown again once saved.
 - `pub fn placeholder(self) -> &'static str` — what an empty input shows.

@@ -24,7 +24,8 @@ tags: [core, cw-vault, module]
 
 ## Depends on
 
-- [[Manifest Module]] — uses `NoteEntry`, `body_hash`
+- [[Manifest Module]] — uses `body_hash`
+- [[NoteEntry]] — uses `NoteEntry`
 
 ## Used by
 

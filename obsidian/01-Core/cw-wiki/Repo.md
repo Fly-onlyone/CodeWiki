@@ -49,7 +49,7 @@ Members:
 
 ## Used by
 
-- [[RenderCtx]] — from `RenderCtx`, `illustration`, `new`, `render_crate`
+- [[RenderCtx]] — from `RenderCtx`, `new`, `render_crate`, `render_home`
 - [[Explain Module]] — from `facts`, `items`, `walk`
 - [[Plan Module]] — from `enclosing_module`, `plan`, `startup_messages`
 - [[Manifests Module]] — from `declared`, `describe`

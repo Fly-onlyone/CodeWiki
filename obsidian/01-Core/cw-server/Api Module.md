@@ -26,7 +26,6 @@ tags: [core, cw-server, module]
 - `fn models_closed(state: &AppState) -> Option<Response>` — the answer of every model route on a backend that listens beyond this machine. A model is installed on the backend's machine and takes its disk, memory and graphics card; like the settings, that is decided there.
 - `async fn start_model_job(state: AppState, kind: models::Kind, id: Option<String>) -> Response` — start a job and answer 202 with it; its progress is in `GET /v1/models`.
 - `async fn cancel_model_job(State(state): State<AppState>) -> Response` — stop the running job. What it downloaded and embedded stays, and the next job goes on from there.
-- `fn proxy_closed(state: &AppState) -> Option<Response>` — the answer of the CLIProxyAPI route on a backend that listens beyond this machine: its proxy is set up where the backend runs.
 - `struct Repo` — resolved repository: its root folder and its index.
 - `struct ListedRepo` — A registered repository as `GET /v1/repos` lists it. `present` is worked out on each request, on this machine, where the paths are; it is never written to `repos.json`.
 - `fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report>` — Re-index a repository and bring its wiki up to date, holding the write lock. Shared by the update route and the git webhook.
@@ -35,20 +34,21 @@ tags: [core, cw-server, module]
 - `fn pushed_names(payload: &Value) -> Vec<String>` — folder names a push payload may refer to: GitHub's `repository.name` and `repository.full_name`, GitLab's `project.name` and `project.path_with_namespace`. Namespaced names contribute their last segment.
 - `async fn git_hook(State(state): State<AppState>, headers: HeaderMap, body: Bytes) -> Response` — push webhook from a git host: update the wiki of the registered repository whose folder is named like the pushed one. The update runs after the response is sent; a host waits only a few seconds for an answer.
 - `struct NoteReadQuery` — what a read of a note asks for. A write names the note alone.
+- `struct ExplanationsQuery` — which waiting notes a coding agent asks for.
 - `coverage` — coverage imported earlier; without one, a report found in a conventional place in the repository is read but not stored.
 
-And 81 more items.
+And 82 more items.
 
 ## Depends on
 
 - [[Query Module]] — uses `Answer`, `Context`, `NoteContent`, `NoteInfo`
 - [[Gitintel Module]] — uses `BlastRadius`, `ChangeRisk`, `FileRisk`, `GitIntel`
-- [[Proposal Module]] — uses `Proposal`, `approve`, `get`, `list`
+- [[Explanations Module]] — uses `Brief`, `Outcome`, `Queue`, `Scope`
 - [[Index]] — uses `Index`, `edges`, `files`, `find_symbols`
+- [[Proposal Module]] — uses `Proposal`, `get`, `list`, `patch_text`
 - [[Coverage Module]] — uses `CoverageReport`, `import`, `import_text`, `load`
 - [[Health Module]] — uses `DeadSymbol`, `DocReport`, `FileHealth`, `dead_code`
 - [[Models Module]] — uses `Kind`, `after_update`, `describe`, `remove`
-- [[Repos Module]] — uses `RepoEntry`, `add`, `get`, `load`
 
 ## Used by
 

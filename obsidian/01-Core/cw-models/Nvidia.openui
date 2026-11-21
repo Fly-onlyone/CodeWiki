@@ -1,5 +1,0 @@
-root = Card([figures])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "0")
-f1 = Stat("Used by notes", "2")
-f2 = Stat("Depends on notes", "0")

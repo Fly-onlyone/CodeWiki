@@ -1,8 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "4")
-f1 = Stat("Used by notes", "1")
-f2 = Stat("Depends on notes", "1")
-flow = Steps([s0, s1])
-s0 = Step("enabled", "Called by AppView::palette_matches, AppView::settings_frame. Calls installed_dir, then matches, then read.")
-s1 = Step("set", "Called by AppView::run_action. Calls installed_dir, then write, then command, then remove.")

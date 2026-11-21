@@ -48,13 +48,12 @@ And 1 more private item with no comment.
 ## Depends on
 
 - [[ListItemButton]] — uses `icon`, `new`, `trailing`
+- [[Motion Module (mui)]] — uses `MENU`, `enter`
 - [[Doc View Module]] — uses `set`
 - [[List Module]] — uses `subheader`
-- [[Motion Module (mui)]] — uses `enter`
 - [[Surfaces Module]] — uses `paper`
 - [[Zoom Module]] — uses `px`
 - [[Glyph]] — uses `Glyph`
-- [[Enter]] — uses `MENU`
 
 ## Used by
 

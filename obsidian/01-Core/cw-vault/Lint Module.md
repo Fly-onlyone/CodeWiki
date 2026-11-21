@@ -16,10 +16,9 @@ Generated notes must pass with no errors before they are written. Adopted notes 
 
 ## How it works
 
-1. `clean_line` in [[Doctext Module]] and `label` in [[Explain Module]] call `is_line_ref`.
-2. `guidance` in [[Writer Module]] calls `max_words`.
-3. `generate_with` in [[Generate Module]] calls `lint`. `lint` calls `Note::parse` in [[Note]], then `extract_links` in [[Note Module]], then `max_words`, then `lint_lines`. `lint_lines` calls `strip_inline_code`, then `has_inline_tag`, then `has_markdown_link`, then `has_line_number_ref`.
-4. `generate_with` in [[Generate Module]] calls `link_resolution_rate`. `link_resolution_rate` calls `Note::parse` in [[Note]].
+1. `submit` in [[Explanations Module]] and `generate_with` in [[Generate Module]] call `lint`. `lint` calls `Note::parse`, then `extract_links` (both in [[Note Module]]), then `max_words`, then `lint_lines`. `lint_lines` calls `strip_inline_code`, then `has_inline_tag`, then `has_markdown_link`, then `has_line_number_ref`.
+2. `clean_line` in [[Doctext Module]] and `label` in [[Explain Module]] call `is_line_ref`.
+3. `generate_with` in [[Generate Module]] calls `link_resolution_rate`. `link_resolution_rate` calls `Note::parse` in [[Note Module]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -28,7 +27,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub enum Severity` — public enum; used by `Issue`, `lint`, `lint_lines`.
 - `pub struct Issue` — public struct; used by `lint`.
 - `pub enum Mode` — public enum; used by `lint`.
-- `pub const MIN_WORDS: usize` — public constant; used by `guidance`, `lint`.
+- `pub const MIN_WORDS: usize` — public constant; used by `lint`.
 - `pub const MAX_WORDS: usize` — the most words a note should hold, for every kind without a limit of its own.
 - `pub const CONCEPT_MAX_WORDS: usize` — for a module, crate or type note, which explains its subject and lists every item with its whole comment.
 - `pub const INTEGRATION_MAX_WORDS: usize` — for an integration note, which says what the package is and what each module takes from it.
@@ -45,17 +44,16 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 ## Depends on
 
-- [[Note]] — uses `parse`, `section`
+- [[Note Module]] — uses `extract_links`, `parse`, `section`
 - [[NoteKind]] — uses `NoteKind`, `sections`
 - [[Registry]] — uses `Registry`, `resolve`
-- [[Note Module]] — uses `extract_links`
 
 ## Used by
 
 - [[codewiki]] — from `note_style_skill_follows_the_lint`
-- [[Writer Module]] — from `guidance`
 - [[Doctext Module]] — from `clean_line`
 - [[Explain Module]] — from `label`
+- [[Explanations Module]] — from `submit`
 - [[Generate Module]] — from `generate_with`
 
 ## See also

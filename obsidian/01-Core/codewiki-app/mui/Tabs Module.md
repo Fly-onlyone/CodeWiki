@@ -16,8 +16,8 @@ Sizes are TradingAgent's (`components.ts`, `MuiTab`): 44 px high, 8 px of paddin
 
 ## How it works
 
-1. `AppView::tab_bar` in [[codewiki-app]] and `tabs` in [[Illustration Module]] call `Tab::new`.
-2. `AppView::tab_bar` in [[codewiki-app]] and `tabs` in [[Illustration Module]] call `Tabs::new`.
+1. `AppView::tab_bar` in [[codewiki-app]] calls `Tab::new`.
+2. `AppView::tab_bar` in [[codewiki-app]] calls `Tabs::new`.
 
 ## Items
 
@@ -44,7 +44,6 @@ And 3 more private items with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `tab_bar`
-- [[Illustration Module]] — from `tabs`
 
 ## See also
 

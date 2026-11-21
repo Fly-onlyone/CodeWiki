@@ -46,12 +46,12 @@ Members:
 
 - [[Settings Module (cw-server)]] — from `change`, `describe`, `resolved`
 - [[cw-embed]] — from `from_settings`, `from_settings_in`
-- [[Serve Module]] — from `run`, `writer_name`
 - [[Semantic Module]] — from `configure`, `configure_in`
 - [[Slot]] — from `configure`, `configure_in`
 - [[codewiki]] — from `run`
-- [[cw-llm]] — from `writer_from`
 - [[Model Module (codewiki)]] — from `remove`
+- [[Serve Module]] — from `run`
+- [[Logs Module]] — from `get`
 
 ## See also
 

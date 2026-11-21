@@ -17,8 +17,9 @@ No UI types, so it is unit-tested.
 ## How it works
 
 1. `AppView::follow_link` in [[codewiki-app]] calls `decode`.
-2. `AppView::edit_view` and `AppView::prepare_page` in [[codewiki-app]] call `prepare_note_with`. `prepare_note_with` calls `link_line`. `link_line` calls `encode`.
-3. `AppView::details` in [[codewiki-app]] calls `outline`.
+2. `AppView::page_content` in [[codewiki-app]] calls `figure_index`.
+3. `AppView::edit_view` and `AppView::prepare_page` in [[codewiki-app]] call `prepare_note_with`. `prepare_note_with` calls `link_line`. `link_line` calls `encode`.
+4. `AppView::details` in [[codewiki-app]] calls `outline`.
 
 ## Items
 
@@ -30,9 +31,9 @@ No UI types, so it is unit-tested.
 - `pub fn prepare_note(text: &str) -> String` — turn a vault note into Markdown the viewer can render: frontmatter becomes a tag line and `[[wikilinks]]` become ordinary links with the note scheme. Code spans and fenced blocks are left untouched.
 - `pub enum Diagram` — what the viewer shows in place of one Mermaid block.
 - `pub const DRAWING: &str` — line shown where a diagram is still being drawn.
-- `pub const FIGURE_BLOCK: &str` — language of the empty code block that stands where a note's illustration is drawn. The viewer draws the illustration in place of such a block.
-- `prepare_note_with` — `prepare_note` with diagram support. `diagram` receives the source of each Mermaid block and says what to show in its place. With `figure`, a `FIGURE_BLOCK` is put under the note's summary, or under its title when it has no summary: the reader meets what the note is about, then the picture of it, then the text.
-- `enum Figure` — how far `prepare_note_with` is with placing the illustration.
+- `pub const FIGURE_BLOCK: &str` — language of the code block that stands where one of a note's pictures is drawn. The block holds the picture's number among the note's pictures, and the viewer draws that picture in its place.
+- `pub fn figure_index(block: &str) -> Option<usize>` — the number of the picture a `FIGURE_BLOCK` with this text stands for.
+- `prepare_note_with` — `prepare_note` with diagram support. `diagram` receives the source of each Mermaid block and says what to show in its place. `figures` are the headings of the sections that have a picture. A `FIGURE_BLOCK` is put directly under each such heading: a picture stands inside the section it explains, and the reader meets it before the text it makes easier.
 - `fn link_line(line: &str) -> String` — replace wikilinks in one line of prose.
 - `pub fn outline(text: &str) -> Vec<String>` — `##` headings of a note, for the outline pane.
 

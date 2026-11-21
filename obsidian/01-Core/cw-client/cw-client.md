@@ -19,7 +19,7 @@ Clients hold no index of their own. They find a running backend, starting a loca
 
 Builds a library.
 
-1. `AppView::open_file` and `AppView::open_in_obsidian` in [[codewiki-app]], and 15 more, call `encode`.
+1. `AppView::open_file` and `AppView::open_in_obsidian` in [[codewiki-app]], and 18 more, call `encode`.
 2. `Backend::new` and `Backend::status` in [[Backend]] call `agent`.
 3. `AppView::connect` and `AppView::run_settings_action` in [[codewiki-app]], and 1 more, call `env_remote`. `env_remote` calls `process_env`.
 4. `AppView::backend_to_stop` and `AppView::install_update` in [[codewiki-app]] call `uses_remote`. `uses_remote` calls `env_remote`, then `saved_remote`.

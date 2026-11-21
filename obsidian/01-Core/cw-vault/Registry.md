@@ -37,18 +37,17 @@ Members:
 
 ## Depends on
 
-- [[Registry Module]] — uses `folder`, `join`, `sanitize_name`, `stem`
+- [[Registry Module]] — uses `RegistryEntry`, `folder`, `join`, `sanitize_name`
 - [[Error Module]] — uses `Result`
 - [[Error]] — uses `invalid`
 - [[NoteKind]] — uses `NoteKind`
-- [[RegistryEntry]] — uses `RegistryEntry`
 
 ## Used by
 
 - [[RenderCtx]] — from `RenderCtx`, `link`, `name`, `new`
 - [[Lint Module]] — from `link_resolution_rate`, `lint`
+- [[Generate Module]] — from `Links`, `generate_with`
 - [[VaultMeta]] — from `registry`, `save`
-- [[Generate Module]] — from `generate_with`
 
 ## See also
 

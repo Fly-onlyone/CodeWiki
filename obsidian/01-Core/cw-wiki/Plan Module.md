@@ -32,7 +32,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `const MIN_MODULE_ITEMS: usize` — outside Rust every file is a module, so only those that hold this many items, or this many symbols counting nested ones, get a note.
 - `pub struct FlowMessage` — one step of a startup flow: `from` note calls into `to` note.
 - `pub enum Subject` — public enum; used by `Planned`.
-- [[Planned]] — struct
+- `pub struct Planned` — public struct; used by `Doc::new`, `Plan`, `RenderCtx::render`, `RenderCtx::render_crate` and 12 more.
 - `pub struct Plan` — public struct; used by `RenderCtx`, `RenderCtx::new`, `generate_with`, `plan`.
 - [[Repo]] — lookup tables over the scanned facts.
 - `fn module_title(module: &Symbol) -> String` — title of the note about `module`. A TypeScript `index` file is named after its folder.
@@ -53,13 +53,13 @@ And 7 more private items with no comment.
 - [[Language]] — uses `has_symbol_support`
 - [[Symbol]] — uses `Symbol`
 - [[SymbolKind]] — uses `is_type`
-- [[Planned]] — uses `Planned`
+- [[NoteKind]] — uses `NoteKind`
 
 ## Used by
 
-- [[RenderCtx]] — from `RenderCtx`, `new`, `render_home`, `render_startup_flow`
-- [[Generate Module]] — from `generate_with`
-- [[Planned]] — from `Planned`
+- [[RenderCtx]] — from `RenderCtx`, `new`, `render`, `render_crate`
+- [[Generate Module]] — from `generate_with`, `planned_path`
+- [[Render Module]] — from `new`
 - [[Repo]] — from `is_test`
 
 ## See also

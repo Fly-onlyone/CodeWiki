@@ -45,9 +45,9 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[Resolver]] — from `by_bare_name`, `resolve`, `resolve_abs`
-- [[RenderCtx]] — from `illustration`, `render_integration`
 - [[Scan Module]] — from `RepoFacts`
 - [[Index]] — from `external_uses`
+- [[RenderCtx]] — from `render_integration`
 
 ## See also
 

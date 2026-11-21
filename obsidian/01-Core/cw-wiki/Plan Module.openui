@@ -1,8 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "12")
-f1 = Stat("Used by notes", "4")
-f2 = Stat("Depends on notes", "7")
-flow = Steps([s0, s1])
-s0 = Step("is_test_path", "Called by Repo::is_test.")
-s1 = Step("plan", "Called by generate_with. Calls module_dir, then module_title, then enclosing_module, then startup_messages and 1 more.")

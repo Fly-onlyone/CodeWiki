@@ -24,7 +24,7 @@ Declared as `pub enum Category`.
 
 Members:
 
-- `pub const ALL: [Self; 8]` — public constant; used by `AppView::settings_frame`, `Category::from_slug`, `actions`.
+- `pub const ALL: [Self; 7]` — public constant; used by `AppView::settings_frame`, `Category::from_slug`, `actions`.
 - `pub fn label(self) -> &'static str` — public method, returns `&'static str`.
 - `pub fn icon(self) -> Glyph` — public method, returns `Glyph`.
 - `pub fn slug(self) -> &'static str` — the category's name in a startup argument: `settings:<slug>`.

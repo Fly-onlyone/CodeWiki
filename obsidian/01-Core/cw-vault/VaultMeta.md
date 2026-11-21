@@ -12,7 +12,7 @@ tags: [core, cw-vault]
 
 ## How it works
 
-1. `run` in [[codewiki]] and `approve_proposal` in [[Api Module]], and 14 more, call `load`. `load` calls `dir`, then `Error::external` in [[Error]], then `Manifest::default` in [[Manifest Module]], then `Error::io` in [[Error]].
+1. `run` in [[codewiki]] and `render` in [[Agentdocs Module]], and 18 more, call `load`. `load` calls `dir`, then `Error::external` in [[Error]], then `Manifest::default` in [[Manifest Module]], then `Error::io` in [[Error]].
 2. `proposals_dir` in [[Proposal Module]] calls `dir`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -32,18 +32,19 @@ Members:
 
 ## Depends on
 
-- [[Manifest Module]] — uses `Json`, `Manifest`, `NoteEntry`, `default`
+- [[Manifest Module]] — uses `Json`, `Manifest`, `default`
 - [[Registry]] — uses `Registry`, `entries`, `new`
 - [[Error]] — uses `external`, `io`
 - [[cw-core]] — uses `MANIFEST_DIR`
 - [[Error Module]] — uses `Result`
-- [[RegistryEntry]] — uses `RegistryEntry`
+- [[Registry Module]] — uses `RegistryEntry`
+- [[NoteEntry]] — uses `NoteEntry`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_note_whose_writer_call_failed_is_written_again_next_run`, `a_picture_goes_when_its_note_has_nothing_left_to_show`, `a_stop_keeps_what_was_written_and_the_next_run_writes_the_rest`, `a_stop_on_an_existing_wiki_keeps_its_commit`
-- [[Query Module]] — from `list_notes`, `notes_citing`, `read_note_as`, `status`
-- [[Api Module]] — from `approve_proposal`, `reject_proposal`
+- [[cw-wiki]] — from `a_new_way_of_writing_the_facts_keeps_the_explanation`, `a_run_counts_the_notes_no_agent_has_explained`, `a_type_that_moves_between_crates_keeps_the_vault_consistent`, `assert_notes`
+- [[Explanations Module]] — from `all_waiting`, `approve`, `brief`, `queue`
+- [[Query Module]] — from `find_entry`, `list_notes`, `notes_citing`, `read_note_as`
 - [[Decisions Module]] — from `list`, `why`
 - [[Generate Module]] — from `adopt_existing`, `generate_with`
 - [[Service Module]] — from `index_notes`, `is_stale`

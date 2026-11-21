@@ -1,8 +1,0 @@
-root = Card([figures, flow])
-figures = Grid([f0, f1, f2], 3)
-f0 = Stat("Public items", "5")
-f1 = Stat("Used by notes", "2")
-f2 = Stat("Depends on notes", "16")
-flow = Steps([s0, s1])
-s0 = Step("page", "Called by AppView::settings_frame. Calls Doc::new, then appearance, then ai_model, then search and 5 more.")
-s1 = Step("job_runs", "Called by AppView::take_models.")

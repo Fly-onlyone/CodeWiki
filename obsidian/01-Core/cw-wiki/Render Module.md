@@ -49,12 +49,14 @@ And 2 more private items with no comment.
 
 - [[Repo]] — uses `Repo`, `children_of`, `subtree_rank`
 - [[Language]] — uses `Language`, `from_path`
+- [[Note Module]] — uses `join`
+- [[Plan Module]] — uses `Planned`
 - [[Symbol]] — uses `Symbol`
-- [[Planned]] — uses `Planned`
+- [[Section]] — uses `Section`
 
 ## Used by
 
-- [[RenderCtx]] — from `RenderCtx`, `composition`, `dep_bullets`, `illustration`
+- [[RenderCtx]] — from `RenderCtx`, `composition`, `dep_bullets`, `link`
 - [[Explain Module]] — from `items`
 
 ## See also

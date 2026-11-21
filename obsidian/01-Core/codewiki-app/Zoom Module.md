@@ -23,7 +23,7 @@ The title bar stays as it is, as a browser's does: it is built at 100% (`unscale
 
 ## How it works
 
-1. `AppView::body` and `AppView::details` in [[codewiki-app]], and 61 more, call `px`. `px` calls `factor`.
+1. `AppView::body` and `AppView::details` in [[codewiki-app]], and 59 more, call `px`. `px` calls `factor`.
 2. `title_bar` in [[codewiki-app]] and `zoom_card` in [[Settings Pages Module]] call `label`.
 3. `AppView::run_command` and `main` in [[codewiki-app]], and 1 more, call `step_by`. `step_by` calls `set`, then `step`, then `percent`.
 4. `DocPage::new` and `DocPage::render` in [[Doc View Module]] call `factor`.
@@ -68,11 +68,11 @@ And 12 more items.
 
 - [[codewiki-app]] — from `body`, `details`, `diagram_viewer_view`, `drop`
 - [[Doc View Module]] — from `caption`, `choices_row`, `code_block`, `column`
-- [[Feedback Module]] — from `alert`, `alert_action`, `chip`, `dots`
-- [[Illustration Module]] — from `bar_chart`, `pie_chart`, `render`, `steps`
+- [[Feedback Module]] — from `alert_action`, `alert_titled`, `chip`, `dots`
 - [[Surfaces Module]] — from `card_content`, `card_shadow`, `divider`, `text`
 - [[Backdrop Module]] — from `Shell`, `new`, `render`
 - [[List Module]] — from `bar_glow`, `render`, `subheader`
+- [[Illustration Module]] — from `flow`, `step`
 - [[Base Module]] — from `attach`, `focus_ring`
 
 ## See also

@@ -4,7 +4,7 @@ tags: [moc, core, cw-core]
 
 # Core / cw-core — Map of Content
 
-> Notes for `cw-core`: 16 concepts.
+> Notes for `cw-core`: 17 concepts.
 
 ## Notes
 
@@ -21,9 +21,10 @@ tags: [moc, core, cw-core]
 - [[Resolved]] — the settings in effect: for each one, the environment variable when it is set, otherwise the saved value, otherwise the default.
 - [[Secret Module]] — secrets kept in a settings file: API keys and the token of a remote backend.
 - [[Settings]] — what `settings.json` holds.
-- [[Settings Module (cw-core)]] — settings the backend keeps for its user: which LLM writes prose, which embedder serves semantic search, and the keys and addresses they need.
+- [[Settings Module (cw-core)]] — settings the backend keeps for its user: which embedder serves semantic search, and the keys and addresses it needs.
 - [[Symbol]] — A named code entity.
 - [[SymbolKind]] — `SymbolKind` enum defined in `cw_core::model` with 3 methods.
+- [[Visibility]] — `Visibility` enum defined in `cw_core::model` with 2 methods.
 
 ## Folders
 

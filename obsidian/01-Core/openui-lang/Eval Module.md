@@ -44,7 +44,6 @@ And 3 more private items with no comment.
 ## Used by
 
 - [[Library]] — from `Library`, `component`, `get`
-- [[codewiki-app]] — from `open_note`
 - [[cw-illustrate]] — from `check`
 
 ## See also

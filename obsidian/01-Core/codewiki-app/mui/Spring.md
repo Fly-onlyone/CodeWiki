@@ -36,11 +36,10 @@ Members:
 
 ## Used by
 
-- [[Motion Module (mui)]] — from `BOUNCY`, `GENTLE`, `PAGE`, `SNAPPY`
-- [[Enter]] — from `Enter`, `rise`, `slide`
+- [[Motion Module (mui)]] — from `BOUNCY`, `Enter`, `GENTLE`, `PAGE`
 - [[Doc View Module]] — from `stat_tile`
-- [[Button Module]] — from `render`
 - [[Tabs Module]] — from `render`
+- [[Button]] — from `render`
 - [[ListItemButton]] — from `render`
 
 ## See also

@@ -26,7 +26,7 @@ Members:
 
 ## Used by
 
-- [[RenderCtx]] — from `illustration`, `render_crate`, `render_operations`, `render_type`
+- [[RenderCtx]] — from `render_crate`, `render_operations`, `render_type`, `summary`
 - [[Manifests Module]] — from `cargo`, `declared`, `other`
 - [[Repo]] — from `module_count`, `top_modules`, `unit_of`
 - [[Units]] — from `Units`, `all_rust`, `by_name`

@@ -31,7 +31,7 @@ Members:
 
 - [[Doc Module]] — from `Cell`, `Stat`, `chip`, `tone`
 - [[Doc View Module]] — from `caption`, `row`, `setting_row`, `under`
-- [[Feedback Module]] — from `alert`, `chip`
+- [[Feedback Module]] — from `alert`, `alert_titled`, `chip`
 - [[Text Field Module]] — from `TextField`, `helper`
 - [[Illustration Module]] — from `tone_of`
 - [[Settings Pages Module]] — from `job`

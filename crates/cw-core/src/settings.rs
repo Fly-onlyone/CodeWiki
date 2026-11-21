@@ -107,6 +107,22 @@ pub const ALL: [Key; 6] = [
     EMBED_DEVICE,
 ];
 
+/// Sections of `settings.json` that held the settings of the AI writer
+/// CodeWiki once called itself: its provider and model, the Anthropic key,
+/// the CLIProxyAPI address and client key. Nothing reads them any more, and
+/// two of them hold an API key, encrypted. They are taken out of the file,
+/// since a key no program uses should not lie on a disk.
+pub const RETIRED_SECTIONS: [&str; 3] = ["llm", "anthropic", "cliproxy"];
+/// The environment variables of those settings. A program that finds one
+/// set says so in its log: its user expects an effect that no longer comes.
+pub const RETIRED_VARIABLES: [&str; 5] = [
+    "CODEWIKI_LLM",
+    "CODEWIKI_MODEL",
+    "ANTHROPIC_API_KEY",
+    "CODEWIKI_CLIPROXY_URL",
+    "CODEWIKI_CLIPROXY_KEY",
+];
+
 /// The setting an environment variable names.
 pub fn key(env: &str) -> Option<Key> {
     ALL.into_iter().find(|key| key.env == env)
@@ -245,6 +261,9 @@ pub fn update(
         }
     };
     change(&mut settings)?;
+    for section in RETIRED_SECTIONS {
+        settings.document.remove(section);
+    }
     settings.document.insert("version".into(), json!(VERSION));
     let text = serde_json::to_string_pretty(&Value::Object(settings.document.clone()))
         .map_err(|e| Error::external("writing the settings", e))?;
@@ -253,6 +272,21 @@ pub fn update(
     std::fs::write(&draft, text).map_err(|e| Error::io(&draft, e))?;
     std::fs::rename(&draft, &path).map_err(|e| Error::io(&path, e))?;
     Ok(settings)
+}
+
+/// Take the settings in [`RETIRED_SECTIONS`] out of the file. Returns
+/// whether it held any. A file without them is not written, and neither is
+/// one that is missing or cannot be read.
+pub fn drop_retired(data_dir: &Path) -> Result<bool> {
+    let held = read(data_dir).is_some_and(|settings| {
+        RETIRED_SECTIONS
+            .iter()
+            .any(|section| settings.document.contains_key(*section))
+    });
+    if held {
+        update(data_dir, |_| Ok(()))?;
+    }
+    Ok(held)
 }
 
 /// Where the value of a setting comes from.
@@ -602,6 +636,52 @@ mod tests {
         assert_eq!(saved.value(OLLAMA_HOST), None);
         let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
         assert!(!text.contains("ollama\":"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_settings_of_the_writer_codewiki_once_had_leave_the_file() {
+        let dir = temp_dir("retired");
+        // Nothing to take out: no file is made.
+        assert!(!drop_retired(&dir).unwrap());
+        assert!(!dir.join(FILE).exists());
+
+        let old = json!({
+            "version": 1,
+            "llm": { "provider": "anthropic", "model": "claude" },
+            "anthropic": { "api_key": { "dpapi": "00112233445566778899aabbccddeeff", "hint": "1234" } },
+            "cliproxy": { "url": "http://127.0.0.1:8317", "api_key": { "dpapi": "ffee", "hint": "abcd" } },
+            "openai": { "api_key": { "dpapi": "0011", "hint": "5678" } },
+            "embed": { "provider": "ollama" },
+            "future": { "x": 1 },
+        });
+        std::fs::write(dir.join(FILE), old.to_string()).unwrap();
+        assert!(drop_retired(&dir).unwrap());
+
+        let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        let value: Value = serde_json::from_str(&text).unwrap();
+        for section in RETIRED_SECTIONS {
+            assert_eq!(value.get(section), None, "{section}");
+        }
+        // No key of the old writer is left on the disk, encrypted or not.
+        assert!(!text.contains("00112233445566778899aabbccddeeff"));
+        assert!(!text.contains("ffee"));
+        // What is still a setting stays, and so does what a newer program
+        // may have written.
+        assert_eq!(value["openai"]["api_key"]["hint"], "5678");
+        assert_eq!(value["embed"]["provider"], "ollama");
+        assert_eq!(value["future"]["x"], 1);
+
+        // Done once: the file is not written again.
+        assert!(!drop_retired(&dir).unwrap());
+        assert_eq!(std::fs::read_to_string(dir.join(FILE)).unwrap(), text);
+
+        // Any later change leaves them out too, should an older program
+        // have put them back.
+        std::fs::write(dir.join(FILE), old.to_string()).unwrap();
+        update(&dir, |s| s.set(EMBED_MODEL, "nomic")).unwrap();
+        let text = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        assert!(!text.contains("anthropic") && !text.contains("cliproxy"));
         let _ = std::fs::remove_dir_all(&dir);
     }
 

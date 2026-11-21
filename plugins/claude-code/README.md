@@ -61,7 +61,10 @@ claude plugin marketplace remove codewiki
 | `get_security_findings` | Security pattern findings in Rust source, test code excluded: hard-coded secrets, shell commands and SQL built with `format!`, disabled TLS verification, `unsafe` blocks with no `// SAFETY:` comment and more. |
 | `get_refactoring_plan` | Refactoring suggestions, highest priority first, each with its evidence and ordered steps. No model is involved. |
 | `get_contracts` | HTTP endpoints a repository provides and the URL paths it calls. With `workspace: true`, matched across all registered repositories. |
-| `sync_wiki` | Re-index and update the wiki. Notes a person edited are never overwritten; changes to them wait as proposals. |
+| `sync_wiki` | Re-index and update the wiki. Notes a person edited are never overwritten; changes to them wait as proposals. Says how many notes wait for an explanation. |
+| `list_waiting_notes` | The notes that wait for an agent to explain them: those whose explanation may be behind the code first, then those never explained. `folder` and `files` narrow the list. |
+| `get_note_brief` | What an agent needs to explain one note: the note, which sections are the agent's, the source files to read, and the limits of text and pictures. |
+| `submit_note` | Send the sections an agent wrote for a note, with pictures. CodeWiki checks them and puts them into the note; it answers `saved` or the faults to fix. A note a person edited is not written: the text waits as a proposal. |
 | `list_repos` | Repositories the backend manages. |
 | `get_workspace` | Every registered repository at a glance, and the external packages two or more of them use. |
 

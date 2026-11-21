@@ -15,7 +15,7 @@
   "interface": {
     "displayName": "CodeWiki",
     "shortDescription": "Codebase wiki for your agent",
-    "longDescription": "Gives Codex the repository's CodeWiki: a wiki that writes itself and stays current, and a structural index of the code. 24 MCP tools read it, a briefing at the start of each session says whether it is up to date, and two skills cover when to call which tool and how to edit a note by hand.",
+    "longDescription": "Gives Codex the repository's CodeWiki: a wiki that writes itself and stays current, and a structural index of the code. 27 MCP tools read it and write its explanations, a briefing at the start of each session says whether it is up to date, and two skills cover when to call which tool and how to edit a note by hand.",
     "developerName": "CodeWiki contributors",
     "category": "Coding",
     "capabilities": [],

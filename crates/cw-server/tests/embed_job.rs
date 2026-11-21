@@ -11,7 +11,7 @@
 use std::fs;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -159,6 +159,19 @@ static FAILED_AT_START: AtomicUsize = AtomicUsize::new(0);
 
 fn failing_at_start() -> Option<Arc<dyn Embedder>> {
     Some(Arc::new(Failing(&FAILED_AT_START)))
+}
+
+/// Whether the server of [`down_then_up`] answers yet.
+static UP: AtomicBool = AtomicBool::new(false);
+static FAILED_WHILE_DOWN: AtomicUsize = AtomicUsize::new(0);
+
+/// An embedder whose server is down until a test brings it up.
+fn down_then_up() -> Option<Arc<dyn Embedder>> {
+    if UP.load(Ordering::SeqCst) {
+        stand_in()
+    } else {
+        Some(Arc::new(Failing(&FAILED_WHILE_DOWN)))
+    }
 }
 
 /// Semantic search is off: an update leaves nothing to a job.
@@ -428,6 +441,25 @@ async fn a_job_whose_embedder_fails_says_why_and_can_be_started_again() {
     let error = job["error"].as_str().unwrap();
     assert!(error.contains("did not answer"), "{error}");
     assert!(FAILED.load(Ordering::SeqCst) > tried);
+}
+
+#[tokio::test]
+async fn a_test_that_succeeds_tries_the_embedding_again() {
+    let h = Harness::new(true, down_then_up);
+    h.repository().await;
+    let job = h.job_in("failed").await;
+    let error = job["error"].as_str().unwrap();
+    assert!(error.contains("did not answer"), "{error}");
+    assert!(FAILED_WHILE_DOWN.load(Ordering::SeqCst) > 0);
+
+    // The server comes up, and someone presses Test.
+    UP.store(true, Ordering::SeqCst);
+    let result = h.ok("POST", "/v1/settings/test/embed", None).await;
+    assert_eq!(result["ok"], true, "{result}");
+    let job = h.job_in("done").await;
+    assert_eq!(job["model"], "stand-in");
+    assert_eq!(job["error"], Value::Null);
+    assert!(!h.waits("stand-in"));
 }
 
 /// One request to a backend that `serve` runs, over a socket: its status

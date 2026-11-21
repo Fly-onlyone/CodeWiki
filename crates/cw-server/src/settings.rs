@@ -113,17 +113,26 @@ fn test_result(name: Option<String>, outcome: Result<Value>, started: Instant) -
 }
 
 /// Have the chosen embedder embed one word. On success `dimensions` is the
-/// length of its vectors.
+/// length of its vectors, and documents that still wait for a vector are
+/// embedded again: a job that failed stays failed until something tries, and
+/// a Test that succeeds is that try. Called in a blocking task of a handler.
 pub(crate) fn test_embedder(state: &AppState) -> Value {
     let started = Instant::now();
     match cw_embed::from_settings(&resolved(state)) {
-        Ok(Some(embedder)) => test_result(
-            Some(embedder.name()),
-            embedder
-                .probe()
-                .map(|dimensions| json!({ "dimensions": dimensions })),
-            started,
-        ),
+        Ok(Some(embedder)) => {
+            let probed = embedder.probe();
+            let answered = probed.is_ok();
+            let result = test_result(
+                Some(embedder.name()),
+                probed.map(|dimensions| json!({ "dimensions": dimensions })),
+                started,
+            );
+            if answered {
+                // Starts a job only when a repository is behind and none runs.
+                crate::embed_job::resume(state);
+            }
+            result
+        }
         Ok(None) => test_result(
             None,
             Err(Error::invalid("semantic search is turned off")),

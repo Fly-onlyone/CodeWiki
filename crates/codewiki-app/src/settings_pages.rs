@@ -463,7 +463,14 @@ fn search(model: &Model) -> Vec<Block> {
         ]),
     ]);
     embedder.extend(tested(model.embed_test));
-    embedder.extend(model.job.into_iter().flat_map(job));
+    let in_use = settings["embed"]["name"].as_str();
+    embedder.extend(
+        model
+            .job
+            .filter(|j| job_runs(j) || belongs_to(j, in_use))
+            .into_iter()
+            .flat_map(job),
+    );
     let mut blocks: Vec<Block> = remote_notice(model).into_iter().collect();
     blocks.push(card("Embedder", embedder));
     blocks
@@ -672,6 +679,16 @@ fn serve_help(provider: &str) -> Option<Vec<Span>> {
 /// Whether an embedding job is under way.
 pub fn job_runs(job: &Value) -> bool {
     job["phase"] == "embedding"
+}
+
+/// Whether a job that is over was the embedder's in use. After a change of
+/// embedder the last job is the old one's, and its word would be about a
+/// server no longer chosen. A job that names no model is shown.
+fn belongs_to(job: &Value, in_use: Option<&str>) -> bool {
+    match job["model"].as_str() {
+        Some(model) => in_use == Some(model),
+        None => true,
+    }
 }
 
 /// What the embedding job that runs, or the last that ran, has to say.
@@ -1666,6 +1683,35 @@ mod tests {
         );
         assert!(!doc.actions().contains(&Action::CancelEmbedJob));
         assert!(!job_runs(fixture.job.as_ref().unwrap()));
+    }
+
+    #[test]
+    fn the_last_job_of_another_embedder_is_left_out() {
+        // Found in the clean-Windows test: llama.cpp's failed job still showed
+        // under Ollama after the embedder was changed.
+        let mut fixture = Fixture::new();
+        fixture.job = Some(json!({
+            "phase": "failed", "model": "llamacpp:vm-embed-missing", "repo": "r",
+            "error": "llama.cpp does not list vm-embed-missing; choose a model it serves",
+        }));
+        let words = fixture.page(Category::Search).words();
+        assert!(!words.contains("did not work"), "{words}");
+
+        // The same failure of the embedder in use is shown.
+        fixture.job.as_mut().unwrap()["model"] = json!("local-hash-v1:384");
+        let words = fixture.page(Category::Search).words();
+        assert!(words.contains("did not work"), "{words}");
+
+        // A running job shows whichever embedder it is for: it can be cancelled.
+        let mut running = embedding(4);
+        running["model"] = json!("llamacpp:vm-embed-stub");
+        fixture.job = Some(running);
+        assert!(
+            fixture
+                .page(Category::Search)
+                .actions()
+                .contains(&Action::CancelEmbedJob)
+        );
     }
 
     #[test]

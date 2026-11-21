@@ -594,7 +594,6 @@ async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
     assert_eq!(settings["embed"]["name"], Value::Null);
     let problem = settings["embed"]["problem"].as_str().unwrap();
     assert!(problem.contains("needs a model"), "{problem}");
-    assert_eq!(h.get("/v1/models").await["embedder"], "builtin");
 
     install_model(h.data.path(), "granite-small-english-r2");
     assert_eq!(

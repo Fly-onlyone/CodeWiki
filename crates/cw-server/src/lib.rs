@@ -14,13 +14,13 @@
 
 mod activity;
 mod api;
-mod models;
+mod embed_job;
 mod repos;
 mod settings;
 pub mod workspace;
 
 use std::net::SocketAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::AtomicU64;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -53,29 +53,19 @@ pub struct ServerConfig {
     pub host: Host,
 }
 
-/// What the work on built-in models asks of the machine. A test replaces
-/// each with a stand-in, so that it starts no model, reads no hardware and
-/// waits for no game.
+/// What the background embedding job asks of the machine. A test replaces
+/// it with a stand-in, so that it calls no model server.
 #[derive(Debug, Clone, Copy)]
 pub struct Host {
     /// The embedder that embeds documents in the background: the one the
     /// settings name.
     pub embedder: fn() -> Option<Arc<dyn cw_embed::Embedder>>,
-    /// Reads the machine's memory, cores, graphics card and free disk space.
-    pub hardware: fn(&Path) -> cw_models::Hardware,
-    /// Whether a game is running; background embedding waits while one is.
-    pub game: fn() -> bool,
-    /// How often a paused job asks whether the game is over.
-    pub pause_poll: Duration,
 }
 
 impl Default for Host {
     fn default() -> Self {
         Self {
             embedder: cw_wiki::semantic::embedder,
-            hardware: cw_models::hardware::probe,
-            game: cw_models::game::busy,
-            pause_poll: Duration::from_secs(5),
         }
     }
 }
@@ -100,10 +90,8 @@ pub(crate) struct Inner {
     pub stop: Notify,
     /// Running updates and the last bridge call, for `GET /v1/status`.
     pub activity: activity::Activity,
-    /// The job on a built-in model that runs, or the last that ran.
-    pub jobs: models::Jobs,
-    /// The machine as last read, for `GET /v1/models`.
-    pub hardware: models::HardwareCache,
+    /// The background embedding job that runs, or the last that ran.
+    pub jobs: embed_job::Jobs,
     /// Updates of a wiki finished since the start. A background embedding
     /// that sees it change starts its repository over.
     pub updates: AtomicU64,
@@ -119,8 +107,7 @@ fn state(config: ServerConfig) -> AppState {
         settings_lock: Mutex::new(()),
         stop: Notify::new(),
         activity: activity::Activity::default(),
-        jobs: models::Jobs::default(),
-        hardware: models::HardwareCache::default(),
+        jobs: embed_job::Jobs::default(),
         updates: AtomicU64::new(0),
     }))
 }
@@ -155,7 +142,7 @@ pub async fn serve(
     cw_wiki::semantic::set_inline_budget(Some(INLINE_BUDGET));
     {
         let state = state.clone();
-        tokio::task::spawn_blocking(move || models::resume(&state));
+        tokio::task::spawn_blocking(move || embed_job::resume(&state));
     }
     let inner = state.0.clone();
     let stop = async move {
@@ -164,8 +151,7 @@ pub async fn serve(
             () = inner.stop.notified() => {}
         }
         // A job in the background would keep the process alive: it ends at
-        // its next step. Its worker ends with the process, whose end closes
-        // the worker's input.
+        // its next step.
         inner.jobs.close();
     };
     axum::serve(listener, api::routes(state))

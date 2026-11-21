@@ -2259,6 +2259,400 @@ Test-Case "SE2" "A model the server does not list is refused" "llama.cpp does no
     Stop-GuestApp
 }
 
+# ---------------------------------------------------------------- real embedding servers, shared helpers
+# Every real server (Ollama, llama.cpp, LM Studio, Lemonade, mistral.rs) is
+# judged the same way by Measure-RealEmbedder, so that the report can compare
+# them: the same five searches, the same repository (cw-core), the same
+# samples of memory, processor and graphics card, the same units. One record
+# per server is appended to logs\embedders.json.
+#
+# The searches are phrased by meaning, not by the words of cw-core's code
+# (secret.rs, logs.rs and paths.rs, settings.rs, hash.rs), so that vectors have
+# something to find that word forms do not.
+$embedQueries = @(
+    "protecting stored credentials",
+    "where log files are kept",
+    "reading user settings from disk",
+    "hashing text into a vector",
+    "what happens when a setting is missing"
+)
+# What the install and pull cases learned, by "<provider>" and
+# "<provider>/<model>": version, installMb, downloadS, installS, modelMb, pullS.
+$embedFacts = @{}
+$embedRecords = [System.Collections.Generic.List[object]]::new()
+$embedLocalRecorded = $false
+$embedSamples = "$($script:Vm.GuestDir)\embed-samples"
+$embedLogs = "$($script:Vm.GuestDir)\embed-logs"
+$embedModels = "$($script:Vm.GuestDir)\models"
+
+function Set-EmbedFact {
+    param([string]$Key, [string]$Name, $Value)
+    if (-not $script:embedFacts.ContainsKey($Key)) { $script:embedFacts[$Key] = @{} }
+    $script:embedFacts[$Key][$Name] = $Value
+}
+function Get-EmbedFact {
+    param([string]$Key, [string]$Name)
+    if ($script:embedFacts.ContainsKey($Key) -and $script:embedFacts[$Key].ContainsKey($Name)) { $script:embedFacts[$Key][$Name] } else { $null }
+}
+
+# The number in the first "<label> N" of a guest output, or $null.
+function Get-OutputNumber {
+    param([string]$Output, [string]$Pattern)
+    if ($Output -match $Pattern) { [double]::Parse($Matches[1], [Globalization.CultureInfo]::InvariantCulture) } else { $null }
+}
+
+# Guest text that stops a case when the disk is nearly full. A case's own
+# installer is deleted when it has installed, to keep the guest's disk free.
+function Get-GuestFreeDiskText {
+    param([double]$MinGb)
+    (@'
+$free = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+"free disk GB: $free"
+if ($free -lt {{MIN}}) { 'result: not enough disk'; return }
+'@).Replace('{{MIN}}', "$MinGb")
+}
+
+# Guest text that downloads a file and says how big it was and how long it took.
+function Get-GuestDownloadText {
+    param([string]$Url, [string]$Path)
+    (@'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+New-Item -ItemType Directory -Force (Split-Path -Parent '{{PATH}}') | Out-Null
+$watch = Get-Date
+Invoke-WebRequest -UseBasicParsing '{{URL}}' -OutFile '{{PATH}}'
+"downloaded: $([math]::Round((Get-Item '{{PATH}}').Length / 1MB, 1)) MB in $([int]((Get-Date) - $watch).TotalSeconds) s"
+'@).Replace('{{PATH}}', $Path).Replace('{{URL}}', $Url)
+}
+
+# Guest text that lists what Defender stopped or reported with a word in it.
+function Get-GuestDefenderText {
+    param([string]$Word)
+    (@'
+$events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1121, 1122, 1116, 1117 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match '{{WORD}}' })
+"Defender events naming {{WORD}}: $($events.Count)"
+foreach ($event in $events | Select-Object -First 4) { "  event $($event.Id): $(($event.Message -split "`r?`n" | Where-Object { $_ -match '^\s*(ID|Path|Name):' } | ForEach-Object { $_.Trim() }) -join ' | ')" }
+'@).Replace('{{WORD}}', $Word)
+}
+
+# Size of folders in the guest, in MB (0 for one that is not there).
+function Get-GuestFolderMb {
+    param([string[]]$Path)
+    $list = (($Path | ForEach-Object { "'$_'" }) -join ", ")
+    $run = Invoke-GuestScript -TimeoutSec 180 -Script ("`$total = 0; foreach (`$p in @($list)) { `$total += (Get-ChildItem `$p -Recurse -File -Force -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum }; `"mb: `$([math]::Round(`$total / 1MB, 1))`"")
+    Get-OutputNumber $run.Output "mb: ([\d\.]+)"
+}
+
+# A server that stays up for the cases after its own: started behind
+# conhost --headless by guest\serve-logged.ps1, which keeps its output in
+# <Log>.out and <Log>.err.
+function Start-LoggedServer {
+    param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string]$Log, [string]$ArgLine = "")
+    New-GuestDirectory $embedLogs
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\serve-logged.ps1") -GuestDirectory $script:Vm.GuestDir
+    Invoke-GuestScript -Script "Remove-Item '$Log.out', '$Log.err' -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\serve-logged.ps1", "-Exe", $Exe, "-Log", $Log, "-ArgLine", $ArgLine
+}
+
+# Wait for a URL in the guest to answer; gives up early when no process whose
+# program path matches -ServerProcess runs any more. Returns the guest's text:
+# "answered after N s: ..." or "no answer ...", then the end of the server's log.
+function Wait-GuestServer {
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$ServerProcess, [int]$Seconds = 120, [string]$Log = "")
+    (Invoke-GuestScript -TimeoutSec ($Seconds + 120) -Script (@'
+$watch = Get-Date
+$deadline = $watch.AddSeconds({{SECONDS}})
+$answered = $false
+while ((Get-Date) -lt $deadline) {
+    try {
+        $text = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 5 '{{URL}}').Content
+        "answered after $([int]((Get-Date) - $watch).TotalSeconds) s: $($text.Substring(0, [math]::Min(300, $text.Length)))"
+        $answered = $true
+        break
+    } catch { }
+    $running = @(Get-CimInstance Win32_Process | Where-Object { $(if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.Name }) -match '{{PATTERN}}' }).Count
+    if (-not $running -and ((Get-Date) - $watch).TotalSeconds -gt 20) { "the server is not running after $([int]((Get-Date) - $watch).TotalSeconds) s"; break }
+    Start-Sleep -Seconds 3
+}
+if (-not $answered) { "no answer after $([int]((Get-Date) - $watch).TotalSeconds) s" }
+if ('{{LOG}}') { foreach ($file in '{{LOG}}.out', '{{LOG}}.err') { if (Test-Path $file) { "--- $file (last lines)"; Get-Content $file -Tail 12 } } }
+'@).Replace('{{SECONDS}}', "$Seconds").Replace('{{URL}}', $Url).Replace('{{PATTERN}}', $ServerProcess).Replace('{{LOG}}', $Log)).Output
+}
+
+# The id a server lists for a model whose id is not known beforehand (llama.cpp
+# names it after the file, LM Studio after its own catalog). Reads each URL as
+# OpenAI's /v1/models (data[].id), or Ollama's and Lemonade's variants, and
+# returns the first id that matches -Match, with the guest's text.
+function Resolve-GuestModelId {
+    param([Parameter(Mandatory)][string[]]$Url, [Parameter(Mandatory)][string]$Match)
+    $list = (($Url | ForEach-Object { "'$_'" }) -join ", ")
+    $run = Invoke-GuestScript -TimeoutSec 120 -Script (@'
+foreach ($url in @({{URLS}})) {
+    try {
+        $answer = Invoke-RestMethod -TimeoutSec 20 $url
+        $ids = @()
+        if ($answer.data) { $ids = @($answer.data | ForEach-Object { $_.id }) }
+        elseif ($answer.models) { $ids = @($answer.models | ForEach-Object { if ($_.id) { $_.id } else { $_.name } }) }
+        "ids from ${url}: $($ids -join ' ; ')"
+    } catch { "no answer from ${url}: $($_.Exception.Message)" }
+}
+'@).Replace('{{URLS}}', $list)
+    $id = $null
+    foreach ($line in $run.Output -split "`n") {
+        if ($line -match "^ids from \S+?: (.*)$") {
+            $found = @($Matches[1] -split " ; " | Where-Object { $_ -match $Match })
+            if ($found.Count) { $id = $found[0].Trim(); break }
+        }
+    }
+    [pscustomobject]@{ Id = $id; Output = $run.Output }
+}
+
+# The part of a measuring script that runs the five searches; fills $searches.
+$guestSearchText = @'
+$queries = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{QUERIES}}')) | ConvertFrom-Json
+$repo = Get-RepoId 'cw-core'
+$searches = @()
+foreach ($q in $queries) {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $answer = Invoke-Backend GET ("/v1/repos/$repo/search?q=" + [uri]::EscapeDataString($q) + '&limit=5')
+    $ms = [int]$watch.ElapsedMilliseconds
+    $failed = $answer.StartsWith('HTTP error')
+    $parsed = if ($answer.StartsWith('[')) { $answer | ConvertFrom-Json } else { @() }
+    $keys = [string[]]@($parsed | ForEach-Object { $_.key })
+    $searches += [pscustomobject]@{ q = $q; ms = $ms; keys = $keys; error = $(if ($failed) { $answer } else { '' }) }
+}
+'@
+
+# Guest text that prints $out as RESULT64 lines (base64, in pieces, so that no
+# line is cut by the width of the guest's output file).
+$guestResultText = @'
+$json = $out | ConvertTo-Json -Depth 6 -Compress
+$b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($json))
+for ($i = 0; $i -lt $b64.Length; $i += 3000) { 'RESULT64: ' + $b64.Substring($i, [math]::Min(3000, $b64.Length - $i)) }
+'@
+
+function Read-GuestResult {
+    param([string]$Output)
+    $b64 = (($Output -split "`n") | ForEach-Object { if ($_ -match '^RESULT64: (\S+)') { $Matches[1] } }) -join ""
+    if (-not $b64) { return $null }
+    [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($b64)) | ConvertFrom-Json
+}
+
+function Get-MedianValue {
+    param($Values)
+    $sorted = @($Values | Where-Object { $null -ne $_ } | Sort-Object)
+    if (-not $sorted.Count) { return $null }
+    $middle = [int][math]::Floor($sorted.Count / 2)
+    if ($sorted.Count % 2) { $sorted[$middle] } else { ($sorted[$middle - 1] + $sorted[$middle]) / 2 }
+}
+
+# What the sampler (guest\sampler.ps1) wrote, as figures: the server's memory
+# at its highest and when idle, the guest's processor load while the model
+# loaded and the job ran, its least free memory, and whether a graphics engine
+# worked.
+function Get-SampleStats {
+    param([string[]]$Lines)
+    $invariant = [Globalization.CultureInfo]::InvariantCulture
+    $number = { param($text) if ($text -eq "na") { $null } else { [double]::Parse($text, $invariant) } }
+    $rows = @()
+    foreach ($line in $Lines) {
+        $f = $line.Trim() -split ","
+        if ($f.Count -ge 7) {
+            $rows += [pscustomobject]@{ Phase = $f[0]; Ws = (& $number $f[2]); Cpu = (& $number $f[3]); Free = (& $number $f[4]); Gpu3d = (& $number $f[5]); GpuCompute = (& $number $f[6]) }
+        }
+    }
+    $working = @($rows | Where-Object { $_.Phase -in "load", "job" })
+    $idle = @($rows | Where-Object { $_.Phase -eq "idle" } | Select-Object -Last 5)
+    $gpuValues = @($working | ForEach-Object { $_.Gpu3d; $_.GpuCompute } | Where-Object { $null -ne $_ })
+    $gpuPeak = if ($gpuValues.Count) { ($gpuValues | Measure-Object -Maximum).Maximum } else { $null }
+    $cpuValues = @($working | ForEach-Object { $_.Cpu } | Where-Object { $null -ne $_ })
+    $freeValues = @($rows | ForEach-Object { $_.Free } | Where-Object { $null -ne $_ })
+    [pscustomobject]@{
+        Samples      = $rows.Count
+        MemoryPeakMb = if ($rows.Count) { [math]::Round(($rows | Measure-Object Ws -Maximum).Maximum, 0) } else { $null }
+        MemoryIdleMb = if ($idle.Count) { [math]::Round(($idle | Measure-Object Ws -Average).Average, 0) } else { $null }
+        CpuAvg       = if ($cpuValues.Count) { [math]::Round(($cpuValues | Measure-Object -Average).Average, 1) } else { $null }
+        CpuPeak      = if ($cpuValues.Count) { [math]::Round(($cpuValues | Measure-Object -Maximum).Maximum, 1) } else { $null }
+        FreeMinMb    = if ($freeValues.Count) { [math]::Round(($freeValues | Measure-Object -Minimum).Minimum, 0) } else { $null }
+        Gpu          = if ($null -eq $gpuPeak) { "not available" } elseif ($gpuPeak -ge 5) { "yes (busiest engine $([math]::Round($gpuPeak, 0)) %)" } else { "no (busiest engine $([math]::Round($gpuPeak, 0)) %)" }
+    }
+}
+
+# Choose the server and its model through Set-GuestEmbedder (and photograph
+# Settings > Semantic search), then judge it: the model list, the test call
+# (its "ms" is the first call, which loads the model), the embedding job of
+# cw-core from the test to done, five searches by meaning with the vectors in
+# use and again with the word-form embedder "local", and, from a sampler in the
+# guest, the server's memory, the guest's processor load, its free memory and
+# whether a graphics engine worked. It then resets the embedder to "local",
+# stops the server and checks that nothing of it runs. A record is appended
+# to logs\embedders.json and a result to the report.
+#   -ServerProcess  a regular expression for the program path (or name) of the
+#                   server's processes, for the samples and for stopping them.
+#   -Model          what Settings is given; -ModelFamily and -Quantisation say
+#                   what it is, for the table's "same model" columns.
+#   -InstallFolder  guest folders whose size is "install MB".
+#   -StopScript     guest text that ends the server politely before it is killed.
+function Measure-RealEmbedder {
+    param(
+        [Parameter(Mandatory)][string]$Id,
+        [Parameter(Mandatory)][ValidateSet("ollama", "lmstudio", "llamacpp", "lemonade", "mistralrs")][string]$Provider,
+        [Parameter(Mandatory)][string]$Model,
+        [string]$Url,
+        [Parameter(Mandatory)][string]$ServerProcess,
+        [Parameter(Mandatory)][int]$Port,
+        [string]$Title = "Semantic search through $Provider",
+        [string]$ModelFamily = $Model,
+        [string]$Quantisation = "unknown",
+        [string]$ServerVersion,
+        [string[]]$InstallFolder = @(),
+        [string]$StopScript = "",
+        [string]$Note = "",
+        [int]$JobSeconds = 1800
+    )
+    $factKey = "$Provider/$Model"
+    $set = Set-GuestEmbedder -Provider $Provider -Model $Model -Url $Url
+    $shot = Shot "settings-search-$Id"
+
+    # The sampler runs beside the work, in its own task.
+    New-GuestDirectory $embedSamples
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\sampler.ps1") -GuestDirectory $script:Vm.GuestDir
+    Invoke-GuestScript -Script "Remove-Item '$embedSamples\*' -Force -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\sampler.ps1", "-Folder", $embedSamples, "-Pattern", $ServerProcess
+    Wait-For 4
+
+    $queriesB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject ([string[]]$embedQueries) -Compress)))
+    $measure = Invoke-GuestBackendScript -TimeoutSec ($JobSeconds + 1800) -Script ((@'
+$folder = '{{FOLDER}}'
+function Set-Phase { param([string]$Name) Set-Content (Join-Path $folder 'phase.txt') $Name -NoNewline }
+$out = [ordered]@{}
+Set-Phase 'load'
+$models = Invoke-Backend GET '/v1/settings/embed/models'
+$out.models = $models.Substring(0, [math]::Min(1500, $models.Length))
+$watch = [Diagnostics.Stopwatch]::StartNew()
+$test = Invoke-Backend POST '/v1/settings/test/embed' $null 900
+$out.testWallMs = [int]$watch.ElapsedMilliseconds
+$out.test = $test.Substring(0, [math]::Min(1500, $test.Length))
+Set-Phase 'job'
+$jobWatch = [Diagnostics.Stopwatch]::StartNew()
+# A good test starts the job by itself. When none runs, ask for one.
+$job = (Invoke-Backend GET '/v1/embed/job' | ConvertFrom-Json).job
+$out.reembed = ''
+if (-not ($job -and $job.phase -eq 'embedding')) { $out.reembed = Invoke-Backend POST '/v1/embed/reembed'; Start-Sleep -Seconds 2 }
+$deadline = (Get-Date).AddSeconds({{JOBSECONDS}})
+do {
+    Start-Sleep -Seconds 2
+    $job = (Invoke-Backend GET '/v1/embed/job' | ConvertFrom-Json).job
+} while ($job -and $job.phase -eq 'embedding' -and (Get-Date) -lt $deadline)
+$out.jobSeconds = [math]::Round($jobWatch.Elapsed.TotalSeconds, 1)
+$out.job = $job
+Set-Phase 'idle'
+Start-Sleep -Seconds 20
+Set-Phase 'search'
+'@ + "`n" + $guestSearchText + @'
+
+$out.searches = $searches
+'@ + "`n" + $guestResultText).Replace('{{FOLDER}}', $embedSamples).Replace('{{JOBSECONDS}}', "$JobSeconds").Replace('{{QUERIES}}', $queriesB64))
+    $data = Read-GuestResult $measure.Output
+    $samples = Invoke-GuestScript -TimeoutSec 120 -Script "New-Item -ItemType File -Force '$embedSamples\stop.flag' | Out-Null; Start-Sleep 4; Get-Content '$embedSamples\samples.csv' -ErrorAction SilentlyContinue"
+    $stats = Get-SampleStats ($samples.Output -split "`n")
+
+    # The same five searches with the word-form embedder, for comparison.
+    Set-GuestEmbedder -Provider "local" | Out-Null
+    $localRun = Invoke-GuestBackendScript -TimeoutSec 600 -Script (($guestSearchText + "`n" + '$out = [ordered]@{ searches = $searches }' + "`n" + $guestResultText).Replace('{{QUERIES}}', $queriesB64))
+    $local = Read-GuestResult $localRun.Output
+    Stop-GuestApp
+
+    # Stop the server and everything it started, and check that it is gone.
+    $stopped = (Invoke-GuestScript -TimeoutSec 300 -Script ($StopScript + "`n" + @'
+Start-Sleep 2
+$pattern = '{{PATTERN}}'
+function Get-Server { @(Get-CimInstance Win32_Process | Where-Object { $(if ($_.ExecutablePath) { $_.ExecutablePath } else { $_.Name }) -match $pattern }) }
+foreach ($p in Get-Server) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep 4
+$left = Get-Server
+"left: $($left.Count) $(($left | ForEach-Object { $_.Name }) -join ', ')"
+"listening on {{PORT}}: $(@(Get-NetTCPConnection -State Listen -LocalPort {{PORT}} -ErrorAction SilentlyContinue).Count)"
+'@.Replace('{{PATTERN}}', $ServerProcess).Replace('{{PORT}}', "$Port"))).Output
+
+    if (-not $data) {
+        Add-Result -Id $Id -Title $Title -Expect "the measuring script answers" -Status fail -Shots @($shot) -Output ("settings change: $set`n" + $measure.Output + "`n--- after stopping`n$stopped") `
+            -Observed "the guest's measuring script printed no result (it did not parse, or ran out of time): $(($measure.Output -split "`n" | Select-Object -Last 2) -join '; ')"
+        return
+    }
+    $test = try { $data.test | ConvertFrom-Json } catch { $null }
+    $job = $data.job
+    $listed = "$($data.models)" -match '"reachable":\s*true' -and "$($data.models)".Contains($Model.Split(":")[0])
+    $tested = $test -and $test.ok -eq $true
+    $stored = $job -and $job.phase -eq "done" -and $job.docs_total -gt 0 -and $job.docs_done -eq $job.docs_total
+    $searches = @($data.searches)
+    $localSearches = if ($local) { @($local.searches) } else { @() }
+    $found = 0; $onlyVectors = 0; $withHits = 0
+    foreach ($search in $searches) {
+        $keys = @($search.keys)
+        $baseline = @($localSearches | Where-Object { $_.q -eq $search.q } | ForEach-Object { $_.keys })
+        $found += $keys.Count
+        if ($keys.Count) { $withHits += 1 }
+        $onlyVectors += @($keys | Where-Object { $baseline -notcontains $_ }).Count
+    }
+    $medianVectors = Get-MedianValue ($searches | ForEach-Object { $_.ms })
+    $medianLocal = Get-MedianValue ($localSearches | ForEach-Object { $_.ms })
+    $jobSeconds = [double]$data.jobSeconds
+    $docs = if ($job) { [int]$job.docs_done } else { $null }
+    $installMb = if ($InstallFolder.Count) { Get-GuestFolderMb $InstallFolder } else { Get-EmbedFact $Provider "installMb" }
+    $version = if ($ServerVersion) { $ServerVersion } else { Get-EmbedFact $Provider "version" }
+    $gone = $stopped -match "left: 0" -and $stopped -match "listening on ${Port}: 0"
+    $status = if ($listed -and $tested -and $stored -and $withHits -eq $searches.Count) { "pass" } elseif ($listed -and $tested -and $stored) { "note" } else { "fail" }
+
+    # The word-form baseline is recorded once per run, before the first server.
+    if (-not $script:embedLocalRecorded -and $local) {
+        $embedRecords.Add([ordered]@{
+                provider = "local"; model = "word forms (no model)"; status = "baseline"
+                searchMedianMs = $medianLocal; queries = @($localSearches | ForEach-Object { [ordered]@{ q = $_.q; ms = $_.ms; keys = @($_.keys) } })
+            })
+        $script:embedLocalRecorded = $true
+    }
+    $embedRecords.Add([ordered]@{
+            case                  = $Id
+            provider              = $Provider
+            serverVersion         = $version
+            model                 = $Model
+            modelFamily           = $ModelFamily
+            quantisation          = $Quantisation
+            installMb             = $installMb
+            modelMb               = Get-EmbedFact $factKey "modelMb"
+            downloadS             = Get-EmbedFact $Provider "downloadS"
+            installS              = Get-EmbedFact $Provider "installS"
+            pullS                 = Get-EmbedFact $factKey "pullS"
+            firstCallMs           = if ($test) { $test.ms } else { $null }
+            dimensions            = if ($test) { $test.dimensions } else { $null }
+            docs                  = $docs
+            jobS                  = $jobSeconds
+            docsPerS              = if ($jobSeconds -gt 0 -and $docs) { [math]::Round($docs / $jobSeconds, 2) } else { $null }
+            searchMedianMs        = $medianVectors
+            searchMedianMsLocal   = $medianLocal
+            hitsFound             = $found
+            hitsNotInLocal        = $onlyVectors
+            serverMemoryPeakMb    = $stats.MemoryPeakMb
+            serverMemoryIdleMb    = $stats.MemoryIdleMb
+            cpuAvgPercent         = $stats.CpuAvg
+            cpuPeakPercent        = $stats.CpuPeak
+            gpuUsed               = $stats.Gpu
+            guestFreeMemoryMinMb  = $stats.FreeMinMb
+            queries               = @($searches | ForEach-Object { [ordered]@{ q = $_.q; ms = $_.ms; keys = @($_.keys) } })
+            serverGone            = [bool]$gone
+            status                = $status
+            notes                 = (@($Note, "samples: $($stats.Samples)") | Where-Object { $_ }) -join "; "
+        })
+    ConvertTo-Json -InputObject ([object[]]$embedRecords.ToArray()) -Depth 8 | Set-Content (Join-Path $logs "embedders.json")
+
+    $lines = @($searches | ForEach-Object { "  $($_.q): $($_.ms) ms, top $(@($_.keys).Count): $(@($_.keys) -join ' ; ')$(if ($_.error) { ' ERROR ' + $_.error })" })
+    $localLines = @($localSearches | ForEach-Object { "  $($_.q): $($_.ms) ms, top $(@($_.keys).Count): $(@($_.keys) -join ' ; ')" })
+    Add-Result -Id $Id -Title $Title -Expect "the model is listed; the test answers; the job is done with every document embedded; the five searches find hits" `
+        -Status $status -Shots @($shot) -Output ("settings change: $set`n" + "models: $($data.models)`ntest: $($data.test)`njob: $($job | ConvertTo-Json -Compress)`nreembed asked for: '$($data.reembed)'`n--- searches with $Provider`n$($lines -join "`n")`n--- searches with local`n$($localLines -join "`n")`n--- samples`n$($samples.Output)`n--- after stopping the server`n$stopped") `
+        -Observed ("$Provider ($version) with $Model ($Quantisation); listed: $listed; test answered: $tested, first call $(if ($test) { "$($test.ms) ms, $($test.dimensions) dimensions" } else { 'none' }); job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }) in $jobSeconds s$(if ($docs -and $jobSeconds -gt 0) { " ($([math]::Round($docs / $jobSeconds, 1)) documents/s)" }); search median $medianVectors ms with vectors, $medianLocal ms with local; $withHits of $($searches.Count) searches had hits, $onlyVectors of $found hits are not in local's top 5; server memory peak $($stats.MemoryPeakMb) MB, idle $($stats.MemoryIdleMb) MB; guest CPU avg $($stats.CpuAvg) %, peak $($stats.CpuPeak) %; GPU: $($stats.Gpu); guest free memory min $($stats.FreeMinMb) MB; server gone after stopping: $gone. $Note Read the screenshot: Settings > Semantic search names $Provider and $Model")
+}
+
 # ---------------------------------------------------------------- OL, a real Ollama
 # README names Ollama and `ollama pull embeddinggemma` as one way to serve
 # embeddings. These cases do exactly that in the guest, which has a network.
@@ -2268,6 +2662,15 @@ $ollamaDownload = "https://ollama.com/download/OllamaSetup.exe"
 # Ask the guest which Ollama version answers on its port; empty when none does.
 function Get-OllamaVersion {
     (Invoke-GuestScript -TimeoutSec 60 -Script "try { (Invoke-RestMethod -TimeoutSec 5 'http://localhost:11434/api/version').version } catch { }").Output.Trim()
+}
+
+# Start `ollama serve` when no server answers (the tray app did not start, or
+# the guest was restored since OL1, or an earlier case stopped Ollama).
+function Start-OllamaServe {
+    if (-not (Get-OllamaVersion)) {
+        Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $ollamaExe, "serve"
+        Wait-For 15
+    }
 }
 
 # OllamaSetup.exe is an Inno Setup installer that needs no administrator
@@ -2332,17 +2735,16 @@ $events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Window
 foreach ($event in $events | Select-Object -First 4) { "  event $($event.Id): $(($event.Message -split "`r?`n" | Where-Object { $_ -match '^\s*(ID|Path|Name):' } | ForEach-Object { $_.Trim() }) -join ' | ')" }
 '@).Replace('{{EXE}}', $ollamaExe)).Output
     $shot = Shot "ollama-installed"
+    Set-EmbedFact "ollama" "version" $version
+    Set-EmbedFact "ollama" "downloadS" (Get-OutputNumber $download.Output "downloaded: \d+ MB in (\d+) s")
+    Set-EmbedFact "ollama" "installS" $seconds
     Add-Result -Id "OL1" -Title "Install Ollama silently" -Expect "the installer runs with /VERYSILENT as the user, ollama.exe is in place and the server answers on 11434" `
         -Status $(if ($installed -and $version) { "pass" } elseif ($installed) { "note" } else { "fail" }) -Shots @($shot) -Output ($download.Output + "`n--- after the install`n" + $facts) `
         -Observed "$ollamaDownload; $(($download.Output -split "`n" | Where-Object { $_ -match '^(downloaded|signature)' }) -join '; '); /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- ended after $seconds s with ollama.exe in place: $installed; the server answers on 11434 with version '$version' (empty: it did not start by itself; see the output for what runs and for any Defender event that names Ollama)"
 }
 
 Test-Case "OL2" "ollama pull embeddinggemma" "the model is pulled as README says and the server lists it" {
-    if (-not (Get-OllamaVersion)) {
-        # The tray app did not start, or the guest was restored since OL1.
-        Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $ollamaExe, "serve"
-        Wait-For 15
-    }
+    Start-OllamaServe
     if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 first" }
     $run = Invoke-GuestScript -Background -TimeoutSec 2700 -Script (@'
 $watch = Get-Date
@@ -2358,65 +2760,58 @@ $folder = Join-Path $env:USERPROFILE '.ollama\models'
 $global:LASTEXITCODE = 0
 '@).Replace('{{EXE}}', $ollamaExe)
     $ok = $run.Output -match "pull exit: 0" -and $run.Output -match "model: embeddinggemma"
+    Set-EmbedFact "ollama/embeddinggemma" "pullS" (Get-OutputNumber $run.Output "pull exit: \d+ after (\d+) s")
+    Set-EmbedFact "ollama/embeddinggemma" "modelMb" (Get-OutputNumber $run.Output "model: embeddinggemma\S*, (\d+) MB")
     Add-Result -Id "OL2" -Title "ollama pull embeddinggemma" -Expect "pull exits 0 and /api/tags lists embeddinggemma" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
         -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|model:|models folder)' }) -join '; ')"
 }
 
-Test-Case "OL3" "Semantic search through Ollama" "Ollama and embeddinggemma chosen: the page lists the model, a reembed stores every document's vector, and a search by meaning answers" {
-    if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 and OL2 first" }
-    $set = Set-GuestEmbedder -Provider "ollama" -Model "embeddinggemma"
-    $shot = Shot "settings-search-ollama"
-    $watch = Get-Date
-    $run = Invoke-GuestBackendScript -TimeoutSec 1500 -Script (@'
-'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
-'test: ' + (Invoke-Backend POST '/v1/settings/test/embed' $null 600)
-'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
-'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "900"))
-    $seconds = [int]((Get-Date) - $watch).TotalSeconds
-    $job = Get-JobLine $run.Output
-    # A search by meaning: the words of the query are not the words of the
-    # code's notes. `codewiki search` is full text alone; the backend's route
-    # adds the vectors. A hit that only the route finds comes from them.
-    $query = "protecting stored credentials"
-    $meaning = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
-$id = Get-RepoId 'cw-core'
-$answer = Invoke-Backend GET "/v1/repos/$id/search?q={{QUERYURL}}&limit=10"
-if ($answer.StartsWith('HTTP error')) { "search: $answer" }
-$parsed = if ($answer.StartsWith('[')) { $answer | ConvertFrom-Json } else { @() }
-$hits = @($parsed)
-"hybrid hits: $(@($hits | ForEach-Object { $_.key }) -join ' ; ')"
-Set-Location '{{REPO}}'
-# In 5.1 a line on stderr through 2>&1 is an error record, which 'Stop' ends the script on.
-$ErrorActionPreference = 'Continue'
-$lexical = @(& '{{CODEWIKI}}' search '{{QUERY}}' --limit 10 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^\[' } | ForEach-Object { ($_ -replace '^\[[^\]]*\]\s*', '') -split ' . ' | Select-Object -First 1 })
-"lexical hits: $($lexical -join ' ; ')"
+Test-Case "OL3" "Semantic search through Ollama" "Ollama and embeddinggemma chosen: the page lists the model, a reembed stores every document's vector, and the five searches by meaning answer" {
+    $version = Get-OllamaVersion
+    if (-not $version) { throw "no Ollama answers on port 11434; run OL1 and OL2 first" }
+    # embeddinggemma is the model README names for Ollama. Quantisation: the
+    # library's default tag; Ollama's page for it states none.
+    Measure-RealEmbedder -Id "OL3" -Title "Semantic search through Ollama" -Provider ollama -Model "embeddinggemma" -ServerVersion $version `
+        -ServerProcess '\\Ollama\\|\\ollama[^\\]*\.exe$' -Port 11434 -ModelFamily "embeddinggemma" -Quantisation "library default (Ollama's page names none)" `
+        -InstallFolder @("$guestHome\AppData\Local\Programs\Ollama") `
+        -Note "README's model for Ollama; not the same model as the nomic-embed-text cases."
+}
+
+# The same model as llama.cpp and LM Studio run (nomic-embed-text v1.5), so
+# that the figures compare servers. https://ollama.com/library/nomic-embed-text:
+# `ollama pull nomic-embed-text`, 274 MB, the default tag is v1.5 and the same
+# size as the tag 137m-v1.5-fp16, that is 16-bit floats, not a quantisation.
+Test-Case "OL4" "ollama pull nomic-embed-text" "the model is pulled and the server lists it" {
+    Start-OllamaServe
+    if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 first" }
+    $run = Invoke-GuestScript -Background -TimeoutSec 2700 -Script (@'
+$watch = Get-Date
+$text = & '{{EXE}}' pull nomic-embed-text 2>&1 | Out-String
+$seconds = [int]((Get-Date) - $watch).TotalSeconds
+"pull exit: $LASTEXITCODE after $seconds s"
+$clean = ($text -replace '[^\x20-\x7E\r\n]', '') -split "`r?`n|`r" | Where-Object { $_.Trim() } | Select-Object -Last 4
+"pull output ends: $($clean -join ' | ')"
+$tags = (Invoke-RestMethod -TimeoutSec 20 'http://localhost:11434/api/tags').models | Where-Object { $_.name -like 'nomic-embed-text*' }
+foreach ($tag in $tags) { "model: $($tag.name), $([math]::Round($tag.size / 1MB)) MB" }
 $global:LASTEXITCODE = 0
-'@).Replace("{{QUERYURL}}", ($query -replace " ", "%20")).Replace("{{QUERY}}", $query).Replace('{{REPO}}', $guestRepo).Replace('{{CODEWIKI}}', "$guestTarget\codewiki.exe")
-    $hybrid = if ($meaning.Output -match "(?m)^hybrid hits: (.*)$") { @($Matches[1] -split " ; " | Where-Object { $_.Trim() }) } else { @() }
-    $lexical = if ($meaning.Output -match "(?m)^lexical hits: (.*)$") { @($Matches[1] -split " ; " | Where-Object { $_.Trim() }) } else { @() }
-    $onlyVectors = @($hybrid | Where-Object { $lexical -notcontains $_ })
-    $memory = (Invoke-GuestScript -TimeoutSec 120 -Script @'
-$processes = @(Get-Process | Where-Object { $_.ProcessName -like '*ollama*' -or $_.ProcessName -eq 'runner' })
-foreach ($p in $processes) { "process: $($p.ProcessName) $([math]::Round($p.WorkingSet64 / 1MB)) MB" }
-"total: $([math]::Round((($processes | Measure-Object WorkingSet64 -Sum).Sum) / 1MB)) MB of $([math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1KB)) MB"
-"loaded: $((Invoke-RestMethod -TimeoutSec 10 'http://localhost:11434/api/ps').models | ForEach-Object { $_.name + ' ' + [math]::Round($_.size / 1MB) + ' MB' })"
-'@).Output
-    # Back to what the other cases expect: no Ollama, search by words alone.
-    Set-GuestEmbedder -Provider "local" | Out-Null
-    Stop-GuestApp
-    $stopped = (Invoke-GuestScript -TimeoutSec 120 -Script @'
-Get-Process | Where-Object { $_.ProcessName -like '*ollama*' -or $_.ProcessName -eq 'runner' } | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep 3
-"left: $(@(Get-Process | Where-Object { $_.ProcessName -like '*ollama*' }).Count)"
-'@).Output
-    $listed = $run.Output -match '"reachable":\s*true' -and $run.Output -match 'embeddinggemma'
-    $tested = $run.Output -match '"ok":\s*true'
-    $stored = $job -and $job.phase -eq "done" -and $job.docs_total -gt 0 -and $job.docs_done -eq $job.docs_total
-    $ok = $listed -and $tested -and $stored -and $hybrid.Count -gt 0
-    Add-Result -Id "OL3" -Title "Semantic search through Ollama" -Expect "the model is listed; the test answers; the job is done with every document embedded; the route finds hits" `
-        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("settings change: $set`n" + $run.Output + "`n" + $meaning.Output + "`n--- memory while the model was loaded`n$memory`n--- after stopping Ollama`n$stopped") `
-        -Observed "Ollama chosen with embeddinggemma; the server's list shows it: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }) in $seconds s (test, reembed and wait); search '$query': $($hybrid.Count) hits with vectors, $($lexical.Count) by words alone, $($onlyVectors.Count) found only with the vectors$(if ($onlyVectors) { ': ' + ($onlyVectors -join ', ') }); Ollama's memory with the model loaded: $(($memory -split "`n" | Where-Object { $_ -match '^total:' }) -join ''); $stopped; read the screenshot: Settings > Semantic search names Ollama and embeddinggemma"
+'@).Replace('{{EXE}}', $ollamaExe)
+    $ok = $run.Output -match "pull exit: 0" -and $run.Output -match "model: nomic-embed-text"
+    Set-EmbedFact "ollama/nomic-embed-text" "pullS" (Get-OutputNumber $run.Output "pull exit: \d+ after (\d+) s")
+    Set-EmbedFact "ollama/nomic-embed-text" "modelMb" (Get-OutputNumber $run.Output "model: nomic-embed-text\S*, (\d+) MB")
+    Add-Result -Id "OL4" -Title "ollama pull nomic-embed-text" -Expect "pull exits 0 and /api/tags lists nomic-embed-text" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|model:)' }) -join '; ')"
+}
+
+Test-Case "OL5" "Semantic search through Ollama with nomic-embed-text" "Ollama and nomic-embed-text chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {
+    Start-OllamaServe
+    $version = Get-OllamaVersion
+    if (-not $version) { throw "no Ollama answers on port 11434; run OL1 and OL4 first" }
+    Measure-RealEmbedder -Id "OL5" -Title "Semantic search through Ollama with nomic-embed-text" -Provider ollama -Model "nomic-embed-text" -ServerVersion $version `
+        -ServerProcess '\\Ollama\\|\\ollama[^\\]*\.exe$' -Port 11434 -ModelFamily "nomic-embed-text v1.5" -Quantisation "F16 (the default tag is 137m-v1.5-fp16)" `
+        -InstallFolder @("$guestHome\AppData\Local\Programs\Ollama") `
+        -Note "Same model family as the llama.cpp and LM Studio cases (v1.5)."
 }
 
 # ---------------------------------------------------------------- K, uninstall

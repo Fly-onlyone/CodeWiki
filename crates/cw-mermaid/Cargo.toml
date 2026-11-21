@@ -11,4 +11,6 @@ workspace = true
 
 [dependencies]
 # Default features are off on purpose: they pull in the EPL-2.0 ELK layout.
-merman = { version = "0.10.0", default-features = false, features = ["svg", "png", "diagram-flowchart", "diagram-sequence", "diagram-state"] }
+# Since 0.10 a PNG needs `system-fonts`: without it every raster render fails with
+# "retained font catalog and host font-source policy have no usable source".
+merman = { version = "0.10.0", default-features = false, features = ["svg", "png", "system-fonts", "diagram-flowchart", "diagram-sequence", "diagram-state"] }

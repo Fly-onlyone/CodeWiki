@@ -4509,6 +4509,8 @@ dependencies = [
  "merman-render",
  "quick-xml 0.42.0",
  "resvg 0.47.0",
+ "rustybuzz",
+ "sha2 0.11.1",
  "svgtypes 0.16.2",
  "thiserror 2.0.21",
  "tiny-skia 0.12.0",

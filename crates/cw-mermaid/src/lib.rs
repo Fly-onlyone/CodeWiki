@@ -96,7 +96,7 @@ pub fn render_png_scaled(source: &str, palette: Palette, scale: f32) -> Result<V
         .render(RenderRequest::png(source, OperationControl::new(), request))
         .map_err(|e| e.to_string())?;
     match output {
-        RenderOutput::Png(Some(png)) => Ok(png.bytes),
+        RenderOutput::Png(Some(png)) => Ok(png.into_bytes()),
         _ => Err("no Mermaid diagram detected".to_string()),
     }
 }

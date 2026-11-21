@@ -4,13 +4,14 @@
 # Removes the programs, the PATH entry, the Start Menu shortcut, the start
 # with Windows and the name Windows shows the app's notification under. Wikis live
 # inside each repository and are not touched. The index cache, the installed
-# embedding models and the logs in %LOCALAPPDATA%\CodeWiki (or
-# CODEWIKI_DATA_DIR) and the settings in %APPDATA%\CodeWiki are kept unless
-# -PurgeData is given.
+# logs in %LOCALAPPDATA%\CodeWiki (or CODEWIKI_DATA_DIR), the embedding models
+# an older version downloaded there (its folder models) and the settings in
+# %APPDATA%\CodeWiki are kept unless -PurgeData is given. The folder cuda an
+# older version put beside the programs is removed with them.
 param(
     [string]$Target = $PSScriptRoot,
-    # Also delete the index cache, the embedding models, the logs and the
-    # settings.
+    # Also delete the index cache, the models an older version downloaded, the
+    # logs and the settings.
     [switch]$PurgeData
 )
 $ErrorActionPreference = "Stop"
@@ -35,7 +36,8 @@ function Remove-Patiently([string]$Path) {
 }
 
 # Stop-Process returns before Windows lets go of the program file, so wait for
-# each process to end before deleting anything.
+# each process to end before deleting anything. codewiki-embed-cuda is the
+# worker of an older version.
 foreach ($process in "codewiki-app", "codewiki-mcp", "codewiki", "codewiki-embed-cuda") {
     Get-Process $process -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -and $_.Path.StartsWith($Target, [StringComparison]::OrdinalIgnoreCase) } |

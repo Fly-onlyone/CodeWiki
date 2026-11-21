@@ -25,8 +25,6 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/cw-embed/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cw-llm/tests" isTestSource="true" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cw-update/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/crates/cw-embed-engine/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/crates/cw-models/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/cw-telemetry/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>

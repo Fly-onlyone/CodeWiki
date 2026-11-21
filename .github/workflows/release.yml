@@ -16,9 +16,6 @@ on:
   pull_request:
     paths:
       - scripts/package.ps1
-      - scripts/cuda-toolkit.ps1
-      - scripts/cuda-worker.ps1
-      - scripts/cuda-common.ps1
       - scripts/install.ps1
       - scripts/uninstall.ps1
       - .github/workflows/release.yml
@@ -38,9 +35,7 @@ jobs:
   package:
     runs-on: windows-latest
     # A release build of all three programs (thin LTO, one codegen unit) with
-    # no cache to start from, and of the worker for NVIDIA cards, for which
-    # package.ps1 first fetches NVIDIA's toolkit (0.9 GB). The runner has no
-    # such card: cuda-worker.ps1 names the generation of cards to build for.
+    # no cache to start from.
     timeout-minutes: 90
     permissions:
       contents: write

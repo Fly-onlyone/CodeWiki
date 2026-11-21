@@ -16,7 +16,7 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 - **Keeps it current.** After new commits it rewrites only the notes whose source changed.
 - **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them.
 - **Answers agents.** An MCP server gives Claude Code and other agents the wiki, symbol detail, search, risk and impact analysis.
-- **Searches by meaning.** Full-text search, joined on Windows by an embedding model that CodeWiki downloads and runs on your machine, on the processor or an NVIDIA card. No key, no other install, no text leaves the machine.
+- **Searches by meaning.** Full-text search, joined by vectors from a model server on your machine (LM Studio, Ollama, Llama for Windows, Lemonade or mistral.rs) that you run and choose the model of. Without one, a built-in word-form match. No key needed, no text leaves the machine.
 - **Analyses the code.** Hotspots, ownership, change coupling, blast radius, dead code, documentation drift, file health, test impact, coverage gaps, security patterns, refactoring suggestions, decision records and API contracts.
 
 Symbols are extracted for Rust, Python, TypeScript, JavaScript and Java. Other files are indexed by path.
@@ -43,7 +43,7 @@ To build the same zip from source, with Rust 1.95 or newer and the MSVC toolchai
 pwsh scripts\package.ps1
 ```
 
-It writes `dist\CodeWiki-<version>-windows-x64.zip`. The zip is about 490 MB, of which some 460 MB is the folder `cuda`: the worker that runs an embedding model on an NVIDIA card, and three NVIDIA libraries it needs, passed on under NVIDIA's licence (`cuda\NVIDIA-CUDA-EULA.txt`). Building that worker also needs Visual Studio's C++ tools and NVIDIA's CUDA toolkit, which the script fetches by itself (0.9 GB, no installer). `pwsh scripts\package.ps1 -NoCuda` builds a package of about 30 MB without the folder; it runs the models on the processor.
+It writes `dist\CodeWiki-<version>-windows-x64.zip`, about 30 MB.
 
 The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to run directly unless scripts have been allowed. From a terminal, `powershell -ExecutionPolicy Bypass -File install.ps1` does the same.
 
@@ -124,32 +124,28 @@ A note about a package from outside the repository (an integration) says what th
 
 ### Search
 
-Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default: it matches word forms and needs no model), `builtin` (a model CodeWiki runs by itself, see below), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for `ollama` and `openai`, and for `builtin` the id of an installed model. `OLLAMA_HOST` is the address of Ollama (`http://127.0.0.1:11434` when not set); `OPENAI_API_KEY` and `OPENAI_BASE_URL` are the key and the address for `openai`. These embed text for search only: nothing writes notes with them. After a change of embedder, search is full-text alone until the documents are embedded again: by the next `codewiki update`, or for a built-in model in the background.
+Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default: it matches word forms and needs no model), `lmstudio`, `ollama`, `llamacpp`, `lemonade`, `mistralrs`, `openai` or `none`. CodeWiki runs no model of its own, does not install a server and does not download a model: you run the server, and CodeWiki asks it for vectors. These embed text for search only: nothing writes notes with them. `CODEWIKI_EMBED=builtin`, and a saved choice of the built-in model from an earlier version, are no longer valid; see the end of this section.
 
-#### A built-in model
+Every server except Ollama is asked through the OpenAI-style route `POST /v1/embeddings`. A server needs a model: `CODEWIKI_EMBED_MODEL` names it, and Settings → Semantic search lists the models the running server offers, with the embedding ones first. Without a model, search stays full-text alone and the page says so.
 
-On Windows, CodeWiki can download an embedding model and run it on your machine. Search then finds notes and code by what they mean, not only by the words in them: "is the user playing" finds a function named `busy` in a module about games. Nothing else is installed, no key is needed, and no text leaves the machine.
+| Embedder | Setting for its address (default) | Setting for its key | How to serve an embedding model | Devices on Windows | Port |
+|---|---|---|---|---|---|
+| `lmstudio` | `CODEWIKI_LMSTUDIO_URL` (`http://127.0.0.1:1234`) | `CODEWIKI_LMSTUDIO_KEY`, optional | Download an embedding model in LM Studio and start the server on the Developer tab | Processor, and NVIDIA, AMD or Intel cards through the runtime LM Studio picks | 1234 |
+| `ollama` | `OLLAMA_HOST` (`http://127.0.0.1:11434`) | none | `ollama pull embeddinggemma`, or another embedding model | Processor, NVIDIA (CUDA), AMD (ROCm) and Vulkan | 11434 |
+| `llamacpp` | `CODEWIKI_LLAMACPP_URL` (`http://127.0.0.1:9931`) | `CODEWIKI_LLAMACPP_KEY`, optional | Load an embedding model (GGUF) in Llama for Windows, or start `llama-server` with one | Processor, CUDA, Vulkan, HIP or SYCL, by the build of `llama-server` | 9931 |
+| `lemonade` | `CODEWIKI_LEMONADE_URL` (`http://127.0.0.1:13305`) | `CODEWIKI_LEMONADE_KEY`, optional | Pull an embedding model in Lemonade, such as `nomic-embed-text-v1-GGUF` | Processor, graphics card, and the AMD NPU through FastFlowLM | 13305 |
+| `mistralrs` | `CODEWIKI_MISTRALRS_URL` (`http://127.0.0.1:1234`) | none: the server has no key | `mistralrs serve -m Qwen/Qwen3-Embedding-0.6B` | Processor with the prebuilt program; CUDA needs a build from source | 1234 |
+| `openai` | `OPENAI_BASE_URL` (`https://api.openai.com/v1`) | `OPENAI_API_KEY`, required | A service with an OpenAI-compatible embeddings route | Not on your machine | none |
 
-In the app, Home offers the model recommended for your machine until one is installed, and Settings → Semantic search lists them all with Install, Use and Remove. Install downloads the model, makes it the embedder, and embeds every repository's documents again in the background, with a bar that shows how far it is. From the command line:
+LM Studio and mistral.rs both use port 1234, and Llama for Windows and `llama-server` both use 9931: run one of each pair at a time, or give one another address. An address pasted with `/v1` at the end, as the servers show it, works like the bare address. A server that wants a key and gets none, or a wrong one, answers with an error that names the setting to fill in. The first request to a server may wait up to five minutes while it loads the model; later requests wait two minutes.
 
-```
-codewiki model list          # the models, and which are installed
-codewiki model recommend     # the one for this machine, and why
-codewiki model install gte-modernbert-base
-codewiki model remove gte-modernbert-base
-```
+A text is cut at 8,000 characters. A batch that a server refuses as too long is sent once more with each text cut to 2,000 characters, and mistral.rs is asked to cut a long text itself.
 
-| Model | Download | Languages | Recommended for |
-|---|---|---|---|
-| `granite-small-english-r2` | 94 MB | English | under 8 GB of memory, or fewer than 4 processor cores |
-| `gte-modernbert-base` | 288 MB | English | 8 GB of memory and 4 cores or more |
-| `qwen3-embedding-0.6b` | 1.1 GB | many | an NVIDIA card with 6 GB of video memory or more |
+Some models expect a short text in front of a query or a document: `embeddinggemma`, `qwen3-embedding`, `nomic-embed-text`, `mxbai-embed`, the `bge` v1.5 models and the `e5` models. CodeWiki adds it for them, whichever server serves the model, and adds `+<name>` to the name its vectors are stored under, so vectors made with and without it are never compared.
 
-All three are under the Apache License 2.0 and come from their publishers' repositories on Hugging Face; every file is checked against a SHA-256 that ships with CodeWiki. A download that is cut short goes on where it stopped. The command line only downloads and deletes: to search with a model it installed, choose it in the app, or set `CODEWIKI_EMBED=builtin` and `CODEWIKI_EMBED_MODEL` to its id.
+After a change of embedder or model, search is full-text alone until the documents are embedded again. The backend does that in the background after every sync, on every platform, and the Settings page shows the progress with a Cancel button. A server that is down, or a model it does not know, ends the job with that error, shown as a warning; nothing retries by itself, and the next sync ("Sync now"), Test or `POST /v1/embed/reembed` tries once more. `GET /v1/embed/job` reads the job, `POST /v1/embed/reembed` starts one and `POST /v1/embed/cancel` stops it; a backend that listens beyond its own machine refuses the last two.
 
-The model runs in a hidden process of its own, which starts with the first search or embedding and is put away after ten idle minutes, so that its memory comes back. On a processor the first embedding of a repository takes a while: about 15 short documents a second with `gte-modernbert-base` on a 12-core desktop, fewer for long notes. On an NVIDIA card it is some 25 times faster; the package brings what the card needs (the folder `cuda`, which is most of the download), and `CODEWIKI_EMBED_DEVICE` (`auto`, `cpu`, `cuda`) or the "Runs on" setting says which to use. While a game runs full-screen and keeps the graphics card busy, the model is put away at once and background embedding waits until the game ends.
-
-A backend that listens beyond its own machine does not let another machine install or remove its models, and the Docker image has no engine to run one.
+**From the built-in model.** Earlier versions could download a model and run it themselves. That is gone, with its worker, its NVIDIA folder `cuda`, the command `codewiki model` and `CODEWIKI_EMBED_DEVICE`. When the backend starts it moves a saved choice of the built-in model to `local`, forgets the model and the device, and deletes the downloaded models in the data folder `models`. An update removes an old `cuda` folder. Choose a server in Settings → Semantic search to search by meaning again. `CODEWIKI_EMBED=builtin` in the environment cannot be changed for you: search is full-text alone and the page says the built-in embedder was removed.
 
 ### Saved settings
 
@@ -163,7 +159,7 @@ Settings → Backend saves the address and token of a backend in Docker or on an
 
 ### Error reports
 
-CodeWiki sends nothing about you or your code unless you ask it to. Settings → Diagnostics → "Send error reports" is off until you turn it on. Then a crash or an error of the app, the backend, the agents' bridge or the embedding worker goes to the developer through [Sentry](https://sentry.io): what failed, where in the code, the versions of CodeWiki and Windows, and the log lines just before it. Every file path is replaced by `<path>` before it leaves, and no report holds note text, a search query, a key or your computer's name. The log lines can name a repository, a note, or the address of a backend on another machine. Sentry does not keep the network address a report came from, but it does keep the city and country it places that address in. Turning it off stops the reports at once; turning it on takes effect when each program next starts.
+CodeWiki sends nothing about you or your code unless you ask it to. Settings → Diagnostics → "Send error reports" is off until you turn it on. Then a crash or an error of the app, the backend or the agents' bridge goes to the developer through [Sentry](https://sentry.io): what failed, where in the code, the versions of CodeWiki and Windows, and the log lines just before it. Every file path is replaced by `<path>` before it leaves, and no report holds note text, a search query, a key or your computer's name. The log lines can name a repository, a note, or the address of a backend on another machine. Sentry does not keep the network address a report came from, but it does keep the city and country it places that address in. Turning it off stops the reports at once; turning it on takes effect when each program next starts.
 
 A developer can point a build at their own Sentry project with `SENTRY_DSN`; the switch then shows as set by that variable.
 

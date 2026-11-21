@@ -2121,6 +2121,287 @@ $global:LASTEXITCODE = 0
     Remove-ClaudeLogin
 }
 
+# ---------------------------------------------------------------- SE, a stand-in embedding server
+# CodeWiki runs no model: it asks a server for vectors (README, Search). The
+# stand-in is guest\embed-server.ps1, which lists one model and answers
+# POST /v1/embeddings with small deterministic vectors. It is chosen as the
+# llama.cpp server (llamacpp.url), because that is the embedder that refuses a
+# model its list does not hold (cw-embed, check_listed). The settings are
+# changed through PUT /v1/settings, the call the Settings page makes; the page
+# is photographed with them in force.
+$stubPort = 9931
+$stubModel = "vm-embed-stub"
+$stubUrl = "http://localhost:$stubPort"
+$stubFolder = "$($script:Vm.GuestDir)\embed"
+$stubUp = $false
+
+function Start-EmbedStub {
+    New-GuestDirectory $stubFolder
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\embed-server.ps1") -GuestDirectory $script:Vm.GuestDir
+    Invoke-GuestScript -Script "Remove-Item '$stubFolder\requests.log' -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\embed-server.ps1", "-Folder", $stubFolder, "-Port", "$stubPort", "-Model", $stubModel
+    Wait-For 6
+    $script:stubUp = $true
+    (Invoke-GuestScript -Script "try { (Invoke-WebRequest -UseBasicParsing '$stubUrl/v1/models').Content } catch { 'no answer: ' + `$_.Exception.Message }").Output
+}
+
+function Stop-EmbedStub {
+    Invoke-GuestScript -Script "try { Invoke-WebRequest -UseBasicParsing '$stubUrl/stop' | Out-Null } catch { }" | Out-Null
+    $script:stubUp = $false
+}
+
+# How many embeddings requests the stand-in has answered, and with how many texts.
+function Get-EmbedStubCount {
+    $run = Invoke-GuestScript -Script "`$lines = @(Get-Content '$stubFolder\requests.log' -ErrorAction SilentlyContinue | Where-Object { `$_ -match 'POST /v1/embeddings -> 200' }); `$texts = 0; foreach (`$l in `$lines) { if (`$l -match 'texts=(\d+)') { `$texts += [int]`$Matches[1] } }; `"posts=`$(`$lines.Count) texts=`$texts`""
+    if ($run.Output -match "posts=(\d+) texts=(\d+)") { [pscustomobject]@{ Posts = [int]$Matches[1]; Texts = [int]$Matches[2] } } else { throw "could not read the stand-in's log: $($run.Output)" }
+}
+
+# Choose an embedder through the backend, as the Settings page does, and
+# leave the app open on Settings > Semantic search with it in force. The app
+# is started first, to have a backend that knows cw-core; it is started again
+# afterwards so that its page is drawn from the new settings. Returns the
+# backend's answer to the change.
+function Set-GuestEmbedder {
+    param([Parameter(Mandatory)][string]$Provider, [string]$Model, [string]$Url)
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "settings:search"
+    Wait-For 20
+    $body = @{ embed = @{ provider = $Provider } }
+    if ($Model) { $body.embed.model = $Model }
+    if ($Url) { $body[$Provider] = @{ url = $Url } }
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($body | ConvertTo-Json -Depth 5 -Compress)))
+    $set = Invoke-GuestBackendScript -Script (@'
+$body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{BODY}}')) | ConvertFrom-Json
+Invoke-Backend PUT '/v1/settings' $body
+'@).Replace('{{BODY}}', $encoded)
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "settings:search"
+    Wait-For 20
+    $set.Output
+}
+
+# Guest text for a job that is waited for: starts nothing, only polls.
+$jobWait = @'
+$deadline = (Get-Date).AddSeconds({{SECONDS}})
+do {
+    Start-Sleep -Seconds 3
+    $job = (Invoke-Backend GET '/v1/embed/job' | ConvertFrom-Json).job
+} while ($job -and $job.phase -eq 'embedding' -and (Get-Date) -lt $deadline)
+'job: ' + ($job | ConvertTo-Json -Compress)
+'@
+
+# The job object of a "job: {...}" line.
+function Get-JobLine {
+    param([string]$Output)
+    if ($Output -match "(?m)^job: (\{.*\})\s*$") { $Matches[1] | ConvertFrom-Json } else { $null }
+}
+
+Test-Case "SE1" "A stand-in embedding server: models and vectors" "Settings shows the server's model, a test answers, a reembed stores vectors for every document, and a search embeds the query" {
+    $listing = Start-EmbedStub
+    $set = Set-GuestEmbedder -Provider "llamacpp" -Model $stubModel -Url $stubUrl
+    $shot = Shot "settings-search-stand-in"
+    $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
+'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
+'test: ' + (Invoke-Backend POST '/v1/settings/test/embed')
+'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
+'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "300"))
+    $job = Get-JobLine $run.Output
+    $before = Get-EmbedStubCount
+    $search = Invoke-GuestBackendScript -Script @'
+$id = Get-RepoId 'cw-core'
+$hits = @(Invoke-Backend GET "/v1/repos/$id/search?q=settings&limit=5" | ConvertFrom-Json)
+"hits: $($hits.Count)"
+'@
+    $after = Get-EmbedStubCount
+    $listed = $run.Output -match '"reachable":\s*true' -and $run.Output -match [regex]::Escape($stubModel)
+    $tested = $run.Output -match '"ok":\s*true' -and $run.Output -match '"dimensions":\s*16'
+    $stored = $job -and $job.phase -eq "done" -and $job.docs_total -gt 0 -and $job.docs_done -eq $job.docs_total -and $before.Texts -ge $job.docs_done
+    $hits = if ($search.Output -match "hits: (\d+)") { [int]$Matches[1] } else { 0 }
+    $queried = $after.Posts -gt $before.Posts
+    $ok = $listed -and $tested -and $stored -and $hits -gt 0 -and $queried
+    Add-Result -Id "SE1" -Title "A stand-in embedding server: models and vectors" -Expect "the model is listed; the test answers with 16 dimensions; the job is done with every document embedded; a search sends the query to the server" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("stand-in's /v1/models: $listing`nsettings change: $set`n" + $run.Output + "`n" + $search.Output) `
+        -Observed "llama.cpp chosen with the model '$stubModel' at $stubUrl; the server's list shows the model: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }), the stand-in answered $($before.Posts) requests with $($before.Texts) texts; a search for 'settings' gave $hits hits and the stand-in then had $($after.Posts) requests (a query is embedded): $queried; read the screenshot: Settings > Semantic search names llama.cpp and $stubModel with no warning"
+    if ($Only -and $Only -notcontains "SE2") {
+        Set-GuestEmbedder -Provider "local" | Out-Null
+        Stop-EmbedStub
+        Stop-GuestApp
+    }
+}
+
+Test-Case "SE2" "A model the server does not list is refused" "llama.cpp does not list the chosen model: the test, the job and the page say so, and no embeddings request is sent" {
+    if (-not $stubUp) { Start-EmbedStub | Out-Null }
+    $missing = "vm-embed-missing"
+    $set = Set-GuestEmbedder -Provider "llamacpp" -Model $missing -Url $stubUrl
+    $shot = Shot "settings-search-model-not-listed"
+    $before = Get-EmbedStubCount
+    $run = Invoke-GuestBackendScript -TimeoutSec 300 -Script (@'
+'test: ' + (Invoke-Backend POST '/v1/settings/test/embed')
+'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
+'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "120"))
+    $after = Get-EmbedStubCount
+    $job = Get-JobLine $run.Output
+    $message = "llama.cpp does not list $missing; choose a model it serves"
+    $tested = $run.Output -match '"ok":\s*false' -and $run.Output.Contains($message)
+    $failed = $job -and $job.phase -eq "failed" -and "$($job.error)".Contains($message)
+    $quiet = $after.Posts -eq $before.Posts
+    Add-Result -Id "SE2" -Title "A model the server does not list is refused" -Expect "'$message' from the test and the job; no embeddings request reaches the server" `
+        -Status $(if ($tested -and $failed -and $quiet) { "pass" } else { "fail" }) -Shots @($shot) -Output ("settings change: $set`n" + $run.Output) `
+        -Observed "chose '$missing', which the stand-in does not list; Test refused with the message: $tested; the job ended $(if ($job) { $job.phase } else { 'unread' }) with it: $failed; embeddings requests at the stand-in before $($before.Posts), after $($after.Posts); read the screenshot: the page shows a warning that llama.cpp does not list $missing, and keeps it selected"
+    Set-GuestEmbedder -Provider "local" | Out-Null
+    Stop-EmbedStub
+    Stop-GuestApp
+}
+
+# ---------------------------------------------------------------- OL, a real Ollama
+# README names Ollama and `ollama pull embeddinggemma` as one way to serve
+# embeddings. These cases do exactly that in the guest, which has a network.
+$ollamaExe = "$guestHome\AppData\Local\Programs\Ollama\ollama.exe"
+$ollamaDownload = "https://ollama.com/download/OllamaSetup.exe"
+
+# Ask the guest which Ollama version answers on its port; empty when none does.
+function Get-OllamaVersion {
+    (Invoke-GuestScript -TimeoutSec 60 -Script "try { (Invoke-RestMethod -TimeoutSec 5 'http://localhost:11434/api/version').version } catch { }").Output.Trim()
+}
+
+# OllamaSetup.exe is an Inno Setup installer that needs no administrator
+# (github.com/ollama/ollama, app/ollama.iss: PrivilegesRequired=lowest,
+# DefaultDirName={localappdata}\Programs\Ollama; docs/windows.mdx: "The Ollama
+# install does not require Administrator, and installs in your home directory
+# by default", and the installer takes /DIR). The download is
+# https://ollama.com/download/OllamaSetup.exe, which redirects to the newest
+# release's asset on GitHub (about 1.8 GB). Inno Setup's own switches make it
+# silent: /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-. The docs name no
+# silent switch of Ollama's own. When the installer ends it starts the tray
+# app, which serves on http://localhost:11434.
+Test-Case "OL1" "Install Ollama silently" "OllamaSetup.exe from ollama.com installs for the user, and the server answers on port 11434" {
+    $download = Invoke-GuestScript -Background -TimeoutSec 2400 -Script (@'
+$ProgressPreference = 'SilentlyContinue'
+$free = [math]::Round((Get-PSDrive C).Free / 1GB, 1)
+"free disk GB: $free"
+if ($free -lt 8) { 'result: not enough disk'; return }
+$folder = '{{HOME}}\Downloads\ollama'
+New-Item -ItemType Directory -Force $folder | Out-Null
+$setup = Join-Path $folder 'OllamaSetup.exe'
+$watch = Get-Date
+Invoke-WebRequest -UseBasicParsing '{{URL}}' -OutFile $setup
+"downloaded: $([math]::Round((Get-Item $setup).Length / 1MB)) MB in $([int]((Get-Date) - $watch).TotalSeconds) s"
+$signature = Get-AuthenticodeSignature $setup
+"signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+'result: downloaded'
+'@).Replace('{{HOME}}', $guestHome).Replace('{{URL}}', $ollamaDownload)
+    if ($download.Output -notmatch "result: downloaded") {
+        Add-Result -Id "OL1" -Title "Install Ollama silently" -Expect "the installer downloads" -Status fail -Output $download.Output `
+            -Observed "the installer was not downloaded: $(($download.Output -split "`n" | Select-Object -Last 2) -join '; ')"
+        return
+    }
+    $setup = "$guestHome\Downloads\ollama\OllamaSetup.exe"
+    $watch = Get-Date
+    # Not Invoke-GuestExe: the installer starts the tray app, which would keep
+    # the output pipe it waits on open for as long as the app runs.
+    Start-GuestExe -Exe $setup -Arguments "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"
+    $installed = $false
+    $deadline = (Get-Date).AddMinutes(15)
+    while ((Get-Date) -lt $deadline -and -not $installed) {
+        Start-Sleep -Seconds 10
+        $state = (Invoke-GuestScript -TimeoutSec 60 -Script "`"setup running: `$(@(Get-Process 'OllamaSetup*' -ErrorAction SilentlyContinue).Count)`"; `"exe: `$(Test-Path '$ollamaExe')`"").Output
+        $installed = $state -match "setup running: 0" -and $state -match "exe: True"
+    }
+    Wait-For 15
+    $seconds = [int]((Get-Date) - $watch).TotalSeconds
+    $version = Get-OllamaVersion
+    $facts = (Invoke-GuestScript -TimeoutSec 120 -Script (@'
+$exe = '{{EXE}}'
+"file version: $((Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion)"
+"on user PATH: $(([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains (Split-Path $exe))"
+"processes: $((Get-Process | Where-Object { $_.ProcessName -like '*ollama*' } | ForEach-Object { $_.ProcessName }) -join ', ')"
+$events = @(Get-WinEvent -FilterHashtable @{ LogName = 'Microsoft-Windows-Windows Defender/Operational'; Id = 1121, 1122, 1116, 1117 } -ErrorAction SilentlyContinue | Where-Object { $_.Message -match 'ollama' })
+"Defender events naming Ollama: $($events.Count)"
+foreach ($event in $events | Select-Object -First 4) { "  event $($event.Id): $(($event.Message -split "`r?`n" | Where-Object { $_ -match '^\s*(ID|Path|Name):' } | ForEach-Object { $_.Trim() }) -join ' | ')" }
+'@).Replace('{{EXE}}', $ollamaExe)).Output
+    $shot = Shot "ollama-installed"
+    Add-Result -Id "OL1" -Title "Install Ollama silently" -Expect "the installer runs with /VERYSILENT as the user, ollama.exe is in place and the server answers on 11434" `
+        -Status $(if ($installed -and $version) { "pass" } elseif ($installed) { "note" } else { "fail" }) -Shots @($shot) -Output ($download.Output + "`n--- after the install`n" + $facts) `
+        -Observed "$ollamaDownload; $(($download.Output -split "`n" | Where-Object { $_ -match '^(downloaded|signature)' }) -join '; '); /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- ended after $seconds s with ollama.exe in place: $installed; the server answers on 11434 with version '$version' (empty: it did not start by itself; see the output for what runs and for any Defender event that names Ollama)"
+}
+
+Test-Case "OL2" "ollama pull embeddinggemma" "the model is pulled as README says and the server lists it" {
+    if (-not (Get-OllamaVersion)) {
+        # The tray app did not start, or the guest was restored since OL1.
+        Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $ollamaExe, "serve"
+        Wait-For 15
+    }
+    if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 first" }
+    $run = Invoke-GuestScript -Background -TimeoutSec 2700 -Script (@'
+$watch = Get-Date
+$text = & '{{EXE}}' pull embeddinggemma 2>&1 | Out-String
+$seconds = [int]((Get-Date) - $watch).TotalSeconds
+"pull exit: $LASTEXITCODE after $seconds s"
+$clean = ($text -replace '[^\x20-\x7E\r\n]', '') -split "`r?`n|`r" | Where-Object { $_.Trim() } | Select-Object -Last 4
+"pull output ends: $($clean -join ' | ')"
+$tags = (Invoke-RestMethod -TimeoutSec 20 'http://localhost:11434/api/tags').models | Where-Object { $_.name -like 'embeddinggemma*' }
+foreach ($tag in $tags) { "model: $($tag.name), $([math]::Round($tag.size / 1MB)) MB" }
+$folder = Join-Path $env:USERPROFILE '.ollama\models'
+"models folder: $([math]::Round(((Get-ChildItem $folder -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB)) MB"
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', $ollamaExe)
+    $ok = $run.Output -match "pull exit: 0" -and $run.Output -match "model: embeddinggemma"
+    Add-Result -Id "OL2" -Title "ollama pull embeddinggemma" -Expect "pull exits 0 and /api/tags lists embeddinggemma" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|model:|models folder)' }) -join '; ')"
+}
+
+Test-Case "OL3" "Semantic search through Ollama" "Ollama and embeddinggemma chosen: the page lists the model, a reembed stores every document's vector, and a search by meaning answers" {
+    if (-not (Get-OllamaVersion)) { throw "no Ollama answers on port 11434; run OL1 and OL2 first" }
+    $set = Set-GuestEmbedder -Provider "ollama" -Model "embeddinggemma"
+    $shot = Shot "settings-search-ollama"
+    $watch = Get-Date
+    $run = Invoke-GuestBackendScript -TimeoutSec 1500 -Script (@'
+'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
+'test: ' + (Invoke-Backend POST '/v1/settings/test/embed' $null 600)
+'reembed: ' + (Invoke-Backend POST '/v1/embed/reembed')
+'@ + "`n" + $jobWait.Replace('{{SECONDS}}', "900"))
+    $seconds = [int]((Get-Date) - $watch).TotalSeconds
+    $job = Get-JobLine $run.Output
+    # A search by meaning: the words of the query are not the words of the
+    # code's notes. `codewiki search` is full text alone; the backend's route
+    # adds the vectors. A hit that only the route finds comes from them.
+    $query = "protecting stored credentials"
+    $meaning = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
+$id = Get-RepoId 'cw-core'
+$hits = @(Invoke-Backend GET "/v1/repos/$id/search?q={{QUERYURL}}&limit=10" | ConvertFrom-Json)
+"hybrid hits: $(@($hits | ForEach-Object { $_.key }) -join ' ; ')"
+Set-Location '{{REPO}}'
+$lexical = @(& '{{CODEWIKI}}' search '{{QUERY}}' --limit 10 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^\[' } | ForEach-Object { ($_ -replace '^\[[^\]]*\]\s*', '') -split ' . ' | Select-Object -First 1 })
+"lexical hits: $($lexical -join ' ; ')"
+$global:LASTEXITCODE = 0
+'@).Replace("{{QUERYURL}}", ($query -replace " ", "%20")).Replace("{{QUERY}}", $query).Replace('{{REPO}}', $guestRepo).Replace('{{CODEWIKI}}', "$guestTarget\codewiki.exe")
+    $hybrid = if ($meaning.Output -match "(?m)^hybrid hits: (.*)$") { @($Matches[1] -split " ; " | Where-Object { $_.Trim() }) } else { @() }
+    $lexical = if ($meaning.Output -match "(?m)^lexical hits: (.*)$") { @($Matches[1] -split " ; " | Where-Object { $_.Trim() }) } else { @() }
+    $onlyVectors = @($hybrid | Where-Object { $lexical -notcontains $_ })
+    $memory = (Invoke-GuestScript -TimeoutSec 120 -Script @'
+$processes = @(Get-Process | Where-Object { $_.ProcessName -like '*ollama*' -or $_.ProcessName -eq 'runner' })
+foreach ($p in $processes) { "process: $($p.ProcessName) $([math]::Round($p.WorkingSet64 / 1MB)) MB" }
+"total: $([math]::Round((($processes | Measure-Object WorkingSet64 -Sum).Sum) / 1MB)) MB of $([math]::Round((Get-CimInstance Win32_OperatingSystem).TotalVisibleMemorySize / 1KB)) MB"
+"loaded: $((Invoke-RestMethod -TimeoutSec 10 'http://localhost:11434/api/ps').models | ForEach-Object { $_.name + ' ' + [math]::Round($_.size / 1MB) + ' MB' })"
+'@).Output
+    # Back to what the other cases expect: no Ollama, search by words alone.
+    Set-GuestEmbedder -Provider "local" | Out-Null
+    Stop-GuestApp
+    $stopped = (Invoke-GuestScript -TimeoutSec 120 -Script @'
+Get-Process | Where-Object { $_.ProcessName -like '*ollama*' -or $_.ProcessName -eq 'runner' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep 3
+"left: $(@(Get-Process | Where-Object { $_.ProcessName -like '*ollama*' }).Count)"
+'@).Output
+    $listed = $run.Output -match '"reachable":\s*true' -and $run.Output -match 'embeddinggemma'
+    $tested = $run.Output -match '"ok":\s*true'
+    $stored = $job -and $job.phase -eq "done" -and $job.docs_total -gt 0 -and $job.docs_done -eq $job.docs_total
+    $ok = $listed -and $tested -and $stored -and $hybrid.Count -gt 0
+    Add-Result -Id "OL3" -Title "Semantic search through Ollama" -Expect "the model is listed; the test answers; the job is done with every document embedded; the route finds hits" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("settings change: $set`n" + $run.Output + "`n" + $meaning.Output + "`n--- memory while the model was loaded`n$memory`n--- after stopping Ollama`n$stopped") `
+        -Observed "Ollama chosen with embeddinggemma; the server's list shows it: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }) in $seconds s (test, reembed and wait); search '$query': $($hybrid.Count) hits with vectors, $($lexical.Count) by words alone, $($onlyVectors.Count) found only with the vectors$(if ($onlyVectors) { ': ' + ($onlyVectors -join ', ') }); Ollama's memory with the model loaded: $(($memory -split "`n" | Where-Object { $_ -match '^total:' }) -join ''); $stopped; read the screenshot: Settings > Semantic search names Ollama and embeddinggemma"
+}
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run and
 # the start with Windows is on (AS3).

@@ -50,6 +50,11 @@ const MAX_CHARS: usize = 8_000;
 /// Characters of one text in the second try, after a server refused a batch
 /// as longer than its model takes.
 const SHORT_CHARS: usize = 2_000;
+/// Characters of a text in its last try, after a server refused it alone at
+/// [`SHORT_CHARS`]. llama-server must hold a bidirectional encoder's whole
+/// input in one physical batch (`-ub`, 512 tokens by default), and 2,000
+/// characters can be more tokens than that.
+const TINY_CHARS: usize = 400;
 /// How long an HTTP embedder may take over one batch.
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long the first call of an embedder may take: a local server loads its
@@ -360,6 +365,16 @@ fn says_too_long(detail: &str) -> bool {
         .any(|word| detail.contains(word))
 }
 
+/// Whether a server refused a request as longer than its model takes. Only
+/// for the statuses a length error comes with; llama-server reports one as a
+/// 500. Never for a rate limit or a refused token.
+fn too_long(posted: &Posted) -> bool {
+    matches!(
+        posted,
+        Posted::Refused { status: 400 | 413 | 422 | 500, detail } if says_too_long(detail)
+    )
+}
+
 fn vector_of(value: &Value) -> Option<Vec<f32>> {
     let mut vector: Vec<f32> = value
         .as_array()?
@@ -656,6 +671,36 @@ impl OpenAiEmbedder {
         }
     }
 
+    /// The `count` vectors of an answer, or the error of a refusal.
+    fn vectors(&self, posted: Posted, count: usize) -> Result<Vec<Vec<f32>>> {
+        match posted {
+            Posted::Done(value) => checked(self.server.label(), parse_openai(&value), count),
+            Posted::Refused { status, detail } => Err(self.refusal(status, &detail)),
+        }
+    }
+
+    /// Embed `texts` one per request, each cut to [`SHORT_CHARS`], and a text
+    /// refused alone as too long once more at [`TINY_CHARS`]. The vectors keep
+    /// the order of the texts.
+    fn one_by_one(
+        &self,
+        url: &str,
+        texts: &[Cow<'_, str>],
+        timeout: Duration,
+    ) -> Result<Vec<Vec<f32>>> {
+        let mut out = Vec::with_capacity(texts.len());
+        for text in texts {
+            let mut posted = self.post(url, &[cut(text, SHORT_CHARS)], timeout)?;
+            if too_long(&posted) {
+                // The prefix starts the text, so the cut keeps it.
+                posted = self.post(url, &[cut(text, TINY_CHARS)], timeout)?;
+            }
+            out.extend(self.vectors(posted, 1)?);
+        }
+        // One result for the batch, as one request would give it.
+        checked(self.server.label(), Some(out), texts.len())
+    }
+
     /// Embed `texts`, each with `prefix` in front.
     fn embed_within(
         &self,
@@ -664,28 +709,25 @@ impl OpenAiEmbedder {
         timeout: Duration,
     ) -> Result<Vec<Vec<f32>>> {
         let url = self.url();
-        let label = self.server.label();
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
             let prefixed = prefixed(prefix, batch);
             let input: Vec<&str> = prefixed.iter().map(|t| clip(t)).collect();
             let mut posted = self.post(&url, &input, timeout)?;
             // A model takes only so many tokens, and a server may refuse the
-            // batch rather than cut the text. Once more, with shorter texts.
-            // Only for the statuses a length error comes with; llama-server
-            // reports one as a 500. Never for a rate limit or a refused token.
-            if matches!(
-                &posted,
-                Posted::Refused { status: 400 | 413 | 422 | 500, detail } if says_too_long(detail)
-            ) {
+            // batch rather than cut the text. Once more, with shorter texts;
+            // refused again, one text at a time, so that one long text does
+            // not stop the rest.
+            if too_long(&posted) {
                 let short: Vec<&str> = prefixed.iter().map(|t| cut(t, SHORT_CHARS)).collect();
                 posted = self.post(&url, &short, timeout)?;
             }
-            let value = match posted {
-                Posted::Done(value) => value,
-                Posted::Refused { status, detail } => return Err(self.refusal(status, &detail)),
+            let vectors = if too_long(&posted) {
+                self.one_by_one(&url, &prefixed, timeout)?
+            } else {
+                self.vectors(posted, batch.len())?
             };
-            out.extend(checked(label, parse_openai(&value), batch.len())?);
+            out.extend(vectors);
             self.warm.store(true, Ordering::Relaxed);
         }
         Ok(out)

@@ -105,7 +105,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
   - **One client.** `OpenAiEmbedder` in `crates/cw-embed/src/lib.rs` serves every OpenAI-style provider, given a `Server`: its address, key, extra body fields and the name used in errors and in the vector name (`<provider>:<model>`). Texts go in batches of 64, each cut at 8,000 characters. Its quirks sit in one place:
     - an address pasted with `/v1` works like the bare one;
     - a 401 or 403 names the key setting to fill in;
-    - a batch refused as too long (HTTP 400, 413, 422 or 500 with a message about length) is sent once more with each text cut to 2,000 characters;
+    - a batch refused as too long (HTTP 400, 413, 422 or 500 with a message about length) is sent once more with each text cut to 2,000 characters; refused again, its texts go one at a time (`one_by_one`), and a text refused alone once more cut to 400 characters (`TINY_CHARS`), its prefix kept; a text still refused is an error;
     - mistral.rs is sent `truncate_sequence: true`, or a long text is an error;
     - a request waits 120 s (`REQUEST_TIMEOUT`); the first call of an embedder instance waits 300 s, so that a server can load a model.
 

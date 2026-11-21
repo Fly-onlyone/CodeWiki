@@ -132,14 +132,14 @@ Every server except Ollama is asked through the OpenAI-style route `POST /v1/emb
 |---|---|---|---|---|---|
 | `lmstudio` | `CODEWIKI_LMSTUDIO_URL` (`http://127.0.0.1:1234`) | `CODEWIKI_LMSTUDIO_KEY`, optional | Download an embedding model in LM Studio and start the server on the Developer tab | Processor or graphics card, by the runtime chosen in LM Studio's settings | 1234 |
 | `ollama` | `OLLAMA_HOST` (`http://127.0.0.1:11434`) | none | `ollama pull embeddinggemma`, or another embedding model | Processor, NVIDIA (CUDA), AMD (ROCm) and Vulkan | 11434 |
-| `llamacpp` | `CODEWIKI_LLAMACPP_URL` (`http://127.0.0.1:9931`) | `CODEWIKI_LLAMACPP_KEY`, optional | Load an embedding model (GGUF) in Llama for Windows, or start `llama-server` with one | Processor, CUDA, Vulkan, HIP or SYCL, by the build of `llama-server` | 9931 |
+| `llamacpp` | `CODEWIKI_LLAMACPP_URL` (`http://127.0.0.1:9931`) | `CODEWIKI_LLAMACPP_KEY`, optional | Load an embedding model (GGUF) in Llama for Windows, or start `llama-server` with one. For long texts, start `llama-server` with `-ub 2048 -b 2048`, or add those flags to the custom serve arguments of Llama for Windows | Processor, CUDA, Vulkan, HIP or SYCL, by the build of `llama-server` | 9931 |
 | `lemonade` | `CODEWIKI_LEMONADE_URL` (`http://127.0.0.1:13305`) | `CODEWIKI_LEMONADE_KEY`, optional | Pull an embedding model in Lemonade, such as `nomic-embed-text-v1-GGUF` | Processor, graphics card, and the AMD NPU through FastFlowLM | 13305 |
 | `mistralrs` | `CODEWIKI_MISTRALRS_URL` (`http://127.0.0.1:1234`) | none: the server has no key | `mistralrs serve -m Qwen/Qwen3-Embedding-0.6B` | Processor with the prebuilt program; CUDA needs a build from source | 1234 |
 | `openai` | `OPENAI_BASE_URL` (`https://api.openai.com/v1`) | `OPENAI_API_KEY`, required | A service with an OpenAI-compatible embeddings route | Not on your machine | none |
 
 LM Studio and mistral.rs both use port 1234, and Llama for Windows and `llama-server` both use 9931: run one of each pair at a time, or give one another address. An address pasted with `/v1` at the end, as the servers show it, works like the bare address. A server that wants a key and gets none, or a wrong one, answers with an error that names the setting to fill in. The first request to a server may wait up to five minutes while it loads the model; later requests wait two minutes.
 
-A text is cut at 8,000 characters. A batch that a server refuses as too long is sent once more with each text cut to 2,000 characters, and mistral.rs is asked to cut a long text itself.
+A text is cut at 8,000 characters. A batch that a server refuses as too long is sent once more with each text cut to 2,000 characters. Refused again, its texts are sent one at a time, and a text refused alone is sent once more cut to 400 characters; a text refused even then ends the job with the server's error. mistral.rs is asked to cut a long text itself.
 
 Some models expect a short text in front of a query or a document: `embeddinggemma`, `qwen3-embedding`, `nomic-embed-text`, `mxbai-embed`, the `bge` v1.5 models and the `e5` models. CodeWiki adds it for them, whichever server serves the model, and adds `+<name>` to the name its vectors are stored under, so vectors made with and without it are never compared.
 

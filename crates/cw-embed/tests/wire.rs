@@ -404,6 +404,101 @@ fn a_batch_refused_as_too_long_is_sent_again_with_shorter_texts() {
     assert_eq!(srv.join().unwrap().len(), 1);
 }
 
+/// llama-server's answer to an input longer than its physical batch (`-ub`,
+/// 512 tokens by default), with the status it really sends.
+/// https://github.com/ggml-org/llama.cpp/blob/master/tools/server/server-context.cpp
+fn too_large() -> (u16, Value) {
+    (
+        500,
+        json!({ "error": { "message": "input is too large to process. increase the physical batch size" } }),
+    )
+}
+
+/// An answer of one vector.
+fn one(vector: [f32; 3]) -> (u16, Value) {
+    (
+        200,
+        json!({ "data": [{ "index": 0, "embedding": vector }] }),
+    )
+}
+
+/// The texts each request carried, in order.
+fn inputs(requests: &[Received]) -> Vec<Vec<String>> {
+    requests
+        .iter()
+        .map(|request| {
+            request.body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|text| text.as_str().unwrap().to_string())
+                .collect()
+        })
+        .collect()
+}
+
+#[test]
+fn a_status_500_about_length_is_retried() {
+    let (url, srv) = serve_many(vec![too_large(), one([1.0, 0.0, 0.0])]);
+    let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
+    assert_eq!(
+        e.embed(&["x".repeat(9_000)]).unwrap(),
+        [vec![1.0, 0.0, 0.0]]
+    );
+    let sent = inputs(&srv.join().unwrap());
+    assert_eq!(sent.len(), 2);
+    assert!(sent[1][0].len() <= 2_000);
+}
+
+#[test]
+fn a_batch_refused_twice_is_sent_text_by_text() {
+    let (url, srv) = serve_many(vec![
+        too_large(),
+        too_large(),
+        one([1.0, 0.0, 0.0]),
+        too_large(),
+        one([0.0, 1.0, 0.0]),
+        one([0.0, 0.0, 1.0]),
+    ]);
+    let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "nomic-embed-text-v1.5");
+    let texts = vec!["a".to_string(), "x".repeat(9_000), "b".to_string()];
+    let vectors = e.embed(&texts).unwrap();
+    // One result for the batch, in the order of its texts.
+    assert_eq!(
+        vectors,
+        [
+            vec![1.0, 0.0, 0.0],
+            vec![0.0, 1.0, 0.0],
+            vec![0.0, 0.0, 1.0]
+        ]
+    );
+    let sent = inputs(&srv.join().unwrap());
+    assert_eq!(sent.len(), 6);
+    assert_eq!(sent[0].len(), 3);
+    assert_eq!(sent[1].len(), 3);
+    assert!(sent[1][1].len() <= 2_000);
+    // Then one text a request, each cut to 2,000 characters.
+    assert_eq!(sent[2], ["search_document: a"]);
+    assert_eq!(sent[3].len(), 1);
+    assert!(sent[3][0].len() <= 2_000 && sent[3][0].len() > 400);
+    // A text refused alone goes once more at 400 characters, its prefix kept.
+    assert_eq!(sent[4].len(), 1);
+    assert!(sent[4][0].starts_with("search_document: x") && sent[4][0].len() <= 400);
+    assert_eq!(sent[5], ["search_document: b"]);
+
+    // A text refused at 400 characters too is an error, not a vector.
+    let (url, srv) = serve_many(vec![too_large(), too_large(), too_large(), too_large()]);
+    let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
+    let error = e.embed(&["x".repeat(9_000)]).unwrap_err().to_string();
+    assert!(
+        error.contains("500") && error.contains("too large"),
+        "{error}"
+    );
+    let sent = inputs(&srv.join().unwrap());
+    assert_eq!(sent.len(), 4);
+    assert!(sent[3][0].len() <= 400);
+}
+
 #[test]
 fn a_known_model_gets_its_prefixes_and_a_name_that_says_so() {
     let (url, srv) = serve_many(vec![

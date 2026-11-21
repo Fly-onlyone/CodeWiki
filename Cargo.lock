@@ -1165,6 +1165,7 @@ dependencies = [
  "clap",
  "cw-core",
  "cw-embed-engine",
+ "cw-illustrate",
  "cw-index",
  "cw-models",
  "cw-server",

@@ -1,6 +1,6 @@
 # CodeWiki plugin for Claude Code
 
-Registers the `codewiki` MCP server so Claude Code can read the repository's wiki and structural index, and a `SessionStart` hook that tells Claude the wiki is there.
+Registers the `codewiki` MCP server so Claude Code can read the repository's wiki and structural index, a `SessionStart` hook that tells Claude the wiki is there, and the skill `write-notes`, with which Claude writes the explanations of the notes.
 
 ## Requirements
 
@@ -70,13 +70,35 @@ claude plugin marketplace remove codewiki
 
 Every tool except `list_repos` and `get_workspace` takes an optional `repo` path and defaults to the directory Claude Code runs in.
 
+## Writing notes
+
+CodeWiki writes each note's facts from the code: where the thing is, its items, what it depends on. What the thing is for, how it works and what can go wrong is written by Claude, through the skill `write-notes`. CodeWiki itself calls no AI model.
+
+```
+/codewiki:write-notes                      the first 5 notes that wait
+/codewiki:write-notes waiting 12           the first 12
+/codewiki:write-notes 01-Core/cw-parse/    the waiting notes of one folder
+/codewiki:write-notes "Scan Module"        one note
+/codewiki:write-notes changed              the notes about the files you changed
+```
+
+For each note Claude reads the note's source files, writes the sections that are its own, and sends them with `submit_note`. CodeWiki checks what it gets and puts it into the note. Claude cannot change a fact: it sends sections, never a whole note.
+
+- **Pictures.** Claude may add a picture to a section: boxes joined by arrows that show what happens from a cause to its result, and marked key points. The app draws them. `skills/write-notes/pictures.md` lists the components and their limits.
+- **By itself.** After a code change, Claude writes the notes about the files it changed, at most three. The count of waiting notes in the session briefing does not start it.
+- **A note you edited** is never written. Claude's text waits in the review queue as a proposal.
+- **After a code change** with no agent running, `sync_wiki` and `codewiki update` refresh the facts of an explained note and keep its explanation. The note is marked as possibly behind and comes first in the list of waiting notes.
+
+Writing many notes uses your Claude usage allowance: each note is a few file reads and one or two tool calls.
+
 ## Session-start hook
 
-`hooks/hooks.json` runs `codewiki hook session-start` on the `SessionStart` event: when a session starts or resumes, and after `/clear` and compaction. Claude Code adds what the command prints to Claude's context. The briefing is four lines, or two when the repository has no wiki yet:
+`hooks/hooks.json` runs `codewiki hook session-start` on the `SessionStart` event: when a session starts or resumes, and after `/clear` and compaction. Claude Code adds what the command prints to Claude's context. The briefing is four or five lines, or two when the repository has no wiki yet:
 
 - whether the repository has a wiki, and where its home note is (`obsidian/_HOME.md`);
 - whether the wiki is up to date with `HEAD` or stale. It is stale only when files outside `obsidian/` changed since the commit the wiki was generated at; committing the wiki itself does not make it stale. If git no longer knows that commit (after a rebase, or in a shallow clone), the wiki counts as stale;
 - how many proposals wait for review;
+- how many notes wait for an explanation, when any does. The line states the count and tells Claude to write notes when you ask or for files it changed;
 - that the `get_overview` and `get_context` tools answer from the wiki.
 
 For example:
@@ -85,6 +107,7 @@ For example:
 CodeWiki: this repository has a maintained wiki of 123 notes in `obsidian/`. Its home note is `obsidian/_HOME.md`.
 The wiki is stale: it was generated at commit 3f2a9c1b7e, and HEAD is 9d04e6a1c2. The MCP tool `sync_wiki` brings it up to date.
 Pending proposals: 2 (changes to human-edited notes that wait for review; those notes may lag behind the code).
+Notes waiting for an explanation: 14 (3 whose explanation may be behind the code, 11 never explained). CodeWiki writes each note's facts from the code; what the thing is for and how it works is written by a coding agent, with the MCP tools `list_waiting_notes`, `get_note_brief` and `submit_note`. This line says what waits; write notes when the user asks, or for files you changed.
 The CodeWiki MCP tools `get_overview` (architecture and index status) and `get_context` (what to know before touching a file or symbol) answer from this wiki. Call them before exploring the code by hand.
 ```
 

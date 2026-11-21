@@ -78,6 +78,9 @@ pub struct State {
     embed_job: Option<Value>,
     /// Whether the loop that asks again while the job runs is going.
     embed_job_watched: bool,
+    /// The models of the chosen embedding server
+    /// (`GET /v1/settings/embed/models`). `None` until they are read.
+    embed_models: Option<Value>,
     /// The news about the last try to connect to a backend elsewhere.
     connect: Option<Note>,
     menu: Option<OpenMenu>,
@@ -125,6 +128,7 @@ impl State {
             embed_test: Tested::Not,
             embed_job: None,
             embed_job_watched: false,
+            embed_models: None,
             connect: None,
             menu: None,
             menu_focus,
@@ -192,7 +196,17 @@ fn change(section: &str, field: &str, value: Value) -> Value {
 /// Whether a change touches the embedder, after which the job the app last
 /// read may be out of date.
 fn changes_the_embedder(body: &Value) -> bool {
-    body.get("embed").is_some()
+    [
+        "embed",
+        "lmstudio",
+        "llamacpp",
+        "lemonade",
+        "mistralrs",
+        "ollama",
+        "openai",
+    ]
+    .iter()
+    .any(|section| body.get(section).is_some())
 }
 
 /// The job in the body of an answer from the job routes; `None` for `null`.
@@ -236,6 +250,7 @@ impl AppView {
         self.load_settings(cx);
         if category == Category::Search {
             self.load_embed_job(cx);
+            self.load_embed_models(cx);
         }
         cx.notify();
     }
@@ -248,6 +263,7 @@ impl AppView {
         if category == Category::Search {
             // A Sync may have set a job going since.
             self.load_embed_job(cx);
+            self.load_embed_models(cx);
         }
         self.settings.last = category;
         self.page = Page::Settings(category);
@@ -313,6 +329,24 @@ impl AppView {
             |this, result, cx| match result {
                 Ok(body) => this.take_embed_job(job_in(&body), cx),
                 Err(error) => log::warn!("could not read the embedding job: {error}"),
+            },
+        );
+    }
+
+    /// Ask the backend which models the chosen embedding server has
+    /// (`GET /v1/settings/embed/models`). A backend on another machine is not
+    /// asked, as for the job.
+    pub(crate) fn load_embed_models(&mut self, cx: &mut Context<Self>) {
+        if self.backend.as_ref().is_none_or(Backend::is_remote) {
+            self.settings.embed_models = None;
+            return;
+        }
+        self.settings_request(
+            cx,
+            |backend| backend.get("/v1/settings/embed/models"),
+            |this, result, _| match result {
+                Ok(body) => this.settings.embed_models = Some(body),
+                Err(error) => log::warn!("could not read the embedding models: {error}"),
             },
         );
     }
@@ -478,8 +512,10 @@ impl AppView {
                 (Ok(settings), field) => {
                     this.take_settings(settings);
                     if embedder {
-                        // A new embedder may have set a job going.
+                        // A new embedder may have set a job going, and a new
+                        // address or provider lists other models.
                         this.load_embed_job(cx);
+                        this.load_embed_models(cx);
                     }
                     // What the embedder was tested as may no longer be what
                     // is chosen.
@@ -646,6 +682,7 @@ impl AppView {
                 }
             }
             Action::TestEmbedder => self.test_embedder(cx),
+            Action::RefreshEmbedModels => self.load_embed_models(cx),
             Action::ConnectRemote => self.connect_remote(cx),
             Action::UseLocalBackend => match cw_client::use_local() {
                 Ok(()) => {
@@ -874,6 +911,7 @@ impl AppView {
                     typing: &self.settings.typing,
                     embed_test: &self.settings.embed_test,
                     job: self.settings.embed_job.as_ref(),
+                    embed_models: self.settings.embed_models.as_ref(),
                     backend_url: self.backend.as_ref().map(Backend::url),
                     origin: self.backend.as_ref().map(Backend::origin),
                     env_url: env_url.as_deref(),
@@ -1031,11 +1069,34 @@ mod tests {
             "provider",
             json!("local")
         )));
-        // An address it may read is not the embedder itself.
-        assert!(!changes_the_embedder(&change(
+        // An address it reads the models from changes them.
+        assert!(changes_the_embedder(&change(
             "ollama",
             "host",
             json!("http://nas:11434")
+        )));
+    }
+
+    #[test]
+    fn a_change_to_a_server_address_reads_the_models_again() {
+        for (section, field) in [
+            ("lmstudio", "url"),
+            ("llamacpp", "url"),
+            ("lemonade", "api_key"),
+            ("mistralrs", "url"),
+            ("ollama", "host"),
+            ("openai", "base_url"),
+            ("embed", "model"),
+        ] {
+            assert!(
+                changes_the_embedder(&change(section, field, json!("x"))),
+                "{section}"
+            );
+        }
+        assert!(!changes_the_embedder(&change(
+            "log",
+            "level",
+            json!("info")
         )));
     }
 

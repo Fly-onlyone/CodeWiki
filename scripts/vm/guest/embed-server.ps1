@@ -72,7 +72,9 @@ try {
                 $inputs = @($request.input)
                 $rows = @()
                 for ($i = 0; $i -lt $inputs.Count; $i++) {
-                    $rows += [ordered]@{ object = "embedding"; index = $i; embedding = (Get-Vector -Text $inputs[$i] -Size $Dimensions) }
+                    # The cast drops the wrapper the pipeline puts on the array: with it,
+                    # Windows PowerShell 5.1 writes {"value": [...], "Count": n}.
+                    $rows += [ordered]@{ object = "embedding"; index = $i; embedding = [double[]](Get-Vector -Text $inputs[$i] -Size $Dimensions) }
                 }
                 $answer = [ordered]@{
                     object = "list"

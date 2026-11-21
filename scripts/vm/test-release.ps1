@@ -1065,8 +1065,11 @@ function Invoke-Backend {
 }
 function Get-RepoId {
     param([string]$Name)
-    $list = @(Invoke-Backend GET '/v1/repos' | ConvertFrom-Json)
-    ($list | Where-Object { $_.name -eq $Name } | Select-Object -First 1).id
+    # Windows PowerShell 5.1 hands a JSON array on as one object: wrapped in
+    # @(...) straight from the pipe, the filter saw the whole list and gave
+    # every id. Kept in a variable first, it is taken apart.
+    $list = Invoke-Backend GET '/v1/repos' | ConvertFrom-Json
+    @($list | Where-Object { $_.name -eq $Name })[0].id
 }
 '@
 function Invoke-GuestBackendScript {
@@ -2209,7 +2212,10 @@ Test-Case "SE1" "A stand-in embedding server: models and vectors" "Settings show
     $before = Get-EmbedStubCount
     $search = Invoke-GuestBackendScript -Script @'
 $id = Get-RepoId 'cw-core'
-$hits = @(Invoke-Backend GET "/v1/repos/$id/search?q=settings&limit=5" | ConvertFrom-Json)
+$answer = Invoke-Backend GET "/v1/repos/$id/search?q=settings&limit=5"
+if ($answer.StartsWith('HTTP error')) { "search: $answer" }
+$parsed = if ($answer.StartsWith('[')) { $answer | ConvertFrom-Json } else { @() }
+$hits = @($parsed)
 "hits: $($hits.Count)"
 '@
     $after = Get-EmbedStubCount
@@ -2307,9 +2313,15 @@ $signature = Get-AuthenticodeSignature $setup
         $state = (Invoke-GuestScript -TimeoutSec 60 -Script "`"setup running: `$(@(Get-Process 'OllamaSetup*' -ErrorAction SilentlyContinue).Count)`"; `"exe: `$(Test-Path '$ollamaExe')`"").Output
         $installed = $state -match "setup running: 0" -and $state -match "exe: True"
     }
-    Wait-For 15
     $seconds = [int]((Get-Date) - $watch).TotalSeconds
-    $version = Get-OllamaVersion
+    # The tray app is up a few seconds after the install, but its server took
+    # longer than 15 s to answer in the first run.
+    $version = ""
+    $deadline = (Get-Date).AddSeconds(120)
+    while (-not $version -and (Get-Date) -lt $deadline) {
+        Wait-For 10
+        $version = Get-OllamaVersion
+    }
     $facts = (Invoke-GuestScript -TimeoutSec 120 -Script (@'
 $exe = '{{EXE}}'
 "file version: $((Get-Item $exe -ErrorAction SilentlyContinue).VersionInfo.ProductVersion)"
@@ -2369,9 +2381,14 @@ Test-Case "OL3" "Semantic search through Ollama" "Ollama and embeddinggemma chos
     $query = "protecting stored credentials"
     $meaning = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
 $id = Get-RepoId 'cw-core'
-$hits = @(Invoke-Backend GET "/v1/repos/$id/search?q={{QUERYURL}}&limit=10" | ConvertFrom-Json)
+$answer = Invoke-Backend GET "/v1/repos/$id/search?q={{QUERYURL}}&limit=10"
+if ($answer.StartsWith('HTTP error')) { "search: $answer" }
+$parsed = if ($answer.StartsWith('[')) { $answer | ConvertFrom-Json } else { @() }
+$hits = @($parsed)
 "hybrid hits: $(@($hits | ForEach-Object { $_.key }) -join ' ; ')"
 Set-Location '{{REPO}}'
+# In 5.1 a line on stderr through 2>&1 is an error record, which 'Stop' ends the script on.
+$ErrorActionPreference = 'Continue'
 $lexical = @(& '{{CODEWIKI}}' search '{{QUERY}}' --limit 10 2>&1 | ForEach-Object { "$_" } | Where-Object { $_ -match '^\[' } | ForEach-Object { ($_ -replace '^\[[^\]]*\]\s*', '') -split ' . ' | Select-Object -First 1 })
 "lexical hits: $($lexical -join ' ; ')"
 $global:LASTEXITCODE = 0
@@ -2483,6 +2500,9 @@ $data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
 New-Item -ItemType Directory -Force $data | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $data 'settings.json'), [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{JSON}}')))
 New-Item -ItemType Directory -Force '{{TARGET}}\cuda' | Out-Null
+# The worker is what marks the folder as the app's own: recover_and_clean in
+# cw-update leaves a cuda folder without it alone.
+Set-Content '{{TARGET}}\cuda\codewiki-embed-cuda.exe' 'not a program'
 Set-Content '{{TARGET}}\cuda\vmtest.dll' 'not a library'
 '@).Replace('{{JSON}}', $encodedLegacy).Replace('{{TARGET}}', $guestTarget) | Out-Null
         $script:legacySeeded = $true

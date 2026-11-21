@@ -102,7 +102,13 @@ fn ollama_embedder_posts_a_batch_and_normalizes_vectors() {
     assert_eq!(got.path, "/api/embed");
     assert_eq!(got.authorization, None);
     assert_eq!(got.body["model"], "embeddinggemma");
-    assert_eq!(got.body["input"], json!(["first text", "second text"]));
+    assert_eq!(
+        got.body["input"],
+        json!([
+            "title: none | text: first text",
+            "title: none | text: second text"
+        ])
+    );
 }
 
 #[test]
@@ -155,7 +161,7 @@ fn a_probe_embeds_one_word_and_reports_the_vector_length() {
     assert_eq!(embedder.probe().unwrap(), 3);
     let got = server.join().unwrap();
     assert_eq!(got.path, "/api/embed");
-    assert_eq!(got.body["input"], json!(["ping"]));
+    assert_eq!(got.body["input"], json!(["title: none | text: ping"]));
 
     let (url, server) = serve_once(
         200,
@@ -287,4 +293,48 @@ fn a_batch_refused_as_too_long_is_sent_again_with_shorter_texts() {
     let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "m");
     assert!(e.embed(&texts).is_err());
     assert_eq!(srv.join().unwrap().len(), 1);
+}
+
+#[test]
+fn a_known_model_gets_its_prefixes_and_a_name_that_says_so() {
+    let (url, srv) = serve_many(vec![
+        (200, json!({ "embeddings": [[1.0, 0.0]] })),
+        (200, json!({ "embeddings": [[1.0, 0.0]] })),
+    ]);
+    let e = OllamaEmbedder::new(&url, "embeddinggemma");
+    assert_eq!(e.name(), "ollama:embeddinggemma+gemma");
+    e.embed(&["a".into()]).unwrap();
+    e.embed_query("q").unwrap();
+    let got = srv.join().unwrap();
+    assert_eq!(got[0].body["input"], json!(["title: none | text: a"]));
+    assert_eq!(
+        got[1].body["input"],
+        json!(["task: search result | query: q"])
+    );
+
+    // A model nobody has a rule for keeps its name and its text.
+    let one = json!({ "data": [{ "index": 0, "embedding": [1.0, 0.0] }] });
+    let (url, srv) = serve_many(vec![(200, one.clone()), (200, one)]);
+    let e = OpenAiEmbedder::new(Server::OpenAi, &url, Some("k"), "text-embedding-3-small");
+    assert_eq!(e.name(), "openai:text-embedding-3-small");
+    e.embed(&["a".into()]).unwrap();
+    e.embed_query("q").unwrap();
+    let got = srv.join().unwrap();
+    assert_eq!(got[0].body["input"], json!(["a"]));
+    assert_eq!(got[1].body["input"], json!(["q"]));
+}
+
+#[test]
+fn the_retry_for_a_too_long_batch_cuts_the_prefixed_text() {
+    let too_long = json!({ "error": { "message": "input is too large to process" } });
+    let one = json!({ "data": [{ "index": 0, "embedding": [1.0, 0.0] }] });
+    let (url, srv) = serve_many(vec![(400, too_long), (200, one)]);
+    let e = OpenAiEmbedder::new(Server::LlamaCpp, &url, None, "nomic-embed-text-v1.5");
+    assert_eq!(e.name(), "llamacpp:nomic-embed-text-v1.5+nomic");
+    e.embed(&["x".repeat(9_000)]).unwrap();
+    let got = srv.join().unwrap();
+    let first = got[0].body["input"][0].as_str().unwrap();
+    assert!(first.starts_with("search_document: x") && first.len() == 8_000);
+    let second = got[1].body["input"][0].as_str().unwrap();
+    assert!(second.starts_with("search_document: x") && second.len() == 2_000);
 }

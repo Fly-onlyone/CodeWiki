@@ -17,6 +17,9 @@
 //! `CODEWIKI_EMBED` selects one: `local` (default), `builtin`, `lmstudio`,
 //! `ollama`, `llamacpp`, `lemonade`, `mistralrs`, `openai` or `none`.
 
+pub mod prefix;
+
+use std::borrow::Cow;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
@@ -247,6 +250,28 @@ impl Embedder for LocalEmbedder {
     }
 }
 
+/// `texts` with `prefix` in front of each, before any clipping.
+fn prefixed<'a>(prefix: &str, texts: &'a [String]) -> Vec<Cow<'a, str>> {
+    texts
+        .iter()
+        .map(|text| {
+            if prefix.is_empty() {
+                Cow::Borrowed(text.as_str())
+            } else {
+                Cow::Owned(format!("{prefix}{text}"))
+            }
+        })
+        .collect()
+}
+
+/// A vector's name: the model, plus `+id` of the prefix rule that applies.
+fn named(base: String, rule: Option<&prefix::Rule>) -> String {
+    match rule {
+        Some(rule) => format!("{base}+{}", rule.id),
+        None => base,
+    }
+}
+
 fn clip(text: &str) -> &str {
     cut(text, MAX_CHARS)
 }
@@ -384,6 +409,8 @@ fn parse_openai(value: &Value) -> Option<Vec<Vec<f32>>> {
 pub struct OllamaEmbedder {
     model: String,
     base_url: String,
+    /// The prefixes the model expects, when it is a known one.
+    rule: Option<&'static prefix::Rule>,
     /// Set by the first call that succeeds.
     warm: AtomicBool,
 }
@@ -393,6 +420,7 @@ impl OllamaEmbedder {
         Self {
             model: model.to_string(),
             base_url: base_url.to_string(),
+            rule: prefix::rule(model),
             warm: AtomicBool::new(false),
         }
     }
@@ -407,11 +435,18 @@ impl OllamaEmbedder {
         }
     }
 
-    fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
+    /// Embed `texts`, each with `prefix` in front.
+    fn embed_within(
+        &self,
+        texts: &[String],
+        prefix: &str,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<f32>>> {
         let url = format!("{}/api/embed", self.base_url.trim_end_matches('/'));
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
-            let input: Vec<&str> = batch.iter().map(|t| clip(t)).collect();
+            let prefixed = prefixed(prefix, batch);
+            let input: Vec<&str> = prefixed.iter().map(|t| clip(t)).collect();
             let value = match post_json(
                 "Ollama",
                 &url,
@@ -433,15 +468,26 @@ impl OllamaEmbedder {
 
 impl Embedder for OllamaEmbedder {
     fn name(&self) -> String {
-        format!("ollama:{}", self.model)
+        named(format!("ollama:{}", self.model), self.rule)
     }
 
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_within(texts, self.timeout())
+        let prefix = self.rule.map_or("", |rule| rule.document);
+        self.embed_within(texts, prefix, self.timeout())
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        let prefix = self.rule.map_or("", |rule| rule.query);
+        let vectors = self.embed_within(&[text.to_string()], prefix, self.timeout())?;
+        vectors
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid(format!("{} returned no vector", self.name())))
     }
 
     fn probe(&self) -> Result<usize> {
-        let vectors = self.embed_within(&[PROBE_TEXT.to_string()], PROBE_TIMEOUT)?;
+        let prefix = self.rule.map_or("", |rule| rule.document);
+        let vectors = self.embed_within(&[PROBE_TEXT.to_string()], prefix, PROBE_TIMEOUT)?;
         Ok(vectors.first().map_or(0, Vec::len))
     }
 }
@@ -527,6 +573,8 @@ pub struct OpenAiEmbedder {
     api_key: Option<String>,
     model: String,
     base_url: String,
+    /// The prefixes the model expects, when it is a known one.
+    rule: Option<&'static prefix::Rule>,
     /// Set by the first call that succeeds.
     warm: AtomicBool,
 }
@@ -538,6 +586,7 @@ impl OpenAiEmbedder {
             api_key: api_key.map(str::to_string),
             model: model.to_string(),
             base_url: base_url.to_string(),
+            rule: prefix::rule(model),
             warm: AtomicBool::new(false),
         }
     }
@@ -591,12 +640,19 @@ impl OpenAiEmbedder {
         }
     }
 
-    fn embed_within(&self, texts: &[String], timeout: Duration) -> Result<Vec<Vec<f32>>> {
+    /// Embed `texts`, each with `prefix` in front.
+    fn embed_within(
+        &self,
+        texts: &[String],
+        prefix: &str,
+        timeout: Duration,
+    ) -> Result<Vec<Vec<f32>>> {
         let url = self.url();
         let label = self.server.label();
         let mut out = Vec::with_capacity(texts.len());
         for batch in texts.chunks(BATCH) {
-            let input: Vec<&str> = batch.iter().map(|t| clip(t)).collect();
+            let prefixed = prefixed(prefix, batch);
+            let input: Vec<&str> = prefixed.iter().map(|t| clip(t)).collect();
             let mut posted = self.post(&url, &input, timeout)?;
             // A model takes only so many tokens, and a server may refuse the
             // batch rather than cut the text. Once more, with shorter texts.
@@ -606,7 +662,7 @@ impl OpenAiEmbedder {
                 &posted,
                 Posted::Refused { status: 400 | 413 | 422 | 500, detail } if says_too_long(detail)
             ) {
-                let short: Vec<&str> = batch.iter().map(|t| cut(t, SHORT_CHARS)).collect();
+                let short: Vec<&str> = prefixed.iter().map(|t| cut(t, SHORT_CHARS)).collect();
                 posted = self.post(&url, &short, timeout)?;
             }
             let value = match posted {
@@ -622,15 +678,26 @@ impl OpenAiEmbedder {
 
 impl Embedder for OpenAiEmbedder {
     fn name(&self) -> String {
-        format!("{}:{}", self.server.id(), self.model)
+        named(format!("{}:{}", self.server.id(), self.model), self.rule)
     }
 
     fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-        self.embed_within(texts, self.timeout())
+        let prefix = self.rule.map_or("", |rule| rule.document);
+        self.embed_within(texts, prefix, self.timeout())
+    }
+
+    fn embed_query(&self, text: &str) -> Result<Vec<f32>> {
+        let prefix = self.rule.map_or("", |rule| rule.query);
+        let vectors = self.embed_within(&[text.to_string()], prefix, self.timeout())?;
+        vectors
+            .into_iter()
+            .next()
+            .ok_or_else(|| Error::invalid(format!("{} returned no vector", self.name())))
     }
 
     fn probe(&self) -> Result<usize> {
-        let vectors = self.embed_within(&[PROBE_TEXT.to_string()], PROBE_TIMEOUT)?;
+        let prefix = self.rule.map_or("", |rule| rule.document);
+        let vectors = self.embed_within(&[PROBE_TEXT.to_string()], prefix, PROBE_TIMEOUT)?;
         Ok(vectors.first().map_or(0, Vec::len))
     }
 }
@@ -942,7 +1009,7 @@ mod tests {
         assert_eq!(name(&[("CODEWIKI_EMBED", "none")]), None);
         assert_eq!(
             name(&[("CODEWIKI_EMBED", "Ollama")]).as_deref(),
-            Some("ollama:embeddinggemma")
+            Some("ollama:embeddinggemma+gemma")
         );
         assert_eq!(
             name(&[

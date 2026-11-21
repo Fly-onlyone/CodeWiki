@@ -15,10 +15,9 @@ use serde_json::{Value, json};
 use crate::AppState;
 
 /// Settings that decide which embedder semantic search uses.
-const EMBEDDER_KEYS: [Key; 13] = [
+const EMBEDDER_KEYS: [Key; 12] = [
     settings::EMBED_PROVIDER,
     settings::EMBED_MODEL,
-    settings::EMBED_DEVICE,
     settings::OPENAI_API_KEY,
     settings::OPENAI_BASE_URL,
     settings::OLLAMA_HOST,
@@ -87,37 +86,8 @@ pub(crate) fn describe(state: &AppState) -> Value {
             })
         };
     }
-    // A choice that cannot work is not offered: the built-in embedder needs a
-    // build that can run a model, the graphics card a card and a worker for
-    // it. The built-in embedder is offered before a model is installed; it
-    // then waits for one. The value in effect is always listed, so that a
-    // page can show it.
-    let data_dir = &state.0.config.data_dir;
-    let offered = |options: &[&str], key: Key, conditional: &str, usable: bool| -> Vec<String> {
-        let current = resolved.get(key.env);
-        options
-            .iter()
-            .filter(|option| {
-                **option != conditional || usable || current.as_deref() == Some(conditional)
-            })
-            .map(|option| option.to_string())
-            .collect()
-    };
-    out["embed"]["provider"]["options"] = json!(offered(
-        &cw_embed::PROVIDERS,
-        settings::EMBED_PROVIDER,
-        "builtin",
-        cw_models::ENGINE
-    ));
-    out["embed"]["device"]["options"] = json!(offered(
-        &cw_embed::DEVICES,
-        settings::EMBED_DEVICE,
-        "cuda",
-        cw_models::worker::cuda_usable()
-    ));
-    let (name, problem) = selected(cw_embed::from_settings_in(&resolved, data_dir), |e| {
-        e.name()
-    });
+    out["embed"]["provider"]["options"] = json!(cw_embed::PROVIDERS);
+    let (name, problem) = selected(cw_embed::from_settings(&resolved), |e| e.name());
     out["embed"]["name"] = json!(name);
     out["embed"]["problem"] = json!(problem);
     out
@@ -146,7 +116,7 @@ fn test_result(name: Option<String>, outcome: Result<Value>, started: Instant) -
 /// length of its vectors.
 pub(crate) fn test_embedder(state: &AppState) -> Value {
     let started = Instant::now();
-    match cw_embed::from_settings_in(&resolved(state), &state.0.config.data_dir) {
+    match cw_embed::from_settings(&resolved(state)) {
         Ok(Some(embedder)) => test_result(
             Some(embedder.name()),
             embedder
@@ -204,8 +174,6 @@ fn checked(key: Key, value: &str) -> Result<String> {
     };
     if key == settings::EMBED_PROVIDER {
         one_of(&cw_embed::PROVIDERS, "embedder")
-    } else if key == settings::EMBED_DEVICE {
-        one_of(&cw_embed::DEVICES, "device")
     } else if ADDRESS_KEYS.contains(&key) {
         if value.starts_with("http://") || value.starts_with("https://") {
             Ok(value.trim_end_matches('/').to_string())
@@ -310,21 +278,11 @@ pub(crate) fn change(state: &AppState, body: &Value) -> Result<Value> {
             {
                 saved.clear(settings::EMBED_MODEL);
             }
-            // A built-in embedder that cannot work is refused here, not
-            // found out at the next search: its model must be one of the
-            // catalog and installed, its device one this installation has.
-            // One with no model yet waits for Install or Use to name one;
-            // until then nothing embeds, and nothing is checked.
-            let after = Resolved::from_parts(saved, config.env);
-            let is_built_in = after.get(settings::EMBED_PROVIDER.env).as_deref() == Some("builtin");
-            if is_built_in && after.get(settings::EMBED_MODEL.env).is_some() {
-                cw_embed::from_settings_in(&after, &config.data_dir)?;
-            }
         }
         Ok(())
     })?;
     if embedder_changed {
-        cw_wiki::semantic::configure_in(&resolved(state), &config.data_dir);
+        cw_wiki::semantic::configure(&resolved(state));
     }
     Ok(describe(state))
 }

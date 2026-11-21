@@ -66,15 +66,6 @@ pub const EMBED_MODEL: Key = Key {
     secret: false,
     default: None,
 };
-/// What runs a built-in embedding model: `auto` (the graphics card when it
-/// can, else the processor), `cpu` or `cuda`.
-pub const EMBED_DEVICE: Key = Key {
-    env: "CODEWIKI_EMBED_DEVICE",
-    section: "embed",
-    field: "device",
-    secret: false,
-    default: Some("auto"),
-};
 pub const OPENAI_API_KEY: Key = Key {
     env: "OPENAI_API_KEY",
     section: "openai",
@@ -149,7 +140,7 @@ pub const MISTRALRS_URL: Key = Key {
 };
 
 /// Every setting, in the order a page shows them.
-pub const ALL: [Key; 13] = [
+pub const ALL: [Key; 12] = [
     OPENAI_API_KEY,
     OPENAI_BASE_URL,
     OLLAMA_HOST,
@@ -162,7 +153,6 @@ pub const ALL: [Key; 13] = [
     MISTRALRS_URL,
     EMBED_PROVIDER,
     EMBED_MODEL,
-    EMBED_DEVICE,
 ];
 
 /// Sections of `settings.json` that held the settings of the AI writer

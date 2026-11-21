@@ -8,7 +8,6 @@
 
 use std::collections::{HashMap, HashSet};
 use std::ops::ControlFlow;
-use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
@@ -75,16 +74,9 @@ impl Slot {
             .clone()
     }
 
-    /// Use the embedder the settings in effect name, from now on. A built-in
-    /// model is looked for under the default data directory.
+    /// Use the embedder the settings in effect name, from now on.
     pub fn configure(&self, resolved: &Resolved) {
-        self.configure_in(resolved, &cw_core::paths::data_dir());
-    }
-
-    /// [`Slot::configure`] with the data directory that holds the built-in
-    /// models.
-    pub fn configure_in(&self, resolved: &Resolved, data_dir: &Path) {
-        let embedder = built(cw_embed::from_settings_in(resolved, data_dir));
+        let embedder = built(cw_embed::from_settings(resolved));
         *self.current.write().unwrap_or_else(|p| p.into_inner()) = Some(embedder);
     }
 }
@@ -107,12 +99,6 @@ pub fn embedder() -> Option<Arc<dyn Embedder>> {
 /// is needed.
 pub fn configure(resolved: &Resolved) {
     EMBEDDER.configure(resolved);
-}
-
-/// [`configure`] with the data directory that holds the built-in models. A
-/// backend passes its own, which need not be the default one.
-pub fn configure_in(resolved: &Resolved, data_dir: &Path) {
-    EMBEDDER.configure_in(resolved, data_dir);
 }
 
 fn text_of(document: &Document) -> String {
@@ -380,10 +366,7 @@ pub fn refresh(index: &mut Index, kinds: &[&str], documents: &[Document]) {
 }
 
 /// [`embed_documents_with`] that stops after the batch during which
-/// `budget` ran out; `None` is no limit. Under a budget, an embedder that
-/// is slow embeds nothing here: its one batch could take longer than the
-/// whole budget, and starting its model longer still. The run is planned,
-/// so that the index knows what waits. Any other embeds at least one batch.
+/// `budget` ran out; `None` is no limit. It embeds at least one batch.
 fn embed_within(
     index: &mut Index,
     embedder: &dyn Embedder,
@@ -391,11 +374,6 @@ fn embed_within(
     documents: &[Document],
     budget: Option<Duration>,
 ) -> Result<Progress> {
-    if budget.is_some() && embedder.slow() {
-        let run = Run::plan(index, embedder, kinds, documents)?;
-        run.finish(index)?;
-        return Ok(run.progress());
-    }
     let started = Instant::now();
     embed_documents_with(index, embedder, kinds, documents, &mut |_| {
         if budget.is_some_and(|budget| started.elapsed() >= budget) {
@@ -751,45 +729,6 @@ mod tests {
         // Every stored vector is still this embedder's, so they are compared.
         let hits = search_with(&index, Some(&embedder), "resolving", None, 5).unwrap();
         assert_eq!(hits.first().map(|h| h.key.as_str()), Some("resolver.md"));
-    }
-
-    /// An embedder that says it is slow, and counts how often it is asked.
-    struct Slow(LocalEmbedder, std::sync::atomic::AtomicUsize);
-
-    impl Embedder for Slow {
-        fn name(&self) -> String {
-            "slow".into()
-        }
-
-        fn embed(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-            self.1.fetch_add(1, Ordering::SeqCst);
-            self.0.embed(texts)
-        }
-
-        fn slow(&self) -> bool {
-            true
-        }
-    }
-
-    #[test]
-    fn under_a_budget_a_slow_embedder_is_left_to_the_background() {
-        let mut index = indexed();
-        let embedder = Slow(LocalEmbedder::default(), Default::default());
-        let budget = Some(Duration::from_secs(60));
-        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), budget).unwrap();
-        // Nothing was embedded, however large the budget, and the index
-        // knows that all of it waits.
-        assert_eq!(progress, Progress { done: 0, total: 3 });
-        assert_eq!(embedder.1.load(Ordering::SeqCst), 0);
-        assert!(behind(&index, &embedder.name(), &["note"]).unwrap());
-        // With no budget it embeds where it stands, as a command does.
-        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), None).unwrap();
-        assert_eq!(progress, Progress { done: 3, total: 3 });
-        assert!(!behind(&index, &embedder.name(), &["note"]).unwrap());
-        // Nothing to embed is not a reason to wait.
-        let progress = embed_within(&mut index, &embedder, &["note"], &corpus(), budget).unwrap();
-        assert_eq!(progress, Progress { done: 0, total: 0 });
-        assert!(!behind(&index, &embedder.name(), &["note"]).unwrap());
     }
 
     #[test]

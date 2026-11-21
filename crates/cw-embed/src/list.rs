@@ -161,7 +161,7 @@ fn list_ollama(base: &str) -> Result<Vec<Listed>> {
 pub fn list_models(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Vec<Listed>>> {
     let chosen = lookup(EMBED_ENV).map(|v| v.to_lowercase());
     let server = match chosen.as_deref() {
-        None | Some("local" | "none" | "builtin") => return Ok(None),
+        None | Some("local" | "none") => return Ok(None),
         Some("ollama") => {
             let base = lookup("OLLAMA_HOST").unwrap_or_else(|| OLLAMA_DEFAULT_URL.into());
             return list_ollama(&base).map(|models| Some(arrange(models)));

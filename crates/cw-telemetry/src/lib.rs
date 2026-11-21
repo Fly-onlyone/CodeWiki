@@ -1,5 +1,5 @@
 //! Error reports to Sentry from the programs that run for a long time: the
-//! app, the backend, the MCP bridge and the embedding worker.
+//! app, the backend and the MCP bridge.
 //!
 //! A program reports only when one of these holds:
 //! - `SENTRY_DSN` is set in its environment, as on a developer's machine;

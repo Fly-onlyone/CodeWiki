@@ -1754,3 +1754,166 @@ async fn an_agent_explains_a_note_through_the_routes() {
     assert_eq!(after["info"]["explanation"], "explained");
     assert_eq!(after["info"]["state"], "human_edited");
 }
+
+#[tokio::test]
+async fn the_local_servers_are_offered_with_their_addresses() {
+    let h = Harness::new();
+    let settings = h.get("/v1/settings").await;
+    let options: Vec<&str> = settings["embed"]["provider"]["options"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|o| o.as_str().unwrap())
+        .collect();
+    let wanted: Vec<&str> = [
+        "local",
+        "builtin",
+        "lmstudio",
+        "ollama",
+        "llamacpp",
+        "lemonade",
+        "mistralrs",
+        "openai",
+        "none",
+    ]
+    .into_iter()
+    .filter(|o| *o != "builtin" || cfg!(windows))
+    .collect();
+    assert_eq!(options, wanted);
+    assert_eq!(
+        settings["lmstudio"]["url"]["default"],
+        "http://127.0.0.1:1234"
+    );
+    assert_eq!(settings["lmstudio"]["api_key"]["state"], "unset");
+    assert_eq!(
+        settings["llamacpp"]["url"]["default"],
+        "http://127.0.0.1:9931"
+    );
+    assert_eq!(
+        settings["lemonade"]["url"]["default"],
+        "http://127.0.0.1:13305"
+    );
+    assert_eq!(
+        settings["mistralrs"]["url"]["default"],
+        "http://127.0.0.1:1234"
+    );
+}
+
+#[tokio::test]
+async fn an_address_must_be_http() {
+    let h = Harness::new();
+    let (status, error) = h.refused(json!({ "lmstudio": { "url": "ftp://x" } })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(error.contains("lmstudio.url"), "{error}");
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "lmstudio": { "url": "http://h:1/" } }),
+        )
+        .await;
+    assert_eq!(settings["lmstudio"]["url"]["value"], "http://h:1");
+}
+
+#[tokio::test]
+async fn a_change_of_embedder_clears_the_model_unless_it_names_one() {
+    let h = Harness::new();
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "provider": "ollama", "model": "m" } }),
+    )
+    .await;
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "lmstudio" } }),
+        )
+        .await;
+    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "lmstudio", "model": "x" } }),
+        )
+        .await;
+    assert_eq!(settings["embed"]["model"]["value"], "x");
+    // A model the environment gives is left alone.
+    let h = Harness::with_config(Some(SECRET), true, model_from_env);
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "lmstudio" } }),
+        )
+        .await;
+    assert_eq!(settings["embed"]["model"]["value"], "env-model");
+}
+
+#[tokio::test]
+async fn a_local_server_without_a_model_says_to_choose_one() {
+    let h = Harness::new();
+    let settings = h
+        .put(
+            "/v1/settings",
+            json!({ "embed": { "provider": "lmstudio" } }),
+        )
+        .await;
+    let problem = settings["embed"]["problem"].as_str().unwrap();
+    assert!(problem.contains("choose a model"), "{problem}");
+}
+
+#[tokio::test]
+async fn the_model_list_comes_from_the_chosen_server() {
+    let h = Harness::new();
+    let (status, _) = h.call("GET", "/v1/settings/embed/models", None, None).await;
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let server = stand_in(
+        200,
+        json!({ "data": [
+            { "id": "nomic-embed-text-v1.5", "type": "embeddings", "state": "loaded" },
+            { "id": "qwen3-8b", "type": "llm", "state": "not-loaded" }
+        ] }),
+    );
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "provider": "lmstudio" }, "lmstudio": { "url": server } }),
+    )
+    .await;
+    let list = h.get("/v1/settings/embed/models").await;
+    assert_eq!(list["provider"], "lmstudio");
+    assert_eq!(list["reachable"], true, "{list}");
+    assert_eq!(list["problem"], Value::Null);
+    let models = list["models"].as_array().unwrap();
+    assert_eq!(models.iter().filter(|m| m["embedding"] == true).count(), 1);
+    assert_eq!(
+        models[0],
+        json!({ "id": "nomic-embed-text-v1.5", "embedding": true, "loaded": true })
+    );
+}
+
+#[tokio::test]
+async fn the_model_list_says_when_the_server_does_not_answer() {
+    let h = Harness::new();
+    let closed = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        format!("http://{}", listener.local_addr().unwrap())
+    };
+    h.put(
+        "/v1/settings",
+        json!({ "embed": { "provider": "lmstudio" }, "lmstudio": { "url": closed } }),
+    )
+    .await;
+    let list = h.get("/v1/settings/embed/models").await;
+    assert_eq!(list["reachable"], false, "{list}");
+    assert_eq!(list["models"], Value::Null);
+    let problem = list["problem"].as_str().unwrap();
+    assert!(problem.contains("LM Studio"), "{problem}");
+}
+
+#[tokio::test]
+async fn local_lists_no_models() {
+    let h = Harness::new();
+    let list = h.get("/v1/settings/embed/models").await;
+    assert_eq!(list["provider"], "local");
+    assert_eq!(list["reachable"], true);
+    assert_eq!(list["models"], Value::Null);
+    assert_eq!(list["problem"], Value::Null);
+}

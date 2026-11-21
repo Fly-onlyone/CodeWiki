@@ -15,13 +15,30 @@ use serde_json::{Value, json};
 use crate::AppState;
 
 /// Settings that decide which embedder semantic search uses.
-const EMBEDDER_KEYS: [Key; 6] = [
+const EMBEDDER_KEYS: [Key; 13] = [
     settings::EMBED_PROVIDER,
     settings::EMBED_MODEL,
     settings::EMBED_DEVICE,
     settings::OPENAI_API_KEY,
     settings::OPENAI_BASE_URL,
     settings::OLLAMA_HOST,
+    settings::LMSTUDIO_URL,
+    settings::LMSTUDIO_KEY,
+    settings::LLAMACPP_URL,
+    settings::LLAMACPP_KEY,
+    settings::LEMONADE_URL,
+    settings::LEMONADE_KEY,
+    settings::MISTRALRS_URL,
+];
+
+/// Settings that hold the address of a server.
+const ADDRESS_KEYS: [Key; 6] = [
+    settings::OPENAI_BASE_URL,
+    settings::OLLAMA_HOST,
+    settings::LMSTUDIO_URL,
+    settings::LLAMACPP_URL,
+    settings::LEMONADE_URL,
+    settings::MISTRALRS_URL,
 ];
 
 /// The settings in effect for this server.
@@ -146,6 +163,31 @@ pub(crate) fn test_embedder(state: &AppState) -> Value {
     }
 }
 
+/// The models the chosen provider offers, for a page that lets a person pick
+/// one. `models` is null when the provider lists none; `reachable` is false
+/// when the server did not answer, and `problem` says why.
+pub(crate) fn embed_models(state: &AppState) -> Value {
+    let resolved = resolved(state);
+    let provider = resolved.get(settings::EMBED_PROVIDER.env);
+    match cw_embed::list_models_in(&resolved) {
+        Ok(models) => json!({
+            "provider": provider,
+            "reachable": true,
+            "models": models.map(|models| models
+                .into_iter()
+                .map(|m| json!({ "id": m.id, "embedding": m.embedding, "loaded": m.loaded }))
+                .collect::<Vec<_>>()),
+            "problem": null,
+        }),
+        Err(error) => json!({
+            "provider": provider,
+            "reachable": false,
+            "models": null,
+            "problem": message(&error),
+        }),
+    }
+}
+
 /// A value that passed the checks of its setting, as it is saved.
 fn checked(key: Key, value: &str) -> Result<String> {
     let value = value.trim();
@@ -164,7 +206,7 @@ fn checked(key: Key, value: &str) -> Result<String> {
         one_of(&cw_embed::PROVIDERS, "embedder")
     } else if key == settings::EMBED_DEVICE {
         one_of(&cw_embed::DEVICES, "device")
-    } else if key == settings::OPENAI_BASE_URL || key == settings::OLLAMA_HOST {
+    } else if ADDRESS_KEYS.contains(&key) {
         if value.starts_with("http://") || value.starts_with("https://") {
             Ok(value.trim_end_matches('/').to_string())
         } else {
@@ -256,16 +298,13 @@ pub(crate) fn change(state: &AppState, body: &Value) -> Result<Value> {
             }
         }
         if embedder_changed {
-            // The model field means a catalog id to the built-in embedder
-            // and a model name to the others. A change of provider across
-            // that line leaves a value of the wrong kind behind unless the
-            // same change names a model; clear it, so that Ollama is never
-            // asked for a catalog id.
-            let built_in = |settings: &Resolved| {
-                settings.get(settings::EMBED_PROVIDER.env).as_deref() == Some("builtin")
-            };
-            let is_built_in = built_in(&Resolved::from_parts(saved, config.env));
-            if built_in(&before) != is_built_in
+            // A model name belongs to one provider: another provider does
+            // not serve it. A change of provider that names no model
+            // clears it, so that no server is asked for a model it does
+            // not have. A model the environment gives stays.
+            let provider = |settings: &Resolved| settings.get(settings::EMBED_PROVIDER.env);
+            let after = Resolved::from_parts(saved, config.env);
+            if provider(&before) != provider(&after)
                 && !model_named
                 && before.source(settings::EMBED_MODEL) != Source::Env
             {
@@ -277,6 +316,7 @@ pub(crate) fn change(state: &AppState, body: &Value) -> Result<Value> {
             // One with no model yet waits for Install or Use to name one;
             // until then nothing embeds, and nothing is checked.
             let after = Resolved::from_parts(saved, config.env);
+            let is_built_in = after.get(settings::EMBED_PROVIDER.env).as_deref() == Some("builtin");
             if is_built_in && after.get(settings::EMBED_MODEL.env).is_some() {
                 cw_embed::from_settings_in(&after, &config.data_dir)?;
             }

@@ -213,6 +213,7 @@ pub fn routes(state: AppState) -> Router {
         .route("/status", get(backend_status))
         .route("/settings", get(read_settings).put(write_settings))
         .route("/settings/test/embed", post(test_embedder))
+        .route("/settings/embed/models", get(embed_models))
         .route("/models", get(read_models))
         .route("/models/cancel", post(cancel_model_job))
         .route("/models/reembed", post(reembed))
@@ -285,6 +286,12 @@ async fn write_settings(State(state): State<AppState>, Json(body): Json<Value>) 
 /// it answered. Always 200: an embedder that refuses is reported in the body.
 async fn test_embedder(State(state): State<AppState>) -> Api<Value> {
     blocking(move || Ok(settings::test_embedder(&state))).await
+}
+
+/// The models the chosen embedder's server offers. Always 200: a server that
+/// does not answer is reported in the body.
+async fn embed_models(State(state): State<AppState>) -> Api<Value> {
+    blocking(move || Ok(settings::embed_models(&state))).await
 }
 
 /// The answer of every model route on a backend that listens beyond this

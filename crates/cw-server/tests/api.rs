@@ -1467,3 +1467,247 @@ async fn workspace_view_and_contracts() {
         .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn an_agent_explains_a_note_through_the_routes() {
+    const NOTE: &str = "01-Core/demo/Math%20Module.md";
+    const PICTURE: &str =
+        "root = Picture([f])\nf = Flow([Step(\"A number\"), Step(\"Twice the number\")])\n";
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let unexplained = report["unexplained"].as_u64().unwrap();
+    assert!(unexplained >= 2, "{report}");
+
+    for (method, uri) in [
+        ("GET", format!("/v1/repos/{id}/explanations")),
+        ("GET", format!("/v1/repos/{id}/explanation?path={NOTE}")),
+        ("PUT", format!("/v1/repos/{id}/explanation?path={NOTE}")),
+    ] {
+        let (status, _) = h
+            .call(method, &uri, None, Some(json!({ "base": "" })))
+            .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED, "{method} {uri}");
+    }
+
+    // What waits, narrowed to a file and to a number.
+    let queue = h.get(&format!("/v1/repos/{id}/explanations")).await;
+    assert_eq!(
+        queue["waiting"],
+        json!({ "behind": 0, "unexplained": unexplained })
+    );
+    assert_eq!(queue["matching"], unexplained);
+    let queue = h
+        .get(&format!(
+            "/v1/repos/{id}/explanations?files=src/nothing.rs,%20src/math.rs&limit=1"
+        ))
+        .await;
+    assert_eq!(queue["notes"].as_array().unwrap().len(), 1, "{queue}");
+    assert!(queue["matching"].as_u64().unwrap() < unexplained, "{queue}");
+    assert_eq!(queue["notes"][0]["why"], "unexplained");
+    assert_eq!(queue["notes"][0]["sources"], json!(["src/math.rs"]));
+    let none = h
+        .get(&format!(
+            "/v1/repos/{id}/explanations?folder=05-Operations/nothing"
+        ))
+        .await;
+    assert_eq!(none["notes"], json!([]));
+
+    // The brief of one note.
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={NOTE}"))
+        .await;
+    assert_eq!(brief["path"], "01-Core/demo/Math Module.md");
+    assert_eq!(brief["kind"], "concept");
+    let yours: Vec<&str> = brief["yours"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|y| y["heading"].as_str().unwrap())
+        .collect();
+    assert_eq!(yours, ["What it does", "How it works", "Gotchas"]);
+    assert_eq!(brief["sources"], json!([{ "path": "src/math.rs" }]));
+    assert_eq!(brief["limits"]["section_words"], 300);
+    let base = brief["base"].as_str().unwrap().to_string();
+    let (status, _) = h
+        .call(
+            "GET",
+            &format!("/v1/repos/{id}/explanation?path=_HOME.md"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = h
+        .call(
+            "GET",
+            &format!("/v1/repos/{id}/explanation?path=No%20Such%20Note"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    // Faults come back as an answer the agent can read, not as an error.
+    let uri = format!("/v1/repos/{id}/explanation?path={NOTE}");
+    let outcome = h
+        .put(
+            &uri,
+            json!({
+                "base": base,
+                "sections": [{ "heading": "Items", "text": "Mine." }],
+                "pictures": [{ "section": "Gotchas", "source": "root = Chart([])" }],
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "issues");
+    assert!(
+        outcome["issues"].as_array().unwrap().len() >= 2,
+        "{outcome}"
+    );
+    let outcome = h
+        .put(
+            &uri,
+            json!({ "base": "older", "sections": [{ "heading": "Gotchas", "text": "x" }] }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "changed");
+
+    let outcome = h
+        .put(
+            &uri,
+            json!({
+                "base": base,
+                "sections": [
+                    { "heading": "How it works", "text": "Each helper is one multiplication, so none can fail or overflowzebra quietly." },
+                    { "heading": "Gotchas", "text": "- A result above the largest number wraps in a release build." },
+                ],
+                "pictures": [{ "section": "How it works", "source": PICTURE }],
+                "read": ["src/lib.rs"],
+                "model": "claude-code",
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "saved", "{outcome}");
+    assert_eq!(outcome["sections"], json!(["How it works", "Gotchas"]));
+    assert_eq!(outcome["pictures"], 1);
+    assert_eq!(outcome["waiting"]["unexplained"], unexplained - 1);
+
+    let note = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    assert_eq!(note["info"]["state"], "generated");
+    assert_eq!(note["info"]["explanation"], "explained");
+    assert_eq!(note["info"]["explained_by"], "claude-code");
+    assert_eq!(
+        note["pictures"],
+        json!([{ "section": "How it works", "source": PICTURE }])
+    );
+    assert!(
+        note["text"]
+            .as_str()
+            .unwrap()
+            .contains("wraps in a release build")
+    );
+    // The view for an agent has no picture.
+    let cut = h
+        .get(&format!("/v1/repos/{id}/note?path={NOTE}&view=agent"))
+        .await;
+    assert!(cut.get("pictures").is_none(), "{cut}");
+    // The new words are found by a search at once.
+    let hits = h
+        .get(&format!("/v1/repos/{id}/search?q=overflowzebra"))
+        .await;
+    assert!(
+        hits.as_array()
+            .unwrap()
+            .iter()
+            .any(|hit| hit["key"] == "01-Core/demo/Math Module.md"),
+        "{hits}"
+    );
+    // An update leaves the explained note alone.
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    assert_eq!(report["written"], json!([]));
+    assert_eq!(report["proposed"], json!([]));
+    assert_eq!(report["unexplained"], unexplained - 1);
+
+    // A file the agent read changes: the explanation is behind.
+    let lib = fs::read_to_string(h.repo.path().join("src/lib.rs")).unwrap();
+    write(
+        h.repo.path(),
+        "src/lib.rs",
+        &format!("{lib}\n// A later line.\n"),
+    );
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    assert_eq!(
+        report["behind"],
+        json!(["01-Core/demo/Math Module.md"]),
+        "{report}"
+    );
+    let queue = h.get(&format!("/v1/repos/{id}/explanations")).await;
+    assert_eq!(queue["notes"][0]["why"], "behind");
+    assert_eq!(queue["notes"][0]["behind"], json!(["src/lib.rs changed"]));
+    let note = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    assert_eq!(note["info"]["explanation"], "behind");
+
+    // The owner edits the note: what an agent sends now is a proposal.
+    let edited = note["text"]
+        .as_str()
+        .unwrap()
+        .replace("wraps in", "wraps around in");
+    h.put(
+        &format!("/v1/repos/{id}/note?path={NOTE}"),
+        json!({ "text": edited }),
+    )
+    .await;
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={NOTE}"))
+        .await;
+    assert_eq!(brief["edited_by_hand"], true);
+    let outcome = h
+        .put(
+            &uri,
+            json!({
+                "base": brief["base"],
+                "sections": [{ "heading": "What it does", "text": "It holds the arithmetic the demo needs." }],
+                "pictures": [{ "section": "What it does", "source": PICTURE }],
+                "model": "claude-code",
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "proposed", "{outcome}");
+    let pid = outcome["proposal"].as_str().unwrap().to_string();
+    let after = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    assert_eq!(after["text"], json!(edited));
+    assert_eq!(after["pictures"].as_array().unwrap().len(), 1);
+
+    let detail = h.get(&format!("/v1/repos/{id}/proposals/{pid}")).await;
+    assert_eq!(detail["proposal"]["kind"], "agent");
+    assert_eq!(detail["proposal"]["model"], "claude-code");
+    assert_eq!(
+        detail["proposal"]["reason"],
+        "claude-code explained this note"
+    );
+    let offered: Vec<&str> = detail["pictures"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["section"].as_str().unwrap())
+        .collect();
+    assert_eq!(offered, ["What it does", "How it works"]);
+    assert!(
+        detail["patch"]
+            .as_str()
+            .unwrap()
+            .contains("+It holds the arithmetic")
+    );
+
+    let approved = h
+        .post(&format!("/v1/repos/{id}/proposals/{pid}/approve"), None)
+        .await;
+    assert_eq!(approved["status"], "approved");
+    let after = h.get(&format!("/v1/repos/{id}/note?path={NOTE}")).await;
+    let text = after["text"].as_str().unwrap();
+    assert!(text.contains("It holds the arithmetic") && text.contains("wraps around in"));
+    assert_eq!(after["pictures"].as_array().unwrap().len(), 2);
+    assert_eq!(after["info"]["explanation"], "explained");
+    assert_eq!(after["info"]["state"], "human_edited");
+}

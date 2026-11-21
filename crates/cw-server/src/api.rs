@@ -14,8 +14,8 @@ use cw_core::hash::{constant_time_eq, hmac_sha256};
 use cw_core::{Error, Result, VAULT_DIR};
 use cw_index::Index;
 use cw_telemetry::sentry::{self, SentryFutureExt as _};
-use cw_vault::{VaultMeta, proposal};
-use cw_wiki::{query, service};
+use cw_vault::proposal;
+use cw_wiki::{explanations, query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -169,6 +169,11 @@ pub fn routes(state: AppState) -> Router {
         .route("/repos/{id}/overview", get(repo_overview))
         .route("/repos/{id}/notes", get(list_notes))
         .route("/repos/{id}/note", get(read_note).put(write_note))
+        .route("/repos/{id}/explanations", get(list_explanations))
+        .route(
+            "/repos/{id}/explanation",
+            get(read_explanation).put(write_explanation),
+        )
         .route("/repos/{id}/files", get(list_files))
         .route("/repos/{id}/symbols", get(find_symbols))
         .route("/repos/{id}/symbol", get(symbol_detail))
@@ -668,6 +673,75 @@ async fn write_note(
     .await
 }
 
+/// Which waiting notes a coding agent asks for.
+#[derive(Deserialize)]
+struct ExplanationsQuery {
+    /// Only notes in this folder of the vault.
+    #[serde(default)]
+    folder: Option<String>,
+    /// Only notes about one of these repository files, separated by commas.
+    #[serde(default)]
+    files: Option<String>,
+    #[serde(default)]
+    limit: Option<usize>,
+}
+
+/// The notes that wait for a coding agent to explain them.
+async fn list_explanations(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<ExplanationsQuery>,
+) -> Api<explanations::Queue> {
+    blocking(move || {
+        let scope = explanations::Scope {
+            folder: q.folder,
+            files: q
+                .files
+                .as_deref()
+                .unwrap_or("")
+                .split(',')
+                .map(str::trim)
+                .filter(|file| !file.is_empty())
+                .map(str::to_string)
+                .collect(),
+            limit: q.limit,
+        };
+        explanations::queue(&Repo::open(&state, &id)?.root, &scope)
+    })
+    .await
+}
+
+/// What a coding agent needs to explain one note.
+async fn read_explanation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<NoteQuery>,
+) -> Api<explanations::Brief> {
+    blocking(move || explanations::brief(&Repo::open(&state, &id)?.root, &q.path)).await
+}
+
+/// Take what a coding agent wrote for one note. Every outcome is an answer
+/// with status 200, also the one that lists faults: a client keeps the body
+/// of an answer and only one line of an error, and the agent must read each
+/// fault to fix it.
+async fn write_explanation(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<NoteQuery>,
+    Json(body): Json<explanations::Submission>,
+) -> Api<explanations::Outcome> {
+    blocking(move || {
+        let repo = Repo::open(&state, &id)?;
+        let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let outcome = explanations::submit(&repo.root, &q.path, &body)?;
+        if matches!(outcome, explanations::Outcome::Saved { .. }) {
+            service::index_notes(&repo.root, &mut repo.index()?)?;
+        }
+        Ok(outcome)
+    })
+    .await
+}
+
 async fn list_files(
     State(state): State<AppState>,
     Path(id): Path<String>,
@@ -859,6 +933,9 @@ struct ProposalDetail {
     proposal: proposal::Proposal,
     patch: String,
     proposed: String,
+    /// The pictures the note would get, for an agent's proposal.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pictures: Vec<cw_illustrate::Picture>,
 }
 
 async fn list_proposals(
@@ -878,6 +955,7 @@ async fn get_proposal(
             proposal: proposal::get(&vault, &pid)?,
             patch: proposal::patch_text(&vault, &pid)?,
             proposed: proposal::proposed_text(&vault, &pid)?,
+            pictures: cw_illustrate::parse_pictures(&proposal::pictures_text(&vault, &pid)?),
         })
     })
     .await
@@ -890,14 +968,7 @@ async fn approve_proposal(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-        let vault = repo.vault();
-        let done = proposal::approve(&vault, &pid)?;
-        let mut meta = VaultMeta::load(&vault)?;
-        if let Some(entry) = meta.notes.get_mut(&done.note_id) {
-            // The human reviewed this input; it needs no further proposal.
-            entry.input_hash = done.input_hash.clone();
-            meta.save(&vault)?;
-        }
+        let done = explanations::approve(&repo.root, &pid)?;
         service::index_notes(&repo.root, &mut repo.index()?)?;
         Ok(done)
     })
@@ -911,14 +982,7 @@ async fn reject_proposal(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-        let vault = repo.vault();
-        let done = proposal::reject(&vault, &pid)?;
-        let mut meta = VaultMeta::load(&vault)?;
-        if let Some(entry) = meta.notes.get_mut(&done.note_id) {
-            entry.rejected_inputs.push(done.input_hash.clone());
-            meta.save(&vault)?;
-        }
-        Ok(done)
+        explanations::reject(&repo.root, &pid)
     })
     .await
 }

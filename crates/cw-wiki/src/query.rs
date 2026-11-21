@@ -24,15 +24,43 @@ pub struct NoteInfo {
     pub origin: Origin,
     pub state: NoteState,
     pub sources: Vec<String>,
+    /// Where the note's explanation stands.
+    #[serde(default)]
+    pub explanation: Explanation,
+    /// Who explained the note, as the agent named itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explained_by: Option<String>,
+    /// Why the explanation may be behind the code, when it is.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behind: Vec<String>,
+}
+
+/// Where a note's explanation stands. Rules write a note's facts; what the
+/// thing is for and how it works is a coding agent's to write.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Explanation {
+    /// A note no agent explains: a map, a glossary entry, a decision, or a
+    /// note that was in the vault before CodeWiki.
+    #[default]
+    None,
+    /// Rules wrote it; no agent has explained it yet.
+    Waiting,
+    /// An agent explained it.
+    Explained,
+    /// An agent explained it, and a file the explanation was written from
+    /// changed since.
+    Behind,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteContent {
     pub info: NoteInfo,
     pub text: String,
-    /// OpenUI Lang source of the note's illustration, when it has one.
-    #[serde(default)]
-    pub illustration: Option<String>,
+    /// The note's pictures, each for one of its sections; empty in a view
+    /// for an agent.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pictures: Vec<cw_illustrate::Picture>,
     /// Headings of the sections `text` leaves out, in a view that is not
     /// the whole note.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -156,7 +184,7 @@ pub struct Answer {
     pub sources: Vec<Hit>,
 }
 
-fn title_of(entry: &NoteEntry) -> String {
+pub(crate) fn title_of(entry: &NoteEntry) -> String {
     let stem = entry.path.rsplit('/').next().unwrap_or(&entry.path);
     stem.trim_end_matches(".md").to_string()
 }
@@ -171,6 +199,15 @@ fn info(entry: &NoteEntry, vault: &Path) -> NoteInfo {
         origin: entry.origin,
         state: lifecycle::state(entry, disk.as_deref(), false),
         sources: entry.sources.iter().map(|s| s.path.clone()).collect(),
+        explanation: match &entry.explained {
+            _ if !entry.kind.explainable() => Explanation::None,
+            Some(_) if entry.behind.is_empty() => Explanation::Explained,
+            Some(_) => Explanation::Behind,
+            None if entry.origin == Origin::Adopted => Explanation::None,
+            None => Explanation::Waiting,
+        },
+        explained_by: entry.explained.as_ref().and(entry.model.clone()),
+        behind: entry.behind.clone(),
     }
 }
 
@@ -197,15 +234,8 @@ fn check_vault_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Read a whole note by vault path or by name.
-pub fn read_note(root: &Path, path_or_name: &str) -> Result<NoteContent> {
-    read_note_as(root, path_or_name, View::Whole)
-}
-
-/// Read a note by vault path or by name, as much of it as `view` says.
-pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteContent> {
-    let vault = root.join(VAULT_DIR);
-    let meta = VaultMeta::load(&vault)?;
+/// The note with the vault path or the name `path_or_name`.
+pub(crate) fn find_entry<'a>(meta: &'a VaultMeta, path_or_name: &str) -> Result<&'a NoteEntry> {
     let entry = meta
         .by_path(path_or_name)
         .or_else(|| {
@@ -216,6 +246,19 @@ pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteC
         })
         .ok_or_else(|| Error::not_found(format!("note '{path_or_name}'")))?;
     check_vault_path(&entry.path)?;
+    Ok(entry)
+}
+
+/// Read a whole note by vault path or by name.
+pub fn read_note(root: &Path, path_or_name: &str) -> Result<NoteContent> {
+    read_note_as(root, path_or_name, View::Whole)
+}
+
+/// Read a note by vault path or by name, as much of it as `view` says.
+pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteContent> {
+    let vault = root.join(VAULT_DIR);
+    let meta = VaultMeta::load(&vault)?;
+    let entry = find_entry(&meta, path_or_name)?;
     let full = vault.join(&entry.path);
     let text = std::fs::read_to_string(&full).map_err(|e| Error::io(full, e))?;
     if view == View::Agent {
@@ -224,16 +267,18 @@ pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteC
             info: info(entry, &vault),
             text,
             // A picture is for the eye.
-            illustration: None,
+            pictures: Vec::new(),
             left_out,
         });
     }
-    let illustration =
-        std::fs::read_to_string(vault.join(crate::generate::illustration_path(&entry.path))).ok();
+    let pictures =
+        std::fs::read_to_string(vault.join(crate::generate::illustration_path(&entry.path)))
+            .map(|file| cw_illustrate::parse_pictures(&file))
+            .unwrap_or_default();
     Ok(NoteContent {
         info: info(entry, &vault),
         text,
-        illustration,
+        pictures,
         left_out: Vec::new(),
     })
 }

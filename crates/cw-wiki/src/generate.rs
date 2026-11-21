@@ -465,7 +465,7 @@ pub fn generate_with(
                 // The facts are the fresh draft's; the explanation is the
                 // agent's, as it stands in the note.
                 let current = disk.clone().unwrap_or_default();
-                let woven = weave_kept(entry, &current, draft, note.kind, &links);
+                let woven = weave_kept(entry, &current, draft, note.kind, &links, false);
                 write_note(&full, &woven.text)?;
                 report.merged.push(path.clone());
                 for heading in &woven.folded {
@@ -499,12 +499,10 @@ pub fn generate_with(
                         && p.status == proposal::ProposalStatus::Pending
                 });
                 if !pending_same {
-                    // What an agent wrote stays in what is proposed: the
-                    // proposal is about the facts.
-                    let proposed = match entry.explained {
-                        Some(_) => weave_kept(entry, &current, draft, note.kind, &links).text,
-                        None => draft.clone(),
-                    };
+                    // The proposal is about the facts. What an agent
+                    // wrote stays in what is proposed, and so does a
+                    // section the owner added that rules do not write.
+                    let proposed = weave_kept(entry, &current, draft, note.kind, &links, true).text;
                     proposal::create(
                         &vault,
                         &note.id,
@@ -645,19 +643,33 @@ impl Links<'_> {
 /// The fresh `draft` of a note with the sections an agent wrote, as they
 /// stand in `current`, the note on disk. A link of the agent's to a note
 /// that is gone becomes plain words.
+///
+/// With `owners_too`, for a note its owner edited: a section that rules do
+/// not write at all, such as `Gotchas`, is kept as well. It can only be the
+/// owner's, and the draft has nothing to put in its place.
 fn weave_kept(
     entry: &NoteEntry,
     current: &str,
     draft: &str,
     kind: NoteKind,
     links: &Links,
+    owners_too: bool,
 ) -> cw_vault::Woven {
-    let headings = entry
+    let mut headings: Vec<String> = entry
         .explained
         .as_ref()
-        .map(|explained| explained.sections.as_slice())
-        .unwrap_or(&[]);
-    let mut agent = cw_vault::extract(current, kind, headings);
+        .map(|explained| explained.sections.clone())
+        .unwrap_or_default();
+    if owners_too {
+        let (_, drafted) = cw_vault::note::split(draft);
+        for heading in kind.agent_sections() {
+            let by_rules = drafted.iter().any(|s| s.heading == *heading);
+            if !by_rules && !headings.iter().any(|h| h == heading) {
+                headings.push(heading.to_string());
+            }
+        }
+    }
+    let mut agent = cw_vault::extract(current, kind, &headings);
     for section in &mut agent {
         section.body =
             cw_vault::unlink_dead(&section.body, |target| links.alive(target, &entry.path));

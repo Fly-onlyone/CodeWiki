@@ -19,7 +19,7 @@ use cw_wiki::{explanations, query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, models, repos, settings, workspace};
+use crate::{AppState, embed_job, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -214,12 +214,9 @@ pub fn routes(state: AppState) -> Router {
         .route("/settings", get(read_settings).put(write_settings))
         .route("/settings/test/embed", post(test_embedder))
         .route("/settings/embed/models", get(embed_models))
-        .route("/models", get(read_models))
-        .route("/models/cancel", post(cancel_model_job))
-        .route("/models/reembed", post(reembed))
-        .route("/models/{id}", axum::routing::delete(remove_model))
-        .route("/models/{id}/install", post(install_model))
-        .route("/models/{id}/use", post(use_model))
+        .route("/embed/job", get(read_embed_job))
+        .route("/embed/reembed", post(reembed))
+        .route("/embed/cancel", post(cancel_embed_job))
         .route("/shutdown", post(shutdown))
         .layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -245,7 +242,8 @@ async fn health() -> Json<Value> {
 /// in its tray icon. Unlike `/v1/health` it needs the token.
 async fn backend_status(State(state): State<AppState>) -> Json<Value> {
     let mut report = state.0.activity.report();
-    // The job on a built-in model that runs, or null.
+    // The background embedding job that runs, or null. The field keeps its
+    // old name, so that older and newer clients read it alike.
     report["model_job"] = state.0.jobs.status();
     Json(report)
 }
@@ -294,77 +292,49 @@ async fn embed_models(State(state): State<AppState>) -> Api<Value> {
     blocking(move || Ok(settings::embed_models(&state))).await
 }
 
-/// The answer of every model route on a backend that listens beyond this
-/// machine. A model is installed on the backend's machine and takes its
-/// disk, memory and graphics card; like the settings, that is decided there.
-fn models_closed(state: &AppState) -> Option<Response> {
+/// The answer of every embedding job route on a backend that listens beyond
+/// this machine. The job runs on the backend's machine and calls the model
+/// server its settings name; like the settings, that is decided there.
+fn embed_closed(state: &AppState) -> Option<Response> {
     (!state.0.config.settings_writable).then(|| {
         (
             StatusCode::FORBIDDEN,
             Json(json!({
-                "error": "this backend's built-in models are managed on its own machine"
+                "error": "this backend's embedding is managed on its own machine"
             })),
         )
             .into_response()
     })
 }
 
-/// The built-in models: the machine, the recommendation, the catalog with
-/// what is installed and in use, and the job that runs.
-async fn read_models(State(state): State<AppState>) -> Response {
-    if let Some(closed) = models_closed(&state) {
+/// The background embedding job that runs, or the last that ran.
+async fn read_embed_job(State(state): State<AppState>) -> Response {
+    if let Some(closed) = embed_closed(&state) {
         return closed;
     }
-    blocking(move || Ok(models::describe(&state)))
-        .await
-        .into_response()
+    Json(json!({ "job": state.0.jobs.snapshot() })).into_response()
 }
 
-/// Start a job and answer 202 with it; its progress is in `GET /v1/models`.
-async fn start_model_job(state: AppState, kind: models::Kind, id: Option<String>) -> Response {
-    if let Some(closed) = models_closed(&state) {
+/// Embed what waits, with the embedder in use. Answers 202 with the job as
+/// it starts; its progress is in `GET /v1/embed/job`.
+async fn reembed(State(state): State<AppState>) -> Response {
+    if let Some(closed) = embed_closed(&state) {
         return closed;
     }
-    match blocking(move || models::start(&state, kind, id.as_deref())).await {
+    match blocking(move || embed_job::start(&state)).await {
         Ok(job) => (StatusCode::ACCEPTED, job).into_response(),
         Err(error) => error.into_response(),
     }
 }
 
-/// Download a model, make it the embedder, and embed every repository's
-/// documents again.
-async fn install_model(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    start_model_job(state, models::Kind::Install, Some(id)).await
-}
-
-/// Make an installed model the embedder, and embed again.
-async fn use_model(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    start_model_job(state, models::Kind::Use, Some(id)).await
-}
-
-/// Embed again what waits, with the embedder in use.
-async fn reembed(State(state): State<AppState>) -> Response {
-    start_model_job(state, models::Kind::Reembed, None).await
-}
-
-/// Stop the running job. What it downloaded and embedded stays, and the
-/// next job goes on from there.
-async fn cancel_model_job(State(state): State<AppState>) -> Response {
-    if let Some(closed) = models_closed(&state) {
+/// Stop the running job. What it embedded stays, and the next job goes on
+/// from there.
+async fn cancel_embed_job(State(state): State<AppState>) -> Response {
+    if let Some(closed) = embed_closed(&state) {
         return closed;
     }
     state.0.jobs.cancel();
     Json(json!({ "job": state.0.jobs.snapshot() })).into_response()
-}
-
-/// Delete a model from the disk.
-async fn remove_model(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    if let Some(closed) = models_closed(&state) {
-        return closed;
-    }
-    blocking(move || models::remove(&state, &id))
-        .await
-        .into_response()
 }
 
 /// Resolved repository: its root folder and its index.
@@ -456,7 +426,7 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     let report = service::update_in(&repo.data_dir, &repo.root);
     // Still under the lock: a background embedding that stores next sees
     // that the documents changed.
-    models::after_update(state, &repo.root);
+    embed_job::after_update(state, &repo.root);
     report
 }
 

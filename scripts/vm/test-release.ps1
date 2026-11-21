@@ -2814,6 +2814,114 @@ Test-Case "OL5" "Semantic search through Ollama with nomic-embed-text" "Ollama a
         -Note "Same model family as the llama.cpp and LM Studio cases (v1.5)."
 }
 
+# ---------------------------------------------------------------- LC, llama.cpp's llama-server
+# README: "start `llama-server` with [a GGUF embedding model]. For long texts,
+# start `llama-server` with `-ub 2048 -b 2048`". Run `-Only D2,LC1,LC2,LC3`.
+# Sources (read 2026-11-21):
+#  - https://github.com/ggml-org/llama.cpp/releases: each build is a release
+#    tagged b<number>, with the asset llama-b<number>-bin-win-cpu-x64.zip (the
+#    "latest" release of the repository is a different tag, v1.0.0, with one
+#    asset, so the newest releases are listed and the first with that asset is
+#    taken).
+#  - https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md:
+#    --embedding ("restrict to only support embedding use case; use only with
+#    dedicated embedding models"), --port (default 9931), -ub and -b.
+#  - https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF: not gated,
+#    nomic-embed-text-v1.5.Q8_0.gguf is 146,146,432 bytes (Apache-2.0).
+# Not verified: whether the zip needs the Visual C++ runtime, which a clean
+# Windows may lack; LC1 runs `llama-server --version` and records what it says.
+$llamaFolder = "$guestHome\llama.cpp"
+$llamaServer = "$llamaFolder\llama-server.exe"
+$llamaModelId = $null
+$nomicUrl = "https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q8_0.gguf"
+$nomicFile = "$embedModels\nomic-embed-text-v1.5.Q8_0.gguf"
+$llamaPattern = '\\llama\.cpp\\|\\llama-server\.exe$'
+
+Test-Case "LC1" "Install llama.cpp's llama-server" "the newest Windows CPU build of llama.cpp unpacks and llama-server.exe reports its version" {
+    $run = Invoke-GuestScript -Background -TimeoutSec 1800 -Script ((Get-GuestFreeDiskText 3) + "`n" + (@'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$folder = '{{FOLDER}}'
+$downloads = '{{HOME}}\Downloads\llamacpp'
+$releases = Invoke-RestMethod -UseBasicParsing -Headers @{ 'User-Agent' = 'codewiki-vm-test' } 'https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=10'
+$asset = $null
+$tag = ''
+foreach ($release in $releases) {
+    $found = @($release.assets | Where-Object { $_.name -match '^llama-b\d+-bin-win-cpu-x64\.zip$' })
+    if ($found.Count) { $asset = $found[0]; $tag = $release.tag_name; break }
+}
+if (-not $asset) { 'result: no Windows CPU asset in the newest 10 releases'; return }
+"release: $tag, asset: $($asset.name), $([math]::Round($asset.size / 1MB, 1)) MB"
+New-Item -ItemType Directory -Force $downloads, $folder | Out-Null
+$zip = Join-Path $downloads $asset.name
+$watch = Get-Date
+Invoke-WebRequest -UseBasicParsing $asset.browser_download_url -OutFile $zip
+"downloaded: $([math]::Round((Get-Item $zip).Length / 1MB, 1)) MB in $([int]((Get-Date) - $watch).TotalSeconds) s"
+$watch = Get-Date
+Expand-Archive -Path $zip -DestinationPath $folder -Force
+"extracted in $([int]((Get-Date) - $watch).TotalSeconds) s"
+Remove-Item $zip -Force
+$exe = Get-ChildItem $folder -Recurse -Filter llama-server.exe | Select-Object -First 1
+if (-not $exe) { 'result: no llama-server.exe in the archive'; return }
+"exe: $($exe.FullName)"
+$signature = Get-AuthenticodeSignature $exe.FullName
+"signature: $($signature.Status) $($signature.SignerCertificate.Subject)"
+$version = @(& $exe.FullName --version 2>&1 | ForEach-Object { "$_" })
+"version exit: $LASTEXITCODE"
+"version output: $($version -join ' | ')"
+"installed MB: $([math]::Round(((Get-ChildItem $folder -Recurse -File | Measure-Object Length -Sum).Sum) / 1MB, 1))"
+'@).Replace('{{FOLDER}}', $llamaFolder).Replace('{{HOME}}', $guestHome) + "`n" + (Get-GuestDefenderText "llama") + "`n" + "'result: installed'")
+    $exePath = if ($run.Output -match "(?m)^exe: (.+)$") { $Matches[1].Trim() } else { $null }
+    if ($exePath) { $script:llamaServer = $exePath }
+    $version = if ($run.Output -match "version: (\d+) \((\w+)\)") { "b$($Matches[1]) ($($Matches[2]))" } elseif ($run.Output -match "release: (b\d+)") { $Matches[1] } else { $null }
+    Set-EmbedFact "llamacpp" "version" $version
+    Set-EmbedFact "llamacpp" "installMb" (Get-OutputNumber $run.Output "installed MB: ([\d\.]+)")
+    Set-EmbedFact "llamacpp" "downloadS" (Get-OutputNumber $run.Output "downloaded: [\d\.]+ MB in (\d+) s")
+    Set-EmbedFact "llamacpp" "installS" (Get-OutputNumber $run.Output "extracted in (\d+) s")
+    $ok = $run.Output -match "result: installed" -and $run.Output -match "version exit: 0"
+    Add-Result -Id "LC1" -Title "Install llama.cpp's llama-server" -Expect "the Windows CPU zip downloads, unpacks, and llama-server.exe --version exits 0" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(release|downloaded|extracted|signature|version exit|installed MB|Defender)' }) -join '; ')"
+}
+
+Test-Case "LC2" "llama-server with nomic-embed-text v1.5" "README's flags start llama-server on port 9931 and it lists the model" {
+    if (-not (Test-Path (Join-Path $PSScriptRoot "guest\serve-logged.ps1"))) { throw "guest\serve-logged.ps1 is missing" }
+    $download = Invoke-GuestScript -Background -TimeoutSec 1800 -Script ((Get-GuestFreeDiskText 2) + "`n" + (@'
+$file = '{{FILE}}'
+if ((Test-Path $file) -and (Get-Item $file).Length -gt 100MB) { 'downloaded: already there in 0 s' } else {
+{{DOWNLOAD}}
+}
+"model MB: $([math]::Round((Get-Item $file).Length / 1MB, 1))"
+'@).Replace('{{FILE}}', $nomicFile).Replace('{{DOWNLOAD}}', (Get-GuestDownloadText $nomicUrl $nomicFile)))
+    $log = "$embedLogs\llama-server"
+    # README's flags: --embedding for an embedding model, -ub 2048 -b 2048 for long texts.
+    Start-LoggedServer -Exe $llamaServer -Log $log -ArgLine "-m $nomicFile --embedding --port 9931 -ub 2048 -b 2048"
+    $wait = Wait-GuestServer -Url "http://127.0.0.1:9931/v1/models" -ServerProcess $llamaPattern -Seconds 180 -Log $log
+    $resolved = Resolve-GuestModelId -Url "http://127.0.0.1:9931/v1/models" -Match "nomic"
+    $script:llamaModelId = $resolved.Id
+    Set-EmbedFact "llamacpp/$($resolved.Id)" "modelMb" (Get-OutputNumber $download.Output "model MB: ([\d\.]+)")
+    Set-EmbedFact "llamacpp/$($resolved.Id)" "pullS" (Get-OutputNumber $download.Output "downloaded: .* in (\d+) s")
+    $shot = Shot "llama-server-running"
+    Add-Result -Id "LC2" -Title "llama-server with nomic-embed-text v1.5" -Expect "llama-server -m <Q8_0 GGUF> --embedding --port 9931 -ub 2048 -b 2048 answers and lists the model" `
+        -Status $(if ($wait -match "answered after" -and $resolved.Id) { "pass" } else { "fail" }) -Shots @($shot) -Output ($download.Output + "`n" + $wait + "`n" + $resolved.Output) `
+        -Observed "$nomicUrl; $(($download.Output -split "`n" | Where-Object { $_ -match '^(downloaded|model MB)' }) -join '; '); $(($wait -split "`n" | Select-Object -First 1)); the server lists the model as '$($resolved.Id)'"
+}
+
+Test-Case "LC3" "Semantic search through llama.cpp" "llama-server and nomic-embed-text chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {
+    if (-not $llamaModelId) { $llamaModelId = (Resolve-GuestModelId -Url "http://127.0.0.1:9931/v1/models" -Match "nomic").Id }
+    if (-not $llamaModelId) { throw "llama-server lists no model on port 9931; run LC1 and LC2 first" }
+    Measure-RealEmbedder -Id "LC3" -Title "Semantic search through llama.cpp" -Provider llamacpp -Model $llamaModelId `
+        -ServerProcess $llamaPattern -Port 9931 -ModelFamily "nomic-embed-text v1.5" -Quantisation "Q8_0 (GGUF)" -InstallFolder @($llamaFolder) `
+        -Note "CPU build; -ub 2048 -b 2048 as README says."
+}
+
+# ---------------------------------------------------------------- Llama for Windows
+# README names "Llama for Windows" beside llama-server (port 9931, "custom serve
+# arguments"). github.com/ggml-org/Llama-Windows is a WinUI tray app that runs
+# `llama serve`, a router (docs\superpowers\specs\2026-11-21-local-embedders-design.md).
+# No case: see the report. Its serving is llama-server with a different front,
+# which LC1 to LC3 test, and its window cannot be driven reliably by this rig.
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run and
 # the start with Windows is on (AS3).

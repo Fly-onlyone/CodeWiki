@@ -2922,6 +2922,139 @@ Test-Case "LC3" "Semantic search through llama.cpp" "llama-server and nomic-embe
 # No case: see the report. Its serving is llama-server with a different front,
 # which LC1 to LC3 test, and its window cannot be driven reliably by this rig.
 
+# ---------------------------------------------------------------- LS, LM Studio
+# Run `-Only D2,LS1,LS2,LS3`. Sources (read 2026-11-21):
+#  - https://lmstudio.ai/docs/developer/core/headless: "irm https://lmstudio.ai/install.ps1 | iex"
+#    installs llmster, the daemon, and `lms`; `lms daemon up`, `lms server start`.
+#    The script itself (https://lmstudio.ai/install.ps1) installs to
+#    $HOME/.lmstudio/bin and runs `lms bootstrap -y` to add it to the user's PATH.
+#  - https://lmstudio.ai/docs/cli/serve/server-start: `lms server start --port <n>`
+#    (port 1234 by default, "last used" otherwise).
+#  - https://lmstudio.ai/docs/cli/local-models/get: `lms get <model>[@<quantization>]`,
+#    `--gguf`; /load: `lms load <model_key>`, `--identifier`; /import:
+#    `lms import <file> --user-repo <user>/<repo> -y --copy`.
+# Not verified: the catalog name LM Studio gives the nomic-embed-text v1.5
+# model to `lms get` (the docs show no embedding example), `-y` on `lms get`
+# and `lms load`, and which quantization it picks. LS2 therefore tries three
+# names, with and without -y, logs `lms get --help` and `lms ls`, and falls
+# back to `lms import` of the same Q8_0 file that llama.cpp uses; it says which
+# way worked, and the quantization LM Studio lists.
+$lmsExe = "$guestHome\.lmstudio\bin\lms.exe"
+$lmsPattern = '\\\.lmstudio\\|\\llmster[^\\]*\.exe$|\\lms\.exe$'
+
+Test-Case "LS1" "Install LM Studio's llmster" "the install script from lmstudio.ai installs lms for the user" {
+    $run = Invoke-GuestScript -TimeoutSec 1800 -Script ((Get-GuestFreeDiskText 4) + "`n" + (@'
+$watch = Get-Date
+# The command as the docs give it, in its own PowerShell: the script calls exit when it fails.
+$child = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://lmstudio.ai/install.ps1 | iex" 2>&1 | ForEach-Object { "$_" })
+"installer exit: $LASTEXITCODE"
+"installed in $([int]((Get-Date) - $watch).TotalSeconds) s"
+"installer output ends: $((($child | Where-Object { $_.Trim() }) | Select-Object -Last 6) -join ' | ')"
+$lms = @("$env:USERPROFILE\.lmstudio\bin\lms.exe", "$env:LOCALAPPDATA\lm-studio\bin\lms.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+"lms: $lms"
+if (-not $lms) { 'result: no lms'; return }
+"version: $((@(& $lms --version 2>&1 | ForEach-Object { "$_" })) -join ' | ')"
+$home1 = Split-Path -Parent (Split-Path -Parent $lms)
+"installed MB: $([math]::Round(((Get-ChildItem $home1 -Recurse -File -ErrorAction SilentlyContinue | Measure-Object Length -Sum).Sum) / 1MB, 1))"
+"on user PATH: $(([Environment]::GetEnvironmentVariable('Path', 'User') -split ';') -contains (Split-Path $lms))"
+'@) + "`n" + (Get-GuestDefenderText "lmstudio|llmster|lms.exe") + "`n" + "'result: installed'")
+    if ($run.Output -match "(?m)^lms: (.+)$") { $script:lmsExe = $Matches[1].Trim() }
+    Set-EmbedFact "lmstudio" "version" $(if ($run.Output -match "(?m)^version: (.+)$") { $Matches[1].Trim() } else { $null })
+    Set-EmbedFact "lmstudio" "installMb" (Get-OutputNumber $run.Output "installed MB: ([\d\.]+)")
+    Set-EmbedFact "lmstudio" "installS" (Get-OutputNumber $run.Output "installed in (\d+) s")
+    $ok = $run.Output -match "result: installed" -and $run.Output -match "installer exit: 0"
+    Add-Result -Id "LS1" -Title "Install LM Studio's llmster" -Expect "irm https://lmstudio.ai/install.ps1 | iex exits 0 and lms.exe is in place" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(installer exit|installed in|lms:|version:|installed MB|on user PATH|Defender)' }) -join '; ') (the script downloads and unpacks in one step: no separate download time)"
+}
+
+Test-Case "LS2" "lms get and load nomic-embed-text" "lms downloads an embedding model and loads it" {
+    if (-not (Test-Path (Join-Path $PSScriptRoot "guest\serve-logged.ps1"))) { throw "guest\serve-logged.ps1 is missing" }
+    Start-GuestExe -Exe $lmsExe -Arguments "daemon", "up"
+    Wait-For 20
+    $run = Invoke-GuestScript -TimeoutSec 3600 -Script ((Get-GuestFreeDiskText 3) + "`n" + (@'
+$lms = '{{LMS}}'
+$log = '{{LOG}}'
+New-Item -ItemType Directory -Force (Split-Path -Parent $log) | Out-Null
+# One lms call with a time limit, so that a prompt nobody answers cannot hang the run.
+function Invoke-Lms {
+    param([string[]]$Arguments, [int]$Seconds = 240)
+    Remove-Item "$log.out", "$log.err" -ErrorAction SilentlyContinue
+    $p = Start-Process -FilePath $lms -ArgumentList $Arguments -NoNewWindow -PassThru -RedirectStandardOutput "$log.out" -RedirectStandardError "$log.err"
+    if (-not $p.WaitForExit($Seconds * 1000)) { $p.Kill(); "  timed out after $Seconds s" } else { "  exit: $($p.ExitCode)" }
+    foreach ($file in "$log.out", "$log.err") { if (Test-Path $file) { Get-Content $file -Tail 8 | ForEach-Object { '  | ' + ($_ -replace '[^\x20-\x7E]', '') } } }
+}
+function Get-Listing { (@(& $lms ls 2>&1 | ForEach-Object { "$_" }) -join "`n") }
+"--- lms get --help"
+Invoke-Lms @('get', '--help') 30
+$route = 'none'
+$watch = Get-Date
+foreach ($name in 'nomic-ai/nomic-embed-text-v1.5-GGUF@Q8_0', 'nomic-embed-text-v1.5@q8_0', 'nomic-embed-text-v1.5') {
+    foreach ($yes in @('-y', '')) {
+        if ((Get-Listing) -match '(?i)nomic') { break }
+        $arguments = @('get', $name, '--gguf'); if ($yes) { $arguments += $yes }
+        "--- lms $($arguments -join ' ')"
+        Invoke-Lms $arguments 300
+    }
+    if ((Get-Listing) -match '(?i)nomic') { $route = "lms get $name"; break }
+}
+$getSeconds = [int]((Get-Date) - $watch).TotalSeconds
+if ($route -eq 'none') {
+    "--- falling back to lms import of the Q8_0 file"
+    $file = '{{FILE}}'
+    if (-not ((Test-Path $file) -and (Get-Item $file).Length -gt 100MB)) {
+{{DOWNLOAD}}
+    }
+    Invoke-Lms @('import', $file, '--user-repo', 'nomic-ai/nomic-embed-text-v1.5-GGUF', '-y', '--copy') 300
+    if ((Get-Listing) -match '(?i)nomic') { $route = 'lms import' }
+}
+"get seconds: $getSeconds"
+"route: $route"
+$listing = Get-Listing
+"--- lms ls"
+$listing
+$key = ($listing -split "`n" | ForEach-Object { if ($_ -match '^\s*(\S*nomic\S*)') { $Matches[1] } } | Select-Object -First 1)
+"key: $key"
+$quant = ($listing -split "`n" | Where-Object { $_ -match '(?i)nomic' } | ForEach-Object { if ($_ -match '(?i)\b(Q\d\w*|F16|F32|BF16)\b') { $Matches[1] } } | Select-Object -First 1)
+"quantization: $quant"
+if ($key) {
+    "--- lms load $key"
+    $watch = Get-Date
+    Invoke-Lms @('load', $key) 600
+    "load seconds: $([int]((Get-Date) - $watch).TotalSeconds)"
+}
+"--- lms ps"
+Invoke-Lms @('ps') 60
+$models = Join-Path (Split-Path -Parent (Split-Path -Parent $lms)) 'models'
+"model MB: $([math]::Round(((Get-ChildItem $models -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.FullName -match 'nomic' } | Measure-Object Length -Sum).Sum) / 1MB, 1))"
+'@).Replace('{{LMS}}', $lmsExe).Replace('{{LOG}}', "$embedLogs\lms").Replace('{{FILE}}', $nomicFile).Replace('{{DOWNLOAD}}', (Get-GuestDownloadText $nomicUrl $nomicFile)))
+    $key = if ($run.Output -match "(?m)^key: (\S+)") { $Matches[1] } else { $null }
+    $route = if ($run.Output -match "(?m)^route: (.+)$") { $Matches[1].Trim() } else { "unknown" }
+    $quant = if ($run.Output -match "(?m)^quantization: (\S+)") { $Matches[1] } else { "not shown by lms ls" }
+    $script:lmsQuantisation = $quant
+    Set-EmbedFact "lmstudio/nomic" "modelMb" (Get-OutputNumber $run.Output "model MB: ([\d\.]+)")
+    Set-EmbedFact "lmstudio/nomic" "pullS" (Get-OutputNumber $run.Output "get seconds: (\d+)")
+    $loaded = $run.Output -match "(?s)--- lms ps.*nomic"
+    $shot = Shot "lmstudio-model-loaded"
+    Add-Result -Id "LS2" -Title "lms get and load nomic-embed-text" -Expect "lms get downloads nomic-embed-text v1.5, lms load loads it and lms ps lists it" `
+        -Status $(if ($route -like "lms get*" -and $loaded) { "pass" } elseif ($key -and $loaded) { "note" } else { "fail" }) -Shots @($shot) -Output $run.Output `
+        -Observed "model reached the machine by: $route (anything but 'lms get ...' means the catalog name or the -y flag was not accepted, see the output); model key '$key', quantization $quant, loaded: $loaded; $(($run.Output -split "`n" | Where-Object { $_ -match '^(get seconds|load seconds|model MB)' }) -join '; ')"
+}
+
+Test-Case "LS3" "Semantic search through LM Studio" "LM Studio's server and nomic-embed-text chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {
+    Start-GuestExe -Exe $lmsExe -Arguments "server", "start", "--port", "1234"
+    $wait = Wait-GuestServer -Url "http://127.0.0.1:1234/v1/models" -ServerProcess $lmsPattern -Seconds 120
+    $resolved = Resolve-GuestModelId -Url "http://127.0.0.1:1234/v1/models" -Match "nomic"
+    if (-not $resolved.Id) { throw "LM Studio lists no nomic model on port 1234; run LS1 and LS2 first. $($resolved.Output) $wait" }
+    Set-EmbedFact "lmstudio/$($resolved.Id)" "modelMb" (Get-EmbedFact "lmstudio/nomic" "modelMb")
+    Set-EmbedFact "lmstudio/$($resolved.Id)" "pullS" (Get-EmbedFact "lmstudio/nomic" "pullS")
+    $quant = if ($script:lmsQuantisation) { $script:lmsQuantisation } else { "unknown (run LS2)" }
+    Measure-RealEmbedder -Id "LS3" -Title "Semantic search through LM Studio" -Provider lmstudio -Model $resolved.Id `
+        -ServerProcess $lmsPattern -Port 1234 -ModelFamily "nomic-embed-text v1.5" -Quantisation $quant `
+        -StopScript ("& '$lmsExe' server stop 2>&1 | Out-Null; & '$lmsExe' daemon down 2>&1 | Out-Null") `
+        -Note "llmster headless; runtime as LM Studio chose it. The model's quantization is what lms get picked, see LS2."
+}
+
 # ---------------------------------------------------------------- K, uninstall
 # uninstall.cmd, as a double-click runs it, while the app and backend run and
 # the start with Windows is on (AS3).

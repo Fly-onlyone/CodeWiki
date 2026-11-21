@@ -214,8 +214,20 @@ fn print_report(report: &cw_wiki::Report, json: bool) -> Result<()> {
     println!("adopted: {}", report.adopted.len());
     println!("lint warnings: {}", report.lint_warnings);
     println!("links resolved: {:.1}%", report.link_rate * 100.0);
+    // CodeWiki writes a note's facts; a coding agent explains it.
+    println!("facts refreshed, explanation kept: {}", report.merged.len());
+    println!("explanation may be behind: {}", report.behind.len());
+    println!("not explained yet: {}", report.unexplained);
     for path in &report.proposed {
         println!("  proposal queued for {path}");
+    }
+    for path in &report.behind {
+        println!("  explanation may be behind in {path}");
+    }
+    if !report.behind.is_empty() || report.unexplained > 0 {
+        println!(
+            "A coding agent writes the explanations: in Claude Code with the CodeWiki plugin, run /codewiki:write-notes."
+        );
     }
     Ok(())
 }

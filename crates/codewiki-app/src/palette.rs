@@ -222,9 +222,9 @@ mod tests {
                 "{category:?}"
             );
         }
-        let found = filter(&all, "settings ai", 5);
-        assert_eq!(found[0].label, "Settings: AI model");
-        assert_eq!(found[0].command, Command::Settings(Some(Category::AiModel)));
+        let found = filter(&all, "settings search", 5);
+        assert_eq!(found[0].label, "Settings: Semantic search");
+        assert_eq!(found[0].command, Command::Settings(Some(Category::Search)));
         // The plain entry still opens the settings where they were left.
         let found = filter(&all, "open settings", 5);
         assert_eq!(found[0].command, Command::Settings(None));

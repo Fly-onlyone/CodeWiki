@@ -1391,7 +1391,7 @@ impl AppView {
             cx.notify();
             return;
         }
-        // `settings:` opens the settings; `settings:ai` one of their
+        // `settings:` opens the settings; `settings:search` one of their
         // categories, by its slug.
         if let Some(slug) = first.strip_prefix("settings:") {
             let category = settings::Category::from_slug(slug);

@@ -354,8 +354,8 @@ pub(crate) fn after_update(state: &AppState, root: &std::path::Path) {
     }
 }
 
-/// At the backend's start: go on with what an earlier backend left waiting,
-/// for any embedder. It tries once; a job that fails stays failed.
+/// At the backend's start, and after a Test that succeeds: go on with what
+/// waits, for any embedder. It tries once; a job that fails stays failed.
 pub(crate) fn resume(state: &AppState) {
     let config = &state.0.config;
     let Some(embedder) = (config.host.embedder)() else {

@@ -12,7 +12,7 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 
 ## What it does
 
-- **Writes the wiki.** Parses the repository, builds a dependency graph, and writes notes for packages, modules, key types, startup flows, external integrations, patterns and operations, with Mermaid diagrams and illustrations.
+- **Writes the wiki.** Parses the repository, builds a dependency graph, and writes notes for packages, modules, key types, startup flows, external integrations, patterns and operations, with Mermaid diagrams. Your coding agent then explains each note and adds pictures to it.
 - **Keeps it current.** After new commits it rewrites only the notes whose source changed.
 - **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them.
 - **Answers agents.** An MCP server gives Claude Code and other agents the wiki, symbol detail, search, risk and impact analysis.
@@ -21,7 +21,7 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 
 Symbols are extracted for Rust, Python, TypeScript, JavaScript and Java. Other files are indexed by path.
 
-No LLM is required. Without one, CodeWiki writes each note from the comments in your code and from which function calls which. With one, a model improves the text, writes the answers and draws the illustrations of packages and flows; what it returns is checked against the house style before it is saved. [How a note is written](#how-a-note-is-written) says who writes what.
+CodeWiki calls no language model, and writing the wiki needs no API key. It writes each note from the comments in your code and from which function calls which. What a note cannot get from the code alone, such as what a thing is for and how it works, your coding agent writes through the plugin, and CodeWiki checks what the agent sends before it is saved. [How a note is written](#how-a-note-is-written) says who writes what.
 
 ## Parts
 
@@ -77,89 +77,54 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. A note opens with its illustration under the summary: a few figures and the steps of the note in short. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), the AI model, semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. A note that an agent explained shows its pictures inside the sections they explain: boxes joined by arrows, and marked key points. "Agent view" in the toolbar shows the note as a coding agent reads it. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
 
 Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. For more in `app.log`, choose a level in Settings → Diagnostics; `CODEWIKI_LOG=debug` does the same for any of the programs and wins over that choice. Set `CODEWIKI_LOG_DIR` to write the logs elsewhere.
 
 ### How a note is written
 
-Two writers can write a note.
+Two writers write a note, and each has its own sections.
 
-- **CodeWiki's own rules** always run. They read your code and never guess. They cost nothing and give the same note on every run. They copy what your comments say, and they list which function calls which.
-- **An AI model** runs only when you set one up (see [With an LLM](#with-an-llm)). It gets the note the rules wrote, with the source, and adds what rules cannot see: the condition a call stands under, a loop, what happens on an error, the reason for a design. It makes one call for each note.
+- **CodeWiki's own rules** always run. They read your code and never guess. They cost nothing and give the same note on every run. They copy what your comments say, and they list which function calls which. They write the facts: where the thing is, its items, what it depends on, who uses it.
+- **Your coding agent** writes the explanation: what the thing is for, how it works, what can go wrong. In Claude Code with the [plugin](#claude-code-plugin), run `/codewiki:write-notes`. The agent reads the note's source files, writes its sections and sends them. It never sends a whole note, so it cannot change a fact. CodeWiki itself calls no language model.
 
-So a wiki made with no AI model is complete, and it is as good as the comments in your code. To get better notes, write comments. A `//!` comment at the top of a Rust module (a docstring in Python, a `/** */` comment in TypeScript or Java) says what the module is for. A `///` comment above a function says what it does. The wiki copies both whole.
+So a wiki that no agent has explained is complete, and it is as good as the comments in your code. To get better notes without an agent, write comments. A `//!` comment at the top of a Rust module (a docstring in Python, a `/** */` comment in TypeScript or Java) says what the module is for. A `///` comment above a function says what it does. The wiki copies both whole.
 
 A note about a module, a package of your own or a type has these sections:
 
-| Section | What it holds | Where the text comes from |
+| Section | What it holds | Who writes it |
 |---|---|---|
-| Summary, the line under the title | What the thing is for, in one sentence | The first sentence of its comment |
-| What it does | The purpose, and what a user of the program sees of it | The rest of the comment |
-| Source | The file | The index |
-| How it works | Numbered steps: who calls in, and what that call does next | Which function calls which |
-| Items | Each function, type and constant, with its signature | The item's comment. For an item with no comment: what the code says of it, such as "private function, returns `String`; called by `enabled`" |
-| Depends on, Used by | The notes on either side | The index |
-| Gotchas | What a maintainer could get wrong | An AI model, or you |
+| Summary, the line under the title | What the thing is for, in one sentence | Rules: the first sentence of its comment |
+| What it does | The purpose, and what a user of the program sees of it | The agent. Until then, rules: the rest of the comment |
+| Source | The file | Rules: the index |
+| How it works | The path from a cause to its result, with conditions and error paths | The agent. Until then, rules: numbered steps of which function calls which |
+| Items | Each function, type and constant, with its signature | Rules: the item's comment. For an item with no comment: what the code says of it, such as "private function, returns `String`; called by `enabled`" |
+| Depends on, Used by | The notes on either side | Rules: the index |
+| Gotchas | What a maintainer could get wrong | The agent, or you |
+
+Other kinds of note divide the same way. In an integration note the agent writes What it does, Wire-up, Auth mode and Gotchas; in a flow or operations note, How it works and Gotchas, under the diagram or the commands that rules write; in a pattern note, Why and Don't.
 
 Three things to know when you read one:
 
-- **"Calls are listed in the order of the source."** The steps under How it works name calls in the order they stand in the file. The rules do not see an `if` or a loop, so "`set` calls `write`, then `remove`" can mean "one or the other". An AI model says which; so does the code.
+- **"Calls are listed in the order of the source."** The steps that rules write under How it works name calls in the order they stand in the file. The rules do not see an `if` or a loop, so "`set` calls `write`, then `remove`" can mean "one or the other". The agent's explanation says which; so does the code.
 - **Not every call is found.** A call through a value whose type the index cannot tell, such as a trait object or a callback, is left out and never guessed.
 - **A long list stops at 20 items** and says how many it leaves out. A private item with no comment that plays no part in the steps is left out first.
 
 A note about a package from outside the repository (an integration) says what the package is, which names each module takes from it, and which version and features each build file asks for. What the package is stands in no file of your repository. CodeWiki reads it from files a build left on the machine (cargo's download cache, `node_modules`), never from the network, and keeps it in `obsidian/.codewiki/packages.json`, so that the note reads the same on a machine that has not built the code. For a Python or Java package it knows the version only.
 
-**The illustration.** In the app, a note opens with a picture under its summary: a few figures, such as how many public items it has and how many notes use it, and the steps in short. For a module, a type or an outside package the picture is made from the same facts as the text, and no AI model draws it. A model may redraw the picture of a package of your own or of a flow.
+**Pictures.** The agent may give a section a picture: a row of numbered boxes joined by arrows that shows what happens from a cause to its result, and marked key points or warnings. The app draws it inside the section it explains. A picture is a short text kept beside the note, in `<Note>.openui`; the note's Markdown stays as it is, and Obsidian shows the note without the picture. A note has at most four pictures, and a note no agent has explained has none: rules cannot tell what a thing is for, so they draw nothing.
 
-**What a coding agent gets.** The MCP tool `read_note` gives an agent the same note without How it works: the agent reads the calls in the code it is about to edit. The note keeps what the code does not say: the purpose, what each item does, the gotchas, who depends on what. `read_note` with `full: true` gives the whole note.
+**When the code changes.** `codewiki update` writes the facts of an explained note anew and keeps the agent's sections and pictures as they are. The explanation was written from the files as they were, so the note is marked: its explanation may be behind. The app says so in the note's details, and such notes come first when an agent asks what waits. `/codewiki:write-notes changed` writes the notes about the files that changed. After a code change of its own, Claude writes the notes about the files it changed, at most three, without being asked.
 
-**Your edits.** A note you change by hand is yours from then on. CodeWiki never writes over it; when its code changes, the new text waits as a proposal that you approve or reject. After a CodeWiki update that changes how notes are written, every note you did not edit is written again. With an AI model set, that is one call for each note.
+**What CodeWiki checks.** A submission is refused, with every fault named, when a section is not one of the agent's, holds a `#` or `##` heading or more than 300 words, links to a note that does not exist, or breaks the house style; when a picture uses a component that does not exist or is too large; or when the note or its code changed since the agent read it.
 
-### With an LLM
+**What a coding agent gets.** The MCP tool `read_note` gives an agent a note without its pictures. While How it works is only the list of calls that rules write, it is left out too: the agent reads the calls in the code it is about to edit. Once an agent explained that section, it is always included. `read_note` with `full: true` gives the whole text. In the app, "Agent view" in a note's toolbar shows the same.
 
-| Variable | Values |
-|---|---|
-| `CODEWIKI_LLM` | `anthropic`, `openai`, `ollama`, `claude-cli`, `codex-cli`, `cliproxy`, `none` |
-| `CODEWIKI_MODEL` | Model name for the chosen provider |
-| `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENAI_BASE_URL` | Credentials and endpoint for the API providers |
-| `OLLAMA_HOST` | Address of Ollama; `http://127.0.0.1:11434` when not set |
-| `CODEWIKI_CLIPROXY_URL` | Address of CLIProxyAPI; `http://127.0.0.1:8317` when not set |
-| `CODEWIKI_CLIPROXY_KEY` | A client key from its `access.api-keys` |
-
-A note whose LLM call fails keeps the text CodeWiki's own rules wrote, and the next update asks again. A reply that comes back unusable (it breaks the house style) is not asked for again until the note's code changes.
-
-### CLIProxyAPI
-
-[CLIProxyAPI](https://github.com/router-for-me/CLIProxyAPI) is a separate program, MIT-licensed, that holds several Claude and Codex subscription logins and serves them behind one OpenAI-compatible address. For each request it takes the next account that is ready, and it rests an account that reached its usage limit. With it, a long update goes on across your accounts instead of stopping at the first limit.
-
-CodeWiki does not install, start or stop CLIProxyAPI, and it does not manage the proxy's accounts. You install and run the proxy, and add your accounts in it. CodeWiki connects to it with an address and a client key.
-
-1. Download the release for your system from its [releases page](https://github.com/router-for-me/CLIProxyAPI/releases) and unpack it.
-2. Copy `config.example.yaml` to `config.yaml` and set at least:
-
-   ```yaml
-   server:
-     host: "127.0.0.1"      # this machine only
-     port: 8317
-   management:
-     secret-key: "<a long random text>"   # opens the proxy's own panel
-   access:
-     api-keys:
-       - "<another long random text>"     # CodeWiki's client key
-   ```
-
-3. Start it: `cli-proxy-api -config config.yaml`.
-4. Add your accounts in the proxy itself, one per subscription. Either:
-   - open its panel at `http://127.0.0.1:8317/management.html` and enter the `secret-key`; or
-   - run `cli-proxy-api -config config.yaml -claude-login` or `-codex-login`.
-5. In the app, choose **CLIProxyAPI (Claude and Codex subscriptions)** under Settings → AI model, and enter the address and the client key. Pick the model from the list of models your accounts serve, then press Test. The page links to the proxy's panel for its accounts.
-
-When every account is at its limit, the proxy says so and the update stops. An update also stops when no account serves the chosen model, for example after its account was removed. The notes already written stay, the rest wait, and the wiki still reads as behind its code. The app shows "Sync stopped", how many notes wait and, when the proxy says, when an account is free again. The next update writes the notes that wait. `codewiki update` and the MCP tool `sync_wiki` report the same.
+**Your edits.** A note you change by hand is yours from then on. Neither CodeWiki nor an agent writes over it. When its code changes, the new text waits as a proposal that you approve or reject; what an agent writes for it waits the same way, with its pictures. After a CodeWiki update that changes how notes are written, the facts of every note you did not edit are written again; explanations stay.
 
 ### Search
 
-Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default: it matches word forms and needs no model), `builtin` (a model CodeWiki runs by itself, see below), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for `ollama` and `openai`, and for `builtin` the id of an installed model. After a change of embedder, search is full-text alone until the documents are embedded again: by the next `codewiki update`, or for a built-in model in the background.
+Search combines full-text matching with vectors. `CODEWIKI_EMBED` selects where vectors come from: `local` (default: it matches word forms and needs no model), `builtin` (a model CodeWiki runs by itself, see below), `ollama`, `openai` or `none`. `CODEWIKI_EMBED_MODEL` names the model for `ollama` and `openai`, and for `builtin` the id of an installed model. `OLLAMA_HOST` is the address of Ollama (`http://127.0.0.1:11434` when not set); `OPENAI_API_KEY` and `OPENAI_BASE_URL` are the key and the address for `openai`. These embed text for search only: nothing writes notes with them. After a change of embedder, search is full-text alone until the documents are embedded again: by the next `codewiki update`, or for a built-in model in the background.
 
 #### A built-in model
 
@@ -188,9 +153,11 @@ A backend that listens beyond its own machine does not let another machine insta
 
 ### Saved settings
 
-The variables above need not be set before every start: the same settings can be chosen in the app, under Settings → AI model and Settings → Semantic search, and take effect at once. Each has a Test button, which sends the chosen provider one small request and shows its answer or its error. A variable that is set wins over the saved value, and the page then shows the setting locked, with the variable's name.
+The variables above need not be set before every start: the same settings can be chosen in the app, under Settings → Semantic search, and take effect at once. Its Test button sends the chosen embedder one small request and shows its answer or its error. A variable that is set wins over the saved value, and the page then shows the setting locked, with the variable's name.
 
-The backend keeps them in `settings.json` in its data folder, so the command line and an agent's MCP bridge use them too. An API key is stored encrypted for your Windows user; the page shows only its last four characters, and nothing sends it back. Over HTTP, `GET /v1/settings` shows each setting and where its value comes from, `PUT /v1/settings` changes the saved ones, and `POST /v1/settings/test/llm` and `/test/embed` run the tests. A backend that listens beyond its own machine, as the one in Docker does, takes its settings from its variables only; the app shows them and cannot change them.
+The backend keeps them in `settings.json` in its data folder, so the command line and an agent's MCP bridge use them too. An API key is stored encrypted for your Windows user; the page shows only its last four characters, and nothing sends it back. Over HTTP, `GET /v1/settings` shows each setting and where its value comes from, `PUT /v1/settings` changes the saved ones, and `POST /v1/settings/test/embed` runs the test. A backend that listens beyond its own machine, as the one in Docker does, takes its settings from its variables only; the app shows them and cannot change them.
+
+Earlier versions could call a language model themselves, through `CODEWIKI_LLM`, `CODEWIKI_MODEL`, `ANTHROPIC_API_KEY` or CLIProxyAPI. Those settings have no effect any more. The backend removes them from `settings.json` when it starts, the saved keys with them, and its log names a variable that is still set.
 
 Settings → Backend saves the address and token of a backend in Docker or on another machine, in place of `CODEWIKI_URL` and `CODEWIKI_TOKEN`. "Connect" checks that it answers and takes the token before anything is saved. The app and the MCP bridge on this machine then both use it. If it stops answering, the app says so and offers "Use local backend"; it never goes back to a local backend by itself.
 
@@ -202,9 +169,9 @@ A developer can point a build at their own Sentry project with `SENTRY_DSN`; the
 
 ### Claude Code plugin
 
-The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the index, so that Claude reads what CodeWiki knows about the code before it explores the code by hand. It adds two things.
+The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the index, so that Claude reads what CodeWiki knows about the code before it explores the code by hand, and writes the explanations of the notes. It adds three things.
 
-**An MCP server.** The plugin runs `codewiki-mcp`, which starts a local backend on first use, or uses the one at `CODEWIKI_URL`. It gives Claude 24 tools:
+**An MCP server.** The plugin runs `codewiki-mcp`, which starts a local backend on first use, or uses the one at `CODEWIKI_URL`. It gives Claude 27 tools:
 
 | Purpose | Tools |
 |---|---|
@@ -213,15 +180,29 @@ The plugin in `plugins/claude-code/` connects Claude Code to the wiki and the in
 | Before and after a change | `get_risk`, `get_change_risk`, `get_blast_radius`, `get_impacted_tests` |
 | Code health | `get_hotspots`, `get_dead_code`, `get_health`, `get_coverage`, `get_security_findings`, `get_refactoring_plan`, `get_contracts` |
 | Upkeep | `sync_wiki` |
+| Writing notes | `list_waiting_notes`, `get_note_brief`, `submit_note` |
 
 `sync_wiki` follows the same rule as `codewiki update`: a note a person edited is never overwritten, and the change waits in the review queue.
 
-**A session-start briefing.** When a session starts or resumes, and after `/clear` or compaction, a hook runs `codewiki hook session-start`. Claude Code adds what it prints to Claude's context; it does not show in the chat. The briefing is four lines:
+**The skill `write-notes`**, which is also the command `/codewiki:write-notes`. With it Claude explains notes (see [How a note is written](#how-a-note-is-written)):
+
+```
+/codewiki:write-notes                      the first 5 notes that wait
+/codewiki:write-notes waiting 12           the first 12
+/codewiki:write-notes 01-Core/cw-parse/    the waiting notes of one folder
+/codewiki:write-notes "Scan Module"        one note
+/codewiki:write-notes changed              the notes about the files you changed
+```
+
+For each note Claude reads its source files, writes the sections that are its own and sends them with `submit_note`. Writing notes uses your Claude usage allowance: a note is a few file reads and one or two tool calls, and a first pass over a large repository is several hundred notes. Write a folder at a time.
+
+**A session-start briefing.** When a session starts or resumes, and after `/clear` or compaction, a hook runs `codewiki hook session-start`. Claude Code adds what it prints to Claude's context; it does not show in the chat. The briefing is four or five lines:
 
 1. how many notes the wiki has, and its home note, `obsidian/_HOME.md`;
 2. whether the wiki is up to date with `HEAD`. It is stale only when files outside `obsidian/` changed since the commit the wiki was written from, so committing the wiki itself does not make it stale. Without git, the line says the wiki cannot be compared;
 3. how many proposals wait for review;
-4. that `get_overview` and `get_context` answer from the wiki, and that Claude should call them before it explores the code by hand.
+4. how many notes wait for an explanation, when any does. The line states a count; it tells Claude to write notes when you ask, or for files it changed;
+5. that `get_overview` and `get_context` answer from the wiki, and that Claude should call them before it explores the code by hand.
 
 In a repository with no wiki yet, the briefing is two lines: there is no wiki, and `sync_wiki` writes one.
 
@@ -265,7 +246,7 @@ claude plugin marketplace remove codewiki
 
 ### Codex plugin
 
-The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and two skills:
+The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and two skills. It has no skill for writing notes yet: Codex reads the wiki, and the tools that write notes are there without a procedure for them.
 
 - `using-codewiki` says which tool to call at each step of a change, and when to write or refresh the wiki with `sync_wiki`;
 - `wiki-note-style` holds the house style of CodeWiki's notes, for when Codex edits a note in `obsidian/` by hand.

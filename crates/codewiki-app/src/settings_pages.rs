@@ -529,8 +529,13 @@ fn server_rows(model: &Model, settings: &Value, provider: &str) -> Vec<Block> {
 fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
     let entry = &settings["embed"]["model"];
     let chosen = entry["value"].as_str().unwrap_or("");
-    let listed = model
+    // A list of another server's models, read before the choice changed, is
+    // not offered.
+    let provider = settings["embed"]["provider"].get("value");
+    let current = model
         .embed_models
+        .filter(|models| provider.is_some_and(|chosen| models["provider"] == *chosen));
+    let listed = current
         .and_then(|models| models["models"].as_array())
         .filter(|models| !models.is_empty());
     let mut rows = Vec::new();
@@ -538,9 +543,12 @@ fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
         Some(models) => rows.push(Block::Select {
             label: "Model".into(),
             help: Some("The models the server lists; embedding ones come first".into()),
-            options: models
-                .iter()
-                .filter_map(|listed| listed["id"].as_str())
+            options: Some(chosen)
+                .filter(|chosen| {
+                    !chosen.is_empty() && !models.iter().any(|listed| listed["id"] == *chosen)
+                })
+                .into_iter()
+                .chain(models.iter().filter_map(|listed| listed["id"].as_str()))
                 .map(|id| Choice {
                     label: id.to_string(),
                     action: Action::SetSetting {
@@ -563,8 +571,7 @@ fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
                 "Model",
                 "The name the server knows the model by",
             ));
-            let problem = model
-                .embed_models
+            let problem = current
                 .filter(|models| models["reachable"] == false)
                 .and_then(|models| models["problem"].as_str());
             rows.extend(problem.map(|problem| Block::Alert {
@@ -1439,6 +1446,67 @@ mod tests {
         );
         assert!(doc.fields().contains(&FieldId::EmbedModel));
         assert!(doc.actions().contains(&Action::RefreshEmbedModels));
+    }
+
+    #[test]
+    fn a_model_that_is_not_listed_stays_chosen() {
+        let mut fixture = Fixture::new();
+        {
+            let settings = fixture.settings.as_mut().unwrap();
+            settings["embed"]["provider"]["value"] = json!("lmstudio");
+            settings["embed"]["model"]["value"] = json!("zzz");
+        }
+        fixture.embed_models = Some(json!({
+            "provider": "lmstudio", "reachable": true, "problem": null,
+            "models": [{ "id": "a", "embedding": true }, { "id": "b", "embedding": null }],
+        }));
+        let words = fixture.page(Category::Search).words();
+        assert!(words.contains("Model: zzz (zzz / a / b)"), "{words}");
+        // Without a model, none is claimed.
+        fixture.settings.as_mut().unwrap()["embed"]["model"]["value"] = json!(null);
+        let words = fixture.page(Category::Search).words();
+        assert!(words.contains("Model:  (a / b)"), "{words}");
+    }
+
+    #[test]
+    fn the_models_of_another_server_are_not_offered() {
+        let doc = search_with(
+            "ollama",
+            Some(json!({
+                "provider": "lmstudio", "reachable": true, "problem": null,
+                "models": [{ "id": "a", "embedding": true }],
+            })),
+        );
+        assert!(doc.fields().contains(&FieldId::EmbedModel));
+        assert!(doc.words().contains("Model: <typed>"), "{}", doc.words());
+    }
+
+    #[test]
+    fn a_model_set_by_the_environment_is_not_offered_for_choosing() {
+        let mut fixture = Fixture::new();
+        {
+            let settings = fixture.settings.as_mut().unwrap();
+            settings["embed"]["provider"]["value"] = json!("lmstudio");
+            settings["embed"]["model"] = json!({
+                "value": "a", "source": "env", "env": "CODEWIKI_EMBED_MODEL"
+            });
+        }
+        fixture.embed_models = Some(json!({
+            "provider": "lmstudio", "reachable": true, "problem": null,
+            "models": [{ "id": "a", "embedding": true }, { "id": "b", "embedding": null }],
+        }));
+        let doc = fixture.page(Category::Search);
+        let words = doc.words();
+        assert!(
+            words.contains(
+                "Model: a (a / b) [Set by CODEWIKI_EMBED_MODEL in the backend's environment]"
+            ),
+            "{words}"
+        );
+        assert!(!doc.actions().iter().any(|a| matches!(
+            a,
+            Action::SetSetting { section, field, .. } if section == "embed" && field == "model"
+        )));
     }
 
     /// The job as `GET /v1/embed/job` gives it.

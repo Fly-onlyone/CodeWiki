@@ -7,3 +7,7 @@ Read `AGENTS.md` first; it holds the project rules, commands, architecture and h
 ## IDE
 
 The project is opened in RustRover. Its MCP server is `mcp__rustrover__execute_tool`. Tool names differ from the IntelliJ ones: use `search_file`, `search_text`, `search_regex`, `search_symbol`, `get_file_problems`, `reformat_file`, `rename_refactoring`.
+
+## Formatting
+
+`reformat_file` formats Rust with RustRover's built-in formatter, not rustfmt, and `cargo fmt --all -- --check` then fails in CI. After editing a `.rs` file, run `get_file_problems`, then `cargo fmt --all`. `reformat_file` is fine for other files.

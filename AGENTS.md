@@ -72,7 +72,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
 
   `win32.rs` is the only module of the app with `unsafe` code. Keep every Win32 call of the app there. The workspace has two more such modules, each for one purpose: `cw_core::secret` and the `win32` module inside `crates/cw-models/src/game.rs`. Every `unsafe` block says why it is sound in a `// SAFETY:` comment above it; clippy (`undocumented_unsafe_blocks`) and `codewiki check` both report one without.
 - **One app per program.** Starting the app while it runs hands what the launch was asked to open to the running app, which shows its window, and the launch ends (`instance.rs`: a lock file the running app holds, and a line of JSON to a local port). "The same app" is the same program file, so an installed copy and a development build stay apart. `CODEWIKI_INSTANCE=new` starts a separate app whatever is running; a check or a test that must not bring another window to the front sets it. A launch that can neither take the lock nor reach the running app runs by itself after ten seconds: the app never refuses to start.
-- **Which repository the app opens.** The command line is `codewiki-app [--tray] [<folder> [<view>]] [--illustration]` (`startup.rs`); a flag may stand anywhere and is never taken for a folder. `--tray` starts with no window on screen, as Windows starts the app at sign-in. The first of these that applies:
+- **Which repository the app opens.** The command line is `codewiki-app [--tray] [<folder> [<view>]]` (`startup.rs`); a flag may stand anywhere and is never taken for a folder. `--tray` starts with no window on screen, as Windows starts the app at sign-in. The first of these that applies:
   1. The first argument that is not a flag.
   2. The working folder, only when it holds `.git` or a CodeWiki vault.
   3. The repository opened last.
@@ -85,6 +85,7 @@ CodeWiki is a Windows-only native desktop app plus a Rust backend that generates
   Never let a folder the user did not choose be registered: the backend would index all of it.
 - **Repositories whose folders are gone.** `GET /v1/repos` reports for each repository whether its folder still exists (`present`). The backend checks this, because the paths are on its machine. The app never forgets one by itself: a folder can be away for a while (a drive that is not plugged in, a share that is offline). Home lists such a repository under "Folder not found" with a Remove button, and only that button deletes it (`Action::ForgetRepo`, `DELETE /v1/repos/{id}`). The deletion forgets the repository only. The index files stay, and opening the folder again restores it under the same id.
 - **Generation.** `cw_wiki::service` holds the operations that the CLI, the server and the MCP tools share. `service::update` rescans the repository into the index, then `generate::generate` scans, plans, freezes names, renders, lints and writes. `cw_vault::lifecycle` decides for each note whether it is written, proposed or left alone. Bump `TEMPLATE_VERSION` in `crates/cw-wiki/src/generate.rs` when a rendering change should refresh every note.
+- **Illustrations and the agent's view.** An illustration is an OpenUI Lang program saved beside its note as `<Note>.openui`. `cw-illustrate` is the one list of components, so the generator, the check and the app's renderer (`crates/codewiki-app/src/illustration.rs`) cannot drift apart. The rules draw every illustration from facts. A writer redraws only a crate's or a flow's (`ProseWriter::illustrate`), and only when the note changed or has none. A drawing that fails `cw_illustrate::check` is never saved. The app shows it under the note's summary. `GET /v1/repos/{id}/note?view=agent` leaves `How it works` out of a module, crate or type note (`cw_wiki::query::agent_view`, `AGENT_OMITS`). MCP `read_note` asks for that view unless `full` is true. The backend cuts the note, so every client gets the same rule.
 - **The LLM plugs in from above.** `cw-wiki` defines the `ProseWriter` trait. `cw-llm` depends on `cw-wiki` and implements it as `LlmWriter`, so `cw-wiki` must never depend on `cw-llm`. Without a writer, a note keeps its structural draft. `rewrite` answers with a `Rewrite`:
   - `Text`: prose to lint and keep.
   - `Rejected`: an unusable reply. The draft stays until the inputs change.
@@ -181,13 +182,13 @@ Check crate APIs against docs.rs or the crate source for the pinned version befo
 
 ## Checking the app without taking focus
 
-Start `codewiki-app <repo> <view>` with `CODEWIKI_INSTANCE=new` in its environment (without it, the launch hands over to an app that is already running, and that one comes to the front), where `<view>` is a note name or one of `home:` (the default), `graph:`, `palette:<query>` (opened over Home), `edit:<note>`, `settings:` or `settings:<category>` (`appearance`, `ai`, `search`, `backend`, `repositories`, `updates`, `keyboard`, `diagnostics`), `themes:`, `health:`, `contracts:` and similar. `_HOME` opens the wiki map note. Capture the window with `PrintWindow` and post input with `PostMessage`; do not bring the window to the front, and never capture the whole screen.
+Start `codewiki-app <repo> <view>` with `CODEWIKI_INSTANCE=new` in its environment (without it, the launch hands over to an app that is already running, and that one comes to the front), where `<view>` is a note name or one of `home:` (the default), `graph:`, `palette:<query>` (opened over Home), `edit:<note>`, `settings:` or `settings:<category>` (`appearance`, `ai`, `search`, `backend`, `repositories`, `updates`, `keyboard`, `diagnostics`), `themes:`, `health:`, `contracts:` and similar. `_HOME` opens the wiki map note. Capture the window with `PrintWindow` and post input with `PostMessage`; do not bring the window to the front, and never capture the whole screen. Start it with `System.Diagnostics.ProcessStartInfo` (`UseShellExecute = false`, `CreateNoWindow = true`, the environment through `.Environment`). `Start-Process -WindowStyle Hidden` hides the GPUI window itself: there is then no window to capture or post keys to.
 
 The window is glass over the Windows backdrop, which a capture cannot see. Set `CODEWIKI_BACKDROP=#RRGGBB` to paint an opaque color under the glass, `CODEWIKI_BACKDROP_DRIFT=1` to keep the backdrop drifting while the window is inactive, and `CODEWIKI_MOTION_SCALE=<n>` to slow every animation by `n` so that a capture can catch one half way. Closing the app's window (`WM_CLOSE`) hides it and ends nothing. To end the app and its backend, start it on `palette:Quit CodeWiki` and post Enter (`WM_KEYDOWN`, `0x0D`), or end it by force and stop its backend (`POST /v1/shutdown` with the token from `backend.json`). An app ended by force (`taskkill`, a crash) leaves its backend running; stop that one too when a check ends. Give a check its own `CODEWIKI_DATA_DIR` and `APPDATA`, so that it shares no backend, no settings and no instance with the owner's app. What needs the window brought to the front (a click on the tray icon, the tray menu, a second launch without `--tray`) is checked in the VM, not here.
 
 ## Testing a package in a clean Windows
 
-`scripts/vm` drives a Hyper-V guest from the host: `provision.ps1` installs Windows unattended and takes the checkpoint `clean`; `provision-gpu.ps1` adds the checkpoint `clean-gpu`, the same guest with the host's graphics driver in it; `test-release.ps1` restores `clean` (or, with `-Gpu`, `clean-gpu` and attaches a share of the host's graphics card; `-VmName`, `-User`, `-Password` and `-Snapshot` name another guest, account and checkpoint), installs the newest zip in `dist\`, runs the cases and writes `report\vm-test-<date>\` (screenshots, a recording, `logs\results.json`). `Vm.ps1` holds the helpers, `record.ps1` films the screen, `guest\probe.ps1` runs inside the guest and reports what is installed and running. A run ends with a `report.md` in that folder that opens with a summary. `report\` is not in git; on the development machine `report\vm-test-2026-11-13-hyperv\report.md` is the model. It needs the account in "Hyper-V Administrators", `oscdimg.exe` from the Windows ADK for provisioning, and `ffmpeg` for the recording.
+`scripts/vm` drives a Hyper-V guest from the host: `provision.ps1` installs Windows unattended and takes the checkpoint `clean`; `provision-gpu.ps1` adds the checkpoint `clean-gpu`, the same guest with the host's graphics driver in it; `test-release.ps1` restores `clean` (or, with `-Gpu`, `clean-gpu` and attaches a share of the host's graphics card; `-VmName`, `-User`, `-Password` and `-Snapshot` name another guest, account and checkpoint), installs the newest zip in `dist\`, runs the cases and writes `report\vm-test-<date>\` (screenshots, a recording, `logs\results.json`). `Vm.ps1` holds the helpers, `record.ps1` films the screen, `guest\probe.ps1` runs inside the guest and reports what is installed and running. A run ends with a `report.md` in that folder that opens with a summary. `report\` is not in git; on the development machine `report\vm-test-2026-11-18-0.2.0\report.md` is the model. It needs the account in "Hyper-V Administrators", `oscdimg.exe` from the Windows ADK for provisioning, and `ffmpeg` for the recording.
 
 What the first runs taught, and the scripts now assume:
 
@@ -217,6 +218,57 @@ What the first runs taught, and the scripts now assume:
 - A script sent to the guest runs in Windows PowerShell 5.1 and prints nothing at all when it does not parse. `"$what: ..."` does not parse there: it reads as a variable on a drive. Write `"${what}: ..."`. A case with empty output is a script that never ran.
 - The host's graphics driver changes without notice (Windows Update did it in the middle of a day's work). With `-Gpu -RefreshGpuDriver` the run copies the host's driver into the guest when the checkpoint holds an older one, and leaves the checkpoint as it is; `provision-gpu.ps1 -Force` is what retakes the checkpoint.
 - The script checks exit codes, files and processes. What a page looks like is known only from reading the screenshots; read every one a report cites.
+
+## Releasing
+
+The `qingyi:ship-release` skill runs a release and reads its facts from this section.
+
+- **Checks.** The four commands under Commands.
+- **Version.** `version` in the root `Cargo.toml`, the `version = "<old>", path` requirements in `crates/*/Cargo.toml`, `plugins/claude-code/.claude-plugin/plugin.json` and `plugins/codex/.codex-plugin/plugin.json`; `crates/codewiki/tests/plugins.rs` fails when a plugin is missed. Then run `cargo check --workspace` once without `--locked`: it rewrites `Cargo.lock`, which the package build and CI then hold to. Commit as `chore(release)`.
+- **Previous package.** Before the bump: `gh release download v<previous> --repo Fly-onlyone/CodeWiki --pattern "*.zip*" --dir dist\old`, then check it against its `.sha256`. A package built before the bump has the old version's name and replaces the zip in `dist\`.
+- **Package.** `pwsh scripts\package.ps1`.
+- **Publish.** After the push, wait for `ci.yml` and `security.yml`. The tag `v<version>` starts `release.yml` and `docker.yml`; `gh release view v<version>` then shows the zip and its `.sha256`.
+- **Docs.** `ROADMAP.md` (date, crate and test counts, what is now verified, the VM run), `README.md` (status line, features), this file (what a later agent must know about the new parts), and the wiki: `cargo run -p codewiki -- update` at the repository root, with `obsidian/` committed as `docs(wiki)`.
+- **Clean-up.** `pwsh scripts\clean.ps1`.
+
+### The guest run on the development machine
+
+- VM `Tiny 11`, account `Software Tester` with an empty password, checkpoints `Clean GPU` (the host's graphics driver in it) and `Clean` (none). The rig's defaults are other names; pass these every time.
+- Passes: the GPU pass on `Clean GPU`, and both passes when drawing or motion changed. `-Hardened` always. `-Plugin` hands the user's Claude login to the guest: ask each time.
+- The run, in the background; the script writes no log of its own, so read this one. A full pass takes about 45 minutes, the plugin cases included.
+
+```
+pwsh scripts\vm\test-release.ps1 -VmName "Tiny 11" -User "Software Tester" -Password "" `
+    -Snapshot "Clean GPU" -Gpu -Hardened -Plugin -MemoryMb 3072 `
+    -Zip dist\CodeWiki-<version>-windows-x64.zip -OldZip dist\old\CodeWiki-<previous>-windows-x64.zip `
+    -Report report\vm-test-<date>-<version> *> report\vm-test-<date>-<version>.log
+```
+
+- `-MemoryMb 3072`: with 4096 MB, Claude Code stopped the run for lack of memory on this 16 GB host.
+- The checkpoints carry no git. Keep it so: the cases B1 and D2 need a Windows without it.
+- Check the host's Claude token before the run: the plugin cases refuse one that ends within 20 minutes.
+- A build of minutes ago is refused under `-Hardened` (S3 records it and goes on); the same build two days later was let through. Neither fails the run.
+- To read 100 screenshots, make contact sheets of six with ffmpeg (`xstack`) and read those; open a single picture only where a sheet is not enough.
+- Pass `-Zip`: the default is the newest zip in `dist\`, which is not always the one meant.
+- A rerun gets a new `-Report` folder; the script empties the screenshots of a folder it is given again. `-Only A1,C1` runs single cases after the usual setup; most cases build on earlier ones.
+- The script stops the guest at its end, but not when it fails during setup. Afterwards: `Get-VM "Tiny 11"`; when it is not `Off`, `Stop-VM -Name "Tiny 11" -Force`.
+- Keeping the guest current, as under "A checkpoint goes stale" above: `Update-GuestWindows -Pattern '^(?!.*(Preview|Windows 11, version)).*$'`, rename the old checkpoint to `<name> (before update <date>)`. Delete an old checkpoint only when the user says so.
+- Against the published release, after the tag. R1 downloads the package in the guest and compares it with `-Zip` and with its `.sha256`; U2 installs the previous version and lets it update itself from the real GitHub:
+
+```
+gh release download v<version> --repo Fly-onlyone/CodeWiki --pattern "*.zip*" --dir <scratchpad folder>
+pwsh scripts\vm\test-release.ps1 -VmName "Tiny 11" -User "Software Tester" -Password "" `
+    -Snapshot "Clean GPU" -Gpu -Zip <scratchpad folder>\CodeWiki-<version>-windows-x64.zip `
+    -OldZip dist\old\CodeWiki-<previous>-windows-x64.zip -ReleaseTag v<version> -RealRelease -Only R1,U2 `
+    -Report report\vm-test-<date>-<version>-published *> report\vm-test-<date>-<version>-published.log
+```
+
+### Traps of this machine
+
+- Until 2026-11-19 the repository was in a folder Proton Drive syncs, and it renamed `.git\HEAD`, refs and working files to "<name> (# Name clash …)" copies. It is now on `D:\`, outside that folder. Should "Name clash" files appear again, `D:\proton-fix-name-clash.ps1` puts them back.
+- The same copies inside `target\` stop rustc ("required to be available in rlib format"): `cargo clean` and build again.
+- Two sessions that build share cargo's lock on `target\`; a check that seems to hang is waiting for the other.
+- A worktree under `.claude\worktrees\` builds into its own `target\`. Never set `CARGO_TARGET_DIR` to the main checkout's: its `codewiki.exe` and `codewiki-app.exe` would replace the owner's dev programs.
 
 ## App look
 

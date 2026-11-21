@@ -398,7 +398,7 @@ async fn a_saved_setting_is_reported_and_takes_effect() {
     assert_eq!(settings["embed"]["model"]["value"], Value::Null);
     assert_eq!(settings["embed"]["model"]["source"], "default");
     // The embedder then takes its own default model.
-    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
+    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma+gemma");
 
     // Blank text clears as well.
     let settings = h
@@ -641,7 +641,7 @@ async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
         .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
         .await;
     assert_eq!(settings["embed"]["model"]["value"], Value::Null);
-    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
+    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma+gemma");
     // And the built-in one does not inherit a model name as its catalog id:
     // it waits for a model instead.
     h.put(
@@ -663,7 +663,7 @@ async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
         .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
         .await;
     assert_eq!(settings["embed"]["model"]["value"], Value::Null);
-    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma");
+    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma+gemma");
     assert_eq!(settings["embed"]["problem"], Value::Null);
     h.put(
         "/v1/settings",

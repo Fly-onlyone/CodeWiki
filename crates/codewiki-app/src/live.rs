@@ -7,8 +7,7 @@
 use serde_json::Value;
 
 use crate::doc::{
-    Action, Block, Cell, Column, Doc, Line, Press, Row, Span, Stat, Table, code, file, rich,
-    strong, text,
+    Action, Block, Cell, Column, Doc, Line, Press, Row, Stat, Table, code, file, rich, strong, text,
 };
 use crate::icons;
 use crate::mui::feedback::Tone;
@@ -460,59 +459,6 @@ pub struct HomeInput<'a> {
     /// The newer version that waits to be installed. Home has no toolbar,
     /// where the offer otherwise is.
     pub update: Option<&'a str>,
-    /// The built-in embedding model to offer, when one is to be offered.
-    pub model_offer: Option<&'a ModelOffer>,
-}
-
-/// The offer of a built-in embedding model on Home.
-#[derive(Debug, Clone, PartialEq)]
-pub struct ModelOffer {
-    /// Catalog id of the model recommended for the backend's machine.
-    pub id: String,
-    pub name: String,
-    /// Its download, as a person reads it.
-    pub size: String,
-    /// Why this model, in a sentence.
-    pub reason: String,
-    /// Whether it is being downloaded right now.
-    pub downloading: bool,
-}
-
-/// The model Home offers, from what the backend says about its models
-/// (`GET /v1/models`). There is an offer only for someone who searches with
-/// the embedder that needs no model, has no model installed, and has not
-/// turned the offer down. Once a model is installed the offer is gone: the
-/// settings are then where its models are.
-pub fn model_offer(models: &Value, dismissed: bool) -> Option<ModelOffer> {
-    // Offered over the embedder that needs no model, and to a built-in one
-    // that still waits for its model.
-    if dismissed
-        || models["available"] != true
-        || !matches!(models["embedder"].as_str(), Some("local" | "builtin"))
-    {
-        return None;
-    }
-    let listed = models["models"].as_array()?;
-    if listed.iter().any(|entry| entry["installed"] == true) {
-        return None;
-    }
-    let id = models["recommended"]["model"].as_str()?;
-    let entry = listed.iter().find(|entry| entry["id"] == id)?;
-    let megabytes = entry["size"].as_u64().unwrap_or(0) as f64 / (1024.0 * 1024.0);
-    Some(ModelOffer {
-        id: id.to_string(),
-        name: entry["name"].as_str().unwrap_or(id).to_string(),
-        size: if megabytes >= 1024.0 {
-            format!("{:.1} GB", megabytes / 1024.0)
-        } else {
-            format!("{megabytes:.0} MB")
-        },
-        reason: models["recommended"]["reason"]
-            .as_str()
-            .unwrap_or_default()
-            .to_string(),
-        downloading: models["job"]["phase"] == "downloading" && models["job"]["model"] == id,
-    })
 }
 
 /// The page the app starts on: a way to open a folder, and every registered
@@ -534,37 +480,6 @@ pub fn home_page(home: &HomeInput) -> Doc {
             tone: Tone::Info,
             text: format!("{name} has no wiki yet. Sync indexes its code and writes one."),
             button: Some(("Sync".into(), Action::Sync)),
-        });
-    }
-    if let Some(offer) = home.model_offer {
-        let mut body = vec![Block::Text(vec![text(format!(
-            "CodeWiki can run a model on this machine that finds notes and code by what they \
-             mean, not only by the words in them. For this machine: {} ({}). {}",
-            offer.name, offer.size, offer.reason
-        ))])];
-        // Home shows that it is on its way, not how far: a page that changed
-        // every second would jump back to its top every second.
-        body.push(if offer.downloading {
-            Block::Text(vec![
-                text("It is being downloaded. "),
-                Span::Link {
-                    label: "Settings".into(),
-                    code: false,
-                    action: Action::Settings(Some(Category::Search)),
-                },
-                text(" shows how far it is."),
-            ])
-        } else {
-            Block::Buttons(vec![
-                Press::new("Install", Action::InstallModel(offer.id.clone())).primary(),
-                Press::new("More in Settings", Action::Settings(Some(Category::Search))),
-                Press::new("Not now", Action::DismissModelHint),
-            ])
-        });
-        doc.push(Block::Card {
-            title: "Search by meaning".into(),
-            chips: Vec::new(),
-            body,
         });
     }
     doc.push(Block::Rows(vec![
@@ -722,7 +637,6 @@ mod tests {
             no_wiki: None,
             missing: &[],
             update: None,
-            model_offer: None,
         }
     }
 
@@ -853,107 +767,6 @@ mod tests {
 
         let page = home_page(&home(&[ALPHA], &[]));
         assert!(!page.actions().contains(&Action::InstallUpdate));
-    }
-
-    /// What a backend says about its models before one is installed, on a
-    /// machine the balanced model is recommended for.
-    fn models() -> Value {
-        json!({
-            "available": true,
-            "embedder": "local",
-            "recommended": {
-                "model": "gte-modernbert-base", "device": "cpu",
-                "reason": "16.0 GB of memory and 12 processor cores.",
-            },
-            "models": [
-                { "id": "granite-small-english-r2", "name": "Granite Small",
-                  "size": 98_916_591u64, "installed": false },
-                { "id": "gte-modernbert-base", "name": "GTE ModernBERT Base",
-                  "size": 301_625_980u64, "installed": false },
-            ],
-            "job": null,
-        })
-    }
-
-    #[test]
-    fn home_offers_the_recommended_model_until_one_is_installed_or_it_is_turned_down() {
-        let offer = model_offer(&models(), false).expect("an offer");
-        assert_eq!(
-            offer,
-            ModelOffer {
-                id: "gte-modernbert-base".into(),
-                name: "GTE ModernBERT Base".into(),
-                size: "288 MB".into(),
-                reason: "16.0 GB of memory and 12 processor cores.".into(),
-                downloading: false,
-            }
-        );
-        let page = home_page(&HomeInput {
-            model_offer: Some(&offer),
-            ..home(&[ALPHA], &[])
-        });
-        assert!(page.headings().contains(&"Search by meaning"));
-        let words = page.words();
-        assert!(
-            words.contains(
-                "For this machine: GTE ModernBERT Base (288 MB). 16.0 GB of memory and 12 processor cores."
-            ),
-            "{words}"
-        );
-        assert!(
-            words.contains("Install | More in Settings | Not now"),
-            "{words}"
-        );
-        let actions = page.actions();
-        assert!(actions.contains(&Action::InstallModel("gte-modernbert-base".into())));
-        assert!(actions.contains(&Action::Settings(Some(Category::Search))));
-        assert!(actions.contains(&Action::DismissModelHint));
-
-        // While it downloads, Home says so and offers nothing to press but
-        // the way to the page that shows how far it is.
-        let mut busy = models();
-        busy["job"] = json!({ "phase": "downloading", "model": "gte-modernbert-base" });
-        let offer = model_offer(&busy, false).expect("still an offer");
-        assert!(offer.downloading);
-        let page = home_page(&HomeInput {
-            model_offer: Some(&offer),
-            ..home(&[ALPHA], &[])
-        });
-        assert!(page.words().contains("It is being downloaded."));
-        assert!(
-            !page
-                .actions()
-                .iter()
-                .any(|action| matches!(action, Action::InstallModel(_)))
-        );
-
-        // No offer: turned down; another embedder chosen; a model on the
-        // disk; nothing recommended; a backend without an engine.
-        assert_eq!(model_offer(&models(), true), None);
-        let mut other = models();
-        other["embedder"] = json!("ollama");
-        assert_eq!(model_offer(&other, false), None);
-        let mut installed = models();
-        installed["models"][0]["installed"] = json!(true);
-        assert_eq!(model_offer(&installed, false), None);
-        let mut none = models();
-        none["recommended"]["model"] = Value::Null;
-        assert_eq!(model_offer(&none, false), None);
-        assert_eq!(model_offer(&json!({ "available": false }), false), None);
-        // And Home without an offer has no such card.
-        let page = home_page(&home(&[ALPHA], &[]));
-        assert!(!page.headings().contains(&"Search by meaning"));
-    }
-
-    #[test]
-    fn home_offers_a_model_while_the_built_in_embedder_waits_for_one() {
-        let mut waiting = models();
-        waiting["embedder"] = json!("builtin");
-        let offer = model_offer(&waiting, false).expect("an offer");
-        assert_eq!(offer.id, "gte-modernbert-base");
-        // Once one is installed, the page that chooses it is in Settings.
-        waiting["models"][0]["installed"] = json!(true);
-        assert_eq!(model_offer(&waiting, false), None);
     }
 
     #[test]

@@ -22,8 +22,8 @@ pub struct Backend {
     pub updating: Vec<String>,
     /// When an agent's MCP bridge last called.
     pub bridge: Bridge,
-    /// What the backend is doing with a built-in embedding model, in a few
-    /// words, while it is doing something.
+    /// What the backend's embedding job is doing, in a few words, while it
+    /// runs.
     pub model_job: Option<String>,
 }
 
@@ -63,18 +63,14 @@ pub fn parse(body: &Value) -> Backend {
     }
 }
 
-/// What a job on a built-in embedding model is doing, in a few words; `None`
-/// when none runs. An older backend says nothing of it.
+/// What the embedding job is doing, in a few words; `None` when none runs.
+/// An older backend says nothing of it.
 fn model_job_text(job: &Value) -> Option<String> {
-    let repo = job["repo"].as_str();
     match job["phase"].as_str()? {
-        "downloading" => Some("Downloading a search model".to_string()),
-        "switching" => Some("Setting up a search model".to_string()),
-        "embedding" => Some(match repo {
+        "embedding" => Some(match job["repo"].as_str() {
             Some(repo) => format!("Embedding {repo} for search"),
             None => "Embedding for search".to_string(),
         }),
-        "paused" => Some("Embedding paused for a game".to_string()),
         _ => None,
     }
 }
@@ -229,17 +225,18 @@ mod tests {
     fn work_on_a_model_is_said_when_nothing_else_is_going_on() {
         let job = |job: Value| parse(&json!({ "now": 5, "model_job": job })).model_job;
         assert_eq!(
-            job(json!({ "phase": "downloading", "model": "gte-modernbert-base" })).as_deref(),
-            Some("Downloading a search model")
-        );
-        assert_eq!(
             job(json!({ "phase": "embedding", "repo": "alpha" })).as_deref(),
             Some("Embedding alpha for search")
         );
         assert_eq!(
-            job(json!({ "phase": "paused", "repo": "alpha" })).as_deref(),
-            Some("Embedding paused for a game")
+            job(json!({ "phase": "embedding" })).as_deref(),
+            Some("Embedding for search")
         );
+        // A phase that is over, or one an older backend had, says nothing; no
+        // text mentions a game.
+        for phase in ["done", "failed", "cancelled", "paused", "downloading"] {
+            assert_eq!(job(json!({ "phase": phase, "repo": "alpha" })), None);
+        }
         // No job, and a backend from before it had any.
         assert_eq!(job(Value::Null), None);
         assert_eq!(parse(&json!({ "now": 5 })).model_job, None);

@@ -41,11 +41,8 @@ use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update, zoo
 
 /// The name the app's log level is saved under (`prefs.rs`).
 pub const LOG_LEVEL_PREF: &str = "log_level";
-/// File of the app's settings that says the offer of a built-in model on
-/// Home was turned down.
-pub const MODEL_HINT: &str = "model_hint";
-/// How long the app waits before it asks again how far a model's job is.
-const MODELS_PAUSE: std::time::Duration = std::time::Duration::from_secs(1);
+/// How long the app waits before it asks again how far the embedding job is.
+const JOB_PAUSE: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// The list of a select that is open.
 struct OpenMenu {
@@ -76,17 +73,11 @@ pub struct State {
     /// Saved secrets whose input is open to take another in their place.
     typing: HashSet<FieldId>,
     embed_test: Tested,
-    /// The backend's built-in embedding models (`GET /v1/models`), once
-    /// they have arrived. Home reads it too, for its offer.
-    pub(crate) models: Option<Value>,
-    /// Why they could not be read.
-    models_error: Option<String>,
-    /// Why the last thing asked of a model was refused.
-    models_note: Option<String>,
-    /// Whether the loop that asks again while a job runs is going.
-    models_watched: bool,
-    /// Whether the offer of a built-in model on Home was turned down.
-    pub(crate) model_hint_dismissed: bool,
+    /// The embedding job (`GET /v1/embed/job`): the one that runs, or the
+    /// last that ran. `None` when there is none, or on a backend elsewhere.
+    embed_job: Option<Value>,
+    /// Whether the loop that asks again while the job runs is going.
+    embed_job_watched: bool,
     /// The news about the last try to connect to a backend elsewhere.
     connect: Option<Note>,
     menu: Option<OpenMenu>,
@@ -113,6 +104,8 @@ impl State {
             ));
             fields.insert(id, input);
         }
+        // The offer of a built-in model on Home is gone, and so is its mark.
+        prefs::remove("model_hint");
         let menu_focus = cx.focus_handle();
         // Tab moves the focus on from the list, which then closes.
         subscriptions.push(cx.on_blur(&menu_focus, window, |this, _, cx| {
@@ -130,11 +123,8 @@ impl State {
             notes: HashMap::new(),
             typing: HashSet::new(),
             embed_test: Tested::Not,
-            models: None,
-            models_error: None,
-            models_note: None,
-            models_watched: false,
-            model_hint_dismissed: prefs::read(MODEL_HINT).is_some(),
+            embed_job: None,
+            embed_job_watched: false,
             connect: None,
             menu: None,
             menu_focus,
@@ -199,32 +189,20 @@ fn change(section: &str, field: &str, value: Value) -> Value {
     json!({ section: { field: value } })
 }
 
-/// Whether a change touches the embedder, after which what the backend said
-/// about its models (the one in use, the embedder chosen) is out of date.
+/// Whether a change touches the embedder, after which the job the app last
+/// read may be out of date.
 fn changes_the_embedder(body: &Value) -> bool {
     body.get("embed").is_some()
 }
 
-/// Whether the models tell of another embedder than the settings read
-/// before: a job switched it since.
-fn settings_behind(models: &Value, settings: Option<&Value>) -> bool {
-    let Some(settings) = settings else {
-        return false;
-    };
-    if models["available"] != true {
-        return false;
-    }
-    let embed = &settings["embed"];
-    if models["embedder"] != embed["provider"]["value"] {
-        return true;
-    }
-    let active = models["models"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .find(|entry| entry["active"] == true)
-        .map(|entry| &entry["id"]);
-    active.is_some_and(|id| *id != embed["model"]["value"])
+/// The job in the body of an answer from the job routes; `None` for `null`.
+fn job_in(body: &Value) -> Option<Value> {
+    Some(body["job"].clone()).filter(|job| !job.is_null())
+}
+
+/// Whether a job that ran has ended: the settings are read again then.
+fn job_ended(before: Option<&Value>, after: Option<&Value>) -> bool {
+    before.is_some_and(settings_pages::job_runs) && !after.is_some_and(settings_pages::job_runs)
 }
 
 impl AppView {
@@ -256,7 +234,9 @@ impl AppView {
             .pending
             .insert(FieldId::RemoteToken, String::new());
         self.load_settings(cx);
-        self.load_models(cx);
+        if category == Category::Search {
+            self.load_embed_job(cx);
+        }
         cx.notify();
     }
 
@@ -266,8 +246,8 @@ impl AppView {
         self.commit_settings_fields(cx);
         self.settings.menu = None;
         if category == Category::Search {
-            // What is installed may have changed outside the app.
-            self.load_models(cx);
+            // A Sync may have set a job going since.
+            self.load_embed_job(cx);
         }
         self.settings.last = category;
         self.page = Page::Settings(category);
@@ -319,83 +299,52 @@ impl AppView {
         .detach();
     }
 
-    /// Ask the backend for its built-in embedding models, and go on asking
-    /// while a job runs. A backend on another machine keeps its models to
-    /// itself, and is not asked.
-    pub(crate) fn load_models(&mut self, cx: &mut Context<Self>) {
+    /// Ask the backend for the embedding job (`GET /v1/embed/job`), and go on
+    /// asking while it runs. A backend on another machine refuses to say, and
+    /// is not asked.
+    pub(crate) fn load_embed_job(&mut self, cx: &mut Context<Self>) {
         if self.backend.as_ref().is_none_or(Backend::is_remote) {
-            self.settings.models = None;
-            self.settings.models_error = None;
+            self.settings.embed_job = None;
             return;
         }
         self.settings_request(
             cx,
-            |backend| backend.get("/v1/models"),
+            |backend| backend.get("/v1/embed/job"),
             |this, result, cx| match result {
-                Ok(models) => this.take_models(models, cx),
-                Err(error) => {
-                    log::warn!("could not read the backend's models: {error}");
-                    this.settings.models_error = Some(error);
-                }
+                Ok(body) => this.take_embed_job(job_in(&body), cx),
+                Err(error) => log::warn!("could not read the embedding job: {error}"),
             },
         );
     }
 
-    /// Keep what the backend says about its models.
-    fn take_models(&mut self, models: Value, cx: &mut Context<Self>) {
-        let ran = self
-            .settings
-            .models
-            .as_ref()
-            .is_some_and(settings_pages::job_runs);
-        let runs = settings_pages::job_runs(&models);
-        let behind = settings_behind(&models, self.settings.backend.as_ref());
-        self.settings.models = Some(models);
-        self.settings.models_error = None;
+    /// Keep what the backend says about the job.
+    fn take_embed_job(&mut self, job: Option<Value>, cx: &mut Context<Self>) {
+        let ended = job_ended(self.settings.embed_job.as_ref(), job.as_ref());
+        let runs = job.as_ref().is_some_and(settings_pages::job_runs);
+        self.settings.embed_job = job;
         if runs {
-            self.watch_models(cx);
+            self.watch_embed_job(cx);
         }
-        // The job that ended may have changed the embedder, and one under
-        // way switches it before it embeds, which can take minutes.
-        if (ran && !runs) || behind {
+        // A job that ended may have changed what the settings say.
+        if ended {
             self.load_settings(cx);
         }
     }
 
-    /// Ask for the models again in a moment. One such wait at a time.
-    fn watch_models(&mut self, cx: &mut Context<Self>) {
-        if self.settings.models_watched {
+    /// Ask for the job again in a moment. One such wait at a time.
+    fn watch_embed_job(&mut self, cx: &mut Context<Self>) {
+        if self.settings.embed_job_watched {
             return;
         }
-        self.settings.models_watched = true;
+        self.settings.embed_job_watched = true;
         cx.spawn(async move |this, cx| {
-            cx.background_executor().timer(MODELS_PAUSE).await;
+            cx.background_executor().timer(JOB_PAUSE).await;
             _ = this.update(cx, |this, cx| {
-                this.settings.models_watched = false;
-                this.load_models(cx);
+                this.settings.embed_job_watched = false;
+                this.load_embed_job(cx);
             });
         })
         .detach();
-    }
-
-    /// Ask the backend to do something with a model, and show the models
-    /// as they are afterwards. What it refuses is said above the models.
-    fn model_request(
-        &mut self,
-        cx: &mut Context<Self>,
-        work: impl FnOnce(&Backend) -> Result<Value, String> + Send + 'static,
-    ) {
-        self.settings.models_note = None;
-        cx.notify();
-        self.settings_request(cx, work, |this, result, cx| {
-            if let Err(error) = result {
-                log::warn!("the backend refused a model request: {error}");
-                this.settings.models_note = Some(error);
-            }
-            this.load_models(cx);
-            // Removing a model in use changes the embedder.
-            this.load_settings(cx);
-        });
     }
 
     /// Ask the backend for its settings.
@@ -529,8 +478,8 @@ impl AppView {
                 (Ok(settings), field) => {
                     this.take_settings(settings);
                     if embedder {
-                        // The model shown in use may no longer be.
-                        this.load_models(cx);
+                        // A new embedder may have set a job going.
+                        this.load_embed_job(cx);
                     }
                     // What the embedder was tested as may no longer be what
                     // is chosen.
@@ -728,27 +677,19 @@ impl AppView {
                 }
                 cx.notify();
             }
-            Action::InstallModel(id) => {
-                let path = format!("/v1/models/{id}/install");
-                log::info!("installing the model {id}");
-                self.model_request(cx, move |backend| backend.post(&path, &json!({})));
-            }
-            Action::UseModel(id) => {
-                let path = format!("/v1/models/{id}/use");
-                self.model_request(cx, move |backend| backend.post(&path, &json!({})));
-            }
-            Action::RemoveModel(id) => {
-                let path = format!("/v1/models/{id}");
-                log::info!("removing the model {id}");
-                self.model_request(cx, move |backend| backend.delete(&path));
-            }
-            Action::CancelModelJob => {
-                self.model_request(cx, |backend| backend.post("/v1/models/cancel", &json!({})));
-            }
-            Action::DismissModelHint => {
-                prefs::write(MODEL_HINT, "dismissed");
-                self.settings.model_hint_dismissed = true;
-                cx.notify();
+            Action::CancelEmbedJob => {
+                log::info!("cancelling the embedding job");
+                self.settings_request(
+                    cx,
+                    |backend| backend.post("/v1/embed/cancel", &json!({})),
+                    |this, result, cx| match result {
+                        Ok(body) => this.take_embed_job(job_in(&body), cx),
+                        Err(error) => {
+                            log::warn!("the backend refused to cancel the job: {error}");
+                            this.error = Some(error);
+                        }
+                    },
+                );
             }
             Action::OpenDataFolder => {
                 let dir = cw_core::paths::data_dir();
@@ -932,9 +873,7 @@ impl AppView {
                     notes: &self.settings.notes,
                     typing: &self.settings.typing,
                     embed_test: &self.settings.embed_test,
-                    models: self.settings.models.as_ref(),
-                    models_error: self.settings.models_error.as_deref(),
-                    models_note: self.settings.models_note.as_deref(),
+                    job: self.settings.embed_job.as_ref(),
                     backend_url: self.backend.as_ref().map(Backend::url),
                     origin: self.backend.as_ref().map(Backend::origin),
                     env_url: env_url.as_deref(),
@@ -1062,67 +1001,35 @@ mod tests {
     // which would stand in for the standard one.
     use serde_json::{Value, json};
 
-    use super::{change, changes_the_embedder, settings_behind, shown_value, test_line};
+    use super::{change, changes_the_embedder, job_ended, job_in, shown_value, test_line};
     use crate::settings_pages::Tested;
 
     #[test]
-    fn the_settings_are_read_again_when_the_models_tell_of_another_embedder() {
-        let embed = |provider: &str, model: Value| json!({ "embed": { "provider": { "value": provider }, "model": { "value": model } } });
-        let granite_in_use = json!({
-            "available": true,
-            "embedder": "builtin",
-            "models": [{ "id": "granite", "active": true }, { "id": "gte", "active": false }],
-        });
-        // A job switched to Granite after the settings were read.
-        assert!(settings_behind(
-            &granite_in_use,
-            Some(&embed("local", Value::Null))
-        ));
-        assert!(settings_behind(
-            &granite_in_use,
-            Some(&embed("builtin", Value::Null))
-        ));
-        assert!(settings_behind(
-            &granite_in_use,
-            Some(&embed("builtin", json!("gte")))
-        ));
-        // In step.
-        assert!(!settings_behind(
-            &granite_in_use,
-            Some(&embed("builtin", json!("granite")))
-        ));
-        let waiting = json!({
-            "available": true,
-            "embedder": "builtin",
-            "models": [{ "id": "granite", "active": false }],
-        });
-        assert!(!settings_behind(
-            &waiting,
-            Some(&embed("builtin", Value::Null))
-        ));
-        let local = json!({ "available": true, "embedder": "local", "models": [] });
-        assert!(!settings_behind(&local, Some(&embed("local", Value::Null))));
-        // Nothing to compare: no settings yet, or a backend without models.
-        assert!(!settings_behind(&granite_in_use, None));
-        assert!(!settings_behind(
-            &json!({ "available": false }),
-            Some(&embed("local", Value::Null))
-        ));
+    fn the_job_is_what_the_backend_names_or_nothing() {
+        assert_eq!(job_in(&json!({ "job": null })), None);
+        assert_eq!(job_in(&json!({})), None);
+        let job = json!({ "phase": "embedding", "repo": "r" });
+        assert_eq!(job_in(&json!({ "job": job })), Some(job));
     }
 
     #[test]
-    fn a_change_of_the_embedder_reads_the_models_again() {
-        // Which model is in use, and whether the built-in embedder is the
-        // one chosen, are in what the backend says about its models.
+    fn the_settings_are_read_again_only_when_a_job_ends() {
+        let running = json!({ "phase": "embedding" });
+        let done = json!({ "phase": "done" });
+        assert!(job_ended(Some(&running), Some(&done)));
+        assert!(job_ended(Some(&running), None));
+        assert!(!job_ended(Some(&running), Some(&running)));
+        assert!(!job_ended(Some(&done), Some(&done)));
+        assert!(!job_ended(None, Some(&running)));
+        assert!(!job_ended(None, None));
+    }
+
+    #[test]
+    fn a_change_of_the_embedder_reads_the_job_again() {
         assert!(changes_the_embedder(&change(
             "embed",
             "provider",
             json!("local")
-        )));
-        assert!(changes_the_embedder(&change(
-            "embed",
-            "device",
-            json!("cpu")
         )));
         // An address it may read is not the embedder itself.
         assert!(!changes_the_embedder(&change(

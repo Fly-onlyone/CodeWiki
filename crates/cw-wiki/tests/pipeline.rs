@@ -899,3 +899,372 @@ fn every_explainable_note_splits_and_joins_to_itself() {
         assert!(checked > 3, "{checked}");
     }
 }
+
+/// The picture an agent gave the section `How it works` of the note about
+/// `Price`.
+const PRICE_PICTURE: &str = "# section: How it works\nroot = Picture([f])\nf = Flow([Step(\"A number of ticks\"), Step(\"One price\")])\n";
+
+/// What a submission does to a note, done by hand: weave the agent's
+/// sections into the note on disk, save its pictures beside it, and record
+/// in the manifest who explained it and from which files.
+fn explain(root: &Path, note: &str, sections: &[(&str, &str)], pictures: &str) {
+    let vault = root.join("obsidian");
+    let mut meta = VaultMeta::load(&vault).unwrap();
+    let id = meta.by_path(note).unwrap().id.clone();
+    let entry = meta.notes.get_mut(&id).unwrap();
+    let agent: Vec<cw_vault::Section> = sections
+        .iter()
+        .map(|(heading, body)| cw_vault::Section {
+            heading: heading.to_string(),
+            body: body.to_string(),
+        })
+        .collect();
+    let woven = cw_vault::weave(&read(&vault, note), &agent, entry.kind);
+    assert!(woven.folded.is_empty(), "{:?}", woven.folded);
+    write(&vault, note, &woven.text);
+    entry.body_hash = cw_vault::body_hash(&woven.text);
+    entry.model = Some("test-agent".into());
+    entry.explained = Some(cw_vault::Explained {
+        sections: woven.written,
+        sources: entry.sources.clone(),
+        commit: Some("commit-1".into()),
+    });
+    if !pictures.is_empty() {
+        let file = note.replace(".md", ".openui");
+        write(&vault, &file, pictures);
+        entry.illustration = Some(file);
+    }
+    meta.save(&vault).unwrap();
+}
+
+const PRICE: &str = "01-Core/engine/Price.md";
+const PRICE_WORKS: &str =
+    "A price counts ticks, and one tick is the smallest step a price can move.";
+const PRICE_GOTCHA: &str = "- A price is never negative: the type holds an unsigned number.";
+
+/// The fixture with a first run done and the note about `Price` explained.
+fn explained_price() -> tempfile::TempDir {
+    let dir = fixture();
+    run(dir.path());
+    explain(
+        dir.path(),
+        PRICE,
+        &[("How it works", PRICE_WORKS), ("Gotchas", PRICE_GOTCHA)],
+        PRICE_PICTURE,
+    );
+    dir
+}
+
+fn entry_of(root: &Path, note: &str) -> cw_vault::NoteEntry {
+    VaultMeta::load(&root.join("obsidian"))
+        .unwrap()
+        .by_path(note)
+        .unwrap()
+        .clone()
+}
+
+fn change_the_price_comment(root: &Path) {
+    let pricing = read(root, "crates/engine/src/pricing.rs").replace(
+        "A price in integer ticks.",
+        "A price in integer ticks of one cent.",
+    );
+    write(root, "crates/engine/src/pricing.rs", &pricing);
+}
+
+#[test]
+fn a_run_counts_the_notes_no_agent_has_explained() {
+    let dir = fixture();
+    let first = run(dir.path());
+    let meta = VaultMeta::load(&dir.path().join("obsidian")).unwrap();
+    let explainable = meta.notes.values().filter(|e| e.kind.explainable()).count();
+    assert!(explainable > 3);
+    assert_eq!(first.unexplained, explainable);
+    assert!(first.merged.is_empty() && first.behind.is_empty());
+    assert_eq!(run(dir.path()).unexplained, explainable);
+
+    explain(dir.path(), PRICE, &[("Gotchas", PRICE_GOTCHA)], "");
+    let after = run(dir.path());
+    assert_eq!(after.unexplained, explainable - 1);
+    // An explanation is not a change by hand: nothing is proposed or
+    // written, and the note is not behind.
+    assert!(
+        after.written.is_empty() && after.proposed.is_empty(),
+        "{after:?}"
+    );
+    assert!(
+        after.merged.is_empty() && after.behind.is_empty(),
+        "{after:?}"
+    );
+
+    // A note its owner changed leaves the agents' queue.
+    let book = "01-Core/engine/OrderBook.md";
+    let vault = dir.path().join("obsidian");
+    write(&vault, book, &(read(&vault, book) + "\nMy own line.\n"));
+    assert_eq!(run(dir.path()).unexplained, explainable - 2);
+}
+
+#[test]
+fn a_code_change_refreshes_the_facts_and_keeps_the_explanation() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    change_the_price_comment(dir.path());
+    let report = run(dir.path());
+
+    assert_eq!(report.merged, [PRICE], "{report:?}");
+    assert!(!report.written.iter().any(|p| p == PRICE), "{report:?}");
+    assert!(report.proposed.is_empty(), "{report:?}");
+    let note = read(&vault, PRICE);
+    // The rules' part follows the code.
+    assert!(
+        note.contains("> A price in integer ticks of one cent."),
+        "{note}"
+    );
+    // The agent's part is its own, to the letter, and in its place.
+    assert!(note.contains(&format!("## How it works\n\n{PRICE_WORKS}\n")));
+    assert!(note.contains(&format!("## Gotchas\n\n{PRICE_GOTCHA}\n\n## See also")));
+    assert_eq!(read(&vault, "01-Core/engine/Price.openui"), PRICE_PICTURE);
+
+    let entry = entry_of(dir.path(), PRICE);
+    assert_eq!(entry.model.as_deref(), Some("test-agent"));
+    let explained = entry.explained.clone().unwrap();
+    assert_eq!(explained.sections, ["How it works", "Gotchas"]);
+    assert_eq!(explained.commit.as_deref(), Some("commit-1"));
+    assert_eq!(
+        entry.illustration.as_deref(),
+        Some("01-Core/engine/Price.openui")
+    );
+    // The explanation was written from the file as it was: it may be
+    // behind now, and the note says so until an agent writes again.
+    assert_eq!(report.behind, [PRICE]);
+    assert_eq!(entry.behind, ["crates/engine/src/pricing.rs changed"]);
+    // The note is as CodeWiki left it: not one a person edited.
+    assert_eq!(entry.body_hash, cw_vault::body_hash(&note));
+
+    let again = run(dir.path());
+    assert!(
+        again.merged.is_empty() && again.written.is_empty(),
+        "{again:?}"
+    );
+    assert_eq!(again.behind, [PRICE]);
+    assert_eq!(read(&vault, PRICE), note);
+    assert_eq!(entry_of(dir.path(), PRICE), entry);
+}
+
+#[test]
+fn a_change_the_rules_do_not_show_still_marks_the_explanation_behind() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    let before = read(&vault, PRICE);
+    // A function's body: no fact of the note changes.
+    let pricing =
+        read(dir.path(), "crates/engine/src/pricing.rs").replace("{ Price(0) }", "{ Price(0u64) }");
+    write(dir.path(), "crates/engine/src/pricing.rs", &pricing);
+    let report = run(dir.path());
+    assert!(
+        report.merged.is_empty() && report.written.is_empty(),
+        "{report:?}"
+    );
+    assert_eq!(read(&vault, PRICE), before);
+    assert_eq!(report.behind, [PRICE]);
+    assert_eq!(
+        entry_of(dir.path(), PRICE).behind,
+        ["crates/engine/src/pricing.rs changed"]
+    );
+
+    // The file as it was again: the explanation is not behind any more.
+    let pricing = pricing.replace("{ Price(0u64) }", "{ Price(0) }");
+    write(dir.path(), "crates/engine/src/pricing.rs", &pricing);
+    let report = run(dir.path());
+    assert!(report.behind.is_empty(), "{report:?}");
+    assert!(entry_of(dir.path(), PRICE).behind.is_empty());
+}
+
+#[test]
+fn a_new_way_of_writing_the_facts_keeps_the_explanation() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    let before = read(&vault, PRICE);
+    // As after an update of CodeWiki that writes the facts otherwise: the
+    // note was made from another input than a run would use now.
+    let mut meta = VaultMeta::load(&vault).unwrap();
+    let id = meta.by_path(PRICE).unwrap().id.clone();
+    meta.notes.get_mut(&id).unwrap().input_hash = "written by an older version".into();
+    meta.save(&vault).unwrap();
+
+    let report = run(dir.path());
+    assert_eq!(report.merged, [PRICE], "{report:?}");
+    assert_eq!(read(&vault, PRICE), before);
+    let entry = entry_of(dir.path(), PRICE);
+    assert!(entry.explained.is_some() && entry.behind.is_empty());
+    assert!(report.behind.is_empty());
+    assert!(vault.join("01-Core/engine/Price.openui").exists());
+    assert!(run(dir.path()).merged.is_empty());
+}
+
+#[test]
+fn an_explained_note_that_is_deleted_is_written_by_rules_again() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    fs::remove_file(vault.join(PRICE)).unwrap();
+    let report = run(dir.path());
+    assert!(report.written.iter().any(|p| p == PRICE), "{report:?}");
+    let note = read(&vault, PRICE);
+    assert!(!note.contains(PRICE_WORKS) && !note.contains("## Gotchas"));
+    let entry = entry_of(dir.path(), PRICE);
+    assert_eq!(entry.explained, None);
+    assert_eq!(entry.model, None);
+    assert!(entry.behind.is_empty());
+    // Its pictures explained text that is gone.
+    assert_eq!(entry.illustration, None);
+    assert!(!vault.join("01-Core/engine/Price.openui").exists());
+}
+
+#[test]
+fn an_explained_note_goes_with_its_subject() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    fs::remove_file(dir.path().join("crates/engine/src/pricing.rs")).unwrap();
+    write(
+        dir.path(),
+        "crates/engine/src/lib.rs",
+        "//! Order matching engine.\npub mod book;\n",
+    );
+    write(
+        dir.path(),
+        "crates/engine/src/book.rs",
+        "//! The order book.\n\n/// Holds resting orders.\npub struct OrderBook;\n",
+    );
+    write(dir.path(), "crates/cli/src/main.rs", "fn main() {}\n");
+    let report = run(dir.path());
+    assert!(report.removed.iter().any(|p| p == PRICE), "{report:?}");
+    assert!(!vault.join(PRICE).exists());
+    assert!(!vault.join("01-Core/engine/Price.openui").exists());
+}
+
+#[test]
+fn an_explained_note_changed_by_hand_gets_a_proposal_with_the_explanation() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    let edited =
+        read(&vault, PRICE).replace(PRICE_GOTCHA, &format!("{PRICE_GOTCHA}\n- My own warning."));
+    write(&vault, PRICE, &edited);
+    assert!(run(dir.path()).proposed.is_empty());
+
+    change_the_price_comment(dir.path());
+    let report = run(dir.path());
+    assert_eq!(report.proposed, [PRICE], "{report:?}");
+    assert!(report.merged.is_empty());
+    assert_eq!(read(&vault, PRICE), edited, "the note is untouched");
+
+    let pending = proposal::list(&vault).unwrap();
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].kind, cw_vault::ProposalKind::Sync);
+    let proposed = proposal::proposed_text(&vault, &pending[0].id).unwrap();
+    // The new fact, the agent's words and the owner's own line.
+    assert!(proposed.contains("of one cent"), "{proposed}");
+    assert!(proposed.contains(PRICE_WORKS));
+    assert!(proposed.contains("- My own warning."));
+    // The explanation is behind, whoever edited the note.
+    assert_eq!(report.behind, [PRICE]);
+}
+
+#[test]
+fn a_link_of_the_agents_to_a_note_that_is_gone_becomes_plain_words() {
+    let dir = fixture();
+    run(dir.path());
+    let vault = dir.path().join("obsidian");
+    let book = "01-Core/engine/OrderBook.md";
+    explain(
+        dir.path(),
+        book,
+        &[(
+            "How it works",
+            "The book holds one [[Price]], the best one. See [[Pricing Module|the price rules]].",
+        )],
+        "",
+    );
+    // The price type and its module go; the book stays.
+    fs::remove_file(dir.path().join("crates/engine/src/pricing.rs")).unwrap();
+    write(
+        dir.path(),
+        "crates/engine/src/lib.rs",
+        "//! Order matching engine.\npub mod book;\n",
+    );
+    write(
+        dir.path(),
+        "crates/engine/src/book.rs",
+        "//! The order book.\n\n/// Holds resting orders.\npub struct OrderBook;\n",
+    );
+    write(dir.path(), "crates/cli/src/main.rs", "fn main() {}\n");
+    let report = run(dir.path());
+    assert_eq!(report.merged, [book], "{report:?}");
+    let note = read(&vault, book);
+    assert!(
+        note.contains("The book holds one Price, the best one. See the price rules."),
+        "{note}"
+    );
+    // No link of the vault leads nowhere.
+    assert_eq!(report.link_rate, 1.0);
+    assert_eq!(
+        entry_of(dir.path(), book).behind,
+        ["crates/engine/src/book.rs changed"]
+    );
+}
+
+#[test]
+fn text_of_a_section_the_kind_lost_moves_and_its_picture_goes() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    // As an older version left the note: a section this kind of note has
+    // no more, with a picture of its own.
+    let old = read(&vault, PRICE).replace(
+        "## Gotchas",
+        "## Design notes\n\nTicks keep the arithmetic exact.\n\n## Gotchas",
+    );
+    write(&vault, PRICE, &old);
+    let pictures = format!(
+        "{PRICE_PICTURE}\n# section: Design notes\nroot = Picture([c])\nc = Callout(\"Exact.\")\n"
+    );
+    write(&vault, "01-Core/engine/Price.openui", &pictures);
+    let mut meta = VaultMeta::load(&vault).unwrap();
+    let id = meta.by_path(PRICE).unwrap().id.clone();
+    let entry = meta.notes.get_mut(&id).unwrap();
+    entry.body_hash = cw_vault::body_hash(&old);
+    entry.input_hash = "written by an older version".into();
+    entry
+        .explained
+        .as_mut()
+        .unwrap()
+        .sections
+        .push("Design notes".into());
+    meta.save(&vault).unwrap();
+
+    let report = run(dir.path());
+    assert_eq!(report.merged, [PRICE], "{report:?}");
+    let note = read(&vault, PRICE);
+    assert!(!note.contains("## Design notes"), "{note}");
+    // Kept, under the first section the agent wrote.
+    assert!(
+        note.contains(&format!(
+            "## How it works\n\n{PRICE_WORKS}\n\nTicks keep the arithmetic exact.\n"
+        )),
+        "{note}"
+    );
+    assert_eq!(read(&vault, "01-Core/engine/Price.openui"), PRICE_PICTURE);
+    let entry = entry_of(dir.path(), PRICE);
+    assert_eq!(
+        entry.explained.clone().unwrap().sections,
+        ["How it works", "Gotchas"]
+    );
+    assert_eq!(report.behind, [PRICE]);
+    assert_eq!(entry.behind.len(), 1, "{:?}", entry.behind);
+    assert!(
+        entry.behind[0].starts_with("the section `Design notes` is no section"),
+        "{:?}",
+        entry.behind
+    );
+    // The reason stays until an agent writes the note again.
+    let again = run(dir.path());
+    assert!(again.merged.is_empty(), "{again:?}");
+    assert_eq!(entry_of(dir.path(), PRICE).behind, entry.behind);
+}

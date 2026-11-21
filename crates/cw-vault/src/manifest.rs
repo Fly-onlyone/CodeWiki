@@ -53,6 +53,22 @@ pub struct SourceRef {
     pub hash: String,
 }
 
+/// What a coding agent explained a note from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Explained {
+    /// Headings of the sections the agent wrote. Every other section of the
+    /// note is the rules'.
+    pub sections: Vec<String>,
+    /// The files the explanation was written from, each with the hash it
+    /// had then: the note's sources and the files the agent says it read.
+    /// One that has another hash now means the explanation may be behind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sources: Vec<SourceRef>,
+    /// Commit the repository stood at.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteEntry {
     pub id: String,
@@ -71,12 +87,23 @@ pub struct NoteEntry {
     pub rejected_inputs: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,
-    /// Model that wrote the prose; absent for structural notes.
+    /// Who explained the note, as the agent names itself; absent for a
+    /// note only rules wrote.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
-    /// Vault-relative path of the saved illustration, if any.
+    /// Vault-relative path of the file that keeps the note's pictures, if
+    /// it has any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub illustration: Option<String>,
+    /// Set once a coding agent explained the note. Rules then write only
+    /// their own sections of it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explained: Option<Explained>,
+    /// Why the explanation may be behind the code, one line for each
+    /// reason; empty when it is not. Written at each sync and cleared when
+    /// an agent explains the note again.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub behind: Vec<String>,
 }
 
 /// Hash used to tell whether a note changed on disk.
@@ -213,6 +240,8 @@ mod tests {
             commit: Some("abc".into()),
             model: None,
             illustration: None,
+            explained: None,
+            behind: Vec::new(),
         }
     }
 

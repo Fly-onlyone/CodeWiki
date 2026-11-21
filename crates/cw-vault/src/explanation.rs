@@ -61,14 +61,17 @@ fn prose(body: &str) -> String {
     text.trim().to_string()
 }
 
-/// The agent's sections of the note `text`, of the headings in `headings`
-/// that the note has and that are the agent's for a note of `kind`. In a
-/// section whose code blocks are facts, only the prose is the agent's.
+/// The sections of the note `text` that an agent wrote: those under the
+/// `headings` the manifest records for it. In a section whose code blocks
+/// are facts, only the prose is the agent's.
+///
+/// A heading that is no section of `kind` any more is still returned: the
+/// text is the agent's, and [`weave`] finds it another place.
 pub fn extract(text: &str, kind: NoteKind, headings: &[String]) -> Vec<Section> {
     let (_, sections) = note::split(text);
     sections
         .into_iter()
-        .filter(|s| headings.contains(&s.heading) && kind.agent_sections().contains(&&*s.heading))
+        .filter(|s| headings.contains(&s.heading))
         .map(|s| Section {
             body: if kind.fact_fences(&s.heading) {
                 prose(&s.body)
@@ -85,9 +88,74 @@ pub fn extract(text: &str, kind: NoteKind, headings: &[String]) -> Vec<Section> 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Woven {
     pub text: String,
+    /// Headings of the sections that hold the agent's text, in the order
+    /// of the kind's template.
+    pub written: Vec<String>,
     /// Headings of agent sections that have no place in a note of this
     /// kind any more. Their text was put into a section that has one.
     pub folded: Vec<String>,
+}
+
+/// `text` with every wikilink that leads nowhere turned into plain words:
+/// the link's alias, or the name it pointed at. `alive` says whether a
+/// link's target leads to a note. A note an agent linked to may be gone
+/// when rules write the note again, and a dead link would fail the vault's
+/// check. Code is left as it is.
+pub fn unlink_dead(text: &str, alive: impl Fn(&str) -> bool) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut in_fence = false;
+    for (number, line) in text.split('\n').enumerate() {
+        if number > 0 {
+            out.push('\n');
+        }
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            out.push_str(line);
+            continue;
+        }
+        if in_fence {
+            out.push_str(line);
+            continue;
+        }
+        let bytes = line.as_bytes();
+        let (mut i, mut copied, mut in_code) = (0, 0, false);
+        while i < bytes.len() {
+            if bytes[i] == b'`' {
+                in_code = !in_code;
+                i += 1;
+                continue;
+            }
+            if !in_code
+                && bytes[i] == b'['
+                && bytes.get(i + 1) == Some(&b'[')
+                && let Some(len) = line[i + 2..].find("]]")
+            {
+                let inner = &line[i + 2..i + 2 + len];
+                let (target, alias) = match inner.split_once('|') {
+                    Some((target, alias)) => (target, Some(alias.trim())),
+                    None => (inner, None),
+                };
+                let name = target.split('#').next().unwrap_or("").trim();
+                let end = i + len + 4;
+                if !name.is_empty() && !alive(name) {
+                    // An embed's `!` goes with its link.
+                    let start = if i > 0 && bytes[i - 1] == b'!' {
+                        i - 1
+                    } else {
+                        i
+                    };
+                    out.push_str(&line[copied..start]);
+                    out.push_str(alias.filter(|a| !a.is_empty()).unwrap_or(name));
+                    copied = end;
+                }
+                i = end;
+                continue;
+            }
+            i += 1;
+        }
+        out.push_str(&line[copied..]);
+    }
+    out
 }
 
 /// Weave the note `base` with the sections an agent wrote. The head
@@ -103,6 +171,7 @@ pub fn weave(base: &str, agent: &[Section], kind: NoteKind) -> Woven {
     if owned.is_empty() {
         return Woven {
             text: base.to_string(),
+            written: Vec::new(),
             folded: Vec::new(),
         };
     }
@@ -138,6 +207,11 @@ pub fn weave(base: &str, agent: &[Section], kind: NoteKind) -> Woven {
         }
     }
 
+    let headings: Vec<String> = owned
+        .iter()
+        .filter(|heading| written.iter().any(|(h, _)| h == *heading))
+        .map(|heading| heading.to_string())
+        .collect();
     let (head, mut sections) = note::split(base);
     let template = kind.sections();
     let place = |heading: &str| template.iter().position(|h| *h == heading);
@@ -174,6 +248,7 @@ pub fn weave(base: &str, agent: &[Section], kind: NoteKind) -> Woven {
     }
     Woven {
         text: note::join(&head, &sections),
+        written: headings,
         folded,
     }
 }
@@ -202,6 +277,7 @@ mod tests {
         ];
         let woven = weave(MODULE, &agent, NoteKind::Concept);
         assert!(woven.folded.is_empty());
+        assert_eq!(woven.written, ["How it works", "Gotchas"]);
         let text = woven.text;
         // The head and the facts are the rule-written note's, to the letter.
         assert!(text.starts_with(
@@ -222,15 +298,31 @@ mod tests {
         // Read back, the agent's sections are what it wrote.
         let headings = vec!["How it works".to_string(), "Gotchas".to_string()];
         assert_eq!(extract(&text, NoteKind::Concept, &headings), agent);
-        // A heading it did not write is not its text, and a fact never is.
-        let all = vec![
-            "What it does".to_string(),
-            "Items".to_string(),
-            "Gotchas".to_string(),
-        ];
-        let read = extract(&text, NoteKind::Concept, &all);
+        // A heading that is not named is not its text.
+        let one = vec!["Gotchas".to_string(), "Auth mode".to_string()];
+        let read = extract(&text, NoteKind::Concept, &one);
         let found: Vec<&str> = read.iter().map(|s| s.heading.as_str()).collect();
-        assert_eq!(found, ["What it does", "Gotchas"]);
+        assert_eq!(found, ["Gotchas"]);
+    }
+
+    #[test]
+    fn text_under_a_heading_the_kind_lost_is_found_and_placed_again() {
+        // The note as an agent left it, when a module note still had a
+        // section `Design notes`.
+        let old = MODULE.replace(
+            "## Used by",
+            "## Design notes\n\nThe value is the whole setting.\n\n## Used by",
+        );
+        let kept = extract(&old, NoteKind::Concept, &["Design notes".to_string()]);
+        assert_eq!(
+            kept,
+            [section("Design notes", "The value is the whole setting.")]
+        );
+        let woven = weave(MODULE, &kept, NoteKind::Concept);
+        assert_eq!(woven.folded, ["Design notes"]);
+        assert_eq!(woven.written, ["What it does"]);
+        assert!(woven.text.contains("The value is the whole setting."));
+        assert!(!woven.text.contains("## Design notes"));
     }
 
     #[test]
@@ -298,6 +390,7 @@ mod tests {
         ];
         let woven = weave(MODULE, &agent, NoteKind::Concept);
         assert_eq!(woven.folded, ["Design notes"]);
+        assert_eq!(woven.written, ["Gotchas"]);
         assert!(woven.text.contains(
             "## Gotchas\n\nWindows has a second switch.\n\nThe value is the whole setting.\n"
         ));
@@ -328,6 +421,33 @@ mod tests {
         assert!(woven.contains(
             "## History\n\nWritten for the tray.\n\n## Used by\n\n- [[app]] — from `run_action`\n\n## Gotchas\n\nOnly an installed copy offers this.\n\n## See also"
         ), "{woven}");
+    }
+
+    #[test]
+    fn a_link_that_leads_nowhere_becomes_plain_words() {
+        use crate::registry::{Registry, RegistryEntry};
+        let mut registry = Registry::new();
+        registry
+            .insert(RegistryEntry {
+                id: "module:app::tray".into(),
+                path: "01-Core/app/Tray Module.md".into(),
+                kind: NoteKind::Concept,
+            })
+            .unwrap();
+        let text = "It asks [[Tray Module]] and [[Gone Module]].\nSee [[Old Flow|the old flow]], [[Gone Module#Items]] and ![[Gone Picture]].\n`[[Gone Module]]` is code.\n```\n[[Gone Module]]\n```\nDone [[Tray Module|the tray]].";
+        let alive = |target: &str| {
+            registry
+                .resolve(target, "01-Core/app/Autostart Module.md")
+                .is_some()
+        };
+        assert_eq!(
+            unlink_dead(text, alive),
+            "It asks [[Tray Module]] and Gone Module.\nSee the old flow, Gone Module and Gone Picture.\n`[[Gone Module]]` is code.\n```\n[[Gone Module]]\n```\nDone [[Tray Module|the tray]]."
+        );
+        // Text without a dead link comes back to the letter.
+        let whole = "Ends with a line end.\n";
+        assert_eq!(unlink_dead(whole, alive), whole);
+        assert_eq!(unlink_dead("[[a]] `[[b]]`", |_| false), "a `[[b]]`");
     }
 
     #[test]

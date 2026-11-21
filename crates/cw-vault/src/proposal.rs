@@ -3,14 +3,18 @@
 //! A proposal stores the full proposed text plus a unified diff for reading.
 //! Nothing in the vault changes until a human approves it, and approval only
 //! applies when the note is still the version the proposal was written against.
+//!
+//! Two things propose. A sync does when the code under a note changed. A
+//! coding agent does when it explained a note its owner had edited: its
+//! text and pictures wait here instead of replacing the owner's words.
 
 use std::path::{Path, PathBuf};
 
-use cw_core::{Error, Result};
+use cw_core::{Error, Result, sha256_hex};
 use serde::{Deserialize, Serialize};
 use similar::TextDiff;
 
-use crate::manifest::{VaultMeta, body_hash};
+use crate::manifest::{Explained, VaultMeta, body_hash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -20,6 +24,29 @@ pub enum ProposalStatus {
     Rejected,
     /// The note changed after the proposal was written.
     Superseded,
+}
+
+/// What made a proposal.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProposalKind {
+    /// A sync: the code under the note changed.
+    #[default]
+    Sync,
+    /// A coding agent that explained the note.
+    Agent,
+}
+
+/// What an agent's proposal carries beside the note's text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Offer {
+    /// What the agent explained the note from; recorded on the note when
+    /// the proposal is approved.
+    pub explained: Explained,
+    /// The agent, as it names itself.
+    pub model: Option<String>,
+    /// The pictures file the note would get; empty for no pictures.
+    pub pictures: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +62,19 @@ pub struct Proposal {
     pub input_hash: String,
     pub reason: String,
     pub status: ProposalStatus,
+    /// What made it. A proposal written before agents explained notes is a
+    /// sync's.
+    #[serde(default)]
+    pub kind: ProposalKind,
+    /// For an agent's proposal: what the note was explained from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explained: Option<Explained>,
+    /// For an agent's proposal: the agent, as it names itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    /// Whether the proposal carries pictures ([`pictures_text`]).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub pictures: bool,
 }
 
 fn proposals_dir(vault: &Path) -> PathBuf {
@@ -62,8 +102,9 @@ fn write_json(vault: &Path, proposal: &Proposal) -> Result<()> {
     std::fs::write(&path, text + "\n").map_err(|e| Error::io(path, e))
 }
 
-/// Queue a proposal. `current` is the note text on disk, empty for a new note.
-/// Any earlier pending proposal for the same note is replaced.
+/// Queue a sync's proposal. `current` is the note text on disk, empty for a
+/// new note. An earlier pending proposal of a sync for the same note is
+/// replaced; one of an agent stays.
 pub fn create(
     vault: &Path,
     note_id: &str,
@@ -73,19 +114,79 @@ pub fn create(
     input_hash: &str,
     reason: &str,
 ) -> Result<Proposal> {
+    create_as(
+        vault,
+        (note_id, note_path),
+        current,
+        proposed,
+        input_hash,
+        reason,
+        None,
+    )
+}
+
+/// Queue an agent's proposal: the note with the agent's sections woven in,
+/// and what comes with it. An earlier pending proposal of an agent for the
+/// same note is replaced; one of a sync stays, since it says something
+/// else: that the facts changed.
+pub fn create_agent(
+    vault: &Path,
+    note_id: &str,
+    note_path: &str,
+    current: &str,
+    proposed: &str,
+    reason: &str,
+    offer: Offer,
+) -> Result<Proposal> {
+    // What is offered names the proposal: the same offer twice is one.
+    let hash = sha256_hex(format!("agent\n{proposed}\n{}", offer.pictures));
+    create_as(
+        vault,
+        (note_id, note_path),
+        current,
+        proposed,
+        &hash,
+        reason,
+        Some(offer),
+    )
+}
+
+fn create_as(
+    vault: &Path,
+    (note_id, note_path): (&str, &str),
+    current: &str,
+    proposed: &str,
+    input_hash: &str,
+    reason: &str,
+    offer: Option<Offer>,
+) -> Result<Proposal> {
+    let kind = if offer.is_some() {
+        ProposalKind::Agent
+    } else {
+        ProposalKind::Sync
+    };
     let dir = proposals_dir(vault);
     std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
     for old in list(vault)? {
-        if old.note_id == note_id && old.status == ProposalStatus::Pending {
+        if old.note_id == note_id && old.status == ProposalStatus::Pending && old.kind == kind {
             remove(vault, &old.id)?;
         }
     }
+    let short = &input_hash[..input_hash.len().min(12)];
+    let pictures = offer
+        .as_ref()
+        .map(|o| o.pictures.clone())
+        .unwrap_or_default();
     let proposal = Proposal {
-        id: format!(
-            "{}-{}",
-            slug(note_id),
-            &input_hash[..input_hash.len().min(12)]
-        ),
+        // The two kinds never share an id, so neither overwrites the other.
+        id: match kind {
+            ProposalKind::Sync => format!("{}-{short}", slug(note_id)),
+            ProposalKind::Agent => format!("{}-agent-{short}", slug(note_id)),
+        },
+        kind,
+        explained: offer.as_ref().map(|o| o.explained.clone()),
+        model: offer.and_then(|o| o.model),
+        pictures: !pictures.trim().is_empty(),
         note_id: note_id.to_string(),
         note_path: note_path.to_string(),
         base_hash: if current.is_empty() {
@@ -104,6 +205,9 @@ pub fn create(
     };
     write("md", proposed)?;
     write("patch", &unified_diff(current, proposed, note_path))?;
+    if proposal.pictures {
+        write(PICTURES, &pictures)?;
+    }
     Ok(proposal)
 }
 
@@ -148,6 +252,21 @@ pub fn patch_text(vault: &Path, id: &str) -> Result<String> {
     std::fs::read_to_string(&path).map_err(|e| Error::io(path, e))
 }
 
+/// The pictures file an agent's proposal would give the note; empty when
+/// it carries none.
+pub fn pictures_text(vault: &Path, id: &str) -> Result<String> {
+    check_id(id)?;
+    let path = proposals_dir(vault).join(format!("{id}.{PICTURES}"));
+    match std::fs::read_to_string(&path) {
+        Ok(text) => Ok(text),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
+        Err(e) => Err(Error::io(path, e)),
+    }
+}
+
+/// Extension of the file that holds a proposal's pictures.
+const PICTURES: &str = "openui";
+
 /// File-name-safe form of a note id such as `type:cw_core::Error`.
 fn slug(note_id: &str) -> String {
     note_id
@@ -176,7 +295,7 @@ fn check_id(id: &str) -> Result<()> {
 }
 
 fn remove(vault: &Path, id: &str) -> Result<()> {
-    for ext in ["json", "md", "patch"] {
+    for ext in ["json", "md", "patch", PICTURES] {
         let path = proposals_dir(vault).join(format!("{id}.{ext}"));
         match std::fs::remove_file(&path) {
             Ok(()) => {}
@@ -328,6 +447,121 @@ mod tests {
         let all = list(dir.path()).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].id, second.id);
+    }
+
+    fn offer(pictures: &str) -> Offer {
+        Offer {
+            explained: Explained {
+                sections: vec!["Gotchas".into()],
+                sources: vec![],
+                commit: Some("abc".into()),
+            },
+            model: Some("claude-code".into()),
+            pictures: pictures.into(),
+        }
+    }
+
+    #[test]
+    fn an_agents_proposal_carries_what_it_explained_and_its_pictures() {
+        let dir = vault_with_note();
+        let picture = "# section: Gotchas\nroot = Picture([c])\nc = Callout(\"New fact.\")\n";
+        let p = create_agent(
+            dir.path(),
+            "note",
+            "01-Core/Note.md",
+            OLD,
+            NEW,
+            "an agent explained this note",
+            offer(picture),
+        )
+        .unwrap();
+        assert_eq!(p.kind, ProposalKind::Agent);
+        assert!(p.id.starts_with("note-agent-"), "{}", p.id);
+        assert!(p.pictures);
+        assert_eq!(p.model.as_deref(), Some("claude-code"));
+        assert_eq!(p.explained.as_ref().unwrap().sections, ["Gotchas"]);
+        // Read back from the queue, it is the same.
+        assert_eq!(get(dir.path(), &p.id).unwrap(), p);
+        assert_eq!(pictures_text(dir.path(), &p.id).unwrap(), picture);
+        assert_eq!(proposed_text(dir.path(), &p.id).unwrap(), NEW);
+        // The note itself is untouched until someone approves.
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("01-Core/Note.md")).unwrap(),
+            OLD
+        );
+        // The same offer twice is one proposal.
+        let again = create_agent(
+            dir.path(),
+            "note",
+            "01-Core/Note.md",
+            OLD,
+            NEW,
+            "an agent explained this note",
+            offer(picture),
+        )
+        .unwrap();
+        assert_eq!(again.id, p.id);
+        assert_eq!(list(dir.path()).unwrap().len(), 1);
+
+        // One without pictures keeps no pictures file.
+        let plain = create_agent(
+            dir.path(),
+            "note",
+            "01-Core/Note.md",
+            OLD,
+            NEW,
+            "an agent explained this note",
+            offer(""),
+        )
+        .unwrap();
+        assert!(!plain.pictures);
+        assert_eq!(pictures_text(dir.path(), &plain.id).unwrap(), "");
+        // It replaced the agent's earlier one, pictures file and all.
+        assert_eq!(list(dir.path()).unwrap().len(), 1);
+        assert_eq!(pictures_text(dir.path(), &p.id).unwrap(), "");
+    }
+
+    #[test]
+    fn a_sync_and_an_agent_do_not_replace_each_other() {
+        let dir = vault_with_note();
+        let sync = queue(dir.path(), "inputhash0001");
+        assert_eq!(sync.kind, ProposalKind::Sync);
+        let agent = create_agent(
+            dir.path(),
+            "note",
+            "01-Core/Note.md",
+            OLD,
+            NEW,
+            "an agent explained this note",
+            offer(""),
+        )
+        .unwrap();
+        let ids: Vec<String> = list(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert!(ids.contains(&sync.id) && ids.contains(&agent.id), "{ids:?}");
+        // A newer sync replaces the sync's, and leaves the agent's.
+        let newer = queue(dir.path(), "inputhash0002");
+        let ids: Vec<String> = list(dir.path())
+            .unwrap()
+            .into_iter()
+            .map(|p| p.id)
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert!(
+            ids.contains(&newer.id) && ids.contains(&agent.id),
+            "{ids:?}"
+        );
+    }
+
+    #[test]
+    fn a_proposal_written_before_agents_reads_as_a_syncs() {
+        let old = r#"{"id":"note-abc","note_id":"note","note_path":"01-Core/Note.md","base_hash":"h","input_hash":"abc","reason":"cited source code changed","status":"pending"}"#;
+        let p: Proposal = serde_json::from_str(old).unwrap();
+        assert_eq!(p.kind, ProposalKind::Sync);
+        assert!(!p.pictures && p.explained.is_none() && p.model.is_none());
     }
 
     #[test]

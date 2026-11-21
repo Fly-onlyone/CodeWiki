@@ -34,6 +34,17 @@ pub struct Report {
     /// Notes left unmanaged because another note already has the same name.
     #[serde(default)]
     pub skipped: Vec<String>,
+    /// Notes an agent explained whose facts changed: rules wrote their own
+    /// sections anew and the agent's sections stayed.
+    #[serde(default)]
+    pub merged: Vec<String>,
+    /// Notes whose explanation may be behind the code: a file it was
+    /// written from changed since.
+    #[serde(default)]
+    pub behind: Vec<String>,
+    /// Notes rules wrote that no agent has explained yet.
+    #[serde(default)]
+    pub unexplained: usize,
     pub kept: usize,
     pub notes_total: usize,
     pub lint_warnings: usize,
@@ -176,6 +187,8 @@ fn adopt_existing(
             commit: None,
             model: None,
             illustration: None,
+            explained: None,
+            behind: Vec::new(),
         };
         report.adopted.push(path);
         meta.notes.insert(entry.id.clone(), entry);
@@ -370,6 +383,27 @@ pub fn generate_with(
         )));
     }
 
+    // Notes CodeWiki wrote whose subject no longer exists go at the end of
+    // this run, unless their owner changed them. They are known now, since
+    // a link to one of them is dead already.
+    let planned_ids: HashSet<&str> = plan.notes.iter().map(|n| n.id.as_str()).collect();
+    let mut leaving: HashSet<String> = HashSet::new();
+    for entry in meta
+        .notes
+        .values()
+        .filter(|e| e.origin == Origin::Generated && !planned_ids.contains(e.id.as_str()))
+    {
+        let untouched = read_optional(&vault.join(&entry.path))?
+            .is_none_or(|text| body_hash(&text) == entry.body_hash);
+        if untouched {
+            leaving.insert(entry.id.clone());
+        }
+    }
+    let links = Links {
+        registry: &registry,
+        leaving: &leaving,
+    };
+
     for note in &plan.notes {
         let path = &paths[&note.id];
         let draft = &drafts[&note.id];
@@ -400,11 +434,14 @@ pub fn generate_with(
             commit: commit.clone(),
             model: None,
             illustration: None,
+            explained: None,
+            behind: Vec::new(),
         };
 
         let Some(entry) = meta.notes.get_mut(&note.id) else {
             write_note(&full, draft)?;
             report.written.push(path.clone());
+            report.unexplained += usize::from(note.kind.explainable());
             meta.notes.insert(note.id.clone(), fresh_entry(draft));
             continue;
         };
@@ -420,8 +457,32 @@ pub fn generate_with(
         }
         let changed = entry.input_hash != input_hash;
         let state = lifecycle::state(entry, disk.as_deref(), changed);
+        // Reasons the explanation is behind that this run itself gives.
+        let mut moved: Vec<String> = Vec::new();
         match lifecycle::action(entry, state, &input_hash) {
             Action::Keep => report.kept += 1,
+            Action::Merge => {
+                // The facts are the fresh draft's; the explanation is the
+                // agent's, as it stands in the note.
+                let current = disk.clone().unwrap_or_default();
+                let woven = weave_kept(entry, &current, draft, note.kind, &links);
+                write_note(&full, &woven.text)?;
+                report.merged.push(path.clone());
+                for heading in &woven.folded {
+                    moved.push(format!(
+                        "{MOVED}`{heading}` is no section of this kind of note any more; its text was moved"
+                    ));
+                }
+                entry.kind = note.kind;
+                entry.sources = sources.clone();
+                entry.body_hash = body_hash(&woven.text);
+                entry.input_hash = input_hash.clone();
+                entry.commit = commit.clone();
+                if let Some(explained) = entry.explained.as_mut() {
+                    explained.sections = woven.written;
+                }
+                keep_placed_pictures(&vault, entry, &woven.text)?;
+            }
             Action::Regenerate => {
                 write_note(&full, draft)?;
                 report.written.push(path.clone());
@@ -438,12 +499,18 @@ pub fn generate_with(
                         && p.status == proposal::ProposalStatus::Pending
                 });
                 if !pending_same {
+                    // What an agent wrote stays in what is proposed: the
+                    // proposal is about the facts.
+                    let proposed = match entry.explained {
+                        Some(_) => weave_kept(entry, &current, draft, note.kind, &links).text,
+                        None => draft.clone(),
+                    };
                     proposal::create(
                         &vault,
                         &note.id,
                         path,
                         &current,
-                        draft,
+                        &proposed,
                         &input_hash,
                         "cited source code changed",
                     )?;
@@ -451,12 +518,51 @@ pub fn generate_with(
                 report.proposed.push(path.clone());
             }
         }
+
+        let Some(explained) = &entry.explained else {
+            entry.behind.clear();
+            // A note its owner changed is not in the agents' queue: what
+            // an agent wrote for it would only be a proposal.
+            let untouched = state != NoteState::HumanEdited && state != NoteState::HumanEditedStale;
+            report.unexplained += usize::from(note.kind.explainable() && untouched);
+            continue;
+        };
+        // The explanation was written from files. One that reads otherwise
+        // now may have made it wrong; only an agent can tell.
+        let mut behind: Vec<String> = explained
+            .sources
+            .iter()
+            .filter_map(|source| {
+                let now = file_hashes
+                    .get(source.path.as_str())
+                    .map(|hash| hash.to_string())
+                    .or_else(|| file_hash(root, &source.path));
+                match now {
+                    Some(hash) if hash == source.hash => None,
+                    Some(_) => Some(format!("{} changed", source.path)),
+                    None => Some(format!("{} is gone", source.path)),
+                }
+            })
+            .collect();
+        // A section that moved stays a reason until an agent writes again.
+        behind.extend(
+            entry
+                .behind
+                .iter()
+                .filter(|l| l.starts_with(MOVED))
+                .cloned(),
+        );
+        behind.extend(moved);
+        if !behind.is_empty() {
+            report.behind.push(path.clone());
+        }
+        entry.behind = behind;
     }
     // A picture explains what a note says, and rules cannot tell what a
     // thing is for: they draw none. Only an agent that explained a note
     // gives it pictures, in `<Note>.openui` beside it. A picture file of a
     // note no agent explained is one that rules drew before; it goes.
-    for entry in meta.notes.values_mut().filter(|e| e.model.is_none()) {
+    for entry in meta.notes.values_mut().filter(|e| e.explained.is_none()) {
         entry.illustration = None;
         let full = vault.join(illustration_path(&entry.path));
         match std::fs::remove_file(&full) {
@@ -466,30 +572,22 @@ pub fn generate_with(
         }
     }
 
-    // Notes CodeWiki wrote whose subject no longer exists.
-    let planned_ids: HashSet<&str> = plan.notes.iter().map(|n| n.id.as_str()).collect();
-    let stale: Vec<String> = meta
-        .notes
-        .values()
-        .filter(|e| e.origin == Origin::Generated && !planned_ids.contains(e.id.as_str()))
-        .map(|e| e.id.clone())
-        .collect();
-    for id in stale {
-        let entry = &meta.notes[&id];
+    // The notes whose subject no longer exists.
+    let mut leaving: Vec<String> = leaving.into_iter().collect();
+    leaving.sort();
+    for id in leaving {
+        let Some(entry) = meta.notes.remove(&id) else {
+            continue;
+        };
         let full = vault.join(&entry.path);
-        let disk = read_optional(&full)?;
-        let untouched = disk
-            .as_deref()
-            .is_none_or(|t| body_hash(t) == entry.body_hash);
-        if untouched {
-            if disk.is_some() {
-                std::fs::remove_file(&full).map_err(|e| Error::io(&full, e))?;
-            }
-            // The illustration has no meaning without its note.
-            let _ = std::fs::remove_file(vault.join(illustration_path(&entry.path)));
-            report.removed.push(entry.path.clone());
-            meta.notes.remove(&id);
+        match std::fs::remove_file(&full) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(Error::io(&full, e)),
         }
+        // Pictures have no meaning without their note.
+        let _ = std::fs::remove_file(vault.join(illustration_path(&entry.path)));
+        report.removed.push(entry.path);
     }
 
     write_readme(&vault, &repo_name)?;
@@ -510,6 +608,86 @@ pub fn generate_with(
     );
     report.notes_total = meta.notes.len();
     Ok(report)
+}
+
+/// How a line of [`NoteEntry::behind`] starts that says a section of the
+/// agent's lost its place.
+const MOVED: &str = "the section ";
+
+/// The hash of the repository file `path` as it is now, made as a scan
+/// makes it; nothing for a file that is gone or leaves the repository.
+pub(crate) fn file_hash(root: &Path, path: &str) -> Option<String> {
+    let inside = !path.is_empty()
+        && !path.contains(':')
+        && !path.starts_with(['/', '\\'])
+        && path.split(['/', '\\']).all(|part| part != "..");
+    if !inside {
+        return None;
+    }
+    std::fs::read(root.join(path)).ok().map(sha256_hex)
+}
+
+/// Which links of a note lead to a note once this run is over.
+struct Links<'a> {
+    registry: &'a Registry,
+    /// Ids of the notes this run removes.
+    leaving: &'a HashSet<String>,
+}
+
+impl Links<'_> {
+    fn alive(&self, target: &str, from_path: &str) -> bool {
+        self.registry
+            .resolve(target, from_path)
+            .is_some_and(|entry| !self.leaving.contains(&entry.id))
+    }
+}
+
+/// The fresh `draft` of a note with the sections an agent wrote, as they
+/// stand in `current`, the note on disk. A link of the agent's to a note
+/// that is gone becomes plain words.
+fn weave_kept(
+    entry: &NoteEntry,
+    current: &str,
+    draft: &str,
+    kind: NoteKind,
+    links: &Links,
+) -> cw_vault::Woven {
+    let headings = entry
+        .explained
+        .as_ref()
+        .map(|explained| explained.sections.as_slice())
+        .unwrap_or(&[]);
+    let mut agent = cw_vault::extract(current, kind, headings);
+    for section in &mut agent {
+        section.body =
+            cw_vault::unlink_dead(&section.body, |target| links.alive(target, &entry.path));
+    }
+    cw_vault::weave(draft, &agent, kind)
+}
+
+/// Keep the pictures of a note whose section the note `text` still has. A
+/// picture stands inside a section and has no place without it.
+fn keep_placed_pictures(vault: &Path, entry: &mut NoteEntry, text: &str) -> Result<()> {
+    let relative = illustration_path(&entry.path);
+    let full = vault.join(&relative);
+    let Some(file) = read_optional(&full)? else {
+        entry.illustration = None;
+        return Ok(());
+    };
+    let (_, sections) = cw_vault::note::split(text);
+    let mut pictures = cw_illustrate::parse_pictures(&file);
+    let before = pictures.len();
+    pictures.retain(|picture| sections.iter().any(|s| s.heading == picture.section));
+    if pictures.is_empty() {
+        std::fs::remove_file(&full).map_err(|e| Error::io(&full, e))?;
+        entry.illustration = None;
+    } else {
+        if pictures.len() != before {
+            write_note(&full, &cw_illustrate::serialize_pictures(&pictures))?;
+        }
+        entry.illustration = Some(relative);
+    }
+    Ok(())
 }
 
 /// Vault path of the file that holds the pictures of the note at `note_path`.

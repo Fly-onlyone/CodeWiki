@@ -80,6 +80,10 @@ fn close_journal(install: &Path) {
     }
 }
 
+/// The folder and program of the removed graphics-card embedding worker.
+const OLD_CUDA_DIR: &str = "cuda";
+const OLD_CUDA_WORKER: &str = "codewiki-embed-cuda.exe";
+
 fn remove(path: &Path) -> std::io::Result<()> {
     if path.is_dir() {
         std::fs::remove_dir_all(path)
@@ -249,6 +253,13 @@ pub fn recover_and_clean(install: &Path) -> Vec<String> {
     let update = install.join(UPDATE_DIR);
     if update.exists() && std::fs::remove_dir_all(&update).is_ok() {
         report.push(format!("deleted {UPDATE_DIR}"));
+    }
+    // The graphics-card worker was removed from the package, and an update
+    // only swaps the entries of the new package, so an old install keeps it.
+    // A locked file leaves the folder for the next start.
+    let cuda = install.join(OLD_CUDA_DIR);
+    if cuda.join(OLD_CUDA_WORKER).is_file() && std::fs::remove_dir_all(&cuda).is_ok() {
+        report.push(OLD_CUDA_DIR.to_string());
     }
     report
 }
@@ -468,6 +479,25 @@ mod tests {
             fs::read_to_string(install.join("codewiki.exe")).unwrap(),
             "1"
         );
+    }
+
+    #[test]
+    fn the_old_cuda_worker_folder_is_removed() {
+        let (_dir, install, _stage) = fixture();
+        write(&install, "cuda/codewiki-embed-cuda.exe", "w");
+        write(&install, "cuda/cublas64_13.dll", "d");
+        let report = recover_and_clean(&install);
+        assert!(report.contains(&"cuda".to_string()), "{report:?}");
+        assert!(!install.join("cuda").exists());
+    }
+
+    #[test]
+    fn a_cuda_folder_without_the_worker_is_left_alone() {
+        let (_dir, install, _stage) = fixture();
+        write(&install, "cuda/notes.txt", "mine");
+        let report = recover_and_clean(&install);
+        assert!(!report.contains(&"cuda".to_string()), "{report:?}");
+        assert!(install.join("cuda/notes.txt").exists());
     }
 
     #[test]

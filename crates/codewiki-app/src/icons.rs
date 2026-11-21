@@ -46,6 +46,7 @@ app_icons! {
     FOLDER = "folder",
     NOTE = "article",
     BACK = "arrow-back",
+    FORWARD = "arrow-forward",
     EDIT = "edit",
     SAVE = "save",
     CLOSE = "close",

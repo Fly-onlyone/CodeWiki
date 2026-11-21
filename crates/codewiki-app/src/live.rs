@@ -306,9 +306,23 @@ pub fn proposal_page(detail: &Value) -> Doc {
         text(" — "),
         text(string(proposal, "reason")),
     ]));
+    // Two things propose: a sync, when the code under the note changed, and
+    // a coding agent that explained the note.
+    let from_agent = proposal["kind"] == "agent";
+    let pictures = detail["pictures"].as_array().map_or(0, Vec::len);
+    let mut said = if from_agent {
+        "A coding agent wrote an explanation for this note. You edited the note by hand, so the agent's text waits for your decision. Nothing is written until you approve.".to_string()
+    } else {
+        "This note was edited by hand, so the change waits for your decision. Nothing is written until you approve.".to_string()
+    };
+    match pictures {
+        0 => {}
+        1 => said.push_str(" Approving also gives the note 1 picture."),
+        n => said.push_str(&format!(" Approving also gives the note {n} pictures.")),
+    }
     doc.push(Block::Alert {
         tone: Tone::Info,
-        text: "This note was edited by hand, so the change waits for your decision. Nothing is written until you approve.".into(),
+        text: said,
         button: None,
     });
     doc.push(Block::Code {
@@ -353,7 +367,50 @@ pub fn sync_page(report: &Value) -> Doc {
             ),
         ),
     ]));
+    // CodeWiki writes each note's facts; a coding agent explains it.
+    let unexplained = report["unexplained"].as_u64().unwrap_or(0) as usize;
+    let waiting = count("behind") + unexplained;
+    if waiting > 0 || count("merged") > 0 {
+        doc.push(Block::Stats(vec![
+            Stat::new("Facts refreshed, explanation kept", count("merged")),
+            Stat::new("Explanation may be behind", count("behind")).tone(if count("behind") > 0 {
+                Tone::Warning
+            } else {
+                Tone::Neutral
+            }),
+            Stat::new("Not explained yet", unexplained),
+        ]));
+    }
+    if waiting > 0 {
+        doc.push(Block::Alert {
+            tone: Tone::Info,
+            text: format!(
+                "{waiting} notes wait for a coding agent to explain them. In Claude Code with the CodeWiki plugin, run /codewiki:write-notes."
+            ),
+            button: None,
+        });
+    }
     doc
+}
+
+/// What the details pane says about a note's explanation, a line for each
+/// string: who wrote it, and why it may be behind. `explanation` is the
+/// backend's word for where it stands. Nothing for a note no agent explains.
+pub fn explanation_lines(explanation: &str, by: &str, behind: &[String]) -> Vec<String> {
+    let who = if by.is_empty() { "a coding agent" } else { by };
+    match explanation {
+        "waiting" => vec!["Facts written by rules. Waits for a coding agent to explain it.".into()],
+        "explained" => vec![format!("Explained by {who}.")],
+        "behind" => {
+            let mut lines = vec![
+                format!("Explained by {who}."),
+                "The explanation may be behind the code:".to_string(),
+            ];
+            lines.extend(behind.iter().map(|reason| format!("• {reason}")));
+            lines
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// A page that only says something, such as that there is no wiki yet.
@@ -1007,6 +1064,54 @@ mod tests {
             _ => None,
         });
         assert_eq!(diff, Some("@@ -1 +1 @@\n-old\n+new"));
+        assert!(!words.contains("picture"));
+    }
+
+    #[test]
+    fn a_proposal_of_an_agent_says_who_proposes_and_what_comes_with_it() {
+        let page = proposal_page(&json!({
+            "proposal": {"note_path": "01-Core/Parser.md", "kind": "agent",
+                         "reason": "claude-code explained this note"},
+            "patch": "@@ -1 +1 @@\n+new\n",
+            "pictures": [{"section": "How it works", "source": "root = Picture([])"},
+                         {"section": "Gotchas", "source": "root = Picture([])"}],
+        }));
+        let words = page.words();
+        assert!(words.contains("01-Core/Parser.md — claude-code explained this note"));
+        assert!(words.contains("A coding agent wrote an explanation for this note."));
+        assert!(words.contains("Nothing is written until you approve."));
+        assert!(words.contains("Approving also gives the note 2 pictures."));
+        let one = proposal_page(&json!({
+            "proposal": {"kind": "agent"}, "pictures": [{"section": "Gotchas"}],
+        }));
+        assert!(one.words().contains("gives the note 1 picture."));
+    }
+
+    #[test]
+    fn the_details_say_where_a_notes_explanation_stands() {
+        assert_eq!(
+            explanation_lines("waiting", "", &[]),
+            ["Facts written by rules. Waits for a coding agent to explain it."]
+        );
+        assert_eq!(
+            explanation_lines("explained", "claude-code", &[]),
+            ["Explained by claude-code."]
+        );
+        assert_eq!(
+            explanation_lines("explained", "", &[]),
+            ["Explained by a coding agent."]
+        );
+        assert_eq!(
+            explanation_lines("behind", "claude-code", &["src/a.rs changed".into()]),
+            [
+                "Explained by claude-code.",
+                "The explanation may be behind the code:",
+                "• src/a.rs changed"
+            ]
+        );
+        // A map of the vault, or a backend that does not say.
+        assert!(explanation_lines("none", "", &[]).is_empty());
+        assert!(explanation_lines("", "", &[]).is_empty());
     }
 
     #[test]
@@ -1020,6 +1125,24 @@ mod tests {
         assert!(words.contains("Queued for review: 1"));
         assert!(words.contains("Notes in all: 8"));
         assert!(words.contains("Links that resolve: 97.5%"));
+        // Nothing about explanations when nothing waits.
+        assert!(!words.contains("wait for a coding agent"));
+        assert!(!words.contains("Not explained yet"));
+
+        let page = sync_page(&json!({
+            "written": [], "kept": 8, "proposed": [], "removed": [], "adopted": [],
+            "notes_total": 8, "link_rate": 1.0,
+            "merged": ["a"], "behind": ["a", "b"], "unexplained": 3
+        }));
+        let words = page.words();
+        assert!(
+            words.contains("Facts refreshed, explanation kept: 1"),
+            "{words}"
+        );
+        assert!(words.contains("Explanation may be behind: 2"));
+        assert!(words.contains("Not explained yet: 3"));
+        assert!(words.contains("5 notes wait for a coding agent to explain them."));
+        assert!(words.contains("/codewiki:write-notes"));
     }
 
     #[test]

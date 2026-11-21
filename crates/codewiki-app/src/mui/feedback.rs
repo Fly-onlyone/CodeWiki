@@ -67,10 +67,30 @@ const ALERT_PADDING: (f32, f32) = (16.0, 6.0);
 const ALERT_ICON: f32 = 22.0;
 const ALERT_GAP: f32 = 12.0;
 const ALERT_FONT: f32 = 14.0;
+/// `AlertTitle.js`: `body1`, in medium weight.
+const ALERT_TITLE_FONT: f32 = 16.0;
 
 /// A message in a tinted box with an icon: MUI's standard `Alert`.
 pub fn alert(tone: Tone, message: impl Into<SharedString>, cx: &App) -> Div {
+    alert_titled(tone, None, message, cx)
+}
+
+/// An [`alert`] with MUI's `AlertTitle` above the message: the title in
+/// medium weight, at the size of body text.
+pub fn alert_titled(
+    tone: Tone,
+    title: Option<String>,
+    message: impl Into<SharedString>,
+    cx: &App,
+) -> Div {
     let color = tone.color(cx);
+    let title = title.map(|title| {
+        div()
+            .text_size(px(ALERT_TITLE_FONT))
+            .line_height(px(ALERT_TITLE_FONT * 1.5))
+            .font_weight(FontWeight::MEDIUM)
+            .child(title)
+    });
     h_flex()
         .w_full()
         .px(px(ALERT_PADDING.0))
@@ -89,7 +109,14 @@ pub fn alert(tone: Tone, message: impl Into<SharedString>, cx: &App) -> Div {
                     .text_color(color),
             ),
         )
-        .child(div().flex_1().min_w_0().py(px(8.)).child(message.into()))
+        .child(
+            div()
+                .flex_1()
+                .min_w_0()
+                .py(px(8.))
+                .children(title)
+                .child(message.into()),
+        )
 }
 
 /// `Alert.js`, `AlertAction`: `padding: '4px 0 0 16px'`, `marginRight: -8`.

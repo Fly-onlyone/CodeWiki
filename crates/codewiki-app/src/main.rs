@@ -224,8 +224,14 @@ enum Page {
         text: String,
         sources: Vec<String>,
         state: String,
-        /// The note's illustration, when it has a valid one.
-        figure: Option<openui_lang::Node>,
+        /// The note's pictures that can be drawn, each with the heading
+        /// of the section it stands in.
+        figures: Vec<(String, openui_lang::Node)>,
+        /// Where the note's explanation stands, in the backend's word, who
+        /// wrote it, and why it may be behind the code.
+        explanation: String,
+        explained_by: String,
+        behind: Vec<String>,
     },
     /// Symbol detail, search results and other generated pages.
     Generated {
@@ -343,9 +349,9 @@ struct AppView {
     last_frame: std::rc::Rc<std::cell::Cell<Option<std::time::Instant>>>,
     drag_last: Option<(f32, f32)>,
     drag_moved: bool,
-    /// Illustration of the current note, when it has a valid one. It is
-    /// drawn in the note, under the summary.
-    figure: Option<openui_lang::Node>,
+    /// Pictures of the current note, each with the heading of its section.
+    /// They are drawn in the note, under those headings.
+    figures: Vec<(String, openui_lang::Node)>,
     /// Palette diagrams were last drawn with; redrawn when the theme flips.
     palette: cw_mermaid::Palette,
     /// How see-through the surfaces are; worked out again on every frame.
@@ -483,7 +489,7 @@ impl AppView {
             last_frame: Default::default(),
             drag_last: None,
             drag_moved: false,
-            figure: None,
+            figures: Vec::new(),
             palette: cw_mermaid::Palette::Dark,
             glass: glass::Levels::OPAQUE,
             zoom_seen: zoom::percent(cx),
@@ -1539,9 +1545,9 @@ impl AppView {
     /// Rebuild the viewer for `self.page` after it changed.
     fn show_page(&mut self) {
         self.page_serial += 1;
-        self.figure = match &self.page {
-            Page::Note { figure, .. } => figure.clone(),
-            _ => None,
+        self.figures = match &self.page {
+            Page::Note { figures, .. } => figures.clone(),
+            _ => Vec::new(),
         };
         // The diagram in the viewer belongs to the page that was left.
         self.diagram_open = false;
@@ -1894,8 +1900,12 @@ impl AppView {
                 let diagrams = &mut self.diagrams;
                 let sources = &mut self.diagram_sources;
                 let store = &mut self.diagram_store;
-                let figure = self.figure.is_some();
-                markdown::prepare_note_with(text, figure, |source| {
+                let headings: Vec<&str> = self
+                    .figures
+                    .iter()
+                    .map(|(heading, _)| heading.as_str())
+                    .collect();
+                markdown::prepare_note_with(text, &headings, |source| {
                     match store.lookup(source, palette) {
                         diagrams::Lookup::Ready(Some(image)) => {
                             diagrams.push(image);
@@ -1989,11 +1999,21 @@ impl AppView {
                 ))
             },
             move |this, content, _| {
-                let figure = content["illustration"]
-                    .as_str()
-                    .map(cw_illustrate::check)
-                    .filter(|doc| doc.is_valid())
-                    .and_then(|doc| doc.root);
+                // A picture that does not pass the library's check is not
+                // drawn; the note reads without it.
+                let figures: Vec<(String, openui_lang::Node)> = content["pictures"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|picture| {
+                        let source = picture["source"].as_str()?;
+                        if !cw_illustrate::review(source).is_empty() {
+                            return None;
+                        }
+                        let root = cw_illustrate::check(source).root?;
+                        Some((picture["section"].as_str()?.to_string(), root))
+                    })
+                    .collect();
                 let info = &content["info"];
                 this.set_page(
                     Page::Note {
@@ -2006,7 +2026,15 @@ impl AppView {
                             .filter_map(|s| s.as_str().map(str::to_string))
                             .collect(),
                         state: info["state"].as_str().unwrap_or("").to_string(),
-                        figure,
+                        figures,
+                        explanation: info["explanation"].as_str().unwrap_or("").to_string(),
+                        explained_by: info["explained_by"].as_str().unwrap_or("").to_string(),
+                        behind: info["behind"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(|reason| reason.as_str().map(str::to_string))
+                            .collect(),
                     },
                     remember,
                 );
@@ -3163,7 +3191,7 @@ impl AppView {
         let closed = value
             .get(cursor..)
             .is_some_and(|rest| rest.starts_with("]]"));
-        let preview = markdown::prepare_note_with(&value, false, |_| markdown::Diagram::Source);
+        let preview = markdown::prepare_note_with(&value, &[], |_| markdown::Diagram::Source);
         let (border, muted, mono, mono_size) = {
             let theme = cx.theme();
             (
@@ -3302,25 +3330,26 @@ impl AppView {
                     // The illustration is a block of the note itself: it
                     // keeps the note's column and scrolls with its text.
                     // `prepare_page` put an empty code block where it goes.
-                    if let Some(figure) = self.figure.clone() {
+                    if !self.figures.is_empty() {
+                        let figures = self.figures.clone();
                         note = note
                             .markdown_block_parser(|node, _| match node {
                                 markdown_ast::Node::Code(code)
                                     if code.lang.as_deref() == Some(markdown::FIGURE_BLOCK) =>
                                 {
-                                    Some(MarkdownNode::new(markdown::FIGURE_BLOCK, ()))
+                                    // The block holds its picture's number.
+                                    let index = markdown::figure_index(&code.value)?;
+                                    Some(MarkdownNode::new(markdown::FIGURE_BLOCK, index))
                                 }
                                 _ => None,
                             })
-                            .markdown_block_renderer(
-                                markdown::FIGURE_BLOCK,
-                                move |_, window, cx| {
-                                    div()
-                                        .w_full()
-                                        .py_2()
-                                        .child(illustration::render(&figure, "figure", window, cx))
-                                },
-                            );
+                            .markdown_block_renderer(markdown::FIGURE_BLOCK, move |node, _, cx| {
+                                let picture = node
+                                    .data::<usize>()
+                                    .and_then(|index| figures.get(*index))
+                                    .map(|(_, picture)| illustration::render(picture, cx));
+                                div().w_full().py_2().children(picture)
+                            });
                     }
                     div()
                         .size_full()
@@ -3718,6 +3747,9 @@ impl AppView {
                 text,
                 sources,
                 state,
+                explanation,
+                explained_by,
+                behind,
                 ..
             } => {
                 pane = pane
@@ -3730,6 +3762,16 @@ impl AppView {
                     other => other,
                 };
                 pane = pane.child(div().text_xs().text_color(muted).child(label.to_string()));
+                // Who explained the note, and whether the code moved on.
+                let warn = cx.theme().warning;
+                for (index, line) in live::explanation_lines(explanation, explained_by, behind)
+                    .into_iter()
+                    .enumerate()
+                {
+                    // The first line says who; the rest say what is behind.
+                    let color = if index == 0 { muted } else { warn };
+                    pane = pane.child(div().text_xs().text_color(color).child(line));
+                }
                 pane = pane.child(heading("OUTLINE"));
                 // Each section gets a dot in the next chart color, so the
                 // outline carries the theme's palette.

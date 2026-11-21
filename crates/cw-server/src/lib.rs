@@ -136,7 +136,7 @@ pub async fn serve(
     let state = state(config);
     // Semantic search uses the embedder the settings name, not only the one
     // the environment names.
-    cw_wiki::semantic::configure_in(&settings::resolved(&state), &state.0.config.data_dir);
+    cw_wiki::semantic::configure(&settings::resolved(&state));
     // An update holds its lock and its client's patience while it embeds;
     // what does not fit the budget is embedded in the background.
     cw_wiki::semantic::set_inline_budget(Some(INLINE_BUDGET));

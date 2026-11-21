@@ -322,34 +322,18 @@ async fn settings_need_the_token_and_start_at_the_defaults() {
     }
     assert_eq!(settings["embed"]["problem"], Value::Null);
     assert_eq!(settings["embed"]["provider"]["value"], "local");
-    // The built-in embedder is listed wherever the build can run a model,
-    // before any model is installed.
     assert_eq!(
         settings["embed"]["provider"]["options"],
-        if cfg!(windows) {
-            json!([
-                "local",
-                "builtin",
-                "lmstudio",
-                "ollama",
-                "llamacpp",
-                "lemonade",
-                "mistralrs",
-                "openai",
-                "none"
-            ])
-        } else {
-            json!([
-                "local",
-                "lmstudio",
-                "ollama",
-                "llamacpp",
-                "lemonade",
-                "mistralrs",
-                "openai",
-                "none"
-            ])
-        }
+        json!([
+            "local",
+            "lmstudio",
+            "ollama",
+            "llamacpp",
+            "lemonade",
+            "mistralrs",
+            "openai",
+            "none"
+        ])
     );
     assert!(
         settings["embed"]["name"]
@@ -504,198 +488,6 @@ async fn a_change_that_cannot_be_applied_changes_nothing() {
     assert_eq!(settings["embed"]["model"]["value"], Value::Null);
     h.put("/v1/settings", json!({ "embed": { "provider": null } }))
         .await;
-}
-
-/// Put a model of the catalog under the data directory as an install leaves
-/// it, with empty files of the right sizes. Nothing runs it in these tests.
-#[cfg(windows)]
-fn install_model(data: &Path, id: &str) {
-    let entry = cw_models::catalog::find(id).unwrap();
-    let dir = cw_models::Store::new(data, None).dir(entry);
-    fs::create_dir_all(&dir).unwrap();
-    for file in &entry.files {
-        fs::File::create(dir.join(&file.path))
-            .unwrap()
-            .set_len(file.size)
-            .unwrap();
-    }
-    write(
-        &dir,
-        "manifest.json",
-        &json!({ "revision": entry.revision }).to_string(),
-    );
-}
-
-#[cfg(windows)]
-#[tokio::test]
-async fn the_built_in_embedder_is_offered_and_waits_for_a_model() {
-    let h = Harness::new();
-    let settings = h.get("/v1/settings").await;
-    // Offered before any model is installed.
-    assert_eq!(
-        settings["embed"]["provider"]["options"],
-        json!([
-            "local",
-            "builtin",
-            "lmstudio",
-            "ollama",
-            "llamacpp",
-            "lemonade",
-            "mistralrs",
-            "openai",
-            "none"
-        ])
-    );
-    // The graphics card is offered where a worker for it is installed, which
-    // a test program is not.
-    assert_eq!(
-        settings["embed"]["device"],
-        json!({
-            "value": "auto",
-            "source": "default",
-            "env": "CODEWIKI_EMBED_DEVICE",
-            "default": "auto",
-            "options": ["auto", "cpu"],
-        })
-    );
-    for (body, expected) in [
-        (
-            json!({ "embed": { "provider": "builtin", "model": "bert" } }),
-            "unknown built-in model 'bert'",
-        ),
-        (
-            json!({ "embed": { "provider": "builtin", "model": "granite-small-english-r2" } }),
-            "Granite Embedding Small English R2 is not installed",
-        ),
-        (
-            json!({ "embed": { "device": "quantum" } }),
-            "unknown device 'quantum'",
-        ),
-    ] {
-        let (status, error) = h.refused(body.clone()).await;
-        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
-        assert!(error.contains(expected), "{body}: {error}");
-    }
-    assert_eq!(
-        h.get("/v1/settings").await["embed"]["provider"]["value"],
-        "local"
-    );
-
-    // Chosen with no model, it waits for one: saved, but nothing embeds,
-    // and the description says what is missing.
-    let settings = h
-        .put(
-            "/v1/settings",
-            json!({ "embed": { "provider": "builtin" } }),
-        )
-        .await;
-    assert_eq!(settings["embed"]["provider"]["value"], "builtin");
-    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
-    assert_eq!(settings["embed"]["name"], Value::Null);
-    let problem = settings["embed"]["problem"].as_str().unwrap();
-    assert!(problem.contains("needs a model"), "{problem}");
-
-    install_model(h.data.path(), "granite-small-english-r2");
-    assert_eq!(
-        h.get("/v1/settings").await["embed"]["provider"]["options"],
-        json!([
-            "local",
-            "builtin",
-            "lmstudio",
-            "ollama",
-            "llamacpp",
-            "lemonade",
-            "mistralrs",
-            "openai",
-            "none"
-        ])
-    );
-    let settings = h
-        .put(
-            "/v1/settings",
-            json!({ "embed": {
-                "provider": "builtin",
-                "model": "granite-small-english-r2",
-                "device": "cpu",
-            } }),
-        )
-        .await;
-    assert_eq!(
-        settings["embed"]["name"],
-        "builtin:granite-small-english-r2@2ab6fa8ea2d6"
-    );
-    assert_eq!(settings["embed"]["problem"], Value::Null);
-    // A device this installation cannot use is refused while the built-in
-    // embedder is chosen, and the device stays.
-    let (status, error) = h.refused(json!({ "embed": { "device": "cuda" } })).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error.contains("no worker for the graphics card"), "{error}");
-    assert_eq!(
-        h.get("/v1/settings").await["embed"]["device"]["value"],
-        "cpu"
-    );
-
-    // Another provider does not inherit the catalog id as its model.
-    let settings = h
-        .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
-        .await;
-    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
-    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma+gemma");
-    // And the built-in one does not inherit a model name as its catalog id:
-    // it waits for a model instead.
-    h.put(
-        "/v1/settings",
-        json!({ "embed": { "model": "nomic-embed-text" } }),
-    )
-    .await;
-    let settings = h
-        .put(
-            "/v1/settings",
-            json!({ "embed": { "provider": "builtin" } }),
-        )
-        .await;
-    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
-    let problem = settings["embed"]["problem"].as_str().unwrap();
-    assert!(problem.contains("needs a model"), "{problem}");
-    // Leaving a waiting built-in embedder leaves nothing of it behind.
-    let settings = h
-        .put("/v1/settings", json!({ "embed": { "provider": "ollama" } }))
-        .await;
-    assert_eq!(settings["embed"]["model"]["value"], Value::Null);
-    assert_eq!(settings["embed"]["name"], "ollama:embeddinggemma+gemma");
-    assert_eq!(settings["embed"]["problem"], Value::Null);
-    h.put(
-        "/v1/settings",
-        json!({ "embed": { "provider": "local", "model": null } }),
-    )
-    .await;
-}
-
-#[cfg(windows)]
-#[tokio::test]
-async fn pending_builtin_does_not_check_the_device() {
-    let h = Harness::new();
-    // Nothing runs while no model is named, so a device this installation
-    // cannot use is kept, as it is for any other embedder.
-    let settings = h
-        .put(
-            "/v1/settings",
-            json!({ "embed": { "provider": "builtin", "device": "cuda" } }),
-        )
-        .await;
-    assert_eq!(settings["embed"]["provider"]["value"], "builtin");
-    assert_eq!(settings["embed"]["device"]["value"], "cuda");
-    // Naming a model checks it: a test program has no worker for the card.
-    install_model(h.data.path(), "granite-small-english-r2");
-    let (status, error) = h
-        .refused(json!({ "embed": { "model": "granite-small-english-r2" } }))
-        .await;
-    assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(error.contains("no worker for the graphics card"), "{error}");
-    assert_eq!(
-        h.get("/v1/settings").await["embed"]["model"]["value"],
-        Value::Null
-    );
 }
 
 /// An environment in which only the embedder's model is set.
@@ -1764,9 +1556,8 @@ async fn the_local_servers_are_offered_with_their_addresses() {
         .iter()
         .map(|o| o.as_str().unwrap())
         .collect();
-    let wanted: Vec<&str> = [
+    let wanted = [
         "local",
-        "builtin",
         "lmstudio",
         "ollama",
         "llamacpp",
@@ -1774,10 +1565,7 @@ async fn the_local_servers_are_offered_with_their_addresses() {
         "mistralrs",
         "openai",
         "none",
-    ]
-    .into_iter()
-    .filter(|o| *o != "builtin" || cfg!(windows))
-    .collect();
+    ];
     assert_eq!(options, wanted);
     assert_eq!(
         settings["lmstudio"]["url"]["default"],

@@ -44,19 +44,6 @@ pub fn open_existing_index_in(data_dir: &Path, root: &Path) -> Result<Option<Ind
 /// and files, [`index_notes`] the notes.
 pub const DOCUMENT_KINDS: [&str; 3] = ["symbol", "file", "note"];
 
-/// Bring the search vectors of an index in line with the documents it
-/// already holds, with `embedder`. Nothing is scanned, generated or written
-/// to the vault, and no LLM is called. `on_batch` hears how far the run is
-/// after each batch and may stop it; the next call goes on from there.
-pub fn reembed(
-    index: &mut Index,
-    embedder: &dyn cw_embed::Embedder,
-    on_batch: &mut dyn FnMut(crate::semantic::Progress) -> std::ops::ControlFlow<()>,
-) -> Result<crate::semantic::Progress> {
-    let documents = index.documents(&DOCUMENT_KINDS)?;
-    crate::semantic::embed_documents_with(index, embedder, &DOCUMENT_KINDS, &documents, on_batch)
-}
-
 /// Meta key set once the index has been filled from the repository.
 const META_BUILT: &str = "built";
 

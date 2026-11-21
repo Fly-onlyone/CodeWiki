@@ -1,6 +1,5 @@
 //! CodeWiki command line.
 
-mod model;
 mod serve;
 
 use std::path::PathBuf;
@@ -133,23 +132,6 @@ enum Command {
     Approve { id: String },
     /// Discard a proposal; the same change is not proposed again.
     Reject { id: String },
-    /// The built-in embedding models for semantic search: what there is,
-    /// what fits this machine, and what is installed.
-    Model {
-        #[command(subcommand)]
-        action: model::ModelAction,
-    },
-    /// The process that holds a built-in embedding model. CodeWiki starts it
-    /// by itself and speaks with it over its standard input and output.
-    #[command(hide = true)]
-    EmbedWorker {
-        /// Catalog id of the model.
-        #[arg(long)]
-        model: String,
-        /// The folder that holds the installed models.
-        #[arg(long)]
-        models_dir: PathBuf,
-    },
     /// Send a test error report to Sentry, or with `--panic` panic, to check
     /// that reports arrive. Reports must be on: `SENTRY_DSN` set, or a build
     /// that carries a DSN with "Send error reports" turned on.
@@ -242,10 +224,6 @@ fn print_json(encoded: serde_json::Result<String>) -> Result<()> {
 fn run(cli: Cli) -> Result<()> {
     if let Command::Serve { host, port } = cli.command {
         return serve::run(host, port);
-    }
-    // The models belong to the machine, not to a repository.
-    if let Command::Model { action } = &cli.command {
-        return model::run(action, cli.json);
     }
     let root = cli
         .repo
@@ -790,10 +768,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("rejected {}", p.id);
             Ok(())
         }
-        Command::Serve { .. }
-        | Command::Model { .. }
-        | Command::EmbedWorker { .. }
-        | Command::SentryTest { .. } => {
+        Command::Serve { .. } | Command::SentryTest { .. } => {
             unreachable!("handled before the repository is resolved")
         }
     }
@@ -822,17 +797,6 @@ fn sentry_test(panic: bool) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-#[cfg(windows)]
-fn embed_worker(model: &str, models_dir: &std::path::Path) -> ExitCode {
-    cw_embed_engine::worker(model, models_dir)
-}
-
-#[cfg(not(windows))]
-fn embed_worker(_: &str, _: &std::path::Path) -> ExitCode {
-    eprintln!("error: this build cannot run a built-in model; it runs on Windows");
-    ExitCode::FAILURE
-}
-
 fn main() -> ExitCode {
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
@@ -851,10 +815,6 @@ fn main() -> ExitCode {
         std::panic::set_hook(Box::new(|_| {}));
         let _ = std::panic::catch_unwind(|| session_start_hook(&cli.repo));
         return ExitCode::SUCCESS;
-    }
-    if let Command::EmbedWorker { model, models_dir } = &cli.command {
-        // Its standard output carries the protocol; it keeps its own log.
-        return embed_worker(model, models_dir);
     }
     if let Command::SentryTest { panic } = cli.command {
         return sentry_test(panic);

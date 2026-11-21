@@ -15,7 +15,6 @@ cw-core = { path = "../cw-core" }
 cw-embed = { path = "../cw-embed" }
 cw-illustrate = { path = "../cw-illustrate" }
 cw-index = { path = "../cw-index" }
-cw-models = { version = "0.2.0", path = "../cw-models" }
 cw-telemetry = { path = "../cw-telemetry" }
 cw-vault = { path = "../cw-vault" }
 cw-wiki = { path = "../cw-wiki" }

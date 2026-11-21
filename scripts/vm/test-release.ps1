@@ -2828,8 +2828,37 @@ Test-Case "OL5" "Semantic search through Ollama with nomic-embed-text" "Ollama a
 #    dedicated embedding models"), --port (default 9931), -ub and -b.
 #  - https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF: not gated,
 #    nomic-embed-text-v1.5.Q8_0.gguf is 146,146,432 bytes (Apache-2.0).
-# Not verified: whether the zip needs the Visual C++ runtime, which a clean
-# Windows may lack; LC1 runs `llama-server --version` and records what it says.
+# The zip needs the Visual C++ runtime, which a clean Windows lacks: in the
+# first run of these cases (2026-11-21) `llama-server --version` ended with
+# 0xC0000135 (a DLL not found), and Lemonade's own llama-server failed to start
+# the same way. Install-GuestVcRuntime installs Microsoft's redistributable
+# first, as a user of llama.cpp on such a machine must.
+$script:vcRuntime = $null
+function Install-GuestVcRuntime {
+    if ($script:vcRuntime) { return $script:vcRuntime }
+    # https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist: the
+    # permanent link to the newest x64 redistributable. A Burn bundle: /install
+    # /quiet /norestart; it needs an administrator, so it runs in the elevated
+    # PowerShell Direct session. Exit 3010 means installed, restart wanted;
+    # 1638 means a newer one is already there.
+    $run = Invoke-GuestScript -Background -TimeoutSec 900 -Script @'
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$before = Test-Path "$env:SystemRoot\System32\vcruntime140.dll"
+"vcruntime140.dll before: $before"
+$setup = Join-Path $env:TEMP 'vc_redist.x64.exe'
+$watch = Get-Date
+Invoke-WebRequest -UseBasicParsing 'https://aka.ms/vs/17/release/vc_redist.x64.exe' -OutFile $setup
+"downloaded: $([math]::Round((Get-Item $setup).Length / 1MB, 1)) MB in $([int]((Get-Date) - $watch).TotalSeconds) s"
+$watch = Get-Date
+$process = Start-Process $setup -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
+"install exit: $($process.ExitCode) after $([int]((Get-Date) - $watch).TotalSeconds) s"
+Remove-Item $setup -Force -ErrorAction SilentlyContinue
+"vcruntime140.dll after: $(Test-Path "$env:SystemRoot\System32\vcruntime140.dll")"
+'@
+    $script:vcRuntime = "Visual C++ runtime: " + (($run.Output -split "`n" | Where-Object { $_ -match '^(vcruntime140.dll|downloaded|install exit)' } | ForEach-Object { $_.Trim() }) -join '; ')
+    $script:vcRuntime
+}
 $llamaFolder = "$guestHome\llama.cpp"
 $llamaServer = "$llamaFolder\llama-server.exe"
 $llamaModelId = $null
@@ -2838,6 +2867,7 @@ $nomicFile = "$embedModels\nomic-embed-text-v1.5.Q8_0.gguf"
 $llamaPattern = '\\llama\.cpp\\|\\llama-server\.exe$'
 
 Test-Case "LC1" "Install llama.cpp's llama-server" "the newest Windows CPU build of llama.cpp unpacks and llama-server.exe reports its version" {
+    $vc = Install-GuestVcRuntime
     $run = Invoke-GuestScript -Background -TimeoutSec 1800 -Script ((Get-GuestFreeDiskText 3) + "`n" + (@'
 $ProgressPreference = 'SilentlyContinue'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -2880,8 +2910,8 @@ $version = @(& $exe.FullName --version 2>&1 | ForEach-Object { "$_" })
     Set-EmbedFact "llamacpp" "installS" (Get-OutputNumber $run.Output "extracted in (\d+) s")
     $ok = $run.Output -match "result: installed" -and $run.Output -match "version exit: 0"
     Add-Result -Id "LC1" -Title "Install llama.cpp's llama-server" -Expect "the Windows CPU zip downloads, unpacks, and llama-server.exe --version exits 0" `
-        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(release|downloaded|extracted|signature|version exit|installed MB|Defender)' }) -join '; ')"
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output ("$vc`n" + $run.Output) `
+        -Observed "$vc; $(($run.Output -split "`n" | Where-Object { $_ -match '^(release|downloaded|extracted|signature|version exit|installed MB|Defender)' }) -join '; ')"
 }
 
 Test-Case "LC2" "llama-server with nomic-embed-text v1.5" "README's flags start llama-server on port 9931 and it lists the model" {
@@ -2947,9 +2977,24 @@ Test-Case "LS1" "Install LM Studio's llmster" "the install script from lmstudio.
 $watch = Get-Date
 # The command as the docs give it, in its own PowerShell: the script calls exit when it fails.
 $child = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://lmstudio.ai/install.ps1 | iex" 2>&1 | ForEach-Object { "$_" })
-"installer exit: $LASTEXITCODE"
+$code = $LASTEXITCODE
+"as written exit: $code"
+"as written output ends: $((($child | Where-Object { $_.Trim() }) | Select-Object -Last 10) -join ' | ')"
+$lms = @("$env:USERPROFILE\.lmstudio\bin\lms.exe", "$env:LOCALAPPDATA\lm-studio\bin\lms.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $lms) {
+    # The script unpacks into %TEMP%\llmster-install-<32 hex digits> with .NET's
+    # ZipFile, which takes no path longer than 260 characters. Under a profile
+    # such as "C:\Users\Software Tester" that failed on 2026-11-21 with a
+    # DirectoryNotFoundException for a file deep in the archive. Once more,
+    # with a short TEMP.
+    New-Item -ItemType Directory -Force 'C:\t' | Out-Null
+    $child = @(& powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "`$env:TEMP = 'C:\t'; `$env:TMP = 'C:\t'; [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; irm https://lmstudio.ai/install.ps1 | iex" 2>&1 | ForEach-Object { "$_" })
+    $code = $LASTEXITCODE
+    "with TEMP=C:\t exit: $code"
+    "with TEMP=C:\t output ends: $((($child | Where-Object { $_.Trim() }) | Select-Object -Last 10) -join ' | ')"
+}
+"installer exit: $code"
 "installed in $([int]((Get-Date) - $watch).TotalSeconds) s"
-"installer output ends: $((($child | Where-Object { $_.Trim() }) | Select-Object -Last 6) -join ' | ')"
 $lms = @("$env:USERPROFILE\.lmstudio\bin\lms.exe", "$env:LOCALAPPDATA\lm-studio\bin\lms.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 "lms: $lms"
 if (-not $lms) { 'result: no lms'; return }
@@ -2965,7 +3010,7 @@ $home1 = Split-Path -Parent (Split-Path -Parent $lms)
     $ok = $run.Output -match "result: installed" -and $run.Output -match "installer exit: 0"
     Add-Result -Id "LS1" -Title "Install LM Studio's llmster" -Expect "irm https://lmstudio.ai/install.ps1 | iex exits 0 and lms.exe is in place" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(installer exit|installed in|lms:|version:|installed MB|on user PATH|Defender)' }) -join '; ') (the script downloads and unpacks in one step: no separate download time)"
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(as written exit|with TEMP=C:\\t exit|installer exit|installed in|lms:|version:|installed MB|on user PATH|Defender)' }) -join '; ') (the script downloads and unpacks in one step: no separate download time)"
 }
 
 Test-Case "LS2" "lms get and load nomic-embed-text" "lms downloads an embedding model and loads it" {
@@ -3126,7 +3171,9 @@ Remove-Item '{{HOME}}\Downloads\lemonade\lemonade.msi' -Force -ErrorAction Silen
 }
 
 Test-Case "LM2" "lemonade pull nomic-embed-text-v1-GGUF" "the model is pulled as README says and loaded" {
-    $up = (Invoke-GuestScript -TimeoutSec 120 -Script "`$ErrorActionPreference = 'Continue'; (@(& '$lemonadeExe' status 2>&1 | ForEach-Object { `"`$_`" }) -join ' | '); `"status exit: `$LASTEXITCODE`"; `$global:LASTEXITCODE = 0").Output
+    # Lemonade's llama-server needs the Visual C++ runtime as well (see LC1).
+    $vc = Install-GuestVcRuntime
+    $up =(Invoke-GuestScript -TimeoutSec 120 -Script "`$ErrorActionPreference = 'Continue'; (@(& '$lemonadeExe' status 2>&1 | ForEach-Object { `"`$_`" }) -join ' | '); `"status exit: `$LASTEXITCODE`"; `$global:LASTEXITCODE = 0").Output
     if ($up -notmatch "status exit: 0") {
         # The installer's own start did not happen or did not last.
         Start-GuestExe -Exe $lemonadeServerExe
@@ -3156,8 +3203,8 @@ $global:LASTEXITCODE = 0
     Set-EmbedFact "lemonade/nomic-embed-text-v1-GGUF" "modelMb" (Get-OutputNumber $run.Output "model file: [^\n]*, ([\d\.]+) MB")
     $ok = $run.Output -match "pull exit: 0" -and $run.Output -match "load exit: 0"
     Add-Result -Id "LM2" -Title "lemonade pull nomic-embed-text-v1-GGUF" -Expect "pull and load exit 0" `
-        -Status $(if ($ok) { "pass" } else { "fail" }) -Output ("status before: $up`n" + $run.Output) `
-        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|load exit|model file)' }) -join '; ') (the load may fetch a llama.cpp backend: its time is in the load figure)"
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output ("$vc`nstatus before: $up`n" + $run.Output) `
+        -Observed "$vc; $(($run.Output -split "`n" | Where-Object { $_ -match '^(pull exit|load exit|model file)' }) -join '; ') (the load may fetch a llama.cpp backend: its time is in the load figure)"
 }
 
 Test-Case "LM3" "Semantic search through Lemonade" "Lemonade and nomic-embed-text-v1-GGUF chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {

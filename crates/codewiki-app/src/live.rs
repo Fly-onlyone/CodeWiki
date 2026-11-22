@@ -548,8 +548,18 @@ pub fn home_page(home: &HomeInput) -> Doc {
                     if open {
                         detail.push_str("Open now · ");
                     }
-                    if let Kept::Under(entry) = project.kept {
-                        detail.push_str(&format!("kept from agents by {} · ", entry.display()));
+                    // Short, so that the project's own path stays readable;
+                    // Settings lists the entry in full.
+                    match project.kept {
+                        Kept::Open => {}
+                        Kept::Own => detail.push_str("Kept from agents · "),
+                        Kept::Under(entry) => {
+                            let name = entry.file_name().map_or_else(
+                                || entry.display().to_string(),
+                                |n| n.to_string_lossy().into_owned(),
+                            );
+                            detail.push_str(&format!("Kept from agents by {name} · "));
+                        }
                     }
                     detail.push_str(project.path);
                     let row = Row::new(
@@ -570,7 +580,9 @@ pub fn home_page(home: &HomeInput) -> Doc {
                             "Let agents in",
                             Action::LetAgentsIn(project.path.to_string()),
                         ),
-                        Kept::Under(_) => row,
+                        Kept::Under(_) => {
+                            row.aside("Settings…", Action::Settings(Some(Category::Repositories)))
+                        }
                     }
                 })
                 .collect(),
@@ -790,7 +802,7 @@ mod tests {
                 Action::KeepAgentsOut(r"C:\code\alpha".into())
             ))
         );
-        assert!(!page.words().contains("kept from agents"));
+        assert!(!page.words().contains("ept from agents"));
     }
 
     #[test]
@@ -826,15 +838,42 @@ mod tests {
                 current,
                 ..home(&[under], &[])
             });
-            assert_eq!(aside_of(&page, "alpha"), None);
+            // No button that changes the list; only a way to Settings.
+            assert_eq!(
+                aside_of(&page, "alpha"),
+                Some(&(
+                    "Settings…".to_string(),
+                    Action::Settings(Some(Category::Repositories))
+                ))
+            );
             assert!(
-                page.words().contains(r"kept from agents by C:\code"),
+                page.words()
+                    .contains(r"Kept from agents by code · C:\code\alpha"),
                 "{}",
                 page.words()
             );
-            assert!(page.words().contains(r"C:\code\alpha"));
-            assert_eq!(page.actions().len(), 2, "{:?}", page.actions());
+            assert!(!page.words().contains(r"by C:\code"));
+            assert!(
+                page.actions()
+                    .iter()
+                    .all(|a| !matches!(a, Action::KeepAgentsOut(_) | Action::LetAgentsIn(_)))
+            );
         }
+    }
+
+    #[test]
+    fn an_exact_entry_gets_a_short_marker() {
+        let own = Project {
+            kept: &Kept::Own,
+            ..ALPHA
+        };
+        let page = home_page(&home(&[own], &[]));
+        assert!(
+            page.words()
+                .contains(r"alpha — Kept from agents · C:\code\alpha"),
+            "{}",
+            page.words()
+        );
     }
 
     #[test]

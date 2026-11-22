@@ -5,7 +5,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 /// Whether a tool call may go ahead.
 #[derive(Debug, PartialEq, Eq)]
@@ -130,26 +130,46 @@ pub fn hide_in_workspace(workspace: &mut Value, hidden: &HashSet<String>) {
 }
 
 /// Drop hidden repositories from a `/v1/workspace/contracts` view: rows of
-/// every list keyed by a hidden `repo`, hidden providers of a matched call,
-/// and matched calls left with no visible provider.
+/// every list keyed by a hidden `repo`, and hidden providers of a matched
+/// call. A visible call left with no visible provider moves to `unprovided`,
+/// so the lists keep adding up to each repository's counts.
+///
+/// Known limitation: a visible route called only by a hidden repository leaves
+/// `matched` and does not appear in `unconsumed`, because a provider reference
+/// has no file or line to rebuild the row from. Fixing it needs the server to
+/// compute over visible repositories only.
 pub fn hide_in_contracts(contracts: &mut Value, hidden: &HashSet<String>) {
     for key in ["repos", "errors", "unprovided", "unconsumed", "matched"] {
         retain_rows(contracts, key, |r| !is_hidden(r, "repo", hidden));
     }
-    if let Some(rows) = contracts["matched"].as_array_mut() {
-        for row in rows.iter_mut() {
-            if let Some(providers) = row["providers"].as_array_mut() {
-                providers.retain(|p| !is_hidden(p, "repo", hidden));
+    let Some(rows) = contracts["matched"].as_array_mut() else {
+        return;
+    };
+    let mut orphaned = Vec::new();
+    rows.retain_mut(|row| {
+        if let Some(providers) = row["providers"].as_array_mut() {
+            providers.retain(|p| !is_hidden(p, "repo", hidden));
+            if providers.is_empty() {
+                orphaned.push(json!({
+                    "repo": row["repo"], "path": row["path"],
+                    "file": row["file"], "line": row["line"],
+                }));
+                return false;
             }
         }
-        rows.retain(|r| r["providers"].as_array().is_none_or(|p| !p.is_empty()));
+        true
+    });
+    if !orphaned.is_empty() {
+        match contracts["unprovided"].as_array_mut() {
+            Some(unprovided) => unprovided.extend(orphaned),
+            None => contracts["unprovided"] = Value::Array(orphaned),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn p(s: &str) -> PathBuf {
         PathBuf::from(s)
@@ -266,7 +286,7 @@ mod tests {
             "errors": [{ "repo": "Clients", "error": "x" }],
             "matched": [
                 { "path": "/a", "repo": "Clients", "providers": [{ "repo": "public" }] },
-                { "path": "/b", "repo": "public", "providers": [{ "repo": "Clients" }] },
+                { "path": "/b", "repo": "public", "file": "b.rs", "line": 7, "providers": [{ "repo": "Clients" }] },
                 { "path": "/c", "repo": "public", "providers": [{ "repo": "Clients" }, { "repo": "tools" }] },
             ],
             "unprovided": [{ "repo": "Clients", "path": "/d" }, { "repo": "public", "path": "/e" }],
@@ -277,7 +297,11 @@ mod tests {
         assert!(c["errors"].as_array().unwrap().is_empty());
         assert_eq!(c["matched"].as_array().unwrap().len(), 1);
         assert_eq!(c["matched"][0]["providers"], json!([{ "repo": "tools" }]));
-        assert_eq!(c["unprovided"].as_array().unwrap().len(), 1);
+        assert_eq!(c["unprovided"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            c["unprovided"][1],
+            json!({ "repo": "public", "path": "/b", "file": "b.rs", "line": 7 })
+        );
         assert!(c["unconsumed"].as_array().unwrap().is_empty());
     }
 }

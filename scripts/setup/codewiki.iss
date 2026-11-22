@@ -53,6 +53,13 @@ DisableProgramGroupPage=yes
 DisableReadyPage=no
 ; install.ps1 stops a running CodeWiki under the install folder itself.
 CloseApplications=no
+; No Cancel while Inno writes its uninstaller and Apps entry (the Preparing
+; page, where install.ps1 runs, has none either): a cancel there would undo
+; them and leave install.ps1's installation without its entry.
+AllowCancelDuringInstall=no
+; One setup program at a time: two would run install.ps1 into the same folder
+; at once.
+SetupMutex=CodeWikiSetup
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
@@ -89,7 +96,7 @@ Type: files; Name: "{app}\uninstall.cmd"
 Type: dirifempty; Name: "{app}"
 
 [Code]
-// Windows PowerShell 5.1, which every Windows CodeWiki runs on has. In 64-bit
+// Windows PowerShell 5.1: every Windows that CodeWiki runs on has it. In 64-bit
 // install mode Exec turns WOW64 file system redirection off, so this is the
 // 64-bit PowerShell: the scripts find running CodeWiki programs by
 // Get-Process ... .Path, which a 32-bit PowerShell cannot read for them.

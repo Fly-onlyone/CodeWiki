@@ -76,19 +76,54 @@ pub fn lookup_name(arg: &RepoArg, exists: impl Fn(&Path) -> bool) -> Option<Stri
     }
 }
 
-/// The `path` of the `/v1/repos` entry whose id equals `id_or_name` or whose
-/// name equals it case-insensitively (the rule of `cw-client`'s `repo_id`).
+/// The `/v1/repos` entry whose id equals `id_or_name` or whose name equals it
+/// case-insensitively (the rule of `cw-client`'s `repo_id`).
+fn find_repo<'a>(listing: &'a Value, id_or_name: &str) -> Option<&'a Value> {
+    listing.as_array()?.iter().find(|r| {
+        r["id"] == id_or_name
+            || r["name"]
+                .as_str()
+                .is_some_and(|n| n.eq_ignore_ascii_case(id_or_name))
+    })
+}
+
+/// The `path` of the entry `id_or_name` names.
 pub fn resolve_id(listing: &Value, id_or_name: &str) -> Option<PathBuf> {
-    listing
-        .as_array()?
-        .iter()
-        .find(|r| {
-            r["id"] == id_or_name
-                || r["name"]
-                    .as_str()
-                    .is_some_and(|n| n.eq_ignore_ascii_case(id_or_name))
-        })
-        .and_then(|r| r["path"].as_str().map(PathBuf::from))
+    find_repo(listing, id_or_name)?["path"]
+        .as_str()
+        .map(PathBuf::from)
+}
+
+/// The folder a `repo` argument means when no registered repository answers
+/// to it: a path as it is, a bare word as a path under `cwd`. The backend
+/// would read a bare word against its own folder, so it is never sent one.
+pub fn direct_path(arg: &RepoArg, cwd: &Path) -> PathBuf {
+    match arg {
+        RepoArg::Path(path) => path.clone(),
+        RepoArg::IdOrName(word) => cw_core::agents_off::normalize(Path::new(word), cwd),
+    }
+}
+
+/// What the backend is given for a `repo` argument.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Target {
+    /// A registered repository's id.
+    Id(String),
+    /// An absolute folder path.
+    Path(PathBuf),
+}
+
+/// An id or name that a registered repository answers to is that repository's
+/// id; any other word is a folder under `cwd`; a path stays a path.
+pub fn target(arg: &RepoArg, listing: Option<&Value>, cwd: &Path) -> Target {
+    if let RepoArg::IdOrName(word) = arg
+        && let Some(id) = listing
+            .and_then(|l| find_repo(l, word))
+            .and_then(|r| r["id"].as_str())
+    {
+        return Target::Id(id.to_string());
+    }
+    Target::Path(direct_path(arg, cwd))
 }
 
 /// Refused when the list cannot be read or covers any session folder.
@@ -287,6 +322,51 @@ mod tests {
         assert_eq!(lookup_name(&here, |_| true), None);
         let bare = repo_arg("pub-1", &cwd);
         assert_eq!(lookup_name(&bare, |_| true), Some("pub-1".to_string()));
+    }
+
+    #[test]
+    fn the_backend_is_never_given_a_bare_word() {
+        let cwd = p("D:\\work");
+        let l = listing();
+        let word = |w: &str| repo_arg(w, &cwd);
+        assert_eq!(
+            target(&word("clients"), Some(&l), &cwd),
+            Target::Id("cw-core-9bb4c92c".to_string())
+        );
+        assert_eq!(
+            target(&word("pub-1"), Some(&l), &cwd),
+            Target::Id("pub-1".to_string())
+        );
+        // No repository answers: a folder under cwd, with or without a listing.
+        assert_eq!(
+            target(&word("secret"), Some(&l), &cwd),
+            Target::Path(p("D:\\work\\secret"))
+        );
+        assert_eq!(
+            target(&word("clients"), None, &cwd),
+            Target::Path(p("D:\\work\\clients"))
+        );
+        // A relative path becomes absolute too.
+        assert_eq!(
+            target(&word("./x"), None, &cwd),
+            Target::Path(p("D:\\work\\x"))
+        );
+    }
+
+    #[test]
+    fn an_unmatched_word_is_refused_when_its_folder_under_cwd_is_covered() {
+        let cwd = p("D:\\work");
+        let covered = vec![p("D:\\work\\secret")];
+        let arg = repo_arg("secret", &cwd);
+        assert_eq!(
+            cw_core::agents_off::covering(&covered, &direct_path(&arg, &cwd)),
+            Some(p("D:\\work\\secret"))
+        );
+        let fine = repo_arg("public", &cwd);
+        assert_eq!(
+            cw_core::agents_off::covering(&covered, &direct_path(&fine, &cwd)),
+            None
+        );
     }
 
     #[test]

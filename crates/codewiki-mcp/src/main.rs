@@ -267,14 +267,22 @@ impl Bridge {
             let backend = connected(&slot)?;
             let cwd = std::env::current_dir()
                 .map_err(|e| format!("cannot read the working directory: {e}"))?;
-            // A path goes to the backend as `screen` read it: absolute against
-            // this session's folder, not the backend's.
-            let path = match repo.as_deref().map(|r| guard::repo_arg(r, &cwd)) {
-                Some(guard::RepoArg::Path(path)) => path.to_string_lossy().to_string(),
-                Some(guard::RepoArg::IdOrName(_)) => repo.unwrap_or_default(),
-                None => cwd.to_string_lossy().to_string(),
+            // The backend gets what `screen` read: a registered repository's
+            // id, or an absolute path against this session's folder, never a
+            // word or relative path it would read against its own folder.
+            let arg = repo.map(|r| guard::repo_arg(&r, &cwd));
+            let listing = match &arg {
+                Some(guard::RepoArg::IdOrName(_)) => backend.get("/v1/repos").ok(),
+                _ => None,
             };
-            let id = backend.repo_id(&path)?;
+            let target = match &arg {
+                Some(arg) => guard::target(arg, listing.as_ref(), &cwd),
+                None => guard::Target::Path(cwd),
+            };
+            let id = match target {
+                guard::Target::Id(id) => id,
+                guard::Target::Path(path) => backend.repo_id(&path.to_string_lossy())?,
+            };
             work(&backend, &id)
         })
         .await
@@ -321,9 +329,10 @@ impl Bridge {
         let entries = list.ok()?;
         let value = arguments?.get("repo")?.as_str().filter(|v| !v.is_empty())?;
         let arg = guard::repo_arg(value, &cwd);
-        if let guard::RepoArg::Path(path) = &arg
-            && let Some(entry) = cw_core::agents_off::covering(&entries, path)
-        {
+        // As a folder, without a backend: a path as written, a word under the
+        // current folder (what it means when no repository answers to it).
+        let direct = guard::direct_path(&arg, &cwd);
+        if let Some(entry) = cw_core::agents_off::covering(&entries, &direct) {
             return Some(guard::refusal(&entry));
         }
         // The backend falls back to a repository's name when it cannot add a

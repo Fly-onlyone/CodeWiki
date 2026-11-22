@@ -30,6 +30,7 @@ Every tool except `list_repos` and `get_workspace` takes an optional `repo` path
 
 ## Rules
 
+- If a CodeWiki tool answers that CodeWiki is turned off for this project, stop using CodeWiki tools for the rest of this session.
 - Never edit `obsidian/.codewiki/`. It holds CodeWiki's manifest and proposals.
 - To change a note by hand, follow the `wiki-note-style` skill. A note you edit counts as edited by a person from then on: CodeWiki proposes changes to it instead of rewriting it.
 - To record a decision, run `codewiki decisions --new "<title>"` and fill in the note it creates.

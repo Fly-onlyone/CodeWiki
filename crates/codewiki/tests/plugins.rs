@@ -320,6 +320,25 @@ fn write_notes_skill_follows_the_tools_and_the_limits() {
 }
 
 #[test]
+fn skills_stop_at_the_agents_refusal() {
+    // The bridge's refusal and the skills use one phrase, so an agent that
+    // reads the skill knows the refusal when it sees it.
+    let phrase = "CodeWiki is turned off for this project";
+    let order = "stop using CodeWiki tools for the rest of this session";
+    let guard = read("crates/codewiki-mcp/src/guard.rs");
+    assert!(guard.contains(phrase), "the bridge never says `{phrase}`");
+    for skill in [
+        format!("{CLAUDE}/skills/write-notes/SKILL.md"),
+        format!("{CODEX}/skills/using-codewiki/SKILL.md"),
+        format!("{CODEX}/skills/wiki-note-style/SKILL.md"),
+    ] {
+        let text = read(&skill);
+        assert!(text.contains(phrase), "{skill} lacks `{phrase}`");
+        assert!(text.contains(order), "{skill} lacks `{order}`");
+    }
+}
+
+#[test]
 fn picture_reference_follows_the_library() {
     use cw_illustrate::{
         MAX_CALLOUT_TEXT, MAX_CALLOUTS, MAX_PICTURES, MAX_SOURCE, MAX_STEP_TEXT, MAX_STEP_TITLE,

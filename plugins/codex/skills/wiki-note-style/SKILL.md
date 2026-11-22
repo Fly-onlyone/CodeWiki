@@ -9,6 +9,7 @@ CodeWiki checks every note it writes against a house style and throws away text 
 
 ## Before you edit
 
+- If a CodeWiki tool answers that CodeWiki is turned off for this project, stop using CodeWiki tools for the rest of this session.
 - Prefer `sync_wiki` when a note is only out of date: CodeWiki rewrites it from the code. Edit by hand to add what the code cannot show, such as a reason, a constraint or a gotcha.
 - A note you edit counts as edited by a person from then on. CodeWiki never overwrites it again; when the code behind it changes, the new text waits as a proposal for review.
 - Never edit anything under `obsidian/.codewiki/`.

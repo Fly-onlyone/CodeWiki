@@ -1,5 +1,6 @@
 //! Shared identifiers, hashing, configuration and error types for CodeWiki.
 
+pub mod agents_off;
 pub mod error;
 pub mod hash;
 pub mod logs;

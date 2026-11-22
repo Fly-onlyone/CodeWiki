@@ -20,5 +20,8 @@ ureq = { version = "3.5.1", features = ["json"] }
 # Compress-Archive writes deflate; nothing else is needed to read the package.
 zip = { version = "9.5.1", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 
+[target.'cfg(windows)'.dependencies]
+windows-registry = "0.100"
+
 [dev-dependencies]
 tempfile = "3.27.0"

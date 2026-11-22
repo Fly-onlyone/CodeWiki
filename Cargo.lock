@@ -1604,6 +1604,7 @@ dependencies = [
  "sha2 0.11.1",
  "tempfile",
  "ureq",
+ "windows-registry 0.100.0",
  "zip",
 ]
 

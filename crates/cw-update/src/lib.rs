@@ -12,6 +12,7 @@
 //!
 //! Only a copy installed by `install.ps1` updates itself ([`installed_dir`]).
 
+mod apps_entry;
 mod download;
 mod release;
 mod stage;
@@ -23,6 +24,7 @@ use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+pub use apps_entry::{APPS_ENTRY, record_version};
 pub use download::download;
 pub use release::{Check, Release, check};
 pub use semver::Version;
@@ -105,6 +107,13 @@ pub fn install(
     stop_backend().map_err(unchanged)?;
     log::info!("update: replacing the files in {}", install.display());
     swap(install, &staged)?;
+    // Only the setup program's entry is touched; a failure here does not undo
+    // an update that worked.
+    match record_version(APPS_ENTRY, &release.version.to_string()) {
+        Ok(true) => log::info!("update: Settings > Apps now shows {}", release.version),
+        Ok(false) => {}
+        Err(e) => log::warn!("update: {e}"),
+    }
     log::info!("update: installed {}", release.version);
     Ok(Installed::Swapped)
 }

@@ -2086,6 +2086,83 @@ $global:LASTEXITCODE = 0
             -Observed "briefing: $(if ($briefing) { $briefing } else { 'none' }); Claude Code's notice about the hook: $(if ($notice) { $notice } else { 'none' })"
     }
 
+    # A folder kept from coding agents (`codewiki agents off`): a real session
+    # asks for a wiki there and gets none. The folder is a new one beside the
+    # demo repository, never registered, so "no wiki, no entry" is a before and
+    # after of nothing; the demo repository is registered and holds a wiki
+    # already, where the same check would prove nothing. It must run while the
+    # plugin is installed, so it sits before CC7.
+    Test-Case "CC9" "A folder kept from coding agents gets no wiki" "agents off, then a live session asks for a wiki: no obsidian folder, no repos.json entry, and Claude's answer says CodeWiki is turned off" {
+        if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
+        $kept = "$guestHome\repos\cw-kept"
+        $run = Invoke-GuestScript -TimeoutSec 600 -Script (@'
+$kept = '{{KEPT}}'
+$cli = '{{CLI}}'
+$dataDir = "$env:LOCALAPPDATA\CodeWiki"
+$reposFile = Join-Path $dataDir "repos.json"
+function Cut { param([string]$Text, [int]$Length) $flat = $Text -replace "\s+", " "; $flat.Substring(0, [Math]::Min($Length, $flat.Length)) }
+function Test-Registered { if (Test-Path $reposFile) { (Get-Content $reposFile -Raw) -match "cw-kept" } else { $false } }
+try {
+    New-Item -ItemType Directory -Force "$kept\src" | Out-Null
+    Set-Content "$kept\Cargo.toml" "[package]`nname = `"cw-kept`"`nversion = `"0.1.0`"`nedition = `"2021`"`n"
+    Set-Content "$kept\src\lib.rs" "pub fn add(a: i32, b: i32) -> i32 {`n    a + b`n}`n"
+    "registered before: $(Test-Registered)"
+    "obsidian before: $(Test-Path "$kept\obsidian")"
+    "--- codewiki agents off"
+    $off = @(& $cli agents off $kept 2>&1 | ForEach-Object { "$_" }); $off
+    "agents off exit: $LASTEXITCODE"
+    "--- codewiki agents status"
+    $status = @(& $cli agents status $kept 2>&1 | ForEach-Object { "$_" }); $status
+    "kept: $([bool]($status -match 'kept from coding agents by'))"
+    Set-Location $kept
+    $env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+    $out = "$env:TEMP\claude-kept-run.jsonl"
+    & "$env:USERPROFILE\.local\bin\claude.exe" -p "Make the wiki for this project: call the sync_wiki tool of the codewiki MCP server once. Then answer with one line: what CodeWiki answered." --permission-mode default --allowedTools "mcp__plugin_codewiki_codewiki__*" --output-format stream-json --verbose --max-turns 6 --model haiku 2>&1 | Out-File -Encoding utf8 $out
+    "claude exit: $LASTEXITCODE"
+    foreach ($line in Get-Content $out) {
+        try { $event = $line | ConvertFrom-Json } catch { "not json: $(Cut $line 200)"; continue }
+        if ($event.type -eq "system" -and $event.subtype -eq "init") {
+            "codewiki server: $(($event.mcp_servers | Where-Object { $_.name -match 'codewiki' } | ForEach-Object { "$($_.name)=$($_.status)" }) -join ', ')"
+        } elseif ($event.type -eq "system" -and $event.subtype -eq "hook_response") {
+            "briefing: $(Cut "$($event.output)" 600)"
+        } elseif ($event.type -eq "assistant") {
+            foreach ($part in $event.message.content) { if ($part.type -eq "tool_use") { "tool call: $($part.name)" } }
+        } elseif ($event.type -eq "user") {
+            foreach ($part in $event.message.content) {
+                if ($part.type -eq "tool_result") { "tool result: $(Cut ($part.content | ConvertTo-Json -Compress -Depth 4) 300)" }
+            }
+        } elseif ($event.type -eq "result") {
+            "result: error $($event.is_error), turns $($event.num_turns)"
+            "answer: $(Cut "$($event.result)" 400)"
+        }
+    }
+    Remove-Item $out -Force -ErrorAction SilentlyContinue
+    "obsidian after: $(Test-Path "$kept\obsidian")"
+    "registered after: $(Test-Registered)"
+} finally {
+    Set-Location $env:USERPROFILE
+    "--- codewiki agents on"
+    & $cli agents on $kept 2>&1 | ForEach-Object { "$_" }
+    "agents on exit: $LASTEXITCODE"
+    Remove-Item $kept -Recurse -Force -ErrorAction SilentlyContinue
+    "removed: $(-not (Test-Path $kept))"
+}
+$global:LASTEXITCODE = 0
+'@).Replace("{{KEPT}}", $kept).Replace("{{CLI}}", "$guestTarget\codewiki.exe")
+        if (-not $run.Output) { throw "the guest script printed nothing (a script that did not parse or timed out)" }
+        $answer = if ($run.Output -match "(?m)^answer: (.+)$") { $Matches[1].Trim() } else { "" }
+        $toolCalled = $run.Output -match "tool call: mcp__plugin_codewiki_codewiki__"
+        $toolRefused = $run.Output -match "(?im)^tool result: .*turned off"
+        $hookQuiet = $run.Output -notmatch "(?m)^briefing: CodeWiki:"
+        $clean = $run.Output -match "obsidian before: False" -and $run.Output -match "registered before: False" -and
+            $run.Output -match "obsidian after: False" -and $run.Output -match "registered after: False"
+        $ok = $run.Output -match "agents off exit: 0" -and $run.Output -match "kept: True" -and $run.Output -match "result: error False" -and
+            $clean -and $answer -match "(?i)turned off" -and $hookQuiet -and $run.Output -match "agents on exit: 0" -and $run.Output -match "removed: True"
+        Add-Result -Id "CC9" -Title "A folder kept from coding agents gets no wiki" -Expect "no obsidian folder, no repos.json entry, the answer says CodeWiki is turned off, the hook adds no briefing" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
+            -Observed "'codewiki agents off' on a new folder, then Claude asked for a wiki there: a CodeWiki tool was called: $toolCalled, the tool's answer said 'turned off': $toolRefused; obsidian folder or repos.json entry before/after: none/none: $clean; session-start hook silent: $hookQuiet; Claude's answer: '$answer'; the folder is removed and 'agents on' run again either way"
+    }
+
     Test-Case "CC7" "Remove the plugin as README says" "the plugin and the marketplace are gone" {
         $run = Invoke-GuestScript -TimeoutSec 300 -Script @'
 $claude = "$env:USERPROFILE\.local\bin\claude.exe"

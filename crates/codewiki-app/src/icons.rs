@@ -164,6 +164,7 @@ pub fn for_command(command: &Command) -> Glyph {
         // The lens alone: the size the app was made at.
         Command::ZoomReset => SEARCH,
         Command::Autostart(_) => SETTINGS,
+        Command::KeepAgentsOut | Command::LetAgentsIn => REPOSITORY,
         Command::NewTab => NEW_TAB,
         Command::CloseTab | Command::Quit => CLOSE,
         Command::ToggleSidebar => SIDEBAR,

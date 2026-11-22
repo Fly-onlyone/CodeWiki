@@ -64,6 +64,12 @@ pub enum Command {
     /// Start the app when the user signs in to Windows, or stop doing so;
     /// listed only for an installed copy.
     Autostart(bool),
+    /// Keep coding agents out of the open project's folder; listed while
+    /// nothing covers it.
+    KeepAgentsOut,
+    /// Let coding agents into the open project again; listed while an entry
+    /// for exactly its folder covers it.
+    LetAgentsIn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

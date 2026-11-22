@@ -337,6 +337,9 @@ pub struct Row {
     /// Drawn as the current item of the list.
     pub selected: bool,
     pub action: Action,
+    /// A small text button at the row's end. A click on it runs its own
+    /// action, not the row's.
+    pub aside: Option<(String, Action)>,
 }
 
 impl Row {
@@ -348,6 +351,7 @@ impl Row {
             detail: None,
             selected: false,
             action,
+            aside: None,
         }
     }
 
@@ -363,6 +367,12 @@ impl Row {
 
     pub fn selected(mut self, selected: bool) -> Self {
         self.selected = selected;
+        self
+    }
+
+    /// A text button at the row's end, with its own action.
+    pub fn aside(mut self, label: impl Into<String>, action: Action) -> Self {
+        self.aside = Some((label.into(), action));
         self
     }
 }
@@ -734,7 +744,12 @@ impl Doc {
                     }
                 }
                 Block::List { items, .. } => items.iter().for_each(|line| of_line(line, &mut out)),
-                Block::Rows(rows) => out.extend(rows.iter().map(|row| row.action.clone())),
+                Block::Rows(rows) => {
+                    for row in rows {
+                        out.push(row.action.clone());
+                        out.extend(row.aside.iter().map(|(_, action)| action.clone()));
+                    }
+                }
                 Block::Alert { button, .. } | Block::Setting { button, .. } => {
                     out.extend(button.iter().map(|(_, action)| action.clone()))
                 }
@@ -840,6 +855,24 @@ mod tests {
         assert!(rich("").is_empty());
         // An unclosed backtick still shows its text.
         assert_eq!(plain(&rich("a `b")), "a b");
+    }
+
+    #[test]
+    fn a_rows_aside_action_is_listed_after_the_rows_own() {
+        let mut doc = Doc::new("t");
+        doc.push(Block::Rows(vec![
+            Row::new(crate::icons::FOLDER, "one", Action::OpenRepo("a".into()))
+                .aside("Keep agents out", Action::KeepAgentsOut("C:/a".into())),
+            Row::new(crate::icons::FOLDER, "two", Action::OpenRepo("b".into())),
+        ]));
+        assert_eq!(
+            doc.actions(),
+            [
+                Action::OpenRepo("a".into()),
+                Action::KeepAgentsOut("C:/a".into()),
+                Action::OpenRepo("b".into()),
+            ]
+        );
     }
 
     #[test]

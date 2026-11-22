@@ -794,8 +794,28 @@ impl AppView {
 
     /// Read the list of folders kept from coding agents again.
     fn reload_agents_off(&mut self) {
-        self.settings.agents_off = read_agents_off();
+        self.refresh_agents_off();
         self.settings.agents_note = None;
+    }
+
+    /// Read the list again, and work out what it means for each project of
+    /// Home and for the palette. All file access happens here, when the data
+    /// is refreshed, never while a page is built.
+    pub(crate) fn refresh_agents_off(&mut self) {
+        self.settings.agents_off = read_agents_off();
+        // An unreadable list passes as empty here; Settings shows the error.
+        let entries: Vec<std::path::PathBuf> = match &self.settings.agents_off {
+            Ok(folders) => folders.iter().map(|folder| folder.path.clone()).collect(),
+            Err(_) => Vec::new(),
+        };
+        self.kept = self
+            .repos
+            .iter()
+            .filter_map(|repo| match crate::live::kept_by(&entries, &repo.path) {
+                crate::live::Kept::Open => None,
+                kept => Some((repo.id.clone(), kept)),
+            })
+            .collect();
     }
 
     /// A change to the list failed: say why, as the other settings do. The

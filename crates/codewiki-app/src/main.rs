@@ -272,6 +272,11 @@ struct AppView {
     /// The registered repositories whose folders are not found. Home lists
     /// them apart, each with a way to remove it.
     missing: Vec<Repo>,
+    /// Which registered repositories coding agents are kept out of, by id;
+    /// one that is not here is not kept. Worked out when the repositories or
+    /// the list change (`refresh_agents_off`), because it reads the file
+    /// system and Home is built every frame.
+    kept: std::collections::HashMap<String, live::Kept>,
     page: Page,
     /// Pages visited before the current one.
     history: Vec<Page>,
@@ -445,6 +450,7 @@ impl AppView {
             pending_proposals: Vec::new(),
             recent: startup::recent(),
             missing: Vec::new(),
+            kept: std::collections::HashMap::new(),
             page: Page::Message(String::new()),
             history: Vec::new(),
             tabs: vec![Tab {
@@ -1250,6 +1256,7 @@ impl AppView {
         self.recent = startup::keep_recent(&paths);
         self.repos = repos;
         self.missing = missing;
+        self.refresh_agents_off();
     }
 
     /// The registered repository opened most recently, if any.
@@ -1691,6 +1698,23 @@ impl AppView {
                 Command::Autostart(!on),
             ));
         }
+        // Judged by the open project's registered folder; a parent entry
+        // is changed in Settings, so then neither is offered.
+        if let Some(repo) = &self.repo {
+            match self.kept.get(&repo.id).unwrap_or(&live::OPEN) {
+                live::Kept::Open => entries.push(palette::Entry::new(
+                    "Keep agents out of this project",
+                    "Command",
+                    Command::KeepAgentsOut,
+                )),
+                live::Kept::Own => entries.push(palette::Entry::new(
+                    "Let agents into this project",
+                    "Command",
+                    Command::LetAgentsIn,
+                )),
+                live::Kept::Under(_) => {}
+            }
+        }
         if let Some(release) = self.update.available() {
             entries.insert(
                 0,
@@ -1815,6 +1839,16 @@ impl AppView {
             Command::Quit => {
                 // The window is open, so a refusal shows where it stands.
                 self.quit(cx);
+            }
+            Command::KeepAgentsOut => {
+                if let Some(path) = self.repo.as_ref().map(|repo| repo.path.clone()) {
+                    self.run_action(&Action::KeepAgentsOut(path), cx);
+                }
+            }
+            Command::LetAgentsIn => {
+                if let Some(path) = self.repo.as_ref().map(|repo| repo.path.clone()) {
+                    self.run_action(&Action::LetAgentsIn(path), cx);
+                }
             }
             // The page with the switch then shows what Windows has.
             Command::Autostart(on) => {
@@ -3447,18 +3481,22 @@ impl AppView {
 
     /// Home, from the registered repositories and the open one.
     fn home_doc(&self) -> Doc {
-        fn listed(repos: &[Repo]) -> Vec<live::Project<'_>> {
+        fn listed<'a>(
+            repos: &'a [Repo],
+            kept: &'a std::collections::HashMap<String, live::Kept>,
+        ) -> Vec<live::Project<'a>> {
             repos
                 .iter()
                 .map(|repo| live::Project {
                     id: &repo.id,
                     name: &repo.name,
                     path: &repo.path,
+                    kept: kept.get(&repo.id).unwrap_or(&live::OPEN),
                 })
                 .collect()
         }
-        let projects = listed(&self.repos);
-        let missing = listed(&self.missing);
+        let projects = listed(&self.repos, &self.kept);
+        let missing = listed(&self.missing, &self.kept);
         let update = self.update.available().map(|r| r.version.to_string());
         let no_wiki = self
             .repo

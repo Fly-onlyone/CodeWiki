@@ -4,6 +4,8 @@
 //! each turns what the backend sent into a [`Doc`]. These show code that the
 //! vault deliberately does not hold as notes.
 
+use std::path::{Path, PathBuf};
+
 use serde_json::Value;
 
 use crate::doc::{
@@ -435,6 +437,44 @@ pub fn message_page(message: &str) -> Doc {
     doc
 }
 
+/// Whether coding agents are kept out of a project's registered folder.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum Kept {
+    /// Nothing in the list covers the folder.
+    #[default]
+    Open,
+    /// An entry for exactly this folder covers it.
+    Own,
+    /// Only this entry, a parent folder, covers it.
+    Under(PathBuf),
+}
+
+/// The state of a project that has none of its own.
+pub static OPEN: Kept = Kept::Open;
+
+/// How `entries` cover `folder`. It looks at the file system (a link is
+/// followed), so the app works it out when Home's data is refreshed, never
+/// while a page is built. An entry inside the folder does not count.
+pub fn kept_by(entries: &[PathBuf], folder: &str) -> Kept {
+    let folder = Path::new(folder);
+    if !folder.is_absolute() {
+        return Kept::Open;
+    }
+    let Some(entry) = cw_core::agents_off::covering(entries, folder) else {
+        return Kept::Open;
+    };
+    let lower = |path: &Path| {
+        cw_core::agents_off::normalize(path, Path::new(""))
+            .to_string_lossy()
+            .to_lowercase()
+    };
+    if lower(&entry) == lower(folder) {
+        Kept::Own
+    } else {
+        Kept::Under(entry)
+    }
+}
+
 /// A registered repository, as Home lists it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Project<'a> {
@@ -442,6 +482,8 @@ pub struct Project<'a> {
     pub name: &'a str,
     /// The repository's folder.
     pub path: &'a str,
+    /// Whether coding agents are kept out of the folder.
+    pub kept: &'a Kept,
 }
 
 /// What Home is made from.
@@ -501,19 +543,35 @@ pub fn home_page(home: &HomeInput) -> Doc {
                 .into_iter()
                 .map(|project| {
                     let open = home.current == Some(project.id);
-                    // The mark goes first: a long path is cut short at its end.
-                    let detail = if open {
-                        format!("Open now · {}", project.path)
-                    } else {
-                        project.path.to_string()
-                    };
-                    Row::new(
+                    // The marks go first: a long path is cut short at its end.
+                    let mut detail = String::new();
+                    if open {
+                        detail.push_str("Open now · ");
+                    }
+                    if let Kept::Under(entry) = project.kept {
+                        detail.push_str(&format!("kept from agents by {} · ", entry.display()));
+                    }
+                    detail.push_str(project.path);
+                    let row = Row::new(
                         icons::REPOSITORY,
                         project.name,
                         Action::OpenRepo(project.id.to_string()),
                     )
                     .detail(detail)
-                    .selected(open)
+                    .selected(open);
+                    // A parent entry is changed in Settings: removing it
+                    // would let agents into other projects too.
+                    match project.kept {
+                        Kept::Open => row.aside(
+                            "Keep agents out",
+                            Action::KeepAgentsOut(project.path.to_string()),
+                        ),
+                        Kept::Own => row.aside(
+                            "Let agents in",
+                            Action::LetAgentsIn(project.path.to_string()),
+                        ),
+                        Kept::Under(_) => row,
+                    }
                 })
                 .collect(),
         ));
@@ -644,16 +702,19 @@ mod tests {
         id: "a1",
         name: "alpha",
         path: r"C:\code\alpha",
+        kept: &Kept::Open,
     };
     const BETA: Project = Project {
         id: "b2",
         name: "Beta",
         path: r"C:\code\beta",
+        kept: &Kept::Open,
     };
     const GAMMA: Project = Project {
         id: "g3",
         name: "gamma",
         path: r"D:\gamma",
+        kept: &Kept::Open,
     };
 
     #[test]
@@ -679,8 +740,11 @@ mod tests {
             [
                 Action::OpenFolder,
                 Action::OpenRepo("g3".into()),
+                Action::KeepAgentsOut(r"D:\gamma".into()),
                 Action::OpenRepo("a1".into()),
+                Action::KeepAgentsOut(r"C:\code\alpha".into()),
                 Action::OpenRepo("b2".into()),
+                Action::KeepAgentsOut(r"C:\code\beta".into()),
             ]
         );
         assert!(page.words().contains(r"gamma — D:\gamma"));
@@ -704,6 +768,89 @@ mod tests {
         assert!(page.words().contains(r"Beta — Open now · C:\code\beta"));
         assert!(page.words().contains(r"alpha — C:\code\alpha"));
         assert_eq!(page.words().matches("Open now").count(), 1);
+    }
+
+    fn aside_of<'a>(page: &'a Doc, label: &str) -> Option<&'a (String, Action)> {
+        page.blocks.iter().find_map(|block| match block {
+            Block::Rows(rows) => rows
+                .iter()
+                .find(|row| row.label == label)
+                .and_then(|row| row.aside.as_ref()),
+            _ => None,
+        })
+    }
+
+    #[test]
+    fn home_offers_keep_agents_out() {
+        let page = home_page(&home(&[ALPHA], &[]));
+        assert_eq!(
+            aside_of(&page, "alpha"),
+            Some(&(
+                "Keep agents out".to_string(),
+                Action::KeepAgentsOut(r"C:\code\alpha".into())
+            ))
+        );
+        assert!(!page.words().contains("kept from agents"));
+    }
+
+    #[test]
+    fn home_offers_let_agents_in_for_an_exact_entry() {
+        let own = Project {
+            kept: &Kept::Own,
+            ..ALPHA
+        };
+        let page = home_page(&home(&[own, BETA], &[]));
+        assert_eq!(
+            aside_of(&page, "alpha"),
+            Some(&(
+                "Let agents in".to_string(),
+                Action::LetAgentsIn(r"C:\code\alpha".into())
+            ))
+        );
+        // Another project's row is its own.
+        assert_eq!(
+            aside_of(&page, "Beta").map(|a| a.0.as_str()),
+            Some("Keep agents out")
+        );
+    }
+
+    #[test]
+    fn home_names_the_parent_entry_and_offers_no_button() {
+        let parent = Kept::Under(PathBuf::from(r"C:\code"));
+        let under = Project {
+            kept: &parent,
+            ..ALPHA
+        };
+        for current in [None, Some("a1")] {
+            let page = home_page(&HomeInput {
+                current,
+                ..home(&[under], &[])
+            });
+            assert_eq!(aside_of(&page, "alpha"), None);
+            assert!(
+                page.words().contains(r"kept from agents by C:\code"),
+                "{}",
+                page.words()
+            );
+            assert!(page.words().contains(r"C:\code\alpha"));
+            assert_eq!(page.actions().len(), 2, "{:?}", page.actions());
+        }
+    }
+
+    #[test]
+    fn kept_by_tells_an_exact_entry_from_a_parent_and_a_subfolder() {
+        let entries = [
+            PathBuf::from(r"C:\work\exact"),
+            PathBuf::from(r"C:\parent"),
+            PathBuf::from(r"C:\work\inside\sub"),
+        ];
+        assert_eq!(kept_by(&entries, r"C:\WORK\exact"), Kept::Own);
+        assert_eq!(
+            kept_by(&entries, r"C:\parent\child"),
+            Kept::Under(PathBuf::from(r"C:\parent"))
+        );
+        assert_eq!(kept_by(&entries, r"C:\work\inside"), Kept::Open);
+        assert_eq!(kept_by(&[], r"C:\work\exact"), Kept::Open);
     }
 
     #[test]
@@ -739,6 +886,7 @@ mod tests {
             [
                 Action::OpenFolder,
                 Action::OpenRepo("a1".into()),
+                Action::KeepAgentsOut(r"C:\code\alpha".into()),
                 Action::ForgetRepo("b2".into()),
                 Action::ForgetRepo("g3".into()),
             ]

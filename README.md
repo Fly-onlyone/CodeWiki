@@ -8,7 +8,7 @@ A native Windows app and a Rust backend that write and maintain a wiki for a cod
 
 The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives in the repository, so it is versioned with the code and readable without CodeWiki.
 
-> Status: version 0.2.0. See `ROADMAP.md` for what is verified and what is not.
+> Status: version 0.3.0. See `ROADMAP.md` for what is verified and what is not.
 
 ## What it does
 
@@ -136,6 +136,8 @@ Every server except Ollama is asked through the OpenAI-style route `POST /v1/emb
 | `lemonade` | `CODEWIKI_LEMONADE_URL` (`http://127.0.0.1:13305`) | `CODEWIKI_LEMONADE_KEY`, optional | Pull an embedding model in Lemonade, such as `nomic-embed-text-v1-GGUF` | Processor, graphics card, and the AMD NPU through FastFlowLM | 13305 |
 | `mistralrs` | `CODEWIKI_MISTRALRS_URL` (`http://127.0.0.1:1234`) | none: the server has no key | `mistralrs serve -m Qwen/Qwen3-Embedding-0.6B` | Processor with the prebuilt program; CUDA needs a build from source | 1234 |
 | `openai` | `OPENAI_BASE_URL` (`https://api.openai.com/v1`) | `OPENAI_API_KEY`, required | A service with an OpenAI-compatible embeddings route | Not on your machine | none |
+
+On a Windows without the Microsoft Visual C++ Redistributable (a clean install has none), `llama-server`, Lemonade's own `llama-server` and mistral.rs do not start: Windows reports a missing DLL (exit code `0xC0000135`), and Lemonade answers "llama-server failed to start". Install the x64 redistributable from Microsoft (https://aka.ms/vs/17/release/vc_redist.x64.exe) first. LM Studio's command-line install (`irm https://lmstudio.ai/install.ps1 | iex`) can fail with "DirectoryNotFoundException" when the path of your `TEMP` folder is long: run it from a PowerShell where `$env:TEMP` and `$env:TMP` name a short folder such as `C:\t`. On the processor mistral.rs loads `Qwen/Qwen3-Embedding-0.6B` as F32, about 2.3 GB, and refuses with "This model does not fit on the devices" when less is free: add `--isq 8` to load it 8-bit. Ollama takes about two seconds for a request whose length in tokens it has not seen since it loaded the model, so with Ollama a search by meaning can take about two seconds; the other servers answered in under 100 ms. All of this was found in a clean Windows 11 on 2026-11-21 and 2026-11-22; how the servers compare there is in `ROADMAP.md` ("Embedding servers compared").
 
 LM Studio and mistral.rs both use port 1234, and Llama for Windows and `llama-server` both use 9931: run one of each pair at a time, or give one another address. An address pasted with `/v1` at the end, as the servers show it, works like the bare address. A server that wants a key and gets none, or a wrong one, answers with an error that names the setting to fill in. The first request to a server may wait up to five minutes while it loads the model; later requests wait two minutes.
 
@@ -285,8 +287,8 @@ CI runs these four on every push and pull request. It also runs `codewiki check`
 To release, set `version` in the root `Cargo.toml`, merge it, and push a matching tag:
 
 ```
-git tag v0.2.0
-git push origin v0.2.0
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 The tag publishes the Windows zip as a GitHub Release and pushes the Docker image. A tag that does not match the `Cargo.toml` version fails the release.

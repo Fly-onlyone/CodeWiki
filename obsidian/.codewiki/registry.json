@@ -20,6 +20,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_core::agents_off",
+    "path": "01-Core/cw-core/Agents Off Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::analyze",
     "path": "01-Core/cw-wiki/Analyze Module.md",
     "kind": "concept"
@@ -27,6 +32,11 @@
   {
     "id": "mod:cw_server::api",
     "path": "01-Core/cw-server/Api Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_update::apps_entry",
+    "path": "01-Core/cw-update/Apps Entry Module.md",
     "kind": "concept"
   },
   {
@@ -387,6 +397,11 @@
   {
     "id": "mod:codewiki_app::graph",
     "path": "01-Core/codewiki-app/Graph Module (codewiki-app).md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_mcp::guard",
+    "path": "01-Core/codewiki-mcp/Guard Module.md",
     "kind": "concept"
   },
   {
@@ -755,6 +770,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_mcp::guard::RepoArg",
+    "path": "01-Core/codewiki-mcp/RepoArg.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_telemetry::Reporting",
     "path": "01-Core/cw-telemetry/Reporting.md",
     "kind": "concept"
@@ -1087,6 +1107,11 @@
   {
     "id": "mod:cw_index::vectors",
     "path": "01-Core/cw-index/Vectors Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_core::model::Visibility",
+    "path": "01-Core/cw-core/Visibility.md",
     "kind": "concept"
   },
   {

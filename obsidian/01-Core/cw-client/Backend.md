@@ -54,7 +54,7 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `backend_to_stop`, `connect`, `connect_remote`
-- [[codewiki-mcp]] — from `Bridge`, `call`, `connected`
+- [[codewiki-mcp]] — from `Bridge`, `call`, `connected`, `get_visible`
 - [[cw-client]] — from `check_remote_in`, `health_version`
 
 ## See also

@@ -4,10 +4,11 @@ tags: [moc, core, cw-update]
 
 # Core / cw-update — Map of Content
 
-> Notes for `cw-update`: 7 concepts.
+> Notes for `cw-update`: 8 concepts.
 
 ## Notes
 
+- [[Apps Entry Module]] — the setup program's entry in Windows Settings > Apps.
 - [[cw-update]] — Self-update of an installed CodeWiki: release check, download, verification and file swap.
 - [[Download Module]] — downloading a package and checking it against its `.sha256` file.
 - [[Release]] — A release newer than the running program.

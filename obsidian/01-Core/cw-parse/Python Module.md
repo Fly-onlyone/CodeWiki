@@ -37,7 +37,7 @@ And 4 more private items with no comment.
 - [[Sink]] — uses `Sink`, `between`, `inherits`, `module_symbol`
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
-- [[Model Module]] — uses `Visibility`
+- [[Visibility]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

@@ -23,7 +23,7 @@ Builds a library.
 
 1. `AppView::install_update` and `AppView::start_updates` in [[codewiki-app]], and 2 more, call `installed_dir`. `installed_dir` calls `is_installation`.
 2. `check` in [[Update Module]] calls `api_base`.
-3. `AppView::install_update` in [[codewiki-app]] calls `install`. `install` calls `download` in [[Download Module]], then `stage`, then `program_version` (both in [[Stage Module]]), then `swap` in [[Swap Module]].
+3. `AppView::install_update` in [[codewiki-app]] calls `install`. `install` calls `download` in [[Download Module]], then `stage`, then `program_version` (both in [[Stage Module]]), then `swap` in [[Swap Module]], then `record_version` in [[Apps Entry Module]].
 4. `AppView::install_update` in [[codewiki-app]] calls `relaunch`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -32,6 +32,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 Modules:
 
+- [[Apps Entry Module]] — the setup program's entry in Windows Settings > Apps.
 - [[Download Module]] — downloading a package and checking it against its `.sha256` file.
 - [[Release Module]] — asking GitHub for the latest release.
 - [[Stage Module]] — unpacking a verified package and checking that its programs start.
@@ -54,6 +55,7 @@ Defined at the crate root:
 
 ## Depends on
 
+- [[Apps Entry Module]] — uses `APPS_ENTRY`, `record_version`
 - [[Stage Module]] — uses `program_version`, `stage`
 - [[Download Module]] — uses `download`
 - [[Swap Module]] — uses `swap`

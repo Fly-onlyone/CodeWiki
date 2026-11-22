@@ -22,7 +22,7 @@ Like the reports in `pages`, each turns what the backend sent into a `Doc`. Thes
 4. `AppView::open_file` in [[codewiki-app]] calls `file_page`. `file_page` calls `string`, then `Doc::new` in [[Doc]], then `Stat::new` in [[Doc Module]], then `number`, then `code` in [[Doc Module]], then `list`, and 8 more.
 5. `AppView::open_proposal` in [[codewiki-app]] calls `proposal_page`. `proposal_page` calls `Doc::new` in [[Doc]], then `code` in [[Doc Module]], then `string`, then `text` in [[Doc Module]].
 
-6 more entry points: `sync_page`, `agent_view_line`, `explanation_lines`, `message_page`, `home_page`, `offline_page`.
+7 more entry points: `sync_page`, `agent_view_line`, `explanation_lines`, `message_page`, `kept_by`, `home_page`, and 1 more.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -32,8 +32,6 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn string<'a>(value: &'a Value, key: &str) -> &'a str` — private function, returns `&'a str`; called by `file_page`, `hotspots_page`, `proposal_page`, `related` and 2 more.
 - `fn number(value: &Value) -> String` — private function, returns `String`; called by `file_page`, `hotspots_page`, `symbol_page`, `sync_page`.
 - `fn symbol_row(qualified: &str, detail: impl Into<String>) -> Row` — A row that opens a symbol, with its signature or relation under its name.
-- `fn file_row(path: &str) -> Row` — A row that opens a file.
-- `fn section(doc: &mut Doc, title: &str, rows: Vec<Row>)` — A heading over rows, or nothing when there are no rows.
 - `pub fn symbol_page(detail: &Value) -> Doc` — one symbol: what it is, where it is, and what it touches.
 - `pub fn search_page(query: &str, hits: &Value) -> Doc` — search results, grouped by what was found.
 - `pub fn hotspots_page(rows: &Value) -> Doc` — the hotspot ranking.
@@ -43,22 +41,26 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn agent_view_line(left_out: &[String]) -> String` — the line above a note in the agent view: what the view is, and what it leaves out of the note.
 - `pub fn explanation_lines(explanation: &str, by: &str, behind: &[String]) -> Vec<String>` — what the details pane says about a note's explanation, a line for each string: who wrote it, and why it may be behind. `explanation` is the backend's word for where it stands. Nothing for a note no agent explains.
 - `pub fn message_page(message: &str) -> Doc` — A page that only says something, such as that there is no wiki yet.
+- `pub enum Kept` — whether coding agents are kept out of a project's registered folder.
+- `pub static OPEN: Kept` — the state of a project that has none of its own.
+- `pub fn kept_by(entries: &[PathBuf], folder: &str) -> Kept` — how `entries` keep agents out of `folder`. A parent entry wins over the folder's own: removing the own entry would leave the folder kept. It looks at the file system (a link is followed), so the app works it out when Home's data is refreshed, never while a page is built.
 - `pub struct Project<'a>` — A registered repository, as Home lists it.
 - `pub struct HomeInput<'a>` — what Home is made from.
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
-- `fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a>>` — `projects` in the order of `recent`, then the ones never opened in the app, by name.
 - `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: where its log is, and a button that tries again. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 2 more items.
+And 5 more items.
 
 ## Depends on
 
-- [[Doc Module]] — uses `Line`, `Row`, `code`, `detail`
+- [[Doc Module]] — uses `Line`, `Row`, `aside`, `code`
 - [[Doc]] — uses `Doc`, `heading`, `lead`, `new`
+- [[Agents Off Module]] — uses `blocking`, `covering`, `normalize`
 
 ## Used by
 
-- [[codewiki-app]] — from `agent_view_notice`, `connect`, `details`, `home_doc`
+- [[codewiki-app]] — from `AppView`, `agent_view_notice`, `connect`, `details`
+- [[Palette Module]] — from `agents_entry`
 
 ## See also
 

@@ -12,7 +12,7 @@ tags: [core, codewiki-app]
 
 ## How it works
 
-1. `AppView::details` and `AppView::diagram_viewer_view` in [[codewiki-app]], and 6 more, call `new`.
+1. `AppView::details` and `AppView::diagram_viewer_view` in [[codewiki-app]], and 7 more, call `new`.
 
 ## Items
 
@@ -20,7 +20,7 @@ Declared as `pub struct Button`.
 
 Members:
 
-- `pub fn new(id: impl Into<ElementId>) -> Self` — public method, returns `Self`; called by `AppView::details`, `AppView::diagram_viewer_view`, `AppView::edit_view`, `AppView::proposal_actions` and 4 more.
+- `pub fn new(id: impl Into<ElementId>) -> Self` — public method, returns `Self`; called by `AppView::details`, `AppView::diagram_viewer_view`, `AppView::edit_view`, `AppView::proposal_actions` and 5 more.
 - `pub fn label(mut self, label: impl Into<SharedString>) -> Self` — public method, returns `Self`.
 - `pub fn icon(mut self, icon: Glyph) -> Self` — MUI's `startIcon`.
 - `pub fn contained(mut self) -> Self` — public method, returns `Self`; called by `draw`.
@@ -46,7 +46,7 @@ Members:
 ## Used by
 
 - [[codewiki-app]] — from `details`, `diagram_viewer_view`, `edit_view`, `proposal_actions`
-- [[Doc View Module]] — from `draw`, `secret_control`
+- [[Doc View Module]] — from `draw`, `draw_row`, `secret_control`
 
 ## See also
 

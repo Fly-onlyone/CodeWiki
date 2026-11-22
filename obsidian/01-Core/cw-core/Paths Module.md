@@ -12,7 +12,7 @@ tags: [core, cw-core, module]
 
 ## How it works
 
-1. `run` and `sentry_test` in [[codewiki]], and 11 more, call `data_dir`.
+1. `agents` and `run` in [[codewiki]], and 18 more, call `data_dir`.
 2. `add` in [[Repos Module]] calls `repo_id`. `repo_id` calls `sha256_hex` in [[Hash Module]].
 3. `open_index` in [[Service Module]] calls `index_path`. `index_path` calls `index_path_in`, then `data_dir`.
 4. `open_existing_index_in` and `open_index_in` in [[Service Module]] call `index_path_in`. `index_path_in` calls `repo_id`.
@@ -34,13 +34,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[cw-client]] — from `check_remote`, `forget_remote`, `save_remote`, `saved_remote`
+- [[codewiki]] — from `agents`, `run`, `sentry_test`, `session_start_hook`
+- [[codewiki-app]] — from `keep_agents_out`, `let_agents_in`, `run_settings_action`, `settings_frame`
 - [[Service Module]] — from `open_existing_index_in`, `open_index`, `open_index_in`, `update`
-- [[codewiki]] — from `run`, `sentry_test`
-- [[codewiki-app]] — from `run_settings_action`, `settings_frame`
+- [[codewiki-mcp]] — from `listed_folders`, `screen`
 - [[Serve Module]] — from `run`
+- [[Settings View Module]] — from `read_agents_off`
 - [[Logs Module]] — from `dir_from`
-- [[Repos Module]] — from `add`
-- [[Backend]] — from `connect`
 
 ## See also
 

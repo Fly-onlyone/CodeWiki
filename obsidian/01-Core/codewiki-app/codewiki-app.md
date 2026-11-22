@@ -91,11 +91,11 @@ And 19 more items.
 
 ## Depends on
 
+- [[Live Module]] — uses `HomeInput`, `Kept`, `OPEN`, `Project`
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
-- [[Live Module]] — uses `HomeInput`, `Project`, `agent_view_line`, `explanation_lines`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
-- [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
+- [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`
 - [[Diagram View Module]] — uses `SHARP_SCALE`, `STEP`, `WHEEL`, `actual`
 - [[Backend]] — uses `Backend`, `answers`, `connect`, `delete`

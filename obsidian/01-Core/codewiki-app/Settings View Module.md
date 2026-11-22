@@ -18,13 +18,15 @@ A change takes effect when it is made. A switch, a select or a choice acts on it
 
 ## How it works
 
-1. `AppView::new` in [[codewiki-app]] calls `State::new`. `State::new` calls `remove` in [[Prefs Module]].
+1. `AppView::new` in [[codewiki-app]] calls `State::new`. `State::new` calls `remove` in [[Prefs Module]], then `read_agents_off`.
 2. `AppView::take_settings` in [[codewiki-app]] calls `shown_value`.
 3. `AppView::test_embedder` in [[codewiki-app]] calls `test_line`.
-4. `AppView::settings_menu_view` in [[codewiki-app]] calls `lists_themes`.
-5. `AppView::commit_settings_field` and `AppView::run_settings_action` in [[codewiki-app]] call `change`.
+4. `AppView::refresh_agents_off` in [[codewiki-app]] calls `read_agents_off`. `read_agents_off` calls `data_dir` in [[Paths Module]], then `load`, then `unreadable`, then `file` (all in [[Agents Off Module]]).
+5. `AppView::settings_menu_view` in [[codewiki-app]] calls `lists_themes`.
 
-3 more entry points: `changes_the_embedder`, `job_in`, `job_ended`.
+4 more entry points: `change`, `changes_the_embedder`, `job_in`, `job_ended`.
+
+Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
 ## Items
 
@@ -34,6 +36,7 @@ A change takes effect when it is made. A switch, a select or a choice acts on it
 - `pub struct State` — what the Settings page remembers between frames.
 - `fn shown_value(entry: &Value) -> String` — what a field shows for the setting `entry` describes: the value that is saved or that the environment gives. A default is not typed in; the input's placeholder stands for it.
 - `fn test_line(result: Result<Value, String>) -> Tested` — the line a test of a provider left.
+- `fn read_agents_off() -> Result<Vec<KeptFolder>, String>` — the list of folders kept from coding agents, or the text that says it cannot be read. The app reads it itself: the backend is not involved.
 - `fn lists_themes(options: &[Choice]) -> bool` — whether the options of a select are the themes.
 - `fn change(section: &str, field: &str, value: Value) -> Value` — the body of a `PUT /v1/settings` that changes one field.
 - `fn changes_the_embedder(body: &Value) -> bool` — whether a change touches the embedder, after which the job the app last read may be out of date.
@@ -43,12 +46,13 @@ A change takes effect when it is made. A switch, a select or a choice acts on it
 ## Depends on
 
 - [[FieldId]] — uses `ALL`, `FieldId`, `placeholder`, `secret`
+- [[Settings Pages Module]] — uses `KeptFolder`, `Tested`, `job_runs`
+- [[Agents Off Module]] — uses `file`, `load`, `unreadable`
 - [[codewiki-app]] — uses `AppView`, `settings_field_event`
-- [[Settings Pages Module]] — uses `Tested`, `job_runs`
 - [[Doc Module]] — uses `Choice`
 - [[Prefs Module]] — uses `remove`
 - [[Settings Module]] — uses `Note`
-- [[Category]] — uses `Category`
+- [[Paths Module]] — uses `data_dir`
 
 ## Used by
 

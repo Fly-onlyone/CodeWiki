@@ -22,7 +22,7 @@ Declared as `pub enum Action`.
 
 ## Used by
 
-- [[Doc Module]] — from `Choice`, `Press`, `Row`, `new`
+- [[Doc Module]] — from `Choice`, `Press`, `Row`, `aside`
 - [[Doc View Module]] — from `OnAction`, `choices_row`, `line`, `secret_control`
 - [[codewiki-app]] — from `run_action`, `run_settings_action`
 - [[Doc]] — from `actions`, `of_line`

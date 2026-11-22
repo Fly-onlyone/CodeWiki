@@ -4,10 +4,11 @@ tags: [moc, core, cw-core]
 
 # Core / cw-core — Map of Content
 
-> Notes for `cw-core`: 16 concepts.
+> Notes for `cw-core`: 18 concepts.
 
 ## Notes
 
+- [[Agents Off Module]] — the list of folders closed to coding agents.
 - [[Confidence]] — how sure the resolver is that an edge is real.
 - [[cw-core]] — shared identifiers, hashing, configuration and error types for CodeWiki.
 - [[Error]] — `Error` enum defined in `cw_core::error` with 4 methods.
@@ -24,6 +25,7 @@ tags: [moc, core, cw-core]
 - [[Settings Module (cw-core)]] — settings the backend keeps for its user: which embedder serves semantic search, and the keys and addresses it needs.
 - [[Symbol]] — A named code entity.
 - [[SymbolKind]] — `SymbolKind` enum defined in `cw_core::model` with 3 methods.
+- [[Visibility]] — `Visibility` enum defined in `cw_core::model` with 2 methods.
 
 ## Folders
 

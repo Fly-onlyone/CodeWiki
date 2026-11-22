@@ -25,9 +25,10 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Items
 
 - `pub enum Tested` — where a test of a provider stands.
+- `pub struct KeptFolder` — A folder on the list of those kept from coding agents. Whether it still exists is looked up when the list is read, never while a page is drawn: a folder on a share that is offline can take long to answer.
 - `pub struct Model<'a>` — everything the pages read.
 - `pub fn page(category: Category, model: &Model) -> Doc` — the page of `category`.
-- `fn card(title: &str, body: Vec<Block>) -> Block` — private function, returns `Block`; called by `appearance`, `backend`, `diagnostics`, `error_reports` and 4 more.
+- `fn card(title: &str, body: Vec<Block>) -> Block` — private function, returns `Block`; called by `agents_card`, `appearance`, `backend`, `diagnostics` and 5 more.
 - `fn appearance(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn zoom_card(model: &Model) -> Block` — how large the whole app is drawn.
 - `fn startup(model: &Model) -> Block` — where the app starts, whether Windows starts it at sign-in, and what closing the window does: the last two belong together, since an app started that way is seen only as its tray icon.
@@ -38,14 +39,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn in_use(settings: &Value, section: &str, nothing: &str) -> Block` — what the settings of `section` select, or why they select nothing usable.
 - `fn search(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn server_rows(model: &Model, settings: &Value, provider: &str) -> Vec<Block>` — the address and key rows of a server, then its model, then how to start it. Nothing for the word-form embedder and for none.
-- `fn lists(models: &[Value], provider: &str, chosen: &str) -> bool` — whether the models a server listed hold `chosen`. Ollama takes a name without a tag as its `latest`: "The tag is optional and, if not provided, will default to latest" (https://github.com/ollama/ollama/blob/main/docs/api.md).
 - `pub fn job_runs(job: &Value) -> bool` — whether an embedding job is under way.
 - `fn job(job: &Value) -> Vec<Block>` — what the embedding job that runs, or the last that ran, has to say.
 - `fn backend(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn repositories(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn updates(model: &Model) -> Vec<Block>` — the version, what the last check found, and whether the app checks by itself.
 
-And 14 more items.
+And 16 more items.
 
 ## Depends on
 
@@ -60,7 +60,7 @@ And 14 more items.
 
 ## Used by
 
-- [[Settings View Module]] — from `State`, `job_ended`, `test_line`
+- [[Settings View Module]] — from `State`, `job_ended`, `read_agents_off`, `test_line`
 - [[codewiki-app]] — from `settings_frame`, `take_embed_job`
 
 ## See also

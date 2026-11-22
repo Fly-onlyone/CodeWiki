@@ -4,7 +4,7 @@ tags: [integration]
 
 # serde
 
-> External crate `serde`, imported by 32 source files.
+> External crate `serde`, imported by 33 source files.
 
 ## What it does
 
@@ -12,8 +12,9 @@ A generic serialization/deserialization framework.
 
 ## Used for
 
-Imported by 32 source files. Main users:
+Imported by 33 source files. Main users:
 
+- [[Agents Off Module]] — imports `Deserialize`, `Serialize`
 - [[Api Module]] — imports `Deserialize`, `Serialize`
 - [[Ci Module]] — imports `Deserialize`, `Serialize`
 - [[Contracts Module]] — imports `Deserialize`, `Serialize`
@@ -21,7 +22,6 @@ Imported by 32 source files. Main users:
 - [[Decisions Module]] — imports `Deserialize`, `Serialize`
 - [[Embed Job Module]] — imports `Serialize`
 - [[Explanations Module]] — imports `Deserialize`, `Serialize`
-- [[Generate Module]] — imports `Deserialize`, `Serialize`
 
 ## Configuration
 

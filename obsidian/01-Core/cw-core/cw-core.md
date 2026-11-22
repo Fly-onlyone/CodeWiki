@@ -19,6 +19,7 @@ Builds a library.
 
 Modules:
 
+- [[Agents Off Module]] — the list of folders closed to coding agents.
 - [[Error Module]] — one error type shared by the engine crates.
 - [[Hash Module]] — content hashing used for change detection.
 - [[Logs Module]] — log files of the programs, under `<data dir>/logs`.

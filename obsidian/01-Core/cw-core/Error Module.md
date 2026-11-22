@@ -12,7 +12,7 @@ tags: [core, cw-core, module]
 
 ## Items
 
-- `pub type Result<T> = std::result::Result<T, Error>` — public type alias; used by `Embedder::embed`, `Embedder::embed_query`, `Embedder::probe`, `Facts::load` and 187 more.
+- `pub type Result<T> = std::result::Result<T, Error>` — public type alias; used by `Embedder::embed`, `Embedder::embed_query`, `Embedder::probe`, `Facts::load` and 190 more.
 - [[Error]] — enum
 
 ## Depends on

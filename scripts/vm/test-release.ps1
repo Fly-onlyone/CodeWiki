@@ -2144,6 +2144,32 @@ try {
     "--- codewiki agents on"
     & $cli agents on $kept 2>&1 | ForEach-Object { "$_" }
     "agents on exit: $LASTEXITCODE"
+    # The feature failed if the folder got registered: forget it the way the
+    # product does (DELETE /v1/repos/{id}); if the backend is not there, take
+    # the entry out of repos.json. Before the folder goes.
+    if (Test-Registered) {
+        "registration found: removing it"
+        try {
+            $list = Get-Content $reposFile -Raw | ConvertFrom-Json
+            $mine = @($list | Where-Object { $_.path -match "cw-kept" })
+            $info = Get-Content (Join-Path $dataDir "backend.json") -Raw | ConvertFrom-Json
+            foreach ($entry in $mine) {
+                try {
+                    $answer = Invoke-WebRequest -UseBasicParsing -Method DELETE -Uri ($info.url + "/v1/repos/" + $entry.id) -Headers @{ Authorization = ("Bearer " + $info.token) } -TimeoutSec 60
+                    "backend delete $($entry.id): $($answer.StatusCode)"
+                } catch { "backend delete $($entry.id) failed: $(Cut "$($_.Exception.Message)" 200)" }
+            }
+        } catch { "backend not reachable: $(Cut "$($_.Exception.Message)" 200)" }
+        if (Test-Registered) {
+            try {
+                $list = Get-Content $reposFile -Raw | ConvertFrom-Json
+                $rest = @($list | Where-Object { $_.path -notmatch "cw-kept" })
+                Set-Content $reposFile (ConvertTo-Json -InputObject $rest -Depth 4) -Encoding UTF8
+                "repos.json edited by hand: $($rest.Count) entries left"
+            } catch { "repos.json edit failed: $(Cut "$($_.Exception.Message)" 200)" }
+        }
+        "leftover registration: $(Test-Registered)"
+    } else { "leftover registration: False" }
     Remove-Item $kept -Recurse -Force -ErrorAction SilentlyContinue
     "removed: $(-not (Test-Path $kept))"
 }
@@ -2158,9 +2184,10 @@ $global:LASTEXITCODE = 0
             $run.Output -match "obsidian after: False" -and $run.Output -match "registered after: False"
         $ok = $run.Output -match "agents off exit: 0" -and $run.Output -match "kept: True" -and $run.Output -match "result: error False" -and
             $clean -and $answer -match "(?i)turned off" -and $hookQuiet -and $run.Output -match "agents on exit: 0" -and $run.Output -match "removed: True"
+        $leftover = if ($run.Output -match "leftover registration: True") { "; a repos.json entry for cw-kept is LEFT in the guest and could not be removed (see the output)" } else { "" }
         Add-Result -Id "CC9" -Title "A folder kept from coding agents gets no wiki" -Expect "no obsidian folder, no repos.json entry, the answer says CodeWiki is turned off, the hook adds no briefing" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-            -Observed "'codewiki agents off' on a new folder, then Claude asked for a wiki there: a CodeWiki tool was called: $toolCalled, the tool's answer said 'turned off': $toolRefused; obsidian folder or repos.json entry before/after: none/none: $clean; session-start hook silent: $hookQuiet; Claude's answer: '$answer'; the folder is removed and 'agents on' run again either way"
+            -Observed "'codewiki agents off' on a new folder, then Claude asked for a wiki there: a CodeWiki tool was called: $toolCalled, the tool's answer said 'turned off': $toolRefused; obsidian folder or repos.json entry before/after: none/none: $clean; session-start hook silent: $hookQuiet; Claude's answer: '$answer'; the folder is removed and 'agents on' run again either way (a registration the case caused is removed first)$leftover"
     }
 
     Test-Case "CC7" "Remove the plugin as README says" "the plugin and the marketplace are gone" {

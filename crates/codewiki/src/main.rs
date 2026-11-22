@@ -177,10 +177,7 @@ fn agents(action: AgentsAction, json: bool) -> ExitCode {
     use cw_core::agents_off::{self, Added, Removed};
     let data = cw_core::paths::data_dir();
     let broken = |_: cw_core::Error| {
-        eprintln!(
-            "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
-            agents_off::file(&data).display()
-        );
+        eprintln!("{}", agents_off::unreadable(&agents_off::file(&data)));
         ExitCode::FAILURE
     };
     let here = || std::env::current_dir().unwrap_or_default();

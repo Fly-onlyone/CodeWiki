@@ -150,10 +150,7 @@ fn a_broken_list_is_reported_and_left_alone() {
         assert_eq!(output.status.code(), Some(1), "{args:?}");
         let text = stderr(&output);
         assert!(
-            text.contains(&format!(
-                "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
-                file.display()
-            )),
+            text.contains(&cw_core::agents_off::unreadable(&file)),
             "{text}"
         );
     }

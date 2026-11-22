@@ -126,6 +126,30 @@ pub fn covering(entries: &[PathBuf], path: &Path) -> Option<PathBuf> {
         .cloned()
 }
 
+/// What an agent is told when a folder of its session is kept from coding
+/// agents: `entry` is the listed folder that keeps it out.
+pub fn refusal(entry: &Path) -> String {
+    format!(
+        "CodeWiki is turned off for this project ({} is kept from coding agents in CodeWiki's settings). Do not call CodeWiki tools here; continue without them.",
+        entry.display()
+    )
+}
+
+/// What an agent is told when only the repository a tool names is kept from
+/// coding agents. It names no path, so it tells nothing about the folder.
+pub fn repo_refusal() -> &'static str {
+    "CodeWiki is turned off for that repository; it is kept from coding agents in CodeWiki's settings. Do not call CodeWiki tools for it."
+}
+
+/// What the MCP bridge, the command line and the app say when the list
+/// (`file`) cannot be read.
+pub fn unreadable(file: &Path) -> String {
+    format!(
+        "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
+        file.display()
+    )
+}
+
 /// Add `folder` to the list unless a listed folder already covers it.
 pub fn add(data_dir: &Path, folder: &Path) -> Result<Added> {
     let mut entries = load(data_dir)?;
@@ -246,6 +270,22 @@ mod tests {
     const ROOT: &str = r"D:\work\clients";
     #[cfg(not(windows))]
     const ROOT: &str = "/work/clients";
+
+    #[test]
+    fn the_texts_are_exact() {
+        assert_eq!(
+            refusal(&p("D:\\secret")),
+            "CodeWiki is turned off for this project (D:\\secret is kept from coding agents in CodeWiki's settings). Do not call CodeWiki tools here; continue without them."
+        );
+        assert_eq!(
+            repo_refusal(),
+            "CodeWiki is turned off for that repository; it is kept from coding agents in CodeWiki's settings. Do not call CodeWiki tools for it."
+        );
+        assert_eq!(
+            unreadable(&p("D:\\data\\agents-off.json")),
+            "CodeWiki's list of folders kept from coding agents (D:\\data\\agents-off.json) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents."
+        );
+    }
 
     #[test]
     fn missing_file_is_an_empty_list() {

@@ -333,7 +333,7 @@ impl Bridge {
         // current folder (what it means when no repository answers to it).
         let direct = guard::direct_path(&arg, &cwd);
         if let Some(entry) = cw_core::agents_off::covering(&entries, &direct) {
-            return Some(guard::refusal(&entry));
+            return Some(cw_core::agents_off::refusal(&entry));
         }
         // The backend falls back to a repository's name when it cannot add a
         // path, so a missing path is looked up by its last component too.
@@ -342,7 +342,8 @@ impl Bridge {
             .and_then(|backend| backend.get("/v1/repos"))
             .ok()?;
         let path = guard::resolve_id(&listing, &name)?;
-        cw_core::agents_off::covering(&entries, &path).map(|entry| guard::refusal(&entry))
+        cw_core::agents_off::covering(&entries, &path)
+            .map(|entry| cw_core::agents_off::refusal(&entry))
     }
 }
 
@@ -1770,7 +1771,10 @@ mod tests {
         let (root, data, closed, _) = scene("folder");
         let session = Session::start(&closed, &data, None);
         let bridge = Bridge::default();
-        assert_eq!(bridge.screen(None), Some(guard::refusal(&closed)));
+        assert_eq!(
+            bridge.screen(None),
+            Some(cw_core::agents_off::refusal(&closed))
+        );
         assert!(bridge.backend.lock().unwrap().is_none());
         drop(session);
         let _ = std::fs::remove_dir_all(root);
@@ -1784,7 +1788,7 @@ mod tests {
         let args = json!({ "repo": closed.join("sub").to_string_lossy() });
         assert_eq!(
             bridge.screen(args.as_object()),
-            Some(guard::refusal(&closed))
+            Some(cw_core::agents_off::refusal(&closed))
         );
         // The open folder, and a path outside the list, are fine.
         assert_eq!(bridge.screen(None), None);
@@ -1800,7 +1804,10 @@ mod tests {
         let (root, data, closed, open) = scene("project");
         let session = Session::start(&open, &data, Some("../closed"));
         let bridge = Bridge::default();
-        assert_eq!(bridge.screen(None), Some(guard::refusal(&closed)));
+        assert_eq!(
+            bridge.screen(None),
+            Some(cw_core::agents_off::refusal(&closed))
+        );
         drop(session);
         let _ = std::fs::remove_dir_all(root);
     }

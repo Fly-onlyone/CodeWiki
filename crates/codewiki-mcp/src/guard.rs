@@ -5,6 +5,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+use cw_core::agents_off;
 use serde_json::{Value, json};
 
 /// Whether a tool call may go ahead.
@@ -12,22 +13,6 @@ use serde_json::{Value, json};
 pub enum Verdict {
     Open,
     Refused(String),
-}
-
-/// What the agent is told in a closed folder.
-pub fn refusal(entry: &Path) -> String {
-    format!(
-        "CodeWiki is turned off for this project ({} is kept from coding agents in CodeWiki's settings). Do not call CodeWiki tools here; continue without them.",
-        entry.display()
-    )
-}
-
-/// What the agent is told when the list cannot be read.
-pub fn unreadable(file: &Path) -> String {
-    format!(
-        "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
-        file.display()
-    )
 }
 
 /// The folders the session works in: the working directory, plus
@@ -134,11 +119,13 @@ pub fn verdict(
     folders: &[PathBuf],
 ) -> Verdict {
     match list {
-        Err(_) => Verdict::Refused(unreadable(list_file)),
+        Err(_) => Verdict::Refused(agents_off::unreadable(list_file)),
         Ok(entries) => folders
             .iter()
-            .find_map(|folder| cw_core::agents_off::covering(entries, folder))
-            .map_or(Verdict::Open, |entry| Verdict::Refused(refusal(&entry))),
+            .find_map(|folder| agents_off::covering(entries, folder))
+            .map_or(Verdict::Open, |entry| {
+                Verdict::Refused(agents_off::refusal(&entry))
+            }),
     }
 }
 
@@ -230,20 +217,12 @@ mod tests {
     }
 
     #[test]
-    fn the_refusal_text_is_exact() {
-        assert_eq!(
-            refusal(&p("D:\\secret")),
-            "CodeWiki is turned off for this project (D:\\secret is kept from coding agents in CodeWiki's settings). Do not call CodeWiki tools here; continue without them."
-        );
-    }
-
-    #[test]
     fn a_covered_session_folder_is_refused() {
         let list = Ok(vec![p("D:\\secret")]);
         let folders = session_folders(&p("D:\\secret\\sub"), None);
         assert_eq!(
             verdict(&list, &p("list.json"), &folders),
-            Verdict::Refused(refusal(&p("D:\\secret")))
+            Verdict::Refused(agents_off::refusal(&p("D:\\secret")))
         );
     }
 
@@ -276,7 +255,7 @@ mod tests {
         let folders = session_folders(&p("D:\\other"), None);
         assert_eq!(
             verdict(&list, &p("D:\\data\\agents-off.json"), &folders),
-            Verdict::Refused("CodeWiki's list of folders kept from coding agents (D:\\data\\agents-off.json) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.".to_string())
+            Verdict::Refused(agents_off::unreadable(&p("D:\\data\\agents-off.json")))
         );
     }
 

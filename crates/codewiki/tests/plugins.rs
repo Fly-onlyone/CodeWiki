@@ -325,8 +325,11 @@ fn skills_stop_at_the_agents_refusal() {
     // reads the skill knows the refusal when it sees it.
     let phrase = "CodeWiki is turned off for this project";
     let order = "stop using CodeWiki tools for the rest of this session";
-    let guard = read("crates/codewiki-mcp/src/guard.rs");
-    assert!(guard.contains(phrase), "the bridge never says `{phrase}`");
+    let refusal = cw_core::agents_off::refusal(Path::new("x"));
+    assert!(
+        refusal.starts_with(phrase),
+        "the bridge never says `{phrase}`"
+    );
     for skill in [
         format!("{CLAUDE}/skills/write-notes/SKILL.md"),
         format!("{CODEX}/skills/using-codewiki/SKILL.md"),

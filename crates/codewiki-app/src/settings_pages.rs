@@ -9,7 +9,7 @@
 //! the backend cannot save a key at all.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use cw_client::Origin;
 use cw_telemetry::Reporting;
@@ -850,15 +850,6 @@ fn backend(model: &Model) -> Vec<Block> {
         card("Connection", connection),
         card("Backend on another machine", other),
     ]
-}
-
-/// What the page says when the list of folders kept from coding agents
-/// (`file`) cannot be read. The MCP bridge and the command line say the same.
-pub fn agents_unreadable(file: &Path) -> String {
-    format!(
-        "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
-        file.display()
-    )
 }
 
 fn repositories(model: &Model) -> Vec<Block> {
@@ -1942,13 +1933,12 @@ mod tests {
     #[test]
     fn agents_card_shows_a_broken_list_with_reset() {
         let mut fixture = Fixture::new();
-        fixture.agents_off = Err(agents_unreadable(Path::new("C:/data/agents-off.json")));
+        let unreadable =
+            cw_core::agents_off::unreadable(std::path::Path::new("C:/data/agents-off.json"));
+        fixture.agents_off = Err(unreadable.clone());
         let doc = fixture.page(Category::Repositories);
         let words = doc.words();
-        assert!(
-            words.contains("CodeWiki's list of folders kept from coding agents (C:/data/agents-off.json) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents."),
-            "{words}"
-        );
+        assert!(words.contains(&unreadable), "{words}");
         assert!(doc.actions().contains(&Action::ResetAgentsList));
         assert!(
             doc.actions()

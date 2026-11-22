@@ -207,7 +207,7 @@ fn read_agents_off() -> Result<Vec<KeptFolder>, String> {
         })
         .map_err(|error| {
             log::warn!("the list of folders kept from coding agents cannot be read: {error}");
-            settings_pages::agents_unreadable(&agents_off::file(&dir))
+            agents_off::unreadable(&agents_off::file(&dir))
         })
 }
 

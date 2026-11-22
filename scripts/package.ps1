@@ -1,9 +1,12 @@
 # Build release binaries and assemble a Windows package:
 #   dist\CodeWiki-<version>-windows-x64.zip
+#   dist\CodeWiki-<version>-windows-x64-setup.exe
 #
 # The zip holds the three programs, the agent plugins, the licence files,
 # install.ps1 / uninstall.ps1 and the install.cmd / uninstall.cmd launchers
-# that run them past Windows's default script policy.
+# that run them past Windows's default script policy. The setup program
+# (scripts\setup\codewiki.iss) carries the same files and runs install.ps1;
+# it is built when the Inno Setup 6 compiler, ISCC.exe, is found.
 # Run from the repository root:
 #   pwsh scripts\package.ps1
 #
@@ -14,7 +17,9 @@
 # the functions of a release build's stack trace.
 param(
     # Skip `cargo build` and package what is already in target\release.
-    [switch]$NoBuild
+    [switch]$NoBuild,
+    # Build only the zip, not the setup program.
+    [switch]$NoSetup
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
@@ -73,3 +78,28 @@ if (Test-Path $zip) { Remove-Item -Force $zip }
 Compress-Archive -Path (Join-Path $stage "*") -DestinationPath $zip
 $size = [math]::Round((Get-Item $zip).Length / 1MB, 1)
 "packaged $zip ($size MB)"
+
+# The setup program, from the same stage folder as the zip. Without the
+# compiler the zip is still built: say so and go on.
+if (-not $NoSetup) {
+    $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source
+    if (-not $iscc) {
+        $iscc = @("${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe", "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe") |
+            Where-Object { Test-Path $_ } | Select-Object -First 1
+    }
+    if ($iscc) {
+        $setupName = "$name-setup"
+        $setup = Join-Path $dist "$setupName.exe"
+        if (Test-Path $setup) { Remove-Item -Force $setup }
+        # The file version takes numbers only: 0.3.1 for 0.3.1-rc.1.
+        $fileVersion = $version -replace '-.*$', ''
+        $icon = Join-Path $root "crates\codewiki-app\resources\codewiki.ico"
+        & $iscc /Q "/DAppVersion=$version" "/DFileVersion=$fileVersion" "/DStage=$stage" "/DIcon=$icon" `
+            "/O$dist" "/F$setupName" (Join-Path $PSScriptRoot "setup\codewiki.iss")
+        if ($LASTEXITCODE -ne 0) { throw "ISCC failed (exit code $LASTEXITCODE)" }
+        $size = [math]::Round((Get-Item $setup).Length / 1MB, 1)
+        "packaged $setup ($size MB)"
+    } else {
+        "no Inno Setup compiler (ISCC.exe) found; the setup program was not built"
+    }
+}

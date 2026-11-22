@@ -8,7 +8,9 @@ argument-hint: "[note | folder/ | waiting | changed] [max]"
 
 CodeWiki writes each wiki note from the code: where the thing is, its items, what it depends on. Those are facts, and CodeWiki keeps them current. It cannot say what the thing is for, how it works, or what can go wrong. Writing that is this skill's task.
 
-If a CodeWiki tool answers that CodeWiki is turned off for this project, stop using CodeWiki tools for the rest of this session.
+If a CodeWiki tool answers that CodeWiki is turned off for this project, stop using CodeWiki's tools and the `codewiki` command for the rest of this session.
+
+If a CodeWiki tool answers that CodeWiki is turned off for that repository, do not call CodeWiki tools for that repository again, and do not run the `codewiki` command on it.
 
 A note is written through three MCP tools. Never edit a file in `obsidian/` to do it: a note edited as a file counts as edited by a person, and CodeWiki stops updating it.
 

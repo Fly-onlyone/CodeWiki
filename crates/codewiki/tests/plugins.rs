@@ -323,21 +323,31 @@ fn write_notes_skill_follows_the_tools_and_the_limits() {
 fn skills_stop_at_the_agents_refusal() {
     // The bridge's refusal and the skills use one phrase, so an agent that
     // reads the skill knows the refusal when it sees it.
-    let phrase = "CodeWiki is turned off for this project";
-    let order = "stop using CodeWiki tools for the rest of this session";
-    let refusal = cw_core::agents_off::refusal(Path::new("x"));
-    assert!(
-        refusal.starts_with(phrase),
-        "the bridge never says `{phrase}`"
+    // A refusal for the session stops CodeWiki for the session; one for a
+    // repository a tool named stops it for that repository.
+    let session = (
+        "CodeWiki is turned off for this project",
+        cw_core::agents_off::refusal(Path::new("x")),
+        "If a CodeWiki tool answers that CodeWiki is turned off for this project, stop using CodeWiki's tools and the `codewiki` command for the rest of this session.",
     );
+    let repo = (
+        "CodeWiki is turned off for that repository",
+        cw_core::agents_off::repo_refusal().to_string(),
+        "If a CodeWiki tool answers that CodeWiki is turned off for that repository, do not call CodeWiki tools for that repository again, and do not run the `codewiki` command on it.",
+    );
+    for (phrase, said, _) in [&session, &repo] {
+        assert!(said.starts_with(phrase), "the bridge never says `{phrase}`");
+    }
     for skill in [
         format!("{CLAUDE}/skills/write-notes/SKILL.md"),
         format!("{CODEX}/skills/using-codewiki/SKILL.md"),
         format!("{CODEX}/skills/wiki-note-style/SKILL.md"),
     ] {
         let text = read(&skill);
-        assert!(text.contains(phrase), "{skill} lacks `{phrase}`");
-        assert!(text.contains(order), "{skill} lacks `{order}`");
+        for (phrase, _, line) in [&session, &repo] {
+            assert!(line.contains(phrase), "`{line}` lacks `{phrase}`");
+            assert!(text.contains(line), "{skill} lacks `{line}`");
+        }
     }
 }
 

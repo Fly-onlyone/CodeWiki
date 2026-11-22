@@ -3669,7 +3669,7 @@ function Get-GuestLog {
 # holder, uninstall with the installed script, delete what is left, the data
 # and settings folders, the Run value, the Apps entry and the PATH entry.
 function Reset-SetupGuest {
-    Invoke-GuestScript -TimeoutSec 280 -Script (@'
+    $run = Invoke-GuestScript -TimeoutSec 280 -Script (@'
 $t = '{{TARGET}}'
 $key = '{{KEY}}'
 [System.IO.File]::WriteAllText('{{HOLD}}.release', 'release')
@@ -3691,7 +3691,10 @@ $kept = @($user -split ';' | Where-Object { $_ -and $_.Trim().TrimEnd('\').ToLow
 [Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User')
 Remove-Item -LiteralPath (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\CodeWiki.lnk') -Force -ErrorAction SilentlyContinue
 "left: folder $(Test-Path -LiteralPath $t), entry $(Test-Path -LiteralPath $key)"
-'@).Replace('{{TARGET}}', $guestTarget).Replace('{{KEY}}', $setupEntryKey).Replace('{{HOLD}}', $setupHold) | Out-Null
+'@).Replace('{{TARGET}}', $guestTarget).Replace('{{KEY}}', $setupEntryKey).Replace('{{HOLD}}', $setupHold)
+    # A reset that leaves CodeWiki behind would show up as a failure of the next case.
+    if ($run.Output -notmatch 'left: folder (True|False), entry (True|False)') { throw "could not reset the guest's installation: $($run.Output) $($run.Stderr)" }
+    if ($Matches[1] -eq 'True' -or $Matches[2] -eq 'True') { throw "the guest was not put back to no installation; left: $($Matches[0]) ($($run.Output))" }
 }
 
 # Hold a file open with no sharing, in a PowerShell that stays alive until a

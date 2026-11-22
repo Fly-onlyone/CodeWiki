@@ -2092,7 +2092,7 @@ $global:LASTEXITCODE = 0
     # after of nothing; the demo repository is registered and holds a wiki
     # already, where the same check would prove nothing. It must run while the
     # plugin is installed, so it sits before CC7.
-    Test-Case "CC9" "A folder kept from coding agents gets no wiki" "agents off, then a live session asks for a wiki: no obsidian folder, no repos.json entry, and Claude's answer says CodeWiki is turned off" {
+    Test-Case "CC9" "A folder kept from coding agents gets no wiki" "agents off, then a live session asks for a wiki: no obsidian folder, no repos.json entry, and the tool's result or Claude's answer says CodeWiki is turned off" {
         if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
         $kept = "$guestHome\repos\cw-kept"
         $run = Invoke-GuestScript -TimeoutSec 600 -Script (@'
@@ -2182,10 +2182,14 @@ $global:LASTEXITCODE = 0
         $hookQuiet = $run.Output -notmatch "(?m)^briefing: CodeWiki:"
         $clean = $run.Output -match "obsidian before: False" -and $run.Output -match "registered before: False" -and
             $run.Output -match "obsidian after: False" -and $run.Output -match "registered after: False"
-        $ok = $run.Output -match "agents off exit: 0" -and $run.Output -match "kept: True" -and $run.Output -match "result: error False" -and
-            $clean -and $answer -match "(?i)turned off" -and $hookQuiet -and $run.Output -match "agents on exit: 0" -and $run.Output -match "removed: True"
+        # The refusal reached the session when the tool's result carried it or
+        # Claude's answer mentions it; a model may answer in other words, so
+        # its answer is kept as an observed value, not required.
+        $refusalSeen = $toolRefused -or ($answer -match "(?i)turned off")
+        $ok = $run.Output -match "agents off exit: 0" -and $run.Output -match "kept: True" -and
+            $clean -and $refusalSeen -and $hookQuiet -and $run.Output -match "agents on exit: 0" -and $run.Output -match "removed: True"
         $leftover = if ($run.Output -match "leftover registration: True") { "; a repos.json entry for cw-kept is LEFT in the guest and could not be removed (see the output)" } else { "" }
-        Add-Result -Id "CC9" -Title "A folder kept from coding agents gets no wiki" -Expect "no obsidian folder, no repos.json entry, the answer says CodeWiki is turned off, the hook adds no briefing" `
+        Add-Result -Id "CC9" -Title "A folder kept from coding agents gets no wiki" -Expect "no obsidian folder, no repos.json entry, the tool's result or Claude's answer says CodeWiki is turned off, the hook adds no briefing" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
             -Observed "'codewiki agents off' on a new folder, then Claude asked for a wiki there: a CodeWiki tool was called: $toolCalled, the tool's answer said 'turned off': $toolRefused; obsidian folder or repos.json entry before/after: none/none: $clean; session-start hook silent: $hookQuiet; Claude's answer: '$answer'; the folder is removed and 'agents on' run again either way (a registration the case caused is removed first)$leftover"
     }

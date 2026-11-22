@@ -100,13 +100,19 @@ begin
   Result := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
 end;
 
-// A PowerShell single-quoted string, in which nothing is expanded.
+// A PowerShell single-quoted string, in which nothing is expanded. PowerShell
+// takes the typographic quotes U+2018 to U+201B for single quotes too, so
+// each is doubled like ' (a profile folder O'Neil written with U+2019).
 function Quoted(const S: String): String;
 var
   Text: String;
 begin
   Text := S;
   StringChangeEx(Text, '''', '''''', True);
+  StringChangeEx(Text, #$2018, #$2018#$2018, True);
+  StringChangeEx(Text, #$2019, #$2019#$2019, True);
+  StringChangeEx(Text, #$201A, #$201A#$201A, True);
+  StringChangeEx(Text, #$201B, #$201B#$201B, True);
   Result := '''' + Text + '''';
 end;
 

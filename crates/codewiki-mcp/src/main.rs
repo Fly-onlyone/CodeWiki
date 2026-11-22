@@ -3,18 +3,21 @@
 //! Standard output carries the MCP protocol, so nothing else may be printed
 //! there; diagnostics go to standard error.
 
-// Task 5 wires the guard into the tools; until then only its tests call it.
-#[allow(dead_code)]
 mod guard;
 
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use cw_client::{Backend, encode};
+use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolResult, ContentBlock};
+use rmcp::model::{CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock};
+use rmcp::service::RequestContext;
 use rmcp::transport::stdio;
 use rmcp::{
-    ErrorData as McpError, ServerHandler, ServiceExt, schemars, tool, tool_handler, tool_router,
+    ErrorData as McpError, RoleServer, ServerHandler, ServiceExt, schemars, tool, tool_handler,
+    tool_router,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -290,6 +293,72 @@ impl Bridge {
     }
 }
 
+impl Bridge {
+    /// The refusal text when this call may not go ahead.
+    ///
+    /// The list is read on every call. The session folders and a path `repo`
+    /// argument are checked without a backend; only an id or name `repo`
+    /// argument connects, for one `GET /v1/repos`, and when that fails the
+    /// session folders alone decide.
+    fn screen(&self, arguments: Option<&serde_json::Map<String, Value>>) -> Option<String> {
+        let data = cw_core::paths::data_dir();
+        let list = cw_core::agents_off::load(&data);
+        if matches!(&list, Ok(entries) if entries.is_empty()) {
+            return None;
+        }
+        let Ok(cwd) = std::env::current_dir() else {
+            return Some("CodeWiki cannot read the working directory, so it cannot tell whether this project is kept from coding agents. CodeWiki's tools are off for now.".to_string());
+        };
+        let project = std::env::var_os("CLAUDE_PROJECT_DIR").filter(|d| !d.is_empty());
+        let folders = guard::session_folders(&cwd, project.as_deref().map(Path::new));
+        if let guard::Verdict::Refused(text) =
+            guard::verdict(&list, &cw_core::agents_off::file(&data), &folders)
+        {
+            return Some(text);
+        }
+        let entries = list.ok()?;
+        let value = arguments?.get("repo")?.as_str().filter(|v| !v.is_empty())?;
+        let path = match guard::repo_arg(value, &cwd) {
+            guard::RepoArg::Path(path) => path,
+            guard::RepoArg::IdOrName(name) => {
+                let listing = connected(&self.backend)
+                    .and_then(|backend| backend.get("/v1/repos"))
+                    .ok()?;
+                guard::resolve_id(&listing, &name)?
+            }
+        };
+        cw_core::agents_off::covering(&entries, &path).map(|entry| guard::refusal(&entry))
+    }
+}
+
+/// The folders on the list; empty when it cannot be read, which `screen`
+/// already refused.
+fn listed_folders() -> Vec<PathBuf> {
+    cw_core::agents_off::load(&cw_core::paths::data_dir()).unwrap_or_default()
+}
+
+/// The `/v1/repos` listing without the repositories on the list, and their
+/// names.
+fn visible_repos(backend: &Backend) -> Result<(Value, HashSet<String>), String> {
+    let mut listing = backend.get("/v1/repos")?;
+    let hidden = guard::hide_repos(&mut listing, &listed_folders());
+    Ok((listing, hidden))
+}
+
+/// Fetch `uri` and drop the repositories on the list from it with `hide`.
+/// With an empty list the answer is returned as it is.
+fn get_visible(
+    backend: &Backend,
+    uri: &str,
+    hide: fn(&mut Value, &HashSet<String>),
+) -> Result<Value, String> {
+    let mut view = backend.get(uri)?;
+    if !listed_folders().is_empty() {
+        hide(&mut view, &visible_repos(backend)?.1);
+    }
+    Ok(view)
+}
+
 /// A tool call that failed: logged, and returned to the agent as an error.
 fn failed(message: String) -> McpError {
     log::warn!("tool call failed: {message}");
@@ -406,14 +475,20 @@ impl Bridge {
         description = "List the repositories the CodeWiki backend manages, with their ids and paths."
     )]
     async fn list_repos(&self) -> Result<CallToolResult, McpError> {
-        pretty(&self.call_global(|b| b.get("/v1/repos")).await?)
+        pretty(
+            &self
+                .call_global(|b| visible_repos(b).map(|(listing, _)| listing))
+                .await?,
+        )
     }
 
     #[tool(
         description = "Every repository the backend manages at a glance: files, symbols, notes, pending proposals, whether the wiki is stale, and the top hotspots of each, plus the external packages two or more repositories use. Use to orient across several repositories."
     )]
     async fn get_workspace(&self) -> Result<CallToolResult, McpError> {
-        let view = self.call_global(|b| b.get("/v1/workspace")).await?;
+        let view = self
+            .call_global(|b| get_visible(b, "/v1/workspace", guard::hide_in_workspace))
+            .await?;
         let repos = rows(&view, "repos");
         if repos.is_empty() {
             return text("No repository is registered with the backend.");
@@ -474,7 +549,9 @@ impl Bridge {
     ) -> Result<CallToolResult, McpError> {
         if p.workspace.unwrap_or(false) {
             let all = self
-                .call_global(|b| b.get("/v1/workspace/contracts"))
+                .call_global(|b| {
+                    get_visible(b, "/v1/workspace/contracts", guard::hide_in_contracts)
+                })
                 .await?;
             return text(workspace_contracts_text(&all));
         }
@@ -1559,7 +1636,27 @@ fn note_text(content: &Value) -> String {
     name = "codewiki",
     instructions = "CodeWiki serves a maintained wiki and a structural index of the repository. Call get_overview first in an unfamiliar codebase. Before editing a file or symbol, call get_context on it. Use search_codebase to locate things and read_note for a note; read_note leaves out the walk-through of calls unless you pass full: true. After editing, call get_impacted_tests to learn which tests to run. Call sync_wiki after substantial code changes. CodeWiki writes each note's facts and you write its explanation: list_waiting_notes shows the notes that wait, get_note_brief gives one note with the sections that are yours, submit_note sends what you wrote."
 )]
-impl ServerHandler for Bridge {}
+impl ServerHandler for Bridge {
+    /// Refuse before the router sees the call, so a closed folder starts no
+    /// backend. `#[tool_handler]` writes `call_tool` only when it is absent;
+    /// this one is the macro's own body behind the screen.
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        let bridge = self.clone();
+        let arguments = request.arguments.clone();
+        let refused = tokio::task::spawn_blocking(move || bridge.screen(arguments.as_ref()))
+            .await
+            .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?;
+        if let Some(text) = refused {
+            return Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into());
+        }
+        let call = ToolCallContext::new(self, request, context);
+        Self::tool_router().call(call).await
+    }
+}
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -1584,6 +1681,125 @@ async fn main() -> std::process::ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The process folder and environment are global: tests that change them
+    /// take this lock and put everything back.
+    static PROCESS_STATE: Mutex<()> = Mutex::new(());
+
+    struct Session {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        folder: PathBuf,
+        data: Option<std::ffi::OsString>,
+        project: Option<std::ffi::OsString>,
+    }
+
+    impl Session {
+        /// Work in `folder`, with `data` as the data folder and `project` as
+        /// `CLAUDE_PROJECT_DIR`.
+        #[allow(unsafe_code)]
+        fn start(folder: &Path, data: &Path, project: Option<&str>) -> Session {
+            let lock = PROCESS_STATE.lock().unwrap_or_else(|e| e.into_inner());
+            let session = Session {
+                _lock: lock,
+                folder: std::env::current_dir().unwrap(),
+                data: std::env::var_os("CODEWIKI_DATA_DIR"),
+                project: std::env::var_os("CLAUDE_PROJECT_DIR"),
+            };
+            std::env::set_current_dir(folder).unwrap();
+            // SAFETY: every test that touches the environment holds PROCESS_STATE.
+            unsafe {
+                std::env::set_var("CODEWIKI_DATA_DIR", data);
+                match project {
+                    Some(dir) => std::env::set_var("CLAUDE_PROJECT_DIR", dir),
+                    None => std::env::remove_var("CLAUDE_PROJECT_DIR"),
+                }
+            }
+            session
+        }
+    }
+
+    impl Drop for Session {
+        #[allow(unsafe_code)]
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.folder);
+            // SAFETY: the lock held by this session is still held here.
+            unsafe {
+                for (key, old) in [
+                    ("CODEWIKI_DATA_DIR", &self.data),
+                    ("CLAUDE_PROJECT_DIR", &self.project),
+                ] {
+                    match old {
+                        Some(value) => std::env::set_var(key, value),
+                        None => std::env::remove_var(key),
+                    }
+                }
+            }
+        }
+    }
+
+    /// A fresh folder holding `data`, `closed` and `open`; `closed` is on the
+    /// list.
+    fn scene(name: &str) -> (PathBuf, PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("cw-mcp-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (data, closed, open) = (root.join("data"), root.join("closed"), root.join("open"));
+        for dir in [&data, &closed, &open] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        cw_core::agents_off::add(&data, &closed).unwrap();
+        (root, data, closed, open)
+    }
+
+    #[test]
+    fn screen_refuses_before_any_backend_starts() {
+        let (root, data, closed, _) = scene("folder");
+        let session = Session::start(&closed, &data, None);
+        let bridge = Bridge::default();
+        assert_eq!(bridge.screen(None), Some(guard::refusal(&closed)));
+        assert!(bridge.backend.lock().unwrap().is_none());
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn screen_refuses_a_covered_repo_path_without_a_backend() {
+        let (root, data, closed, open) = scene("repo");
+        let session = Session::start(&open, &data, None);
+        let bridge = Bridge::default();
+        let args = json!({ "repo": closed.join("sub").to_string_lossy() });
+        assert_eq!(
+            bridge.screen(args.as_object()),
+            Some(guard::refusal(&closed))
+        );
+        // The open folder, and a path outside the list, are fine.
+        assert_eq!(bridge.screen(None), None);
+        let other = json!({ "repo": open.to_string_lossy() });
+        assert_eq!(bridge.screen(other.as_object()), None);
+        assert!(bridge.backend.lock().unwrap().is_none());
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn screen_normalizes_a_relative_claude_project_dir() {
+        let (root, data, closed, open) = scene("project");
+        let session = Session::start(&open, &data, Some("../closed"));
+        let bridge = Bridge::default();
+        assert_eq!(bridge.screen(None), Some(guard::refusal(&closed)));
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn screen_refuses_when_the_list_is_broken() {
+        let (root, data, _, open) = scene("broken");
+        std::fs::write(cw_core::agents_off::file(&data), "{").unwrap();
+        let session = Session::start(&open, &data, None);
+        let refused = Bridge::default().screen(None).unwrap();
+        assert!(refused.contains("cannot be read"), "{refused}");
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
 
     #[test]
     fn formats_the_contracts_of_one_repository() {

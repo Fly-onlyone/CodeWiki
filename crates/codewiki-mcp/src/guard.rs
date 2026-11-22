@@ -31,11 +31,12 @@ pub fn unreadable(file: &Path) -> String {
 }
 
 /// The folders the session works in: the working directory, plus
-/// `CLAUDE_PROJECT_DIR` when set.
+/// `CLAUDE_PROJECT_DIR` when set, made absolute against the working directory
+/// so that a relative value cannot slip past the list.
 pub fn session_folders(cwd: &Path, project_dir: Option<&Path>) -> Vec<PathBuf> {
     let mut folders = vec![cwd.to_path_buf()];
     if let Some(dir) = project_dir {
-        folders.push(dir.to_path_buf());
+        folders.push(cw_core::agents_off::normalize(dir, cwd));
     }
     folders
 }
@@ -201,6 +202,12 @@ mod tests {
             verdict(&list, &p("list.json"), &folders),
             Verdict::Refused(_)
         ));
+    }
+
+    #[test]
+    fn a_relative_claude_project_dir_is_made_absolute() {
+        let folders = session_folders(&p("D:\\work\\app"), Some(&p("..\\secret")));
+        assert_eq!(folders, vec![p("D:\\work\\app"), p("D:\\work\\secret")]);
     }
 
     #[test]

@@ -37,6 +37,15 @@ pub enum Tested {
     },
 }
 
+/// A folder on the list of those kept from coding agents. Whether it still
+/// exists is looked up when the list is read, never while a page is drawn:
+/// a folder on a share that is offline can take long to answer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KeptFolder {
+    pub path: PathBuf,
+    pub missing: bool,
+}
+
 /// Everything the pages read.
 pub struct Model<'a> {
     pub theme: &'a str,
@@ -75,7 +84,7 @@ pub struct Model<'a> {
     pub repos: &'a [(String, String)],
     /// The folders kept from coding agents; the error is the text that says
     /// the list cannot be read.
-    pub agents_off: &'a Result<Vec<PathBuf>, String>,
+    pub agents_off: &'a Result<Vec<KeptFolder>, String>,
     /// What the last change to that list answered, when it is worth saying.
     pub agents_note: Option<&'a str>,
     pub update: &'a update::State,
@@ -879,22 +888,33 @@ fn agents_card(model: &Model) -> Block {
         "Claude Code and Codex get no CodeWiki tools in these folders and everything below them. The app and the command line still work there.",
     )])];
     match model.agents_off {
-        Ok(folders) => {
+        // A table, as the repositories above: each path on one line.
+        Ok(folders) if !folders.is_empty() => {
+            let mut table = Table::new([
+                Column::new("Folder").weight(2.0),
+                Column::new("").weight(0.6),
+                Column::new("").weight(0.4),
+            ]);
             for folder in folders {
-                body.push(Block::Setting {
-                    label: folder.display().to_string(),
-                    value: if folder.exists() {
-                        String::new()
+                let path = folder.path.display().to_string();
+                table.row([
+                    code(path.clone()).into(),
+                    Cell::text(if folder.missing {
+                        "Folder not found"
                     } else {
-                        "Folder not found".into()
-                    },
-                    button: Some((
-                        "Remove".into(),
-                        Action::LetAgentsIn(folder.display().to_string()),
-                    )),
-                });
+                        ""
+                    }),
+                    Span::Link {
+                        label: "Remove".into(),
+                        code: false,
+                        action: Action::LetAgentsIn(path),
+                    }
+                    .into(),
+                ]);
             }
+            body.push(Block::Table(table));
         }
+        Ok(_) => {}
         Err(unreadable) => body.push(Block::Alert {
             tone: Tone::Error,
             text: unreadable.clone(),
@@ -1112,7 +1132,7 @@ mod tests {
         saved: Option<cw_client::Remote>,
         connect: Option<Note>,
         repos: Vec<(String, String)>,
-        agents_off: Result<Vec<PathBuf>, String>,
+        agents_off: Result<Vec<KeptFolder>, String>,
         agents_note: Option<String>,
         update: update::State,
         auto_update: bool,
@@ -1886,12 +1906,18 @@ mod tests {
     fn agents_card_lists_entries_with_remove() {
         let mut fixture = Fixture::new();
         let here = std::env::temp_dir();
-        fixture.agents_off = Ok(vec![here.clone()]);
+        fixture.agents_off = Ok(vec![KeptFolder {
+            path: here.clone(),
+            missing: false,
+        }]);
         let doc = fixture.page(Category::Repositories);
         let words = doc.words();
         assert!(words.contains("Kept from coding agents"), "{words}");
         assert!(words.contains(AGENTS_LINE), "{words}");
-        assert!(words.contains(&format!("{}: ", here.display())), "{words}");
+        assert!(
+            words.contains(&format!("{} |  | Remove", here.display())),
+            "{words}"
+        );
         assert!(!words.contains("Folder not found"), "{words}");
         let actions = doc.actions();
         assert!(actions.contains(&Action::LetAgentsIn(here.display().to_string())));
@@ -1935,10 +1961,13 @@ mod tests {
     fn agents_card_marks_a_missing_folder() {
         let mut fixture = Fixture::new();
         let gone = missing_folder();
-        fixture.agents_off = Ok(vec![gone.clone()]);
+        fixture.agents_off = Ok(vec![KeptFolder {
+            path: gone.clone(),
+            missing: true,
+        }]);
         let words = fixture.page(Category::Repositories).words();
         assert!(
-            words.contains(&format!("{}: Folder not found", gone.display())),
+            words.contains(&format!("{} | Folder not found | Remove", gone.display())),
             "{words}"
         );
     }

@@ -14,7 +14,7 @@
 //! together and are checked before they are used.
 
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 use cw_client::{Backend, Origin};
@@ -37,7 +37,7 @@ use crate::mui::tokens::Variant;
 use crate::mui::{select, surfaces};
 use crate::settings::{Category, FieldId, Note};
 use crate::settings_layout as layout;
-use crate::settings_pages::{self, Model, Tested};
+use crate::settings_pages::{self, KeptFolder, Model, Tested};
 use crate::zoom::px;
 use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update, zoom};
 
@@ -88,7 +88,7 @@ pub struct State {
     /// The folders kept from coding agents, read from the data folder when
     /// the page opens and after each change; the error is the text for a
     /// list that cannot be read.
-    agents_off: Result<Vec<PathBuf>, String>,
+    agents_off: Result<Vec<KeptFolder>, String>,
     /// What the last change to that list answered, when it is worth saying.
     agents_note: Option<String>,
     menu: Option<OpenMenu>,
@@ -192,12 +192,23 @@ fn test_line(result: Result<Value, String>) -> Tested {
 
 /// The list of folders kept from coding agents, or the text that says it
 /// cannot be read. The app reads it itself: the backend is not involved.
-fn read_agents_off() -> Result<Vec<PathBuf>, String> {
+fn read_agents_off() -> Result<Vec<KeptFolder>, String> {
     let dir = cw_core::paths::data_dir();
-    agents_off::load(&dir).map_err(|error| {
-        log::warn!("the list of folders kept from coding agents cannot be read: {error}");
-        settings_pages::agents_unreadable(&agents_off::file(&dir))
-    })
+    agents_off::load(&dir)
+        .map(|folders| {
+            // Looked up here, once per read, never while a frame is drawn.
+            folders
+                .into_iter()
+                .map(|path| KeptFolder {
+                    missing: !path.exists(),
+                    path,
+                })
+                .collect()
+        })
+        .map_err(|error| {
+            log::warn!("the list of folders kept from coding agents cannot be read: {error}");
+            settings_pages::agents_unreadable(&agents_off::file(&dir))
+        })
 }
 
 /// Whether the options of a select are the themes.

@@ -445,33 +445,47 @@ pub enum Kept {
     Open,
     /// An entry for exactly this folder covers it.
     Own,
-    /// Only this entry, a parent folder, covers it.
+    /// This entry, a parent folder, covers it: alone, or beside an entry for
+    /// exactly this folder, whose removal would not let agents in.
     Under(PathBuf),
+    /// Nothing covers the folder, but this entry lies inside it, so agents
+    /// get no CodeWiki for the project.
+    Contains(PathBuf),
 }
 
 /// The state of a project that has none of its own.
 pub static OPEN: Kept = Kept::Open;
 
-/// How `entries` cover `folder`. It looks at the file system (a link is
-/// followed), so the app works it out when Home's data is refreshed, never
-/// while a page is built. An entry inside the folder does not count.
+/// How `entries` keep agents out of `folder`. A parent entry wins over the
+/// folder's own: removing the own entry would leave the folder kept. It
+/// looks at the file system (a link is followed), so the app works it out
+/// when Home's data is refreshed, never while a page is built.
 pub fn kept_by(entries: &[PathBuf], folder: &str) -> Kept {
+    use cw_core::agents_off::{self, Block};
     let folder = Path::new(folder);
     if !folder.is_absolute() {
         return Kept::Open;
     }
-    let Some(entry) = cw_core::agents_off::covering(entries, folder) else {
-        return Kept::Open;
-    };
     let lower = |path: &Path| {
-        cw_core::agents_off::normalize(path, Path::new(""))
+        agents_off::normalize(path, Path::new(""))
             .to_string_lossy()
             .to_lowercase()
     };
-    if lower(&entry) == lower(folder) {
-        Kept::Own
-    } else {
-        Kept::Under(entry)
+    let covers =
+        |entry: &&PathBuf| agents_off::covering(std::slice::from_ref(*entry), folder).is_some();
+    let (own, parents): (Vec<&PathBuf>, Vec<&PathBuf>) = entries
+        .iter()
+        .filter(covers)
+        .partition(|entry| lower(entry) == lower(folder));
+    if let Some(parent) = parents.first() {
+        return Kept::Under((*parent).clone());
+    }
+    if !own.is_empty() {
+        return Kept::Own;
+    }
+    match agents_off::blocking(entries, folder) {
+        Some(Block::Contains(entry)) => Kept::Contains(entry),
+        _ => Kept::Open,
     }
 }
 
@@ -550,15 +564,23 @@ pub fn home_page(home: &HomeInput) -> Doc {
                     }
                     // Short, so that the project's own path stays readable;
                     // Settings lists the entry in full.
+                    let name = |entry: &PathBuf| {
+                        entry.file_name().map_or_else(
+                            || entry.display().to_string(),
+                            |n| n.to_string_lossy().into_owned(),
+                        )
+                    };
                     match project.kept {
                         Kept::Open => {}
                         Kept::Own => detail.push_str("Kept from agents · "),
                         Kept::Under(entry) => {
-                            let name = entry.file_name().map_or_else(
-                                || entry.display().to_string(),
-                                |n| n.to_string_lossy().into_owned(),
-                            );
-                            detail.push_str(&format!("Kept from agents by {name} · "));
+                            detail.push_str(&format!("Kept from agents by {} · ", name(entry)));
+                        }
+                        Kept::Contains(entry) => {
+                            detail.push_str(&format!(
+                                "Kept from agents (contains {}) · ",
+                                name(entry)
+                            ));
                         }
                     }
                     detail.push_str(project.path);
@@ -570,7 +592,8 @@ pub fn home_page(home: &HomeInput) -> Doc {
                     .detail(detail)
                     .selected(open);
                     // A parent entry is changed in Settings: removing it
-                    // would let agents into other projects too.
+                    // would let agents into other projects too. So is an
+                    // entry inside the project, which is not the project's.
                     match project.kept {
                         Kept::Open => row.aside(
                             "Keep agents out",
@@ -580,7 +603,7 @@ pub fn home_page(home: &HomeInput) -> Doc {
                             "Let agents in",
                             Action::LetAgentsIn(project.path.to_string()),
                         ),
-                        Kept::Under(_) => {
+                        Kept::Under(_) | Kept::Contains(_) => {
                             row.aside("Settings…", Action::Settings(Some(Category::Repositories)))
                         }
                     }
@@ -888,8 +911,58 @@ mod tests {
             kept_by(&entries, r"C:\parent\child"),
             Kept::Under(PathBuf::from(r"C:\parent"))
         );
-        assert_eq!(kept_by(&entries, r"C:\work\inside"), Kept::Open);
+        assert_eq!(
+            kept_by(&entries, r"C:\work\inside"),
+            Kept::Contains(PathBuf::from(r"C:\work\inside\sub"))
+        );
+        assert_eq!(kept_by(&entries, r"C:\work\insid"), Kept::Open);
         assert_eq!(kept_by(&[], r"C:\work\exact"), Kept::Open);
+    }
+
+    #[test]
+    fn an_exact_entry_under_a_parent_entry_is_kept_by_the_parent() {
+        let child = PathBuf::from(r"C:\parent\child");
+        let parent = PathBuf::from(r"C:\parent");
+        // Either order in the file: removing the child's entry would not let
+        // agents in, so Home offers no toggle.
+        for entries in [
+            [child.clone(), parent.clone()],
+            [parent.clone(), child.clone()],
+        ] {
+            assert_eq!(
+                kept_by(&entries, r"C:\parent\child"),
+                Kept::Under(parent.clone())
+            );
+        }
+        assert_eq!(kept_by(&[child, parent], r"C:\parent"), Kept::Own);
+    }
+
+    #[test]
+    fn home_names_an_entry_inside_and_offers_no_button() {
+        let inside = Kept::Contains(PathBuf::from(r"C:\code\alpha\vendor\acme"));
+        let holder = Project {
+            kept: &inside,
+            ..ALPHA
+        };
+        let page = home_page(&home(&[holder], &[]));
+        assert_eq!(
+            aside_of(&page, "alpha"),
+            Some(&(
+                "Settings…".to_string(),
+                Action::Settings(Some(Category::Repositories))
+            ))
+        );
+        assert!(
+            page.words()
+                .contains(r"alpha — Kept from agents (contains acme) · C:\code\alpha"),
+            "{}",
+            page.words()
+        );
+        assert!(
+            page.actions()
+                .iter()
+                .all(|a| !matches!(a, Action::KeepAgentsOut(_) | Action::LetAgentsIn(_)))
+        );
     }
 
     #[test]

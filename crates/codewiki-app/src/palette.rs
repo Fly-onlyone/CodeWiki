@@ -90,6 +90,26 @@ impl Entry {
     }
 }
 
+/// The command that changes the list for the open project, judged by its
+/// registered folder. None when a parent entry covers it, or when it holds
+/// an entry: those are changed in Settings.
+pub fn agents_entry(kept: &crate::live::Kept) -> Option<Entry> {
+    use crate::live::Kept;
+    match kept {
+        Kept::Open => Some(Entry::new(
+            "Keep agents out of this project",
+            "Command",
+            Command::KeepAgentsOut,
+        )),
+        Kept::Own => Some(Entry::new(
+            "Let agents into this project",
+            "Command",
+            Command::LetAgentsIn,
+        )),
+        Kept::Under(_) | Kept::Contains(_) => None,
+    }
+}
+
 /// The fixed commands, in the order shown for an empty query.
 pub fn actions() -> Vec<Entry> {
     [
@@ -208,6 +228,20 @@ mod tests {
             Entry::new("Open graph", "Command", Command::Graph),
             Entry::new("Paragraph", "Note", Command::Note("a/Paragraph.md".into())),
         ]
+    }
+
+    #[test]
+    fn the_agents_command_follows_the_projects_state() {
+        use crate::live::Kept;
+        use std::path::PathBuf;
+        let command = |kept: Kept| agents_entry(&kept).map(|entry| entry.command);
+        assert_eq!(command(Kept::Open), Some(Command::KeepAgentsOut));
+        assert_eq!(command(Kept::Own), Some(Command::LetAgentsIn));
+        assert_eq!(command(Kept::Under(PathBuf::from(r"C:\code"))), None);
+        assert_eq!(
+            command(Kept::Contains(PathBuf::from(r"C:\code\alpha\acme"))),
+            None
+        );
     }
 
     #[test]

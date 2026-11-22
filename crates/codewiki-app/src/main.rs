@@ -1698,22 +1698,13 @@ impl AppView {
                 Command::Autostart(!on),
             ));
         }
-        // Judged by the open project's registered folder; a parent entry
-        // is changed in Settings, so then neither is offered.
+        // Judged by the open project's registered folder; a parent entry,
+        // or one inside the folder, is changed in Settings, so then neither
+        // is offered.
         if let Some(repo) = &self.repo {
-            match self.kept.get(&repo.id).unwrap_or(&live::OPEN) {
-                live::Kept::Open => entries.push(palette::Entry::new(
-                    "Keep agents out of this project",
-                    "Command",
-                    Command::KeepAgentsOut,
-                )),
-                live::Kept::Own => entries.push(palette::Entry::new(
-                    "Let agents into this project",
-                    "Command",
-                    Command::LetAgentsIn,
-                )),
-                live::Kept::Under(_) => {}
-            }
+            entries.extend(palette::agents_entry(
+                self.kept.get(&repo.id).unwrap_or(&live::OPEN),
+            ));
         }
         if let Some(release) = self.update.available() {
             entries.insert(

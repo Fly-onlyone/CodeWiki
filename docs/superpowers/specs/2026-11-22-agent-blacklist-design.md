@@ -54,17 +54,17 @@ Owner's decisions (2026-11-22):
 
 ### The agents' side
 
-- **MCP bridge** (`codewiki-mcp`): before any tool runs, global ones included (`list_repos`, `get_workspace`, `get_workspace_contracts`), the bridge decides which folders the call is about and refuses when any of them is covered:
+- **MCP bridge** (`codewiki-mcp`): before any tool runs, global ones included (`list_repos`, `get_workspace`, `get_contracts` with `workspace: true`), the bridge decides which folders the call is about and refuses when any of them is covered:
   - the session's folders: its current folder **and** `CLAUDE_PROJECT_DIR` when set (the hook uses the latter first; checking both closes the case where an agent starts the bridge elsewhere). *My call.*
   - a `repo` argument that is a path (absolute, or relative to the current folder).
   - a `repo` argument that is not a path but an id or a folder name, which `cw-client`'s `Backend::repo_id` also accepts: the bridge looks it up in `GET /v1/repos` and checks the path the backend gives. That lookup is the one HTTP request a refusal may cost; a backend on another machine gives its own paths, which this machine's list cannot match, so there the check can only use the session's folders. *My call.*
 
   When a folder is covered, the bridge answers the tool call with a normal text result (not a protocol error): "CodeWiki is turned off for this project (`<entry>` is kept from coding agents in CodeWiki's settings). Do not call CodeWiki tools here; continue without them." It makes no HTTP request and does not start a backend for that call. The list is read on each call (it is tiny), so a change takes effect at once.
   - The bridge's server instructions, sent once at connection, stay as they are; when the session's folder is covered, its `instructions` field instead says the same sentence, so an agent that reads instructions learns it before calling anything. **Builder's call** whether this is worth doing given that the first tool call says it anyway.
-- **Cross-project tools in a session that is not covered** (`list_repos`, `get_workspace`, `get_workspace_contracts`): the bridge leaves out every repository whose backend path is covered, from the list, from the workspace's per-repository rows and shared dependencies, and from contract matches, so an agent elsewhere learns nothing about listed projects. With a remote backend its paths cannot be matched and nothing is left out; README says so.
+- **Cross-project tools in a session that is not covered** (`list_repos`, `get_workspace`, `get_contracts` with `workspace: true`): the bridge leaves out every repository whose backend path is covered, from the list, from the workspace's per-repository rows and shared dependencies, and from contract matches, so an agent elsewhere learns nothing about listed projects. With a remote backend its paths cannot be matched and nothing is left out; README says so.
 - **Session-start hook** (`codewiki hook session-start`, `codewiki/src/main.rs` and `cw-wiki/src/briefing.rs`): when the project folder (`CLAUDE_PROJECT_DIR` or the current folder) **or** the vault root it finds above it is covered, it prints nothing and exits 0, as it does today on any problem. *My call: either one covered is enough.*
 - **A list file that cannot be read fails closed.** The bridge then refuses every tool with "CodeWiki's list of folders kept from coding agents (`<path>`) cannot be read; fix or delete it", the hook prints nothing, and the app's card shows the error with a button that starts a new, empty list. Keeping agents out is what the owner asked for, so a broken list must not let them back in silently. *My call.*
-- The Claude Code skills (`using-codewiki`, `write-notes`, `wiki-note-style`) and the Codex skills get one line: when a CodeWiki tool says CodeWiki is turned off for this project, stop using CodeWiki tools in this session.
+- The Claude Code skill `write-notes` and the Codex skills `using-codewiki` and `wiki-note-style` get one line: when a CodeWiki tool says CodeWiki is turned off for this project, stop using CodeWiki tools in this session.
 
 ### Managing the list
 

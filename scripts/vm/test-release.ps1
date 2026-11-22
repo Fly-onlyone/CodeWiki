@@ -31,6 +31,11 @@ param(
     # and has it update itself to the package under test, which a stand-in
     # for GitHub serves inside the guest (guest\update-server.ps1).
     [string]$OldZip,
+    # The setup program (CodeWiki-<version>-windows-x64-setup.exe) to test in
+    # cases IS1 to IS6. Default: the one beside the package, named for the
+    # same version, else the newest in that folder. Without one, those cases
+    # do not run; a release run always gives it.
+    [string]$Setup,
     # With -OldZip: let the older version ask the real GitHub instead of the
     # stand-in. For the run after a release, with the published package as -Zip.
     [switch]$RealRelease,
@@ -78,6 +83,19 @@ if (-not $Zip) {
 }
 $Zip = (Resolve-Path $Zip).Path
 if ($OldZip) { $OldZip = (Resolve-Path $OldZip).Path }
+if ($Setup) {
+    $Setup = (Resolve-Path $Setup).Path
+} else {
+    $beside = Split-Path -Parent $Zip
+    $sameVersion = Join-Path $beside (((Split-Path -Leaf $Zip) -replace '\.zip$', '') + "-setup.exe")
+    if (Test-Path -LiteralPath $sameVersion) {
+        $Setup = $sameVersion
+    } else {
+        $newestSetup = Get-ChildItem $beside -Filter "CodeWiki-*-windows-x64-setup.exe" -ErrorAction SilentlyContinue |
+            Sort-Object LastWriteTime -Descending | Select-Object -First 1
+        if ($newestSetup) { $Setup = $newestSetup.FullName }
+    }
+}
 # The version a package's name carries.
 function Get-ZipVersion {
     param([string]$Path)
@@ -276,6 +294,11 @@ Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\probe.ps1") -GuestDirectory $
 Copy-ToGuest -Path $Zip -GuestDirectory "$guestHome\Downloads"
 Copy-ToGuest -Path (Join-Path $root "crates\cw-core") -GuestDirectory "$guestHome\repos"
 $guestZip = "$guestHome\Downloads\$(Split-Path -Leaf $Zip)"
+$guestSetup = $null
+if ($Setup) {
+    Copy-ToGuest -Path $Setup -GuestDirectory "$guestHome\Downloads"
+    $guestSetup = "$guestHome\Downloads\$(Split-Path -Leaf $Setup)"
+}
 
 # ---------------------------------------------------------------- S1, protection
 # Before anything of CodeWiki is in the guest, so that the unpacking, the
@@ -3512,11 +3535,442 @@ Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and setting
         -Observed "install exit $($install.ExitCode), uninstall exit $($run.ExitCode); files left in %LOCALAPPDATA%\CodeWiki: $dataLeft; left in %APPDATA%\CodeWiki: $(if ($prefsLeft) { $prefsLeft -join ', ' } else { 'nothing' })"
 }
 
+# ---------------------------------------------------------------- IS, the setup program
+# The setup program (scripts\setup\codewiki.iss) installs per user, runs
+# install.ps1 from the package it carries, and uninstalls through the
+# uninstall.ps1 it installed. Each case starts from no installation and puts
+# the guest back to none, so that the next case, and U2 after them, find what
+# they expect. They need the guest only, not the zip's unpacked folder, except
+# IS5 and IS6, which make an install.cmd installation first.
+$setupEntryKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{7DEA7959-917F-46EC-80A8-625E2A9B24F5}_is1'
+$setupHold = "$($script:Vm.GuestDir)\hold"
+$setupShortcut = "$guestHome\AppData\Roaming\Microsoft\Windows\Start Menu\Programs\CodeWiki.lnk"
+
+# What is in the guest of the installation the setup program makes, one
+# "name=value" line each, as a table. Lower-case names; the Apps entry's
+# values are e_DisplayName and so on.
+function Get-SetupState {
+    $run = Invoke-GuestScript -TimeoutSec 180 -Script (@'
+$t = '{{TARGET}}'
+$key = '{{KEY}}'
+"folder=$(Test-Path -LiteralPath $t)"
+$names = @()
+if (Test-Path -LiteralPath $t) { $names = @(Get-ChildItem -LiteralPath $t -Force | ForEach-Object { $_.Name }) }
+"names=$($names -join '|')"
+$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+$same = @($user -split ';' | Where-Object { $_ -and $_.Trim().TrimEnd('\').ToLowerInvariant() -eq $t.TrimEnd('\').ToLowerInvariant() })
+"pathcount=$($same.Count)"
+$lnk = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\CodeWiki.lnk'
+"lnk=$(Test-Path -LiteralPath $lnk)"
+$entry = $null
+if (Test-Path -LiteralPath $key) { $entry = Get-ItemProperty -LiteralPath $key }
+"entry=$([bool]$entry)"
+if ($entry) {
+    foreach ($n in 'DisplayName', 'DisplayVersion', 'Publisher', 'UninstallString', 'QuietUninstallString') { "e_$n=$($entry.$n)" }
+}
+$runValue = (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -ErrorAction SilentlyContinue).CodeWiki
+"run=$runValue"
+$data = Join-Path $env:LOCALAPPDATA 'CodeWiki'
+$prefs = Join-Path $env:APPDATA 'CodeWiki'
+"datadir=$(Test-Path -LiteralPath $data)"
+"prefsdir=$(Test-Path -LiteralPath $prefs)"
+"datamarker=$(Test-Path -LiteralPath (Join-Path $data 'marker.txt'))"
+"prefsmarker=$(Test-Path -LiteralPath (Join-Path $prefs 'marker.txt'))"
+"procs=$(@(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'codewiki*' }).Count)"
+# What a new shell would find: the machine PATH and the user PATH as stored.
+$env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $user
+$found = Get-Command codewiki -ErrorAction SilentlyContinue
+"command=$($found.Source)"
+if ($found) { "version=$((& $found.Source --version 2>&1 | Out-String).Trim() -replace '\s+', ' ')" }
+'@).Replace('{{TARGET}}', $guestTarget).Replace('{{KEY}}', $setupEntryKey)
+    $state = @{}
+    foreach ($line in @($run.Output -split "`r?`n")) {
+        if ($line -match '^([A-Za-z_]+)=(.*)$') { $state[$Matches[1]] = $Matches[2] }
+    }
+    # Empty output is a script that did not run, never "nothing installed".
+    if (-not $state.ContainsKey("folder")) { throw "could not read the guest's installation: $($run.Output) $($run.Stderr)" }
+    $state["names"] = @($state["names"] -split '\|' | Where-Object { $_ })
+    $state
+}
+
+# What a setup-installed CodeWiki must look like. Returns the problems.
+function Test-SetupInstalled {
+    param($State, [string]$Version)
+    $problems = @()
+    foreach ($need in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "plugins", "uninstall.ps1", "unins000.exe") {
+        if ($State.names -notcontains $need) { $problems += "missing $need" }
+    }
+    if ($State.names -contains "install.ps1") { $problems += "install.ps1 is in the folder" }
+    if ($State.pathcount -ne "1") { $problems += "user PATH holds the folder $($State.pathcount) times" }
+    if ($State.lnk -ne "True") { $problems += "no Start menu shortcut" }
+    if ($State.entry -ne "True") {
+        $problems += "no Apps entry"
+    } else {
+        if ($State.e_DisplayVersion -ne $Version) { $problems += "DisplayVersion is '$($State.e_DisplayVersion)'" }
+        if ($State.e_DisplayName -ne "CodeWiki") { $problems += "DisplayName is '$($State.e_DisplayName)'" }
+        if ($State.e_Publisher -ne "CodeWiki") { $problems += "Publisher is '$($State.e_Publisher)'" }
+        if ($State.e_QuietUninstallString -ne "`"$guestTarget\unins000.exe`" /SILENT") { $problems += "QuietUninstallString is '$($State.e_QuietUninstallString)'" }
+    }
+    if ($State.version -notmatch [regex]::Escape($Version)) { $problems += "codewiki --version said '$($State.version)' (found as '$($State.command)')" }
+    $problems
+}
+
+# One line of what the guest holds, for a result.
+function Format-SetupState {
+    param($State)
+    "folder $($State.folder) [$($State.names -join ', ')], user PATH entries $($State.pathcount), shortcut $($State.lnk), Apps entry $($State.entry)$(if ($State.entry -eq 'True') { " (name '$($State.e_DisplayName)', version '$($State.e_DisplayVersion)', publisher '$($State.e_Publisher)')" }), Run value '$($State.run)', data folder $($State.datadir), settings folder $($State.prefsdir), CodeWiki processes $($State.procs)"
+}
+
+# Run the setup program with switches and wait for it; the exit code is Setup's.
+function Invoke-GuestSetup {
+    param([string[]]$Arguments, [int]$TimeoutSec = 240)
+    Invoke-GuestExe -Exe $guestSetup -TimeoutSec $TimeoutSec -Arguments $Arguments
+}
+
+# The uninstaller starts a copy of itself and may return before that copy has
+# finished; wait until no uninstaller process is left.
+function Wait-GuestUninstaller {
+    Invoke-GuestScript -TimeoutSec 240 -Script @'
+Start-Sleep -Seconds 3
+$deadline = (Get-Date).AddSeconds(150)
+do {
+    $left = @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^_?unins' })
+    if ($left.Count) { Start-Sleep -Seconds 1 }
+} while ($left.Count -and (Get-Date) -lt $deadline)
+"uninstallers left: $($left.Count)"
+'@ | Out-Null
+}
+
+# Uninstall through the Apps entry, as Settings > Apps does, and wait for it.
+# -Quiet runs QuietUninstallString (/SILENT), else UninstallString with
+# /VERYSILENT. Returns the run (ExitCode) and the log's text.
+function Invoke-GuestUninstall {
+    param([string]$Log, [switch]$Quiet)
+    $state = Get-SetupState
+    $command = if ($Quiet) { $state.e_QuietUninstallString } else { $state.e_UninstallString }
+    if ($command -notmatch '^"([^"]+)"\s*(.*)$') { throw "the Apps entry has no usable uninstall command: '$command'" }
+    $exe = $Matches[1]
+    $arguments = @($Matches[2] -split '\s+' | Where-Object { $_ })
+    if (-not $Quiet) { $arguments += "/VERYSILENT" }
+    $arguments += "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$Log"
+    $run = Invoke-GuestExe -Exe $exe -TimeoutSec 240 -Arguments $arguments
+    Wait-GuestUninstaller
+    $text = (Invoke-GuestScript -Script "Get-Content -LiteralPath '$Log' -ErrorAction SilentlyContinue").Output
+    [pscustomobject]@{ ExitCode = $run.ExitCode; Command = $command; Arguments = ($arguments -join " "); Stdout = $run.Stdout; Stderr = $run.Stderr; Log = $text }
+}
+
+# The guest's own text of a setup log.
+function Get-GuestLog {
+    param([string]$Log)
+    (Invoke-GuestScript -Script "Get-Content -LiteralPath '$Log' -ErrorAction SilentlyContinue").Output
+}
+
+# Back to no installation, by whatever means: end the programs and the file
+# holder, uninstall with the installed script, delete what is left, the data
+# and settings folders, the Run value, the Apps entry and the PATH entry.
+function Reset-SetupGuest {
+    Invoke-GuestScript -TimeoutSec 280 -Script (@'
+$t = '{{TARGET}}'
+$key = '{{KEY}}'
+[System.IO.File]::WriteAllText('{{HOLD}}.release', 'release')
+Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*hold-file.ps1*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'codewiki*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+if (Test-Path -LiteralPath (Join-Path $t 'uninstall.cmd')) {
+    & "$env:SystemRoot\System32\cmd.exe" /c (Join-Path $t 'uninstall.cmd') -PurgeData | Out-Null
+}
+if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue }
+if (Test-Path -LiteralPath $t) { Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue }
+foreach ($folder in (Join-Path $env:LOCALAPPDATA 'CodeWiki'), (Join-Path $env:APPDATA 'CodeWiki')) {
+    if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue }
+}
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'CodeWiki' -ErrorAction SilentlyContinue
+$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+$kept = @($user -split ';' | Where-Object { $_ -and $_.Trim().TrimEnd('\').ToLowerInvariant() -ne $t.TrimEnd('\').ToLowerInvariant() })
+[Environment]::SetEnvironmentVariable('Path', ($kept -join ';'), 'User')
+Remove-Item -LiteralPath (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\CodeWiki.lnk') -Force -ErrorAction SilentlyContinue
+"left: folder $(Test-Path -LiteralPath $t), entry $(Test-Path -LiteralPath $key)"
+'@).Replace('{{TARGET}}', $guestTarget).Replace('{{KEY}}', $setupEntryKey).Replace('{{HOLD}}', $setupHold) | Out-Null
+}
+
+# Hold a file open with no sharing, in a PowerShell that stays alive until a
+# marker file appears: the file can then be neither replaced nor deleted.
+$holdScript = @'
+param([string]$Path, [string]$Marker)
+$stream = [System.IO.File]::Open($Path, 'Open', 'Read', 'None')
+try {
+    [System.IO.File]::WriteAllText("$Marker.ready", "held")
+    $deadline = (Get-Date).AddMinutes(20)
+    while (-not (Test-Path -LiteralPath "$Marker.release") -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 300 }
+} finally {
+    $stream.Close()
+}
+'@
+function Start-GuestFileHold {
+    param([string]$GuestPath)
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($holdScript))
+    Invoke-GuestScript -Script (@'
+$file = '{{DIR}}\hold-file.ps1'
+[System.IO.File]::WriteAllText($file, [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{BODY}}')), (New-Object System.Text.UTF8Encoding $false))
+Remove-Item -LiteralPath '{{HOLD}}.ready', '{{HOLD}}.release' -Force -ErrorAction SilentlyContinue
+'@).Replace('{{DIR}}', $script:Vm.GuestDir).Replace('{{BODY}}', $encoded).Replace('{{HOLD}}', $setupHold) | Out-Null
+    Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+        "-File", "$($script:Vm.GuestDir)\hold-file.ps1", "-Path", $GuestPath, "-Marker", $setupHold
+    $run = Invoke-GuestScript -TimeoutSec 90 -Script (@'
+$deadline = (Get-Date).AddSeconds(45)
+while (-not (Test-Path -LiteralPath '{{HOLD}}.ready') -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 500 }
+"held: $(Test-Path -LiteralPath '{{HOLD}}.ready')"
+'@).Replace('{{HOLD}}', $setupHold)
+    if ($run.Output -notmatch 'held: True') { throw "the file $GuestPath was not held open: $($run.Output) $($run.Stderr)" }
+}
+function Stop-GuestFileHold {
+    Invoke-GuestScript -TimeoutSec 90 -Script (@'
+[System.IO.File]::WriteAllText('{{HOLD}}.release', 'release')
+$deadline = (Get-Date).AddSeconds(30)
+do {
+    $left = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*hold-file.ps1*' })
+    if ($left.Count) { Start-Sleep -Milliseconds 500 }
+} while ($left.Count -and (Get-Date) -lt $deadline)
+"holders left: $($left.Count)"
+'@).Replace('{{HOLD}}', $setupHold) | Out-Null
+}
+
+# The installation install.cmd makes from the unpacked zip, which C1 unpacks;
+# unpack it here when C1 did not run.
+function Install-GuestWithCmd {
+    $have = (Invoke-GuestScript -Script "Test-Path -LiteralPath '$guestUnpacked\install.cmd'").Output
+    if ($have -notmatch 'True') {
+        Invoke-GuestScript -Script "Expand-Archive -Path '$guestZip' -DestinationPath '$guestUnpacked' -Force" | Out-Null
+    }
+    Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestUnpacked\install.cmd"
+}
+
+# A button of the setup wizard by its text; null while the wizard shows none.
+function Find-SetupButton {
+    param([string]$Pattern)
+    @(Get-GuestElements -Class "TWizardForm" |
+            Where-Object { $_.Kind -eq "Button" -and $_.Name -match $Pattern -and $_.OnScreen -and $_.Enabled }) | Select-Object -First 1
+}
+
+if ($Setup) {
+    $setupVersion = Get-ZipVersion $Zip
+    $setupSilent = "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
+
+    Test-Case "IS1" "Silent install with the setup program" "exit 0; the three programs, plugins, uninstall.ps1 and unins000.exe in the folder, no install.ps1; the PATH entry once; the shortcut; the Apps entry (CodeWiki, the package's version, CodeWiki); codewiki --version answers; the shortcut starts one window" {
+        Reset-SetupGuest
+        try {
+            $log = "C:\Users\Public\cwvm-is1.log"
+            $run = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=$log")
+            $state = Get-SetupState
+            $problems = @(Test-SetupInstalled $state $setupVersion)
+            if ($run.ExitCode -ne 0) { $problems += "setup exited with $($run.ExitCode)" }
+            $setupLog = Get-GuestLog $log
+            # The shortcut, as the Start menu would run it.
+            Start-GuestExe -Exe "C:\Windows\explorer.exe" -Arguments $setupShortcut
+            $window = Show-GuestWindow -ProcessName "codewiki-app"
+            Wait-For 8
+            $shot = Shot "setup-silent-app"
+            $probe = Get-Probe "setup-silent" -Quick
+            $windows = @(Get-App $probe | Where-Object { $_.hasWindow })
+            if (@(Get-App $probe).Count -ne 1 -or $windows.Count -ne 1) { $problems += "the shortcut started $(@(Get-App $probe).Count) app processes, $($windows.Count) with a window" }
+            Add-Result -Id "IS1" -Title "Silent install with the setup program" -Expect "exit 0, the files, PATH entry, shortcut and Apps entry in place, the version answers, the shortcut starts one window" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + $setupLog + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
+                -Observed "setup.exe $($setupSilent -join ' ') /LOG: exit $($run.ExitCode); $(Format-SetupState $state); codewiki --version: '$($state.version)'; $(if ($problems) { $problems -join '; ' } else { 'all in place' }); app started from the shortcut: $(@(Get-App $probe).Count) app process, $($windows.Count) window"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS2" "Uninstall from the Apps entry" "exit 0 with the app running; the folder, PATH entry, shortcut, Run value and Apps entry gone; the data and settings folders stay" {
+        Reset-SetupGuest
+        try {
+            $install = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is2-install.log")
+            if ($install.ExitCode -ne 0) { throw "the silent install failed first: exit $($install.ExitCode)" }
+            # What a user has by then: the start with Windows on (what AS1 turns on),
+            # the app running, and data and settings to keep.
+            Invoke-GuestScript -Script (@'
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'CodeWiki' -Value '{{RUN}}' -PropertyType String -Force | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $env:LOCALAPPDATA 'CodeWiki'), (Join-Path $env:APPDATA 'CodeWiki') | Out-Null
+Set-Content -Path (Join-Path $env:LOCALAPPDATA 'CodeWiki\marker.txt') -Value 'data'
+Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'settings'
+'@).Replace('{{RUN}}', $autostartCommand) | Out-Null
+            Start-GuestApp -Arguments $guestRepo
+            Wait-For 15
+            $before = Get-SetupState
+            $running = Shot "setup-uninstall-app-running"
+            $log = "C:\Users\Public\cwvm-is2.log"
+            $run = Invoke-GuestUninstall -Log $log -Quiet
+            Wait-For 3
+            $shot = Shot "setup-uninstalled"
+            $after = Get-SetupState
+            $problems = @()
+            if ($before.procs -eq "0") { $problems += "the app was not running before the uninstall" }
+            if ($before.run -ne $autostartCommand) { $problems += "the Run value was not in place before ('$($before.run)')" }
+            if ($run.ExitCode -ne 0) { $problems += "uninstall exited with $($run.ExitCode)" }
+            if ($after.folder -eq "True") { $problems += "the folder is left: $($after.names -join ', ')" }
+            if ($after.pathcount -ne "0") { $problems += "PATH entry left" }
+            if ($after.lnk -eq "True") { $problems += "shortcut left" }
+            if ($after.run) { $problems += "Run value left: $($after.run)" }
+            if ($after.entry -eq "True") { $problems += "Apps entry left" }
+            if ($after.procs -ne "0") { $problems += "$($after.procs) CodeWiki processes still run" }
+            if ($after.datamarker -ne "True" -or $after.prefsmarker -ne "True") { $problems += "data or settings were deleted (data marker $($after.datamarker), settings marker $($after.prefsmarker))" }
+            Add-Result -Id "IS2" -Title "Uninstall from the Apps entry" -Expect "exit 0; programs, folder, PATH entry, shortcut, Run value and Apps entry gone; data and settings stay" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($running, $shot) -Output ("$($run.Command) $($run.Arguments)`n" + $run.Log).Trim() `
+                -Observed "ran QuietUninstallString '$($run.Command)' plus $($run.Arguments) with the app running (processes before: $($before.procs)): exit $($run.ExitCode); after: $(Format-SetupState $after); $(if ($problems) { $problems -join '; ' } else { 'removed, data and settings kept' })"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS3" "Uninstall refused while a program is held" "a non-zero exit, and the entry, PATH entry, shortcut and programs stay; after the file is released the uninstall succeeds" {
+        Reset-SetupGuest
+        try {
+            $install = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is3-install.log")
+            if ($install.ExitCode -ne 0) { throw "the silent install failed first: exit $($install.ExitCode)" }
+            Start-GuestFileHold "$guestTarget\codewiki-app.exe"
+            $refusedRun = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is3-refused.log"
+            Wait-For 2
+            $refusedShot = Shot "setup-uninstall-refused"
+            $kept = Get-SetupState
+            $problems = @()
+            if ($refusedRun.ExitCode -eq 0) { $problems += "the uninstall exited with 0 while codewiki-app.exe was held" }
+            if ($kept.entry -ne "True") { $problems += "the Apps entry is gone" }
+            if ($kept.pathcount -ne "1") { $problems += "PATH entries $($kept.pathcount)" }
+            if ($kept.lnk -ne "True") { $problems += "the shortcut is gone" }
+            foreach ($need in "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe") {
+                if ($kept.names -notcontains $need) { $problems += "$need is gone" }
+            }
+            # Let go; the same command must now work.
+            Stop-GuestFileHold
+            $doneRun = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is3-done.log"
+            Wait-For 3
+            $gone = Get-SetupState
+            if ($doneRun.ExitCode -ne 0) { $problems += "the uninstall after the release exited with $($doneRun.ExitCode)" }
+            if ($gone.folder -eq "True" -or $gone.entry -eq "True" -or $gone.pathcount -ne "0" -or $gone.lnk -eq "True") { $problems += "after the release: $(Format-SetupState $gone)" }
+            Add-Result -Id "IS3" -Title "Uninstall refused while a program is held" -Expect "non-zero exit and everything kept while held; exit 0 and everything gone after" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($refusedShot) `
+                -Output ("--- while held: $($refusedRun.Command) $($refusedRun.Arguments)`n" + $refusedRun.Log + "`n--- after the release`n" + $doneRun.Log).Trim() `
+                -Observed "codewiki-app.exe held open with no sharing: uninstall exit $($refusedRun.ExitCode); then $(Format-SetupState $kept); released, uninstall exit $($doneRun.ExitCode); then $(Format-SetupState $gone); $(if ($problems) { $problems -join '; ' } else { 'refused and kept while held, removed after' }); read the screenshot for what, if anything, the uninstaller showed"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS4" "The setup wizard by mouse" "Ready to Install, a click on Install, the progress, the finish page with Start CodeWiki, a click on Finish; the app's window appears and the folder is as after a silent install" {
+        Reset-SetupGuest
+        try {
+            Start-GuestExe -Exe $guestSetup
+            $install = $null
+            for ($try = 0; $try -lt 15 -and -not $install; $try++) {
+                Wait-For 4
+                $install = Find-SetupButton '^&?Install$'
+            }
+            $ready = Shot "setup-wizard-ready"
+            if (-not $install) { throw "the wizard showed no Install button within a minute; read the screenshot" }
+            $readyText = (@(Get-GuestElements -Class "TWizardForm" | Where-Object { $_.OnScreen -and $_.Name }) | ForEach-Object { $_.Name }) -join " | "
+            Send-RestedClick -X $install.X -Y $install.Y
+            Wait-For 1
+            $progress = Shot "setup-wizard-progress"
+            $finish = $null
+            for ($try = 0; $try -lt 40 -and -not $finish; $try++) {
+                Wait-For 4
+                $finish = Find-SetupButton '^&?Finish$'
+            }
+            $done = Shot "setup-wizard-finish"
+            if (-not $finish) { throw "the wizard showed no Finish button within three minutes; read the screenshots" }
+            $finishElements = @(Get-GuestElements -Class "TWizardForm" | Where-Object { $_.OnScreen -and $_.Name })
+            $finishText = ($finishElements | ForEach-Object { "$($_.Kind): $($_.Name)" }) -join " | "
+            $startBox = @($finishElements | Where-Object { $_.Name -like "*Start CodeWiki*" }).Count
+            Send-RestedClick -X $finish.X -Y $finish.Y
+            $problems = @()
+            try {
+                [void](Show-GuestWindow -ProcessName "codewiki-app" -TimeoutSec 90)
+            } catch {
+                $problems += "no app window appeared after Finish"
+            }
+            Wait-For 8
+            $shot = Shot "setup-wizard-app"
+            $state = Get-SetupState
+            $problems += @(Test-SetupInstalled $state $setupVersion)
+            $probe = Get-Probe "setup-wizard" -Quick
+            if (@(Get-App $probe | Where-Object { $_.hasWindow }).Count -ne 1) { $problems += "the app has $(@(Get-App $probe | Where-Object { $_.hasWindow }).Count) windows" }
+            Add-Result -Id "IS4" -Title "The setup wizard by mouse" -Expect "Install and Finish by click; the app starts by itself from the checked Start CodeWiki; the install is complete" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($ready, $progress, $done, $shot) `
+                -Output ("ready page: $readyText`nfinish page: $finishText") `
+                -Observed "run with no switches; clicked Install at $($install.X),$($install.Y) and Finish at $($finish.X),$($finish.Y); Start CodeWiki box found on the finish page: $($startBox -gt 0) (it was left as it came: the app's window appearing shows it was checked); $(Format-SetupState $state); $(if ($problems) { $problems -join '; ' } else { 'all in place' }); read the four screenshots for the page order, the wording and the box"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS5" "Silent install over an install.cmd installation, app running" "exit 0 within 120 s with no prompt; the PATH entry once; the settings folder's marker and the Run value stay; the Apps entry appears; codewiki --version answers" {
+        Reset-SetupGuest
+        try {
+            $first = Install-GuestWithCmd
+            if ($first.ExitCode -ne 0) { throw "install.cmd failed first: exit $($first.ExitCode)" }
+            Invoke-GuestScript -Script (@'
+New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'CodeWiki' -Value '{{RUN}}' -PropertyType String -Force | Out-Null
+New-Item -ItemType Directory -Force (Join-Path $env:APPDATA 'CodeWiki') | Out-Null
+Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'settings'
+'@).Replace('{{RUN}}', $autostartCommand) | Out-Null
+            Start-GuestApp -Arguments $guestRepo
+            Wait-For 15
+            $before = Get-SetupState
+            $log = "C:\Users\Public\cwvm-is5.log"
+            $clock = [System.Diagnostics.Stopwatch]::StartNew()
+            $run = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=$log") -TimeoutSec 150
+            $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
+            $shot = Shot "setup-over-install-cmd"
+            $state = Get-SetupState
+            $problems = @()
+            if ($before.procs -eq "0") { $problems += "the app was not running before the setup" }
+            if ($before.entry -eq "True") { $problems += "an Apps entry existed before the setup" }
+            if ($run.ExitCode -ne 0) { $problems += "setup exited with $($run.ExitCode)" }
+            if ($seconds -ge 120) { $problems += "setup took $seconds s" }
+            if ($state.prefsmarker -ne "True") { $problems += "the settings folder's marker is gone" }
+            if ($state.run -ne $autostartCommand) { $problems += "the Run value is '$($state.run)'" }
+            $problems += @(Test-SetupInstalled $state $setupVersion)
+            Add-Result -Id "IS5" -Title "Silent install over an install.cmd installation, app running" -Expect "exit 0 in under 120 s; PATH once; marker and Run value kept; Apps entry present; the version answers" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + (Get-GuestLog $log) + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
+                -Observed "install.cmd first (exit $($first.ExitCode)), the app running ($($before.procs) processes), no Apps entry ($($before.entry)); then setup silent: exit $($run.ExitCode) after $seconds s; $(Format-SetupState $state); app processes after: $($state.procs); codewiki --version: '$($state.version)'; $(if ($problems) { $problems -join '; ' } else { 'all in place' })"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS6" "A failing install says why" "exit 7; the setup log holds 'CodeWiki could not be installed'; no Apps entry is written" {
+        Reset-SetupGuest
+        try {
+            $first = Install-GuestWithCmd
+            if ($first.ExitCode -ne 0) { throw "install.cmd failed first: exit $($first.ExitCode)" }
+            # A copy over a file that is held open with no sharing fails.
+            Start-GuestFileHold "$guestTarget\codewiki.exe"
+            $log = "C:\Users\Public\cwvm-is6.log"
+            $run = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=$log")
+            $shot = Shot "setup-failed"
+            $state = Get-SetupState
+            $text = Get-GuestLog $log
+            $problems = @()
+            if ($run.ExitCode -ne 7) { $problems += "setup exited with $($run.ExitCode), not 7" }
+            if ($text -notmatch "CodeWiki could not be installed") { $problems += "the setup log does not say 'CodeWiki could not be installed'" }
+            if ($state.entry -eq "True") { $problems += "an Apps entry was written" }
+            Add-Result -Id "IS6" -Title "A failing install says why" -Expect "exit 7, the reason in the log, no Apps entry" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + $text + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
+                -Observed "install.cmd first (exit $($first.ExitCode)), codewiki.exe held open with no sharing, then setup silent: exit $($run.ExitCode); log says 'could not be installed': $($text -match 'CodeWiki could not be installed'); Apps entry: $($state.entry); $(if ($problems) { $problems -join '; ' } else { 'failed as it should' })"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+}
+
 # ---------------------------------------------------------------- U2, self-update
-# Ends the app and removes the installation U2 made, data included.
+# Ends the app and removes the installation U2 made, data included, and the
+# Apps entry U2 made to stand for a setup-installed old copy.
 function Remove-UpdateTestInstall {
     Stop-GuestApp
     Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd", "-PurgeData" | Out-Null
+    Invoke-GuestScript -Script "Remove-Item -LiteralPath '$setupEntryKey' -Recurse -Force -ErrorAction SilentlyContinue" | Out-Null
 }
 
 if ($OldZip) {
@@ -3563,6 +4017,12 @@ Set-Content '{{TARGET}}\cuda\codewiki-embed-cuda.exe' 'not a program'
 Set-Content '{{TARGET}}\cuda\vmtest.dll' 'not a library'
 '@).Replace('{{JSON}}', $encodedLegacy).Replace('{{TARGET}}', $guestTarget) | Out-Null
         $script:legacySeeded = $true
+        # The Apps entry a setup-installed old copy would have; the update must
+        # move its DisplayVersion to the new version, and never creates it.
+        Invoke-GuestScript -Script (@'
+New-Item -Path '{{KEY}}' -Force | Out-Null
+New-ItemProperty -LiteralPath '{{KEY}}' -Name 'DisplayVersion' -Value '{{OLD}}' -PropertyType String -Force | Out-Null
+'@).Replace('{{KEY}}', $setupEntryKey).Replace('{{OLD}}', $oldVersion) | Out-Null
         $serve = "$($script:Vm.GuestDir)\update"
         if (-not $RealRelease) {
             # The stand-in for GitHub: it serves the package under test.
@@ -3600,10 +4060,11 @@ Set-Content '{{TARGET}}\cuda\vmtest.dll' 'not a library'
         $log = (Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'update|ERROR|WARN' | Select-Object -Last 12 | ForEach-Object { `$_.Line }").Output
         # One app: the new one must take the place of the one it replaced,
         # not hand over to it while it ends.
-        $ok = $install.ExitCode -eq 0 -and $was -match [regex]::Escape($oldVersion) -and $now -match [regex]::Escape($newVersion) -and $window.Count -eq 1 -and (Get-App $probe).Count -eq 1 -and -not $left
-        Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left" `
+        $entryNow = (Invoke-GuestScript -Script "(Get-ItemProperty -LiteralPath '$setupEntryKey' -ErrorAction SilentlyContinue).DisplayVersion").Output.Trim()
+        $ok = $install.ExitCode -eq 0 -and $was -match [regex]::Escape($oldVersion) -and $now -match [regex]::Escape($newVersion) -and $window.Count -eq 1 -and (Get-App $probe).Count -eq 1 -and -not $left -and $entryNow -eq $newVersion
+        Add-Result -Id "U2" -Title "The app updates itself" -Expect "codewiki --version changes from $oldVersion to $newVersion; the app is running again; no .old file or .update folder is left; the Apps entry's DisplayVersion changes to $newVersion" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) -Output ("requests the stand-in saw:`n" + $asked + "`n--- app.log`n" + $log).Trim() `
-            -Observed "installed $oldVersion (exit $($install.ExitCode))$(if ($oldStart -and $oldStart.Status -ne 'started') { ", which Windows refused to start until the rules $($oldStart.Rules -join '; ') were in audit" }), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' })"
+            -Observed "installed $oldVersion (exit $($install.ExitCode))$(if ($oldStart -and $oldStart.Status -ne 'started') { ", which Windows refused to start until the rules $($oldStart.Rules -join '; ') were in audit" }), codewiki --version said '$was'; update source: $(if ($RealRelease) { 'GitHub' } else { 'the stand-in in the guest' }); palette: 'update codewiki', Enter; 75 s later codewiki --version said '$now', app processes: $((Get-App $probe).Count), app windows: $($window.Count), left over in the install folder: $(if ($left) { $left } else { 'nothing' }); the Apps entry made before the update held DisplayVersion '$oldVersion' and holds '$entryNow' now (the old app does the writing, so an old package from before the setup program leaves it unchanged)"
         $script:updatedInstall = $ok
         # U3 looks at what the update left, then clears up.
         if ($Only -and $Only -notcontains "U3") { Remove-UpdateTestInstall }

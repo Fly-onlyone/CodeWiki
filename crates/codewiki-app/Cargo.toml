@@ -17,13 +17,13 @@ cw-client = { path = "../cw-client" }
 # Paths and log files only; the engine crates stay out of the app.
 cw-core = { path = "../cw-core" }
 cw-telemetry = { path = "../cw-telemetry" }
-cw-illustrate = { version = "0.3.0", path = "../cw-illustrate" }
-cw-mermaid = { version = "0.3.0", path = "../cw-mermaid" }
+cw-illustrate = { version = "0.3.1", path = "../cw-illustrate" }
+cw-mermaid = { version = "0.3.1", path = "../cw-mermaid" }
 # Updates its own installation; see AGENTS.md.
 cw-update = { path = "../cw-update" }
 gpui-kit = "=0.9.1"
 log = "0.4"
-openui-lang = { version = "0.3.0", path = "../openui-lang" }
+openui-lang = { version = "0.3.1", path = "../openui-lang" }
 serde_json = "1"
 
 [target.'cfg(windows)'.dependencies]

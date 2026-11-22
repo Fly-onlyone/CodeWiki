@@ -150,6 +150,104 @@ enum Command {
         #[arg(long, default_value_t = 0)]
         port: u16,
     },
+    /// Keep coding agents out of chosen folders: CodeWiki's hook and tools stay
+    /// silent there.
+    Agents {
+        #[command(subcommand)]
+        action: AgentsAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentsAction {
+    /// Keep coding agents out of a folder (default: the current folder).
+    Off { folder: Option<PathBuf> },
+    /// Let coding agents into a folder again (default: the current folder).
+    On { folder: Option<PathBuf> },
+    /// List the folders kept from coding agents.
+    List,
+    /// Say whether a folder is kept from coding agents (default: the current
+    /// folder).
+    Status { folder: Option<PathBuf> },
+}
+
+/// Run `codewiki agents`. A list that cannot be read is reported, never
+/// overwritten, and every action then fails.
+fn agents(action: AgentsAction, json: bool) -> ExitCode {
+    use cw_core::agents_off::{self, Added, Removed};
+    let data = cw_core::paths::data_dir();
+    let broken = |_: cw_core::Error| {
+        eprintln!(
+            "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
+            agents_off::file(&data).display()
+        );
+        ExitCode::FAILURE
+    };
+    let here = || std::env::current_dir().unwrap_or_default();
+    let target = |folder: Option<PathBuf>| match folder {
+        Some(folder) => agents_off::normalize(&folder, &here()),
+        None => agents_off::normalize(&here(), &here()),
+    };
+    match action {
+        AgentsAction::Off { folder } => match agents_off::add(&data, &target(folder)) {
+            Ok(Added::Added(folder)) => {
+                println!("kept from coding agents: {}", folder.display());
+                ExitCode::SUCCESS
+            }
+            Ok(Added::CoveredBy(entry)) => {
+                println!("already kept from coding agents by {}", entry.display());
+                ExitCode::SUCCESS
+            }
+            Err(e) => broken(e),
+        },
+        AgentsAction::On { folder } => match agents_off::remove(&data, &target(folder.clone())) {
+            Ok(Removed::Removed(entry)) => {
+                println!("coding agents allowed again: {}", entry.display());
+                ExitCode::SUCCESS
+            }
+            Ok(Removed::NotListed) => {
+                println!("not listed: {}", target(folder).display());
+                ExitCode::SUCCESS
+            }
+            Ok(Removed::CoveredBy(entry)) => {
+                println!(
+                    "kept from coding agents by {}; remove that entry to let agents in",
+                    entry.display()
+                );
+                ExitCode::FAILURE
+            }
+            Err(e) => broken(e),
+        },
+        AgentsAction::List => match agents_off::load(&data) {
+            Ok(entries) => {
+                if json {
+                    println!("{}", serde_json::json!({ "folders": entries }));
+                } else if entries.is_empty() {
+                    println!("no folder is kept from coding agents");
+                } else {
+                    for entry in entries {
+                        println!("{}", entry.display());
+                    }
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => broken(e),
+        },
+        AgentsAction::Status { folder } => match agents_off::load(&data) {
+            Ok(entries) => {
+                let entry = agents_off::covering(&entries, &target(folder));
+                if json {
+                    println!("{}", serde_json::json!({ "covered_by": entry }));
+                } else if let Some(entry) = entry {
+                    println!("kept from coding agents by {}", entry.display());
+                } else {
+                    println!("open to coding agents");
+                }
+                ExitCode::SUCCESS
+            }
+            Err(e) => broken(e),
+        },
+    }
 }
 
 #[derive(Subcommand)]
@@ -780,7 +878,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("rejected {}", p.id);
             Ok(())
         }
-        Command::Serve { .. } | Command::SentryTest { .. } => {
+        Command::Serve { .. } | Command::SentryTest { .. } | Command::Agents { .. } => {
             unreachable!("handled before the repository is resolved")
         }
     }
@@ -830,6 +928,9 @@ fn main() -> ExitCode {
     }
     if let Command::SentryTest { panic } = cli.command {
         return sentry_test(panic);
+    }
+    if let Command::Agents { action } = cli.command {
+        return agents(action, cli.json);
     }
     // The backend has no console when the app or an agent starts it: it keeps
     // `backend.log`, and prints the same lines when run from a terminal. A

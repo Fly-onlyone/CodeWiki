@@ -74,9 +74,15 @@ pub fn load(data_dir: &Path) -> Result<Vec<PathBuf>> {
 }
 
 /// Make `path` absolute (relative paths are joined to `base`), resolve `.` and
-/// `..` without touching the disk, and drop any trailing separator.
+/// `..` without touching the disk, and drop any trailing separator. The result
+/// is always absolute: a path that joining leaves relative (on Windows a drive
+/// without a root, `D:secret`) is resolved by the system first, against the
+/// process's folder on that drive.
 pub fn normalize(path: &Path, base: &Path) -> PathBuf {
-    let joined = base.join(path);
+    let mut joined = base.join(path);
+    if !joined.is_absolute() {
+        joined = std::path::absolute(&joined).unwrap_or(joined);
+    }
     let mut parts: Vec<Component> = Vec::new();
     for part in joined.components() {
         match part {
@@ -259,6 +265,15 @@ mod tests {
         let entries = vec![p(r"D:\")];
         assert!(covering(&entries, &p(r"D:\x")).is_some());
         assert!(covering(&entries, &p(r"C:\x")).is_none());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_relative_path_is_made_absolute() {
+        for written in [r"D:secret", r"D:x\y"] {
+            let made = normalize(Path::new(written), Path::new(r"C:\work"));
+            assert!(made.is_absolute(), "{written} gave {}", made.display());
+        }
     }
 
     #[test]

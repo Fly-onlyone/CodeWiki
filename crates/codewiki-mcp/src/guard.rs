@@ -3,7 +3,7 @@
 //! listed projects. Plain functions, no backend, so they test without one.
 
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use serde_json::{Value, json};
 
@@ -52,7 +52,8 @@ pub enum RepoArg {
 /// otherwise an id or name. A path is made absolute against `cwd`.
 pub fn repo_arg(value: &str, cwd: &Path) -> RepoArg {
     let path = Path::new(value);
-    if path.is_absolute() || value.starts_with('.') || value.contains(['/', '\\']) {
+    let has_drive = matches!(path.components().next(), Some(Component::Prefix(_)));
+    if path.is_absolute() || has_drive || value.starts_with('.') || value.contains(['/', '\\']) {
         RepoArg::Path(cw_core::agents_off::normalize(path, cwd))
     } else {
         RepoArg::IdOrName(value.to_string())
@@ -351,6 +352,20 @@ mod tests {
             target(&word("./x"), None, &cwd),
             Target::Path(p("D:\\work\\x"))
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_relative_value_is_an_absolute_path() {
+        let cwd = p("D:\\work");
+        for written in ["D:secret", "D:x\\y"] {
+            let arg = repo_arg(written, &cwd);
+            assert!(matches!(arg, RepoArg::Path(_)), "{written}");
+            match target(&arg, Some(&listing()), &cwd) {
+                Target::Path(path) => assert!(path.is_absolute(), "{written}"),
+                other => panic!("{written}: {other:?}"),
+            }
+        }
     }
 
     #[test]

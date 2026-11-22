@@ -2463,7 +2463,9 @@ function Get-SampleStats {
     }
     $working = @($rows | Where-Object { $_.Phase -in "load", "job" })
     $idle = @($rows | Where-Object { $_.Phase -eq "idle" } | Select-Object -Last 5)
-    $gpuValues = @($working | ForEach-Object { $_.Gpu3d; $_.GpuCompute } | Where-Object { $null -ne $_ })
+    $bench = @($rows | Where-Object { $_.Phase -eq "bench" })
+    $benchCpu = @($bench | ForEach-Object { $_.Cpu } | Where-Object { $null -ne $_ })
+    $gpuValues = @(@($working) + @($bench) | ForEach-Object { $_.Gpu3d; $_.GpuCompute } | Where-Object { $null -ne $_ })
     $gpuPeak = if ($gpuValues.Count) { ($gpuValues | Measure-Object -Maximum).Maximum } else { $null }
     $cpuValues = @($working | ForEach-Object { $_.Cpu } | Where-Object { $null -ne $_ })
     $freeValues = @($rows | ForEach-Object { $_.Free } | Where-Object { $null -ne $_ })
@@ -2474,6 +2476,9 @@ function Get-SampleStats {
         CpuAvg       = if ($cpuValues.Count) { [math]::Round(($cpuValues | Measure-Object -Average).Average, 1) } else { $null }
         CpuPeak      = if ($cpuValues.Count) { [math]::Round(($cpuValues | Measure-Object -Maximum).Maximum, 1) } else { $null }
         FreeMinMb    = if ($freeValues.Count) { [math]::Round(($freeValues | Measure-Object -Minimum).Minimum, 0) } else { $null }
+        CpuBenchAvg  = if ($benchCpu.Count) { [math]::Round(($benchCpu | Measure-Object -Average).Average, 1) } else { $null }
+        CpuBenchPeak = if ($benchCpu.Count) { [math]::Round(($benchCpu | Measure-Object -Maximum).Maximum, 1) } else { $null }
+        MemoryBenchPeakMb = if ($bench.Count) { [math]::Round(($bench | Measure-Object Ws -Maximum).Maximum, 0) } else { $null }
         Gpu          = if ($null -eq $gpuPeak) { "not available" } elseif ($gpuPeak -ge 5) { "yes (busiest engine $([math]::Round($gpuPeak, 0)) %)" } else { "no (busiest engine $([math]::Round($gpuPeak, 0)) %)" }
     }
 }
@@ -2522,6 +2527,9 @@ function Measure-RealEmbedder {
     Wait-For 4
 
     $queriesB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject ([string[]]$embedQueries) -Compress)))
+    # Each server's own embeddings route, as cw-embed calls it: Ollama's
+    # /api/embed, every other server's OpenAI-style /v1/embeddings.
+    $benchUrl = if ($Provider -eq "ollama") { "http://127.0.0.1:11434/api/embed" } else { "http://127.0.0.1:$Port/v1/embeddings" }
     $measure = Invoke-GuestBackendScript -TimeoutSec ($JobSeconds + 1800) -Script ((@'
 $folder = '{{FOLDER}}'
 function Set-Phase { param([string]$Name) Set-Content (Join-Path $folder 'phase.txt') $Name -NoNewline }
@@ -2548,11 +2556,48 @@ $out.jobSeconds = [math]::Round($jobWatch.Elapsed.TotalSeconds, 1)
 $out.job = $job
 Set-Phase 'idle'
 Start-Sleep -Seconds 20
+# The server alone, the same work for every server: 64 fixed texts of about
+# 500 characters in batches of 16 straight to its own embeddings route, once
+# to warm up and then three timed rounds; then ten single short queries. The
+# job above starts when the embedder is chosen, before any clock here, so its
+# documents per second are not comparable; these are.
+Set-Phase 'bench'
+$benchUrl = '{{BENCHURL}}'
+$benchModel = '{{BENCHMODEL}}'
+$words = 'index', 'vector', 'module', 'parser', 'backend', 'settings', 'search', 'note', 'graph', 'token', 'cache', 'server', 'client', 'update', 'window', 'theme', 'secret', 'log'
+$texts = New-Object 'string[]' 64
+for ($i = 0; $i -lt 64; $i++) {
+    $picked = New-Object 'string[]' 70
+    for ($k = 0; $k -lt 70; $k++) { $picked[$k] = $words[($i * 7 + $k * 3) % $words.Count] }
+    $texts[$i] = "Paragraph $i. " + ($picked -join ' ') + '.'
+}
+function Send-Batch {
+    param([string[]]$Batch)
+    $json = (New-Object PSObject -Property @{ model = $benchModel; input = $Batch }) | ConvertTo-Json -Compress -Depth 4
+    Invoke-RestMethod -UseBasicParsing -Method Post -Uri $benchUrl -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 900 | Out-Null
+}
+$roundsMs = @()
+$queryMs = @()
+$benchError = ''
+try {
+    Send-Batch $texts[0..15]
+    for ($r = 0; $r -lt 3; $r++) {
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        for ($b = 0; $b -lt 64; $b += 16) { Send-Batch $texts[$b..($b + 15)] }
+        $roundsMs += [int]$watch.ElapsedMilliseconds
+    }
+    for ($q = 0; $q -lt 10; $q++) {
+        $watch = [Diagnostics.Stopwatch]::StartNew()
+        Send-Batch @("where are the settings of query $q stored")
+        $queryMs += [int]$watch.ElapsedMilliseconds
+    }
+} catch { $benchError = $_.Exception.Message }
+$out.bench = [ordered]@{ url = $benchUrl; texts = 64; batch = 16; roundsMs = [int[]]$roundsMs; queryMs = [int[]]$queryMs; error = $benchError }
 Set-Phase 'search'
 '@ + "`n" + $guestSearchText + @'
 
 $out.searches = $searches
-'@ + "`n" + $guestResultText).Replace('{{FOLDER}}', $embedSamples).Replace('{{JOBSECONDS}}', "$JobSeconds").Replace('{{QUERIES}}', $queriesB64))
+'@ + "`n" + $guestResultText).Replace('{{FOLDER}}', $embedSamples).Replace('{{JOBSECONDS}}', "$JobSeconds").Replace('{{QUERIES}}', $queriesB64).Replace('{{BENCHURL}}', $benchUrl).Replace('{{BENCHMODEL}}', $Model))
     $data = Read-GuestResult $measure.Output
     $samples = Invoke-GuestScript -TimeoutSec 120 -Script "New-Item -ItemType File -Force '$embedSamples\stop.flag' | Out-Null; Start-Sleep 4; Get-Content '$embedSamples\samples.csv' -ErrorAction SilentlyContinue"
     $stats = Get-SampleStats ($samples.Output -split "`n")
@@ -2599,6 +2644,11 @@ $left = Get-Server
     $medianLocal = Get-MedianValue ($localSearches | ForEach-Object { $_.ms })
     $jobSeconds = [double]$data.jobSeconds
     $docs = if ($job) { [int]$job.docs_done } else { $null }
+    $bench = $data.bench
+    $benchRoundMs = if ($bench) { Get-MedianValue @($bench.roundsMs) } else { $null }
+    $benchTextsPerS = if ($benchRoundMs -gt 0) { [math]::Round(64 / ($benchRoundMs / 1000), 1) } else { $null }
+    $benchQueryMs = if ($bench) { Get-MedianValue @($bench.queryMs) } else { $null }
+    $benchText = if ($benchTextsPerS) { "bench $benchTextsPerS texts/s (64 texts of ~500 characters, batches of 16, warm, median of 3 rounds: $(@($bench.roundsMs) -join '/') ms), single query median $benchQueryMs ms, guest CPU during it avg $($stats.CpuBenchAvg) %, peak $($stats.CpuBenchPeak) %" } else { "bench failed: $(if ($bench) { $bench.error } else { 'no result' })" }
     $installMb = if ($InstallFolder.Count) { Get-GuestFolderMb $InstallFolder } else { Get-EmbedFact $Provider "installMb" }
     $version = if ($ServerVersion) { $ServerVersion } else { Get-EmbedFact $Provider "version" }
     $gone = $stopped -match "left: 0" -and $stopped -match "listening on ${Port}: 0"
@@ -2629,6 +2679,13 @@ $left = Get-Server
             docs                  = $docs
             jobS                  = $jobSeconds
             docsPerS              = if ($jobSeconds -gt 0 -and $docs) { [math]::Round($docs / $jobSeconds, 2) } else { $null }
+            benchTextsPerS        = $benchTextsPerS
+            benchRoundMs          = @($(if ($bench) { $bench.roundsMs }))
+            benchQueryMedianMs    = $benchQueryMs
+            benchError            = if ($bench) { $bench.error } else { "no result" }
+            cpuBenchAvgPercent    = $stats.CpuBenchAvg
+            cpuBenchPeakPercent   = $stats.CpuBenchPeak
+            serverMemoryBenchPeakMb = $stats.MemoryBenchPeakMb
             searchMedianMs        = $medianVectors
             searchMedianMsLocal   = $medianLocal
             hitsFound             = $found
@@ -2650,7 +2707,7 @@ $left = Get-Server
     $localLines = @($localSearches | ForEach-Object { "  $($_.q): $($_.ms) ms, top $(@($_.keys).Count): $(@($_.keys) -join ' ; ')" })
     Add-Result -Id $Id -Title $Title -Expect "the model is listed; the test answers; the job is done with every document embedded; the five searches find hits" `
         -Status $status -Shots @($shot) -Output ("settings change: $set`n" + "models: $($data.models)`ntest: $($data.test)`njob: $($job | ConvertTo-Json -Compress)`nreembed asked for: '$($data.reembed)'`n--- searches with $Provider`n$($lines -join "`n")`n--- searches with local`n$($localLines -join "`n")`n--- samples`n$($samples.Output)`n--- after stopping the server`n$stopped") `
-        -Observed ("$Provider ($version) with $Model ($Quantisation); listed: $listed; test answered: $tested, first call $(if ($test) { "$($test.ms) ms, $($test.dimensions) dimensions" } else { 'none' }); job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }) in $jobSeconds s$(if ($docs -and $jobSeconds -gt 0) { " ($([math]::Round($docs / $jobSeconds, 1)) documents/s)" }); search median $medianVectors ms with vectors, $medianLocal ms with local; $withHits of $($searches.Count) searches had hits, $onlyVectors of $found hits are not in local's top 5; server memory peak $($stats.MemoryPeakMb) MB, idle $($stats.MemoryIdleMb) MB; guest CPU avg $($stats.CpuAvg) %, peak $($stats.CpuPeak) %; GPU: $($stats.Gpu); guest free memory min $($stats.FreeMinMb) MB; server gone after stopping: $gone. $Note Read the screenshot: Settings > Semantic search names $Provider and $Model")
+        -Observed ("$Provider ($version) with $Model ($Quantisation); listed: $listed; test answered: $tested, first call $(if ($test) { "$($test.ms) ms, $($test.dimensions) dimensions" } else { 'none' }); job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }) $jobSeconds s after the test (the job starts when the embedder is chosen, so this is no speed); search median $medianVectors ms with vectors, $medianLocal ms with local; $withHits of $($searches.Count) searches had hits, $onlyVectors of $found hits are not in local's top 5; server memory peak $($stats.MemoryPeakMb) MB, idle $($stats.MemoryIdleMb) MB; guest CPU avg $($stats.CpuAvg) %, peak $($stats.CpuPeak) %; GPU: $($stats.Gpu); guest free memory min $($stats.FreeMinMb) MB; $benchText; server gone after stopping: $gone. $Note Read the screenshot: Settings > Semantic search names $Provider and $Model")
 }
 
 # ---------------------------------------------------------------- OL, a real Ollama

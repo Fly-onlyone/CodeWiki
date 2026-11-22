@@ -35,21 +35,25 @@ The app and the MCP program start a local backend when none is running, or conne
 
 ## Install
 
-Requires Windows 11. Download `CodeWiki-<version>-windows-x64.zip` from the [latest release](https://github.com/Fly-onlyone/CodeWiki/releases/latest); the `.sha256` file beside it holds its checksum. Unpack it and double-click `install.cmd`. It copies the programs to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your `PATH` and creates a Start Menu shortcut. `uninstall.cmd` in that folder reverses it; `uninstall.cmd -PurgeData` also deletes the index, the logs and the settings.
+Requires Windows 11. Download `CodeWiki-<version>-windows-x64-setup.exe` from the [latest release](https://github.com/Fly-onlyone/CodeWiki/releases/latest) and double-click it. It needs no administrator rights. The setup program is not signed, so Windows SmartScreen shows "Windows protected your PC": click "More info", then "Run anyway". The wizard shows Ready to Install, Preparing and Completing; "Start CodeWiki" is checked on the last page.
 
-To build the same zip from source, with Rust 1.95 or newer and the MSVC toolchain:
+It copies the programs and the plugins to `%LOCALAPPDATA%\Programs\CodeWiki`, adds that folder to your user `PATH`, creates a Start Menu shortcut and adds an entry "CodeWiki" to Settings → Apps. If something fails, it says why. The app started from the last page has the `PATH` from before the install: open a new terminal before you start a coding agent. To remove CodeWiki, uninstall it in Settings → Apps. That keeps your data (`%LOCALAPPDATA%\CodeWiki`) and settings (`%APPDATA%\CodeWiki`). If a program file is still in use, the uninstall stops and keeps the entry: close CodeWiki and uninstall again. To delete the data and the settings too, run `uninstall.cmd -PurgeData` from the install folder.
+
+The other way is the zip. Download `CodeWiki-<version>-windows-x64.zip` from the same page; the `.sha256` file beside it holds its checksum. Unpack it and double-click `install.cmd`. It does the same, except for the Settings → Apps entry. `uninstall.cmd` in the install folder reverses it; `uninstall.cmd -PurgeData` also deletes the index, the logs and the settings. Running the setup program over a zip installation works too.
+
+To build both from source, with Rust 1.95 or newer and the MSVC toolchain:
 
 ```
 pwsh scripts\package.ps1
 ```
 
-It writes `dist\CodeWiki-<version>-windows-x64.zip`, about 30 MB.
+It writes `dist\CodeWiki-<version>-windows-x64.zip`, about 30 MB. When Inno Setup 6 is installed, it also writes `dist\CodeWiki-<version>-windows-x64-setup.exe`; `-NoSetup` skips that.
 
 The `.cmd` files run `install.ps1` and `uninstall.ps1`, which Windows refuses to run directly unless scripts have been allowed. From a terminal, `powershell -ExecutionPolicy Bypass -File install.ps1` does the same.
 
 ### Updates
 
-An installed app updates itself. Once a day, while it runs, it asks GitHub for the latest release; when there is a newer one, the toolbar, Home and the tray menu show it. One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
+An installed app updates itself, whether it came from the setup program or from the zip. Once a day, while it runs, it asks GitHub for the latest release; when there is a newer one, the toolbar, Home and the tray menu show it. One click downloads the zip, checks it against its `.sha256` file, replaces the programs and restarts the app on the same repository. The version in the Settings → Apps entry is updated too, when there is one. Settings → Updates shows the version, checks on demand ("Check now") and turns the daily check off. Ctrl+K → "Check for updates" does the same.
 
 The backend is stopped first and a new one starts with the new app. A coding agent's MCP bridge that is running keeps working and reaches the new backend on its next call; restarting the agent's session gives it the new bridge too. If anything goes wrong, the app says what and leaves the installation as it was. Pre-releases are never offered, and a copy that was only unpacked, or built from source, does not update itself.
 

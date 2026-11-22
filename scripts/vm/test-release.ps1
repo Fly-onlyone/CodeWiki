@@ -32,7 +32,7 @@ param(
     # for GitHub serves inside the guest (guest\update-server.ps1).
     [string]$OldZip,
     # The setup program (CodeWiki-<version>-windows-x64-setup.exe) to test in
-    # cases IS1 to IS6. Default: the one beside the package, named for the
+    # cases IS1 to IS8. Default: the one beside the package, named for the
     # same version, else the newest in that folder. Without one, those cases
     # do not run; a release run always gives it.
     [string]$Setup,
@@ -3665,6 +3665,23 @@ function Get-GuestLog {
     (Invoke-GuestScript -Script "Get-Content -LiteralPath '$Log' -ErrorAction SilentlyContinue").Output
 }
 
+# Every Apps entry named CodeWiki, the user's and the machine's: the path of
+# each one's registry key, as PowerShell writes it ($setupEntryKey for the
+# setup program's).
+function Get-SetupEntryKey {
+    $run = Invoke-GuestScript -Script @'
+foreach ($root in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall', 'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall') {
+    Get-ChildItem -LiteralPath $root -ErrorAction SilentlyContinue | ForEach-Object {
+        if ((Get-ItemProperty -LiteralPath $_.PSPath -ErrorAction SilentlyContinue).DisplayName -eq 'CodeWiki') { "entry=$root\$($_.PSChildName)" }
+    }
+}
+"entries read"
+'@
+    # Empty output is a script that did not run, never "no entry".
+    if ($run.Output -notmatch 'entries read') { throw "could not read the guest's Apps entries: $($run.Output) $($run.Stderr)" }
+    @($run.Output -split "`r?`n" | Where-Object { $_ -match '^entry=' } | ForEach-Object { $_.Substring(6).Trim() })
+}
+
 # Back to no installation, by whatever means: end the programs and the file
 # holder, uninstall with the installed script, delete what is left, the data
 # and settings folders, the Run value, the Apps entry and the PATH entry.
@@ -4049,6 +4066,81 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
             Add-Result -Id "IS6" -Title "A failing install says why" -Expect "exit 7, the reason in the log, no Apps entry" `
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + $text + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
                 -Observed "install.cmd first (exit $($first.ExitCode)), codewiki.exe held open with no sharing, then setup silent: exit $($run.ExitCode); log says 'could not be installed': $($text -match 'CodeWiki could not be installed'); Apps entry: $($state.entry); $(if ($problems) { $problems -join '; ' } else { 'failed as it should' })"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS7" "Another folder is refused" "exit 7; the setup log holds 'CodeWiki installs only to'; no CodeWiki programs in the other folder, nothing in the default one, no Apps entry" {
+        Reset-SetupGuest
+        $elsewhere = "C:\Users\Public\cwvm-elsewhere"
+        try {
+            $log = "C:\Users\Public\cwvm-is7.log"
+            # The folder has no space, so it needs no quotes; the harness would
+            # hand Setup a quote inside an argument as \".
+            $run = Invoke-GuestSetup -Arguments ($setupSilent + "/DIR=$elsewhere" + "/LOG=$log")
+            $shot = Shot "setup-elsewhere-refused"
+            $state = Get-SetupState
+            $text = Get-GuestLog $log
+            $other = (Invoke-GuestScript -Script (@'
+$d = '{{DIR}}'
+"exists=$(Test-Path -LiteralPath $d)"
+$names = @()
+if (Test-Path -LiteralPath $d) { $names = @(Get-ChildItem -LiteralPath $d -Force | ForEach-Object { $_.Name }) }
+"names=$($names -join '|')"
+$user = [Environment]::GetEnvironmentVariable('Path', 'User')
+"inpath=$(@($user -split ';' | Where-Object { $_ -and $_.Trim().TrimEnd('\') -ieq $d }).Count)"
+'@).Replace('{{DIR}}', $elsewhere)).Output
+            if ($other -notmatch '(?m)^exists=(True|False)') { throw "could not read $elsewhere in the guest: $other" }
+            $otherExists = $Matches[1]
+            $otherNames = @(if ($other -match '(?m)^names=(.*)$') { $Matches[1].Trim() -split '\|' | Where-Object { $_ } })
+            $otherInPath = if ($other -match '(?m)^inpath=(\d+)') { $Matches[1] } else { "?" }
+            $problems = @()
+            if ($run.ExitCode -ne 7) { $problems += "setup exited with $($run.ExitCode), not 7" }
+            if ($text -notmatch "CodeWiki installs only to") { $problems += "the setup log does not say 'CodeWiki installs only to'" }
+            $programs = @($otherNames | Where-Object { "codewiki.exe", "codewiki-mcp.exe", "codewiki-app.exe", "plugins", "uninstall.ps1", "unins000.exe" -contains $_ })
+            if ($programs) { $problems += "$elsewhere holds $($programs -join ', ')" }
+            if ($otherInPath -ne "0") { $problems += "the user PATH holds $elsewhere $otherInPath times" }
+            if ($state.entry -eq "True") { $problems += "an Apps entry was written" }
+            if ($state.folder -eq "True" -and $state.names.Count) { $problems += "the default folder holds $($state.names -join ', ')" }
+            if ($state.pathcount -ne "0") { $problems += "the user PATH holds the default folder $($state.pathcount) times" }
+            Add-Result -Id "IS7" -Title "Another folder is refused" -Expect "exit 7, the reason in the log, nothing installed in either folder, no Apps entry" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + $text + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
+                -Observed "setup silent with /DIR=$elsewhere`: exit $($run.ExitCode); log says 'installs only to': $($text -match 'CodeWiki installs only to'); $elsewhere exists: $otherExists [$($otherNames -join ', ')], in the user PATH $otherInPath times; default folder: $(Format-SetupState $state); $(if ($problems) { $problems -join '; ' } else { 'refused, nothing written' })"
+        } finally {
+            Invoke-GuestScript -Script "Remove-Item -LiteralPath '$elsewhere' -Recurse -Force -ErrorAction SilentlyContinue" | Out-Null
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS8" "Setup over a setup installation" "the second silent run exits 0; the PATH entry once; one Apps entry, with the version; codewiki --version answers; then the uninstall from the entry exits 0 and leaves nothing" {
+        Reset-SetupGuest
+        try {
+            $first = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is8-first.log")
+            if ($first.ExitCode -ne 0) { throw "the first silent install failed: exit $($first.ExitCode)" }
+            $log = "C:\Users\Public\cwvm-is8.log"
+            $run = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=$log")
+            $shot = Shot "setup-over-setup"
+            $state = Get-SetupState
+            $entries = @(Get-SetupEntryKey)
+            $problems = @()
+            if ($run.ExitCode -ne 0) { $problems += "the second setup exited with $($run.ExitCode)" }
+            $problems += @(Test-SetupInstalled $state $setupVersion)
+            if ($entries.Count -ne 1 -or $entries[0] -ne $setupEntryKey) { $problems += "Apps entries named CodeWiki: $($entries.Count) ($($entries -join ', '))" }
+            $uninstall = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is8-uninstall.log" -Quiet
+            Wait-For 3
+            $gone = Get-SetupState
+            $left = @(Get-SetupEntryKey)
+            if ($uninstall.ExitCode -ne 0) { $problems += "the uninstall exited with $($uninstall.ExitCode)" }
+            if ($gone.folder -eq "True") { $problems += "the folder is left: $($gone.names -join ', ')" }
+            if ($gone.pathcount -ne "0") { $problems += "PATH entry left" }
+            if ($gone.lnk -eq "True") { $problems += "shortcut left" }
+            if ($left.Count) { $problems += "Apps entries left: $($left -join ', ')" }
+            if ($gone.procs -ne "0") { $problems += "$($gone.procs) CodeWiki processes still run" }
+            Add-Result -Id "IS8" -Title "Setup over a setup installation" -Expect "second exit 0; PATH once; one Apps entry with the version; the version answers; then uninstall exit 0 and nothing left" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) `
+                -Output ("setup log $log`n" + (Get-GuestLog $log) + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim() + "`n--- uninstall: $($uninstall.Command) $($uninstall.Arguments)`n" + $uninstall.Log).Trim() `
+                -Observed "setup silent twice: exit $($first.ExitCode), then $($run.ExitCode); then $(Format-SetupState $state); Apps entries named CodeWiki: $($entries.Count); codewiki --version: '$($state.version)'; uninstall from QuietUninstallString: exit $($uninstall.ExitCode); then $(Format-SetupState $gone), Apps entries $($left.Count); $(if ($problems) { $problems -join '; ' } else { 'one installation, removed' })"
         } finally {
             Reset-SetupGuest
         }

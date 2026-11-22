@@ -11,6 +11,9 @@ param(
 )
 $ErrorActionPreference = 'Continue'
 New-Item -ItemType Directory -Force (Split-Path -Parent $Log) | Out-Null
-$options = @{ FilePath = $Exe; NoNewWindow = $true; Wait = $true; RedirectStandardOutput = "$Log.out"; RedirectStandardError = "$Log.err" }
+# In the user's own folder, as a server typed into a terminal starts: started
+# from Task Scheduler the folder is C:\Windows\System32, and mistral.rs ended
+# there with "Access is denied. (os error 5)" right after loading its model.
+$options = @{ FilePath = $Exe; NoNewWindow = $true; Wait = $true; RedirectStandardOutput = "$Log.out"; RedirectStandardError = "$Log.err"; WorkingDirectory = $env:USERPROFILE }
 if ($ArgLine) { $options.ArgumentList = $ArgLine }
 Start-Process @options

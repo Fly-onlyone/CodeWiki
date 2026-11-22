@@ -3749,11 +3749,89 @@ function Install-GuestWithCmd {
     Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestUnpacked\install.cmd"
 }
 
-# A button of the setup wizard by its text; null while the wizard shows none.
+# The setup wizard's windows as Windows itself lists them. UI Automation found
+# no button in the wizard on the first run (a "TWizardForm" window, buttons
+# "Install" and "Finish" assumed), although the screenshot shows the Ready
+# page with its Install button; so the wizard is read through the window
+# tree instead: every visible top-level window with a title ("top=class;
+# process;title"), and every child window of the wizard (title "Setup -
+# CodeWiki ..." or class TWizardForm) with its class, visible, enabled, place
+# in screen pixels and text, asked with WM_GETTEXT because GetWindowText
+# does not read another program's controls.
+$setupWizardScript = @'
+Add-Type -Namespace VmTest -Name Wizard -MemberDefinition '
+[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+public delegate bool EachWindow(IntPtr window, IntPtr data);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")] public static extern bool EnumWindows(EachWindow each, IntPtr data);
+[DllImport("user32.dll")] public static extern bool EnumChildWindows(IntPtr parent, EachWindow each, IntPtr data);
+[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
+[DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr window);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetClassName(IntPtr window, System.Text.StringBuilder name, int size);
+[DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr SendMessageTimeout(IntPtr window, uint message, IntPtr wParam, System.Text.StringBuilder lParam, uint flags, uint timeout, out IntPtr result);
+public static string ClassOf(IntPtr w) { System.Text.StringBuilder s = new System.Text.StringBuilder(256); GetClassName(w, s, 256); return s.ToString(); }
+public static string TextOf(IntPtr w) { System.Text.StringBuilder s = new System.Text.StringBuilder(1024); IntPtr r; SendMessageTimeout(w, 0x000D, (IntPtr)1024, s, 0x0002, 2000, out r); return s.ToString(); }
+public static uint ProcessOf(IntPtr w) { uint p; GetWindowThreadProcessId(w, out p); return p; }
+public static string Place(IntPtr w) { Rect r; GetWindowRect(w, out r); return r.Left + "," + r.Top + "," + r.Right + "," + r.Bottom; }
+public static System.Collections.Generic.List<IntPtr> Tops() { System.Collections.Generic.List<IntPtr> all = new System.Collections.Generic.List<IntPtr>(); EnumWindows(delegate(IntPtr w, IntPtr d) { if (IsWindowVisible(w)) { all.Add(w); } return true; }, IntPtr.Zero); return all; }
+public static System.Collections.Generic.List<IntPtr> Children(IntPtr parent) { System.Collections.Generic.List<IntPtr> all = new System.Collections.Generic.List<IntPtr>(); EnumChildWindows(parent, delegate(IntPtr w, IntPtr d) { all.Add(w); return true; }, IntPtr.Zero); return all; }
+'
+# Without this, a scaled screen gives scaled numbers, and clicks miss.
+[void][VmTest.Wizard]::SetProcessDPIAware()
+foreach ($top in [VmTest.Wizard]::Tops()) {
+    $class = [VmTest.Wizard]::ClassOf($top)
+    $title = [VmTest.Wizard]::TextOf($top) -replace '\s+', ' '
+    $process = (Get-Process -Id ([VmTest.Wizard]::ProcessOf($top)) -ErrorAction SilentlyContinue).ProcessName
+    if ($title) { "top=$class;$process;$title" }
+    if ($class -ne 'TWizardForm' -and $title -notlike 'Setup - CodeWiki*') { continue }
+    foreach ($child in [VmTest.Wizard]::Children($top)) {
+        "control=$([VmTest.Wizard]::ClassOf($child));$([int][VmTest.Wizard]::IsWindowVisible($child));$([int][VmTest.Wizard]::IsWindowEnabled($child));$([VmTest.Wizard]::Place($child));$([VmTest.Wizard]::TextOf($child) -replace '\s+', ' ')"
+    }
+}
+'@
+
+# What the guest shows of the setup wizard: Tops (one "class;process;title"
+# text per top-level window with a title) and Controls (the wizard's child
+# windows, each with Class, Visible, Enabled, Text and the point in its
+# middle, X and Y, where a click lands).
+function Get-SetupWizard {
+    $run = Invoke-GuestScript -TimeoutSec 90 -Script $setupWizardScript
+    $tops = @()
+    $controls = @()
+    foreach ($line in @($run.Output -split "`r?`n")) {
+        if ($line -match '^top=(.*)$') {
+            $tops += $Matches[1].Trim()
+        } elseif ($line -match '^control=([^;]*);(\d);(\d);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(.*)$') {
+            $controls += [pscustomobject]@{
+                Class = $Matches[1]; Visible = $Matches[2] -eq "1"; Enabled = $Matches[3] -eq "1"
+                Left = [int]$Matches[4]; Top = [int]$Matches[5]; Right = [int]$Matches[6]; Bottom = [int]$Matches[7]
+                X = [int](([int]$Matches[4] + [int]$Matches[6]) / 2); Y = [int](([int]$Matches[5] + [int]$Matches[7]) / 2)
+                Text = $Matches[8].Trim()
+            }
+        }
+    }
+    [pscustomobject]@{ Tops = $tops; Controls = $controls; Raw = $run.Output }
+}
+
+# One line of what the wizard showed, for a result or an error.
+function Format-SetupWizard {
+    param($Wizard)
+    if (-not $Wizard) { return "nothing read" }
+    "top-level windows: $($Wizard.Tops -join ' | '); wizard controls shown: $((@($Wizard.Controls | Where-Object { $_.Visible -and $_.Text }) | ForEach-Object { "$($_.Class) '$($_.Text)'$(if (-not $_.Enabled) { ' (disabled)' })" }) -join ', ')"
+}
+
+# A button of the setup wizard by its text (an & before the access key is
+# left out); null while the wizard shows none. What was read last stays in
+# $script:setupWizardSeen.
 function Find-SetupButton {
     param([string]$Pattern)
-    @(Get-GuestElements -Class "TWizardForm" |
-            Where-Object { $_.Kind -eq "Button" -and $_.Name -match $Pattern -and $_.OnScreen -and $_.Enabled }) | Select-Object -First 1
+    $wizard = Get-SetupWizard
+    $script:setupWizardSeen = $wizard
+    @($wizard.Controls | Where-Object {
+            $_.Class -match 'Button' -and $_.Visible -and $_.Enabled -and $_.Right -gt $_.Left -and ($_.Text -replace '&', '') -match $Pattern
+        }) | Select-Object -First 1
 }
 
 if ($Setup) {
@@ -3870,8 +3948,14 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                 $install = Find-SetupButton '^&?Install$'
             }
             $ready = Shot "setup-wizard-ready"
-            if (-not $install) { throw "the wizard showed no Install button within a minute; read the screenshot" }
-            $readyText = (@(Get-GuestElements -Class "TWizardForm" | Where-Object { $_.OnScreen -and $_.Name }) | ForEach-Object { $_.Name }) -join " | "
+            if (-not $install) { throw "the wizard showed no Install button within a minute; read the screenshot; $(Format-SetupWizard $script:setupWizardSeen)" }
+            $readyText = Format-SetupWizard $script:setupWizardSeen
+            # What UI Automation sees of the same window, by the class Windows
+            # gives it: recorded, to explain the first run's failure.
+            $wizardClass = @($script:setupWizardSeen.Tops | Where-Object { $_ -match ';Setup - CodeWiki' } | ForEach-Object { ($_ -split ';')[0] }) | Select-Object -First 1
+            if (-not $wizardClass) { $wizardClass = "TWizardForm" }
+            $readyUia = @(Get-GuestElements -Class $wizardClass | Where-Object { $_.Name })
+            $readyText += "`nUI Automation under class '$wizardClass': $($readyUia.Count) named elements: $(($readyUia | ForEach-Object { "$($_.Kind) '$($_.Name)'$(if (-not $_.OnScreen) { ' (off screen)' })" }) -join ', ')"
             Send-RestedClick -X $install.X -Y $install.Y
             Wait-For 1
             $progress = Shot "setup-wizard-progress"
@@ -3881,9 +3965,13 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                 $finish = Find-SetupButton '^&?Finish$'
             }
             $done = Shot "setup-wizard-finish"
-            if (-not $finish) { throw "the wizard showed no Finish button within three minutes; read the screenshots" }
-            $finishElements = @(Get-GuestElements -Class "TWizardForm" | Where-Object { $_.OnScreen -and $_.Name })
-            $finishText = ($finishElements | ForEach-Object { "$($_.Kind): $($_.Name)" }) -join " | "
+            if (-not $finish) { throw "the wizard showed no Finish button within three minutes; read the screenshots; $(Format-SetupWizard $script:setupWizardSeen)" }
+            $finishText = Format-SetupWizard $script:setupWizardSeen
+            # The Start CodeWiki box is an item of a check list, not a window
+            # of its own: only UI Automation names it. Recorded, not judged; the
+            # app's window appearing after Finish is what shows it was checked.
+            $finishElements = @(Get-GuestElements -Class $wizardClass | Where-Object { $_.OnScreen -and $_.Name })
+            $finishText += "`nUI Automation under class '$wizardClass': $(($finishElements | ForEach-Object { "$($_.Kind) '$($_.Name)'" }) -join ', ')"
             $startBox = @($finishElements | Where-Object { $_.Name -like "*Start CodeWiki*" }).Count
             Send-RestedClick -X $finish.X -Y $finish.Y
             $problems = @()
@@ -3901,7 +3989,7 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
             Add-Result -Id "IS4" -Title "The setup wizard by mouse" -Expect "Install and Finish by click; the app starts by itself from the checked Start CodeWiki; the install is complete" `
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($ready, $progress, $done, $shot) `
                 -Output ("ready page: $readyText`nfinish page: $finishText") `
-                -Observed "run with no switches; clicked Install at $($install.X),$($install.Y) and Finish at $($finish.X),$($finish.Y); Start CodeWiki box found on the finish page: $($startBox -gt 0) (it was left as it came: the app's window appearing shows it was checked); $(Format-SetupState $state); $(if ($problems) { $problems -join '; ' } else { 'all in place' }); read the four screenshots for the page order, the wording and the box"
+                -Observed "run with no switches; clicked Install at $($install.X),$($install.Y) and Finish at $($finish.X),$($finish.Y); Start CodeWiki box named by UI Automation on the finish page: $($startBox -gt 0) (it was left as it came: the app's window appearing shows it was checked); $(Format-SetupState $state); $(if ($problems) { $problems -join '; ' } else { 'all in place' }); read the four screenshots for the page order, the wording and the box"
         } finally {
             Reset-SetupGuest
         }

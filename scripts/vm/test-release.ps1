@@ -3331,6 +3331,21 @@ Test-Case "MR2" "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B" "README's command
     Start-LoggedServer -Exe $mistralExe -Log $log -ArgLine "serve -m $mistralModel"
     # The first start downloads the model (about 1.2 GB) and loads it.
     $wait = Wait-GuestServer -Url "http://127.0.0.1:1234/v1/models" -ServerProcess $mistralPattern -Seconds 1500 -Log $log
+    $script:mistralQuant = "F32 (mistral.rs's choice on the processor)"
+    $asWritten = "as written: $(($wait -split "`n" | Select-Object -First 1))"
+    if ($wait -notmatch "answered after" -and $wait -match "does not fit") {
+        # On 2026-11-22 README's command loaded the model as F32 (2272 MiB) and
+        # refused: "This model does not fit on the devices [cpu (avail:
+        # 1037MB)]". Its docs (reference/cli/serve.md) name --isq: "Quantize
+        # the weights at load time (in-situ quantization, ISQ): a bit width".
+        # Once more, 8-bit, which a machine with little free memory needs.
+        $asWritten += " ($(($wait -split "`n" | Where-Object { $_ -match 'does not fit' } | Select-Object -First 1).Trim()))"
+        $watch = Get-Date
+        Start-LoggedServer -Exe $mistralExe -Log $log -ArgLine "serve -m $mistralModel --isq 8"
+        $wait = Wait-GuestServer -Url "http://127.0.0.1:1234/v1/models" -ServerProcess $mistralPattern -Seconds 1500 -Log $log
+        $script:mistralQuant = "8-bit ISQ (--isq 8): README's command did not fit"
+        $asWritten += "; with --isq 8: $(($wait -split "`n" | Select-Object -First 1))"
+    }
     $seconds = [int]((Get-Date) - $watch).TotalSeconds
     $resolved = Resolve-GuestModelId -Url "http://127.0.0.1:1234/v1/models" -Match "Qwen3-Embedding"
     $script:mistralModelId = $resolved.Id
@@ -3340,15 +3355,15 @@ Test-Case "MR2" "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B" "README's command
     $memory = (Invoke-GuestScript -TimeoutSec 60 -Script "`$free = [math]::Round((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1KB); `"guest free memory MB: `$free`"").Output
     $shot = Shot "mistralrs-running"
     Add-Result -Id "MR2" -Title "mistralrs serve -m Qwen/Qwen3-Embedding-0.6B" -Expect "the server answers on 1234 and lists the model, within 25 minutes" `
-        -Status $(if ($wait -match "answered after" -and $resolved.Id) { "pass" } else { "fail" }) -Shots @($shot) -Output ($wait + "`n" + $resolved.Output + "`n" + $memory) `
-        -Observed "$(($wait -split "`n" | Select-Object -First 1)) (download of the model and load, $seconds s from the start; model on disk $modelMb MB); the server lists the model as '$($resolved.Id)'; $memory"
+        -Status $(if ($wait -match "answered after" -and $resolved.Id) { if ($script:mistralQuant -match "ISQ") { "note" } else { "pass" } } else { "fail" }) -Shots @($shot) -Output ($asWritten + "`n" + $wait + "`n" + $resolved.Output + "`n" + $memory) `
+        -Observed "$asWritten (load, $seconds s from the last start; model on disk $modelMb MB); serving as $($script:mistralQuant); the server lists the model as '$($resolved.Id)'; $memory"
 }
 
 Test-Case "MR3" "Semantic search through mistral.rs" "mistral.rs and Qwen3-Embedding-0.6B chosen: the model is listed, a reembed stores every document's vector, and the five searches answer" {
     if (-not $mistralModelId) { $mistralModelId = (Resolve-GuestModelId -Url "http://127.0.0.1:1234/v1/models" -Match "Qwen3-Embedding").Id }
     if (-not $mistralModelId) { throw "mistral.rs lists no Qwen3-Embedding model on port 1234; run MR1 and MR2 first" }
     Measure-RealEmbedder -Id "MR3" -Title "Semantic search through mistral.rs" -Provider mistralrs -Model $mistralModelId `
-        -ServerProcess $mistralPattern -Port 1234 -ModelFamily "Qwen3-Embedding-0.6B" -Quantisation "BF16 safetensors as published (mistral.rs may convert on load; see its log)" `
+        -ServerProcess $mistralPattern -Port 1234 -ModelFamily "Qwen3-Embedding-0.6B" -Quantisation $(if ($script:mistralQuant) { $script:mistralQuant } else { "unknown" }) `
         -InstallFolder @("$guestHome\.mistralrs") -JobSeconds 2400 `
         -Note "README's model for mistral.rs, 0.6B parameters, 1024 dimensions: not the model of the llama.cpp, LM Studio and Ollama cases. Processor build; 3072 MB guest."
 }

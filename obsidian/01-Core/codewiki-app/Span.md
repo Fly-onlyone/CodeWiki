@@ -22,6 +22,7 @@ Declared as `pub enum Span`.
 
 - [[Doc Module]] — from `Line`, `code`, `file`, `from`
 - [[Doc View Module]] — from `line`
+- [[Settings Pages Module]] — from `serve_help`
 - [[Doc]] — from `of_line`
 
 ## See also

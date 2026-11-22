@@ -16,7 +16,8 @@ Each server lists its models in its own shape. The parsers below read the shapes
 
 ## How it works
 
-1. `list_models_in` in [[cw-embed]] calls `list_models`. `list_models` calls `list_ollama`, then `arrange`, then `Error::invalid` in [[Error]], then `server_root` in [[cw-embed]], then `fetch`. `list_ollama` calls `fetch`, then `parse_ollama_tags`, then `post_json` in [[cw-embed]], then `ollama_embeds`, then `unknown`. `fetch` calls `get_json`, then `refused` (both in [[cw-embed]]).
+1. `list_models_in` in [[cw-embed]] calls `list_models`. `list_models` calls `list_ollama`, then `arrange`, then `Error::invalid` in [[Error]], then `listed_by`. `list_ollama` calls `fetch`, then `parse_ollama_tags`, then `post_json` in [[cw-embed]], then `ollama_embeds`, then `unknown`.
+2. `OpenAiEmbedder::check_listed` in [[OpenAiEmbedder]] calls `listed_by`. `listed_by` calls `server_root` in [[cw-embed]], then `fetch`, then `arrange`. `fetch` calls `get_json`, then `refused` (both in [[cw-embed]]).
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -35,19 +36,21 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn fetch(label: &str, url: &str, key: Option<&str>) -> Result<Value>` — the JSON a GET answers, or the error for a refusal.
 - `fn list_ollama(base: &str) -> Result<Vec<Listed>>` — the models of Ollama at `base`. A model whose details cannot be read is listed with embedding unknown.
 - `pub fn list_models(lookup: impl Fn(&str) -> Option<String>) -> Result<Option<Vec<Listed>>>` — the models the provider chosen by `lookup` offers. `None` for a provider with no list (`local`, `none`). An error names the server that did not answer.
+- `pub(crate) fn listed_by(server: Server, base: &str, key: Option<&str>) -> Result<Vec<Listed>>` — the models `server` at `base` lists, embedding ones first. An error names the server.
 
 And 1 more private item with no comment.
 
 ## Depends on
 
 - [[cw-embed]] — uses `EMBED_ENV`, `OLLAMA_DEFAULT_URL`, `PROVIDERS`, `get_json`
-- [[Server]] — uses `address`, `label`
+- [[Server]] — uses `Server`, `address`, `label`
 - [[Error Module]] — uses `Result`
 - [[Error]] — uses `invalid`
 
 ## Used by
 
 - [[cw-embed]] — from `a_server_lists_with_its_token_and_path`, `a_server_that_does_not_answer_is_an_error_naming_it`, `an_ollama_model_whose_details_fail_is_still_listed`, `list_models_in`
+- [[OpenAiEmbedder]] — from `check_listed`
 
 ## See also
 

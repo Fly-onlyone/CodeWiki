@@ -20,10 +20,10 @@ Locks: embedding takes minutes and holds none. The write lock is taken for each 
 
 ## How it works
 
-1. `Jobs::begin` and `Jobs::change` in [[Jobs (cw-server)]], and 2 more, call `lock`.
-2. `reembed` in [[Api Module]] calls `start`. `start` calls `run`. `run` calls `embed_all`.
-3. `run_update` in [[Api Module]] calls `after_update`. `after_update` calls `open_existing_index_in` in [[Service Module]], then `behind` in [[Semantic Module]], then `start`.
-4. `serve` in [[cw-server]] calls `resume`. `resume` calls `load` in [[Repos Module]], then `open_existing_index_in` in [[Service Module]], then `behind` in [[Semantic Module]], then `start`.
+1. `serve` in [[cw-server]] and `test_embedder` in [[Settings Module (cw-server)]] call `resume`. `resume` calls `load` in [[Repos Module]], then `open_existing_index_in` in [[Service Module]], then `behind` in [[Semantic Module]], then `start`.
+2. `Jobs::begin` and `Jobs::change` in [[Jobs (cw-server)]], and 2 more, call `lock`.
+3. `reembed` in [[Api Module]] calls `start`. `start` calls `run`. `run` calls `embed_all`.
+4. `run_update` in [[Api Module]] calls `after_update`. `after_update` calls `open_existing_index_in` in [[Service Module]], then `behind` in [[Semantic Module]], then `start`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -41,7 +41,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `embed_repo` — embed one repository's documents. `Ok(false)`: the job was stopped.
 - `fn embed_all(state: &AppState, embedder: Option<Arc<dyn Embedder>>) -> Result<End>` — embed the documents of every repository that waits, one after the other.
 - `pub(crate) fn after_update(state: &AppState, root: &std::path::Path)` — what an update of a wiki leaves to do: count it, so that a run under way starts over, and embed in the background what the update left waiting.
-- `pub(crate) fn resume(state: &AppState)` — at the backend's start: go on with what an earlier backend left waiting, for any embedder. It tries once; a job that fails stays failed.
+- `pub(crate) fn resume(state: &AppState)` — at the backend's start, and after a Test that succeeds: go on with what waits, for any embedder. It tries once; a job that fails stays failed.
 
 ## Depends on
 
@@ -59,6 +59,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Jobs (cw-server)]] — from `Jobs`, `begin`, `change`, `running`
 - [[Api Module]] — from `reembed`, `run_update`
 - [[cw-server]] — from `serve`
+- [[Settings Module (cw-server)]] — from `test_embedder`
 
 ## See also
 

@@ -47,10 +47,11 @@ Members:
 - [[Settings Module (cw-server)]] — from `change`, `describe`, `resolved`
 - [[cw-embed]] — from `from_settings`, `list_models_in`
 - [[codewiki]] — from `run`
+- [[cw-server]] — from `no_model_server`
+- [[cw-wiki]] — from `no_model_server`
 - [[Serve Module]] — from `run`
 - [[Logs Module]] — from `get`
 - [[Semantic Module]] — from `configure`
-- [[Slot]] — from `configure`
 
 ## See also
 

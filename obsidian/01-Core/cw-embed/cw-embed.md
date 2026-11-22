@@ -4,7 +4,7 @@ tags: [core, cw-embed]
 
 # cw-embed
 
-> Text embeddings for CodeWiki's semantic search: a built-in local embedder and HTTP providers.
+> Text embeddings for CodeWiki's semantic search: a word-form hashing embedder and HTTP providers.
 
 ## What it does
 
@@ -55,7 +55,7 @@ Defined at the crate root:
 - `pub fn words(text: &str) -> Vec<String>` — split text into lowercase words, breaking identifiers at underscores, punctuation and camel-case humps: `PageRank_score` gives `page`, `rank`, `score`.
 - `pub fn stem(word: &str) -> &str` — strip a common English ending so `computes`, `computed` and `computing` count as one word. Crude on purpose: it only has to be consistent.
 - `fn hash(feature: &str, salt: u8) -> u64` — FNV-1a, 64 bit. Stable across runs and platforms, which the stored vectors depend on.
-- [[LocalEmbedder]] — the built-in embedder: signed feature hashing, no model and no network.
+- [[LocalEmbedder]] — the word-form embedder: signed feature hashing, no model and no network.
 - `fn named(base: String, rule: Option<&prefix::Rule>) -> String` — A vector's name: the model, plus `+id` of the prefix rule that applies.
 - `fn cut(text: &str, max: usize) -> &str` — `text` cut to at most `max` bytes, on a character boundary.
 - [[OllamaEmbedder]] — A model served by Ollama on this machine or another.
@@ -67,7 +67,7 @@ Defined at the crate root:
 - `pub fn from_env() -> Result<Option<Box<dyn Embedder>>>` — the embedder chosen by the environment; `None` turns semantic search off.
 - `pub fn from_settings(resolved: &cw_core::settings::Resolved) -> Result<Option<Box<dyn Embedder>>>` — the embedder chosen by the settings in effect: the environment over the settings file.
 
-And 24 more items.
+And 26 more items.
 
 ## Depends on
 
@@ -82,10 +82,10 @@ And 24 more items.
 
 ## Used by
 
-- [[OpenAiEmbedder]] — from `embed_within`, `name`, `post`, `probe`
+- [[OpenAiEmbedder]] — from `embed_within`, `name`, `one_by_one`, `post`
+- [[List Module (cw-embed)]] — from `fetch`, `list_models`, `list_ollama`, `listed_by`
 - [[Settings Module (cw-server)]] — from `checked`, `describe`, `embed_models`, `test_embedder`
 - [[OllamaEmbedder]] — from `embed_within`, `name`, `probe`, `timeout`
-- [[List Module (cw-embed)]] — from `fetch`, `list_models`, `list_ollama`
 - [[Embedder]] — from `batch_size`, `probe`
 - [[LocalEmbedder]] — from `add`, `embed_one`
 - [[Slot]] — from `configure`, `get`

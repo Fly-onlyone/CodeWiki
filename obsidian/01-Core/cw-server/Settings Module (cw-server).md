@@ -18,7 +18,7 @@ A description never holds a secret: a key is reported as unset, saved, given by 
 
 1. `serve` in [[cw-server]] calls `resolved`. `resolved` calls `Resolved::from_parts` in [[Resolved]], then `load` in [[Settings Module (cw-core)]].
 2. `read_settings` in [[Api Module]] calls `describe`. `describe` calls `resolved`, then `available` in [[Secret Module]], then `selected`, then `from_settings` in [[cw-embed]]. `selected` calls `message`.
-3. `test_embedder` in [[Api Module]] calls `test_embedder`. `test_embedder` calls `from_settings` in [[cw-embed]], then `resolved`, then `test_result`, then `Error::invalid` in [[Error]]. `test_result` calls `message`.
+3. `test_embedder` in [[Api Module]] calls `test_embedder`. `test_embedder` calls `from_settings` in [[cw-embed]], then `resolved`, then `test_result`, then `resume` in [[Embed Job Module]], then `Error::invalid` in [[Error]]. `test_result` calls `message`.
 4. `embed_models` in [[Api Module]] calls `embed_models`. `embed_models` calls `resolved`, then `list_models_in` in [[cw-embed]], then `message`.
 5. `write_settings` in [[Api Module]] calls `change`. `change` calls `Error::invalid` in [[Error]], then `resolved`, then `update`, then `key_at` (both in [[Settings Module (cw-core)]]), then `apply`, then `Resolved::from_parts` in [[Resolved]], and 2 more. `apply` calls `Error::invalid` in [[Error]], then `checked`, then `available` in [[Secret Module]].
 
@@ -33,7 +33,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `selected` — the name of what the settings select, or why they select nothing usable.
 - `pub(crate) fn describe(state: &AppState) -> Value` — every setting with its value in effect and where that comes from.
 - `fn test_result(name: Option<String>, outcome: Result<Value>, started: Instant) -> Value` — what a test of a provider found: `ok`, the provider's name, and either how long it took (with `extra`, what the answer showed) or its error.
-- `pub(crate) fn test_embedder(state: &AppState) -> Value` — have the chosen embedder embed one word. On success `dimensions` is the length of its vectors.
+- `pub(crate) fn test_embedder(state: &AppState) -> Value` — have the chosen embedder embed one word. On success `dimensions` is the length of its vectors, and documents that still wait for a vector are embedded again: a job that failed stays failed until something tries, and a Test that succeeds is that try. Called in a blocking task of a handler.
 - `pub(crate) fn embed_models(state: &AppState) -> Value` — the models the chosen provider offers, for a page that lets a person pick one. `models` is null when the provider lists none; `reachable` is false when the server did not answer, and `problem` says why.
 - `fn checked(key: Key, value: &str) -> Result<String>` — A value that passed the checks of its setting, as it is saved.
 - `fn apply(saved: &mut Settings, key: Key, value: &Value) -> Result<()>` — apply one field of a change. `null` clears a setting. A plain setting takes text; a secret takes `{"set": "<secret>"}` or `{"remove": true}`.
@@ -47,8 +47,8 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Error]] — uses `Error`, `invalid`
 - [[Error Module]] — uses `Result`
 - [[Secret Module]] — uses `available`
+- [[Embed Job Module]] — uses `resume`
 - [[Semantic Module]] — uses `configure`
-- [[Key]] — uses `Key`
 
 ## Used by
 

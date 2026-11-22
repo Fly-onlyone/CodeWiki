@@ -20,7 +20,7 @@ Imported by 3 source files. Main users:
 
 ## Configuration
 
-- `crates/cw-index/Cargo.toml` — declares the dependency: version `0.42.0`, locked `0.42.0`, features `bundled`
+- `crates/cw-index/Cargo.toml` — declares the dependency: version `0.43.0`, locked `0.43.0`, features `bundled`
 
 ## See also
 

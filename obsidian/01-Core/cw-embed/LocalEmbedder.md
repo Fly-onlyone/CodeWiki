@@ -4,7 +4,7 @@ tags: [core, cw-embed]
 
 # LocalEmbedder
 
-> The built-in embedder: signed feature hashing, no model and no network.
+> The word-form embedder: signed feature hashing, no model and no network.
 
 ## Source
 

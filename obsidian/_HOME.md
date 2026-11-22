@@ -2,11 +2,11 @@
 tags: [moc, home]
 ---
 
-# local-embedders — Knowledge Vault
+# CodeWiki — Knowledge Vault
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **local-embedders** is a Rust codebase of 17 crates and 318 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 322 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
@@ -24,7 +24,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 - [[01-Core/codewiki/_index|codewiki/]] — CodeWiki command line and backend server.
 - [[01-Core/cw-client/_index|cw-client/]] — client for the CodeWiki backend: discovery, autostart and HTTP calls.
 - [[01-Core/cw-core/_index|cw-core/]] — shared identifiers, hashing, configuration and error types for CodeWiki.
-- [[01-Core/cw-embed/_index|cw-embed/]] — text embeddings for CodeWiki's semantic search: a built-in local embedder and HTTP providers.
+- [[01-Core/cw-embed/_index|cw-embed/]] — text embeddings for CodeWiki's semantic search: a word-form hashing embedder and HTTP providers.
 - [[01-Core/cw-graph/_index|cw-graph/]] — graph construction, metrics, community detection and layout for CodeWiki.
 - [[01-Core/cw-illustrate/_index|cw-illustrate/]] — the pictures of a CodeWiki note: their components, their limits and the file that keeps them.
 - [[01-Core/cw-index/_index|cw-index/]] — SQLite index: files, symbols, edges, metrics and full-text search for CodeWiki.

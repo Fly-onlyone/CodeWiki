@@ -25,9 +25,9 @@ Members:
 
 ## Used by
 
-- [[OpenAiEmbedder]] — from `OpenAiEmbedder`, `embed_within`, `name`, `new`
-- [[cw-embed]] — from `each_local_server_gets_its_path_and_a_token_only_when_one_is_set`, `from_config`, `local_server`
-- [[List Module (cw-embed)]] — from `list_models`
+- [[OpenAiEmbedder]] — from `OpenAiEmbedder`, `check_listed`, `name`, `new`
+- [[cw-embed]] — from `a_server_that_does_not_list_the_model_is_not_asked_for_vectors`, `each_local_server_gets_its_path_and_a_token_only_when_one_is_set`, `from_config`, `local_server`
+- [[List Module (cw-embed)]] — from `list_models`, `listed_by`
 
 ## See also
 

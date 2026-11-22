@@ -43,13 +43,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn load(data_dir: &Path) -> Settings` — the saved settings. A missing or unreadable file gives none, so a damaged file never stops the backend.
 - `update` — read the file, apply `change` and write it back. The new file replaces the old one in one step, so a reader never sees half of it. When `change` fails, nothing is written.
 - `pub fn drop_retired(data_dir: &Path) -> Result<bool>` — take the settings in `RETIRED_SECTIONS` out of the file. Returns whether it held any. A file without them is not written, and neither is one that is missing or cannot be read.
-- `pub fn retire_builtin(data_dir: &Path) -> Result<Retired>` — move a user of the removed built-in embedder to a working state. A saved `builtin` choice becomes `local` and its model name is cleared, since the name belonged to the built-in engine. `embed.device` leaves the file, and the built-in models in `<data_dir>/models` are deleted. A file that holds none of these is not written.
+- `pub fn retire_builtin(data_dir: &Path) -> Result<Retired>` — move a user of the removed built-in embedder to a working state. A saved `builtin` choice becomes `local` and its model name is cleared, since the name belonged to the built-in engine. `embed.device` leaves the file, and the built-in models in `<data_dir>/models` are deleted (`delete_models`). A file that holds none of these is not written.
 - `pub enum Source` — where the value of a setting comes from.
 - `pub enum SecretState` — what is known about a secret without showing it.
 - [[Resolved]] — the settings in effect: for each one, the environment variable when it is set, otherwise the saved value, otherwise the default.
 - `pub fn process_env(name: &str) -> Option<String>` — an environment variable of this process. What `Resolved::load` reads the environment with; a test passes its own function in its place.
 
-And 16 more items.
+And 17 more items.
 
 ## Depends on
 

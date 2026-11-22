@@ -16,8 +16,8 @@ A page function turns backend data into a `Doc`: a title, and blocks such as tab
 
 ## How it works
 
-1. `home_page` and `offline_page` in [[Live Module]], and 14 more, call `text`.
-2. `file_page` and `offline_page` in [[Live Module]], and 12 more, call `code`.
+1. `home_page` and `offline_page` in [[Live Module]], and 15 more, call `text`.
+2. `file_page` and `offline_page` in [[Live Module]], and 13 more, call `code`.
 3. `file_page` and `hotspots_page` in [[Live Module]], and 12 more, call `Column::new`.
 4. `file_page` and `hotspots_page` in [[Live Module]], and 10 more, call `Cell::text`. `Cell::text` calls `text`.
 5. `file_page` and `hotspots_page` in [[Live Module]], and 12 more, call `Table::new`.
@@ -29,9 +29,9 @@ A page function turns backend data into a `Doc`: a title, and blocks such as tab
 - [[Action]] — what following a link or pressing a row does.
 - [[Span]] — A stretch of text within a line.
 - `pub type Line = Vec<Span>` — A line of text made of spans.
-- `pub fn text(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `Cell::text`, `Doc::text`, `Doc::words`, `appearance` and 21 more.
+- `pub fn text(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `Cell::text`, `Doc::text`, `Doc::words`, `appearance` and 22 more.
 - `pub fn strong(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `message_page`, `workspace_page`.
-- `pub fn code(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `appearance`, `backend`, `contracts_page`, `decisions_page` and 11 more.
+- `pub fn code(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `appearance`, `backend`, `contracts_page`, `decisions_page` and 12 more.
 - `pub fn rich(source: &str) -> Line` — text from the backend, in which backticks mark code: `like this`.
 - `pub fn file(path: &str) -> Span` — A link to a source file, labelled with its path.
 - `pub fn symbol(qualified: &str) -> Span` — A link to a symbol, labelled with the last part of its name.

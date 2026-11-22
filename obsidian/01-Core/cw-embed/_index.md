@@ -8,10 +8,10 @@ tags: [moc, core, cw-embed]
 
 ## Notes
 
-- [[cw-embed]] — text embeddings for CodeWiki's semantic search: a built-in local embedder and HTTP providers.
+- [[cw-embed]] — text embeddings for CodeWiki's semantic search: a word-form hashing embedder and HTTP providers.
 - [[Embedder]] — `Embedder` trait defined in `cw_embed` with 5 methods.
 - [[List Module (cw-embed)]] — the models a server offers, for the page that lets someone pick one.
-- [[LocalEmbedder]] — the built-in embedder: signed feature hashing, no model and no network.
+- [[LocalEmbedder]] — the word-form embedder: signed feature hashing, no model and no network.
 - [[OllamaEmbedder]] — A model served by Ollama on this machine or another.
 - [[OpenAiEmbedder]] — any endpoint that speaks the OpenAI embeddings API.
 - [[Prefix Module]] — the text some embedding models expect before a query and before a document.

@@ -63,13 +63,13 @@ And 6 more items.
 ## Used by
 
 - [[Run]] — from `Run`, `finish`, `plan`, `progress`
+- [[cw-server]] — from `no_model_server`, `serve`, `waits`
 - [[Embed Job Module]] — from `after_update`, `embed_repo`, `resume`
-- [[cw-server]] — from `serve`, `waits`
 - [[Service Module]] — from `index_notes`, `reindex`
 - [[Slot]] — from `configure`, `get`
 - [[codewiki]] — from `run`
+- [[cw-wiki]] — from `no_model_server`
 - [[Serve Module]] — from `run`
-- [[Api Module]] — from `search`
 
 ## See also
 

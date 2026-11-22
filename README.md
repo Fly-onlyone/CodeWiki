@@ -8,7 +8,7 @@ A native Windows app and a Rust backend that write and maintain a wiki for a cod
 
 The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives in the repository, so it is versioned with the code and readable without CodeWiki.
 
-> Status: version 0.3.0. See `ROADMAP.md` for what is verified and what is not.
+> Status: version 0.3.1. See `ROADMAP.md` for what is verified and what is not.
 
 ## What it does
 
@@ -317,8 +317,8 @@ CI runs these four on every push and pull request. It also runs `codewiki check`
 To release, set `version` in the root `Cargo.toml`, merge it, and push a matching tag:
 
 ```
-git tag v0.3.0
-git push origin v0.3.0
+git tag v0.3.1
+git push origin v0.3.1
 ```
 
 The tag publishes the Windows zip as a GitHub Release and pushes the Docker image. A tag that does not match the `Cargo.toml` version fails the release.

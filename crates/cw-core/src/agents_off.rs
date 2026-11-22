@@ -48,7 +48,9 @@ pub fn file(data_dir: &Path) -> PathBuf {
 }
 
 /// The listed folders. A missing file is an empty list; a file that cannot be
-/// read or understood is an error.
+/// read or understood is an error, and so is an entry that is empty or not
+/// absolute: `""` would cover every folder and `"secret"` would mean a
+/// different folder to each reader.
 pub fn load(data_dir: &Path) -> Result<Vec<PathBuf>> {
     let path = file(data_dir);
     let text = match std::fs::read_to_string(&path) {
@@ -70,14 +72,23 @@ pub fn load(data_dir: &Path) -> Result<Vec<PathBuf>> {
             document.version
         )));
     }
+    if let Some(entry) = document.folders.iter().find(|entry| !entry.is_absolute()) {
+        return Err(Error::invalid(format!(
+            "{} lists {:?}, which is not an absolute folder",
+            path.display(),
+            entry.to_string_lossy()
+        )));
+    }
     Ok(document.folders)
 }
 
 /// Make `path` absolute (relative paths are joined to `base`), resolve `.` and
-/// `..` without touching the disk, and drop any trailing separator. The result
-/// is always absolute: a path that joining leaves relative (on Windows a drive
-/// without a root, `D:secret`) is resolved by the system first, against the
-/// process's folder on that drive.
+/// `..` without touching the disk, and drop any trailing separator. A path
+/// that joining leaves relative (on Windows a drive without a root,
+/// `D:secret`) is resolved by the system first, against the process's folder
+/// on that drive. Only when the system cannot do that, for a path with a NUL
+/// in it or one too long for it, is the result still relative; the backend
+/// cannot open such a path either, and [`load`] and [`add`] refuse it.
 pub fn normalize(path: &Path, base: &Path) -> PathBuf {
     let mut joined = base.join(path);
     if !joined.is_absolute() {
@@ -155,7 +166,15 @@ pub fn reset(data_dir: &Path) -> Result<()> {
 fn absolute(folder: &Path) -> Result<PathBuf> {
     let cwd = std::env::current_dir()
         .map_err(|e| Error::invalid(format!("cannot find the current folder: {e}")))?;
-    Ok(normalize(folder, &cwd))
+    let made = normalize(folder, &cwd);
+    if !made.is_absolute() {
+        // Written to the list, it would make the list unreadable.
+        return Err(Error::invalid(format!(
+            "{:?} cannot be made an absolute folder",
+            folder.to_string_lossy()
+        )));
+    }
+    Ok(made)
 }
 
 fn save(data_dir: &Path, folders: &[PathBuf]) -> Result<()> {
@@ -329,6 +348,11 @@ mod tests {
             "[]",
             "{\"version\":2,\"folders\":[]}",
             "{\"version\":1,",
+            // An entry that is not an absolute folder would cover every
+            // folder, or one that depends on where it is read.
+            "{\"version\":1,\"folders\":[\"\"]}",
+            "{\"version\":1,\"folders\":[\".\"]}",
+            "{\"version\":1,\"folders\":[\"x\"]}",
         ] {
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(file(dir.path()), broken).unwrap();
@@ -339,6 +363,14 @@ mod tests {
             reset(dir.path()).unwrap();
             assert_eq!(load(dir.path()).unwrap(), Vec::<PathBuf>::new());
         }
+    }
+
+    #[test]
+    fn a_relative_entry_is_named_in_the_error() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(file(dir.path()), "{\"version\":1,\"folders\":[\"secret\"]}").unwrap();
+        let error = load(dir.path()).unwrap_err().to_string();
+        assert!(error.contains("\"secret\""), "{error}");
     }
 
     #[cfg(windows)]

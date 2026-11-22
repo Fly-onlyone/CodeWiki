@@ -2164,7 +2164,7 @@ try {
             try {
                 $list = Get-Content $reposFile -Raw | ConvertFrom-Json
                 $rest = @($list | Where-Object { $_.path -notmatch "cw-kept" })
-                Set-Content $reposFile (ConvertTo-Json -InputObject $rest -Depth 4) -Encoding UTF8
+                [IO.File]::WriteAllText($reposFile, (ConvertTo-Json -InputObject $rest -Depth 4), (New-Object Text.UTF8Encoding $false))
                 "repos.json edited by hand: $($rest.Count) entries left"
             } catch { "repos.json edit failed: $(Cut "$($_.Exception.Message)" 200)" }
         }

@@ -158,6 +158,14 @@ function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Output: String;
 begin
+  // Only the folder install.cmd uses. /DIR=, a /LOADINF file's Dir= or an
+  // older entry's folder could name another one, and uninstall.ps1 deletes
+  // LICENSE, NOTICE, plugins, cuda and *.old* from it: there, the user's own.
+  if CompareText(ExpandConstant('{app}'), ExpandConstant('{userpf}\CodeWiki')) <> 0 then
+  begin
+    Result := 'CodeWiki installs only to ' + ExpandConstant('{userpf}\CodeWiki') + '.';
+    Exit;
+  end;
   Result := '';
   try
     // Matched against the unexpanded DestDir; files land in {tmp}\pkg with

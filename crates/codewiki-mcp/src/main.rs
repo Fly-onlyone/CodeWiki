@@ -3,6 +3,10 @@
 //! Standard output carries the MCP protocol, so nothing else may be printed
 //! there; diagnostics go to standard error.
 
+// Task 5 wires the guard into the tools; until then only its tests call it.
+#[allow(dead_code)]
+mod guard;
+
 use std::sync::{Arc, Mutex};
 
 use cw_client::{Backend, encode};

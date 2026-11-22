@@ -174,7 +174,19 @@ fn session_start_hook(repo: &std::path::Path) {
     let Ok(start) = start.canonicalize() else {
         return;
     };
-    let root = cw_wiki::briefing::vault_root(&start).unwrap_or(start);
+    let root = cw_wiki::briefing::vault_root(&start).unwrap_or_else(|| start.clone());
+    // A folder closed to coding agents gets no briefing, and neither does any
+    // run where the list cannot be read: when in doubt, say nothing.
+    match cw_core::agents_off::load(&cw_core::paths::data_dir()) {
+        Err(_) => return,
+        Ok(entries) => {
+            if cw_core::agents_off::covering(&entries, &start).is_some()
+                || cw_core::agents_off::covering(&entries, &root).is_some()
+            {
+                return;
+            }
+        }
+    }
     if let Ok(text) = cw_wiki::briefing::session_start(&root) {
         print!("{text}");
     }

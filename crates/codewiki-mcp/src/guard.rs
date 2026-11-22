@@ -59,6 +59,23 @@ pub fn repo_arg(value: &str, cwd: &Path) -> RepoArg {
     }
 }
 
+/// The id or name to look up in `/v1/repos` for a `repo` argument, if any:
+/// an id or name as given, or the last component of a path that is not an
+/// existing folder. The backend falls back to that name when it cannot add
+/// the path (`cw-client`'s `repo_id`), so a missing path can still reach a
+/// listed repository. An existing folder needs no lookup.
+pub fn lookup_name(arg: &RepoArg, exists: impl Fn(&Path) -> bool) -> Option<String> {
+    match arg {
+        RepoArg::IdOrName(name) => Some(name.clone()),
+        RepoArg::Path(path) if exists(path) => None,
+        RepoArg::Path(path) => {
+            let written = path.to_string_lossy().replace('\\', "/");
+            let name = written.trim_end_matches('/').rsplit('/').next()?;
+            (!name.is_empty()).then(|| name.to_string())
+        }
+    }
+}
+
 /// The `path` of the `/v1/repos` entry whose id equals `id_or_name` or whose
 /// name equals it case-insensitively (the rule of `cw-client`'s `repo_id`).
 pub fn resolve_id(listing: &Value, id_or_name: &str) -> Option<PathBuf> {
@@ -243,6 +260,33 @@ mod tests {
             { "id": "cw-core-9bb4c92c", "name": "Clients", "path": "D:\\work\\clients" },
             { "id": "pub-1", "name": "public", "path": "D:\\work\\public" },
         ])
+    }
+
+    #[test]
+    fn a_missing_path_is_looked_up_by_its_last_component() {
+        let cwd = p("D:\\work");
+        let missing = |_: &Path| false;
+        let covered = vec![p("D:\\work\\clients")];
+        for written in [
+            "D:\\elsewhere\\clients",
+            "./clients",
+            "clients/",
+            "x/Clients",
+        ] {
+            let arg = repo_arg(written, &cwd);
+            let name = lookup_name(&arg, missing).expect(written);
+            let path = resolve_id(&listing(), &name).expect(written);
+            assert_eq!(
+                cw_core::agents_off::covering(&covered, &path),
+                Some(p("D:\\work\\clients")),
+                "{written}"
+            );
+        }
+        // An existing folder needs no lookup; an id or name always does.
+        let here = repo_arg("D:\\work\\public", &cwd);
+        assert_eq!(lookup_name(&here, |_| true), None);
+        let bare = repo_arg("pub-1", &cwd);
+        assert_eq!(lookup_name(&bare, |_| true), Some("pub-1".to_string()));
     }
 
     #[test]

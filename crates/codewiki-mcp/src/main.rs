@@ -265,12 +265,14 @@ impl Bridge {
         let slot = self.backend.clone();
         let outcome = tokio::task::spawn_blocking(move || {
             let backend = connected(&slot)?;
-            let path = match repo {
-                Some(path) => path,
-                None => std::env::current_dir()
-                    .map_err(|e| format!("cannot read the working directory: {e}"))?
-                    .to_string_lossy()
-                    .to_string(),
+            let cwd = std::env::current_dir()
+                .map_err(|e| format!("cannot read the working directory: {e}"))?;
+            // A path goes to the backend as `screen` read it: absolute against
+            // this session's folder, not the backend's.
+            let path = match repo.as_deref().map(|r| guard::repo_arg(r, &cwd)) {
+                Some(guard::RepoArg::Path(path)) => path.to_string_lossy().to_string(),
+                Some(guard::RepoArg::IdOrName(_)) => repo.unwrap_or_default(),
+                None => cwd.to_string_lossy().to_string(),
             };
             let id = backend.repo_id(&path)?;
             work(&backend, &id)
@@ -318,15 +320,19 @@ impl Bridge {
         }
         let entries = list.ok()?;
         let value = arguments?.get("repo")?.as_str().filter(|v| !v.is_empty())?;
-        let path = match guard::repo_arg(value, &cwd) {
-            guard::RepoArg::Path(path) => path,
-            guard::RepoArg::IdOrName(name) => {
-                let listing = connected(&self.backend)
-                    .and_then(|backend| backend.get("/v1/repos"))
-                    .ok()?;
-                guard::resolve_id(&listing, &name)?
-            }
-        };
+        let arg = guard::repo_arg(value, &cwd);
+        if let guard::RepoArg::Path(path) = &arg
+            && let Some(entry) = cw_core::agents_off::covering(&entries, path)
+        {
+            return Some(guard::refusal(&entry));
+        }
+        // The backend falls back to a repository's name when it cannot add a
+        // path, so a missing path is looked up by its last component too.
+        let name = guard::lookup_name(&arg, |path| path.is_dir())?;
+        let listing = connected(&self.backend)
+            .and_then(|backend| backend.get("/v1/repos"))
+            .ok()?;
+        let path = guard::resolve_id(&listing, &name)?;
         cw_core::agents_off::covering(&entries, &path).map(|entry| guard::refusal(&entry))
     }
 }

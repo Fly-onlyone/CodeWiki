@@ -126,6 +126,44 @@ pub fn covering(entries: &[PathBuf], path: &Path) -> Option<PathBuf> {
         .cloned()
 }
 
+/// Why coding agents get no CodeWiki in a folder.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Block {
+    /// This entry is the folder or a folder above it ([`covering`]).
+    Covered(PathBuf),
+    /// This entry lies inside the folder: indexing the folder would index
+    /// the entry's code.
+    Contains(PathBuf),
+}
+
+impl Block {
+    /// The listed entry that blocks the folder.
+    pub fn entry(&self) -> &Path {
+        match self {
+            Block::Covered(entry) | Block::Contains(entry) => entry,
+        }
+    }
+}
+
+/// Whether `entries` keep coding agents out of `path`: an entry that covers
+/// it comes first, then one inside it. Compared as [`covering`] compares, so
+/// `D:\work\client` neither holds `D:\work\clients\x` nor lies in it. `path`
+/// must be absolute.
+pub fn blocking(entries: &[PathBuf], path: &Path) -> Option<Block> {
+    if let Some(entry) = covering(entries, path) {
+        return Some(Block::Covered(entry));
+    }
+    let wanted = forms(path);
+    entries
+        .iter()
+        .find(|entry| {
+            forms(entry)
+                .iter()
+                .any(|a| wanted.iter().any(|b| a.len() > b.len() && a.starts_with(b)))
+        })
+        .map(|entry| Block::Contains(entry.clone()))
+}
+
 /// What an agent is told when a folder of its session is kept from coding
 /// agents: `entry` is the listed folder that keeps it out.
 pub fn refusal(entry: &Path) -> String {
@@ -318,6 +356,63 @@ mod tests {
         assert_eq!(covering(&entries, &long), None);
     }
 
+    #[test]
+    fn a_folder_that_holds_an_entry_is_blocked_too() {
+        let entries = vec![p(ROOT).join("acme")];
+        let parent = p(ROOT).parent().unwrap().to_path_buf();
+        for holder in [p(ROOT), parent] {
+            assert_eq!(
+                blocking(&entries, &holder),
+                Some(Block::Contains(p(ROOT).join("acme"))),
+                "{}",
+                holder.display()
+            );
+            assert_eq!(covering(&entries, &holder), None);
+        }
+        // The entry itself and what is below it are covered, as before.
+        for inside in [p(ROOT).join("acme"), p(ROOT).join("acme").join("api")] {
+            assert_eq!(
+                blocking(&entries, &inside),
+                Some(Block::Covered(p(ROOT).join("acme"))),
+                "{}",
+                inside.display()
+            );
+        }
+        // A sibling, and a folder that only shares a prefix, are neither.
+        assert_eq!(blocking(&entries, &p(ROOT).join("other")), None);
+        assert_eq!(blocking(&entries, &p(&format!("{ROOT}X"))), None);
+        assert_eq!(blocking(&entries, &p(&ROOT[..ROOT.len() - 1])), None);
+        assert_eq!(blocking(&[], &p(ROOT)), None);
+    }
+
+    #[test]
+    fn a_covering_entry_is_named_before_one_inside() {
+        let inner = p(ROOT).join("acme");
+        let entries = vec![inner.clone(), p(ROOT)];
+        assert_eq!(blocking(&entries, &p(ROOT)), Some(Block::Covered(p(ROOT))));
+        assert_eq!(Block::Contains(inner.clone()).entry(), inner.as_path());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_drive_root_holds_every_entry_on_its_drive() {
+        let entries = vec![p(r"D:\work\clients\acme")];
+        assert!(matches!(
+            blocking(&entries, &p(r"D:\")),
+            Some(Block::Contains(_))
+        ));
+        assert!(matches!(
+            blocking(&entries, &p(r"d:/WORK")),
+            Some(Block::Contains(_))
+        ));
+        assert_eq!(blocking(&entries, &p(r"C:\")), None);
+        assert_eq!(blocking(&entries, &p(r"D:\work\client")), None);
+        assert_eq!(
+            blocking(&[p(r"D:\work\client")], &p(r"D:\work\clients\x")),
+            None
+        );
+    }
+
     #[cfg(windows)]
     #[test]
     fn a_drive_root_covers_the_drive_only() {
@@ -428,8 +523,21 @@ mod tests {
         if !made.is_ok_and(|out| out.status.success()) {
             return;
         }
-        let entries = vec![target];
+        let entries = vec![target.clone()];
         assert!(covering(&entries, &link).is_some());
         assert!(covering(&entries, &link.join("inner")).is_some());
+        // A link to a folder that holds an entry holds it too.
+        let parent_link = dir.path().join("parent-link");
+        let made = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(&parent_link)
+            .arg(dir.path())
+            .output();
+        if made.is_ok_and(|out| out.status.success()) {
+            assert!(matches!(
+                blocking(&entries, &parent_link),
+                Some(Block::Contains(_))
+            ));
+        }
     }
 }

@@ -14,9 +14,11 @@
 //! together and are checked before they are used.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use cw_client::{Backend, Origin};
+use cw_core::agents_off::{self, Added, Removed};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -83,6 +85,12 @@ pub struct State {
     embed_models: Option<Value>,
     /// The news about the last try to connect to a backend elsewhere.
     connect: Option<Note>,
+    /// The folders kept from coding agents, read from the data folder when
+    /// the page opens and after each change; the error is the text for a
+    /// list that cannot be read.
+    agents_off: Result<Vec<PathBuf>, String>,
+    /// What the last change to that list answered, when it is worth saying.
+    agents_note: Option<String>,
     menu: Option<OpenMenu>,
     /// Holds the focus while the list of a select is open.
     menu_focus: FocusHandle,
@@ -130,6 +138,8 @@ impl State {
             embed_job_watched: false,
             embed_models: None,
             connect: None,
+            agents_off: read_agents_off(),
+            agents_note: None,
             menu: None,
             menu_focus,
         };
@@ -178,6 +188,16 @@ fn test_line(result: Result<Value, String>) -> Tested {
             format!("{name}: {error}")
         },
     }
+}
+
+/// The list of folders kept from coding agents, or the text that says it
+/// cannot be read. The app reads it itself: the backend is not involved.
+fn read_agents_off() -> Result<Vec<PathBuf>, String> {
+    let dir = cw_core::paths::data_dir();
+    agents_off::load(&dir).map_err(|error| {
+        log::warn!("the list of folders kept from coding agents cannot be read: {error}");
+        settings_pages::agents_unreadable(&agents_off::file(&dir))
+    })
 }
 
 /// Whether the options of a select are the themes.
@@ -239,6 +259,7 @@ impl AppView {
         }
         self.settings.last = category;
         self.settings.connect = None;
+        self.reload_agents_off();
         // The address of the saved backend, to see and to change.
         let saved = cw_client::saved_remote().map(|remote| remote.url);
         self.settings
@@ -264,6 +285,9 @@ impl AppView {
             // A Sync may have set a job going since.
             self.load_embed_job(cx);
             self.load_embed_models(cx);
+        }
+        if category == Category::Repositories {
+            self.reload_agents_off();
         }
         self.settings.last = category;
         self.page = Page::Settings(category);
@@ -738,9 +762,102 @@ impl AppView {
                 log::info!("opening the data folder {}", dir.display());
                 cx.open_with_system(&dir);
             }
+            Action::KeepAgentsOut(folder) => self.keep_agents_out(folder, cx),
+            Action::LetAgentsIn(folder) => self.let_agents_in(folder, cx),
+            Action::PickAgentsFolder => self.pick_agents_folder(cx),
+            Action::ResetAgentsList => {
+                match agents_off::reset(&cw_core::paths::data_dir()) {
+                    Ok(()) => {
+                        log::info!("started a new list of folders kept from coding agents");
+                        self.reload_agents_off();
+                        self.settings.agents_note = None;
+                    }
+                    Err(error) => self.fail_agents_change("start a new list", &error),
+                }
+                cx.notify();
+            }
             _ => return false,
         }
         true
+    }
+
+    /// Read the list of folders kept from coding agents again.
+    fn reload_agents_off(&mut self) {
+        self.settings.agents_off = read_agents_off();
+        self.settings.agents_note = None;
+    }
+
+    /// A change to the list failed: say why, as the other settings do. The
+    /// list is read again, so that the page shows what is on disk.
+    fn fail_agents_change(&mut self, what: &str, error: &cw_core::Error) {
+        log::warn!("could not {what} in the list of folders kept from coding agents: {error}");
+        self.error = Some(format!("Could not {what}: {error}"));
+        self.reload_agents_off();
+    }
+
+    fn keep_agents_out(&mut self, folder: &str, cx: &mut Context<Self>) {
+        let note = match agents_off::add(&cw_core::paths::data_dir(), Path::new(folder)) {
+            Ok(Added::Added(entry)) => {
+                log::info!("kept coding agents out of {}", entry.display());
+                None
+            }
+            Ok(Added::CoveredBy(entry)) => {
+                Some(format!("{} already covers {folder}.", entry.display()))
+            }
+            Err(error) => {
+                self.fail_agents_change("add the folder", &error);
+                cx.notify();
+                return;
+            }
+        };
+        self.error = None;
+        self.reload_agents_off();
+        self.settings.agents_note = note;
+        cx.notify();
+    }
+
+    fn let_agents_in(&mut self, folder: &str, cx: &mut Context<Self>) {
+        match agents_off::remove(&cw_core::paths::data_dir(), Path::new(folder)) {
+            Ok(Removed::Removed(entry)) => {
+                log::info!("let coding agents into {} again", entry.display());
+                self.error = None;
+                self.reload_agents_off();
+            }
+            Ok(Removed::CoveredBy(entry)) => {
+                self.reload_agents_off();
+                self.settings.agents_note = Some(format!(
+                    "{folder} is not listed itself: {} covers it. Remove that folder instead.",
+                    entry.display()
+                ));
+            }
+            Ok(Removed::NotListed) => self.reload_agents_off(),
+            Err(error) => self.fail_agents_change("remove the folder", &error),
+        }
+        cx.notify();
+    }
+
+    /// Ask for a folder to keep coding agents out of. Unlike opening a
+    /// folder, it needs no backend: the list is a file the app reads itself.
+    fn pick_agents_folder(&mut self, cx: &mut Context<Self>) {
+        let chosen = cx.prompt_for_paths(PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Keep agents out".into()),
+        });
+        cx.spawn(async move |this, cx| {
+            let Ok(Ok(Some(paths))) = chosen.await else {
+                return;
+            };
+            let Some(path) = paths.into_iter().next() else {
+                return;
+            };
+            let folder = path.to_string_lossy().into_owned();
+            _ = this.update(cx, |this, cx| {
+                this.run_action(&Action::KeepAgentsOut(folder), cx)
+            });
+        })
+        .detach();
     }
 
     /// Open the list of the select that was clicked, or close it when it is
@@ -923,6 +1040,8 @@ impl AppView {
                     saved_remote: saved_remote.as_ref(),
                     connect: self.settings.connect.as_ref(),
                     repos: &repos,
+                    agents_off: &self.settings.agents_off,
+                    agents_note: self.settings.agents_note.as_deref(),
                     update: &self.update,
                     auto_update: update::auto_check(),
                     autostart: crate::autostart::enabled(),

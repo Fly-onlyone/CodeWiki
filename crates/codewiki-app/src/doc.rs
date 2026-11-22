@@ -44,6 +44,15 @@ pub enum Action {
     /// Take the repository with this id off the list. Its folder and the
     /// wiki in it are left alone.
     ForgetRepo(String),
+    /// Keep coding agents out of this folder and everything below it.
+    KeepAgentsOut(String),
+    /// Take this folder off the list of those kept from coding agents.
+    LetAgentsIn(String),
+    /// Ask for a folder to keep coding agents out of.
+    PickAgentsFolder,
+    /// Replace an unreadable list of folders kept from coding agents with an
+    /// empty one.
+    ResetAgentsList,
     /// Bring the open repository's wiki up to date.
     Sync,
     /// Show the folder of the log files in Explorer.

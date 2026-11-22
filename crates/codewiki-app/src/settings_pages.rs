@@ -9,6 +9,7 @@
 //! the backend cannot save a key at all.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 
 use cw_client::Origin;
 use cw_telemetry::Reporting;
@@ -72,6 +73,11 @@ pub struct Model<'a> {
     pub connect: Option<&'a Note>,
     /// `(name, folder)` of each registered repository.
     pub repos: &'a [(String, String)],
+    /// The folders kept from coding agents; the error is the text that says
+    /// the list cannot be read.
+    pub agents_off: &'a Result<Vec<PathBuf>, String>,
+    /// What the last change to that list answered, when it is worth saying.
+    pub agents_note: Option<&'a str>,
     pub update: &'a update::State,
     /// Whether the app looks for updates by itself.
     pub auto_update: bool,
@@ -837,20 +843,74 @@ fn backend(model: &Model) -> Vec<Block> {
     ]
 }
 
+/// What the page says when the list of folders kept from coding agents
+/// (`file`) cannot be read. The MCP bridge and the command line say the same.
+pub fn agents_unreadable(file: &Path) -> String {
+    format!(
+        "CodeWiki's list of folders kept from coding agents ({}) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents.",
+        file.display()
+    )
+}
+
 fn repositories(model: &Model) -> Vec<Block> {
+    let mut blocks = Vec::new();
     if model.repos.is_empty() {
-        return vec![Block::Empty(
+        blocks.push(Block::Empty(
             "No repository is registered. Open a folder from Home.".into(),
-        )];
+        ));
+    } else {
+        let mut table = Table::new([
+            Column::new("Repository").weight(0.6),
+            Column::new("Folder").weight(1.6),
+        ]);
+        for (name, path) in model.repos {
+            table.row([Cell::text(name), code(path).into()]);
+        }
+        blocks.push(Block::Table(table));
     }
-    let mut table = Table::new([
-        Column::new("Repository").weight(0.6),
-        Column::new("Folder").weight(1.6),
-    ]);
-    for (name, path) in model.repos {
-        table.row([Cell::text(name), code(path).into()]);
+    blocks.push(agents_card(model));
+    blocks
+}
+
+/// The folders kept from coding agents, with what takes one off the list or
+/// puts one on it.
+fn agents_card(model: &Model) -> Block {
+    let mut body = vec![Block::Text(vec![text(
+        "Claude Code and Codex get no CodeWiki tools in these folders and everything below them. The app and the command line still work there.",
+    )])];
+    match model.agents_off {
+        Ok(folders) => {
+            for folder in folders {
+                body.push(Block::Setting {
+                    label: folder.display().to_string(),
+                    value: if folder.exists() {
+                        String::new()
+                    } else {
+                        "Folder not found".into()
+                    },
+                    button: Some((
+                        "Remove".into(),
+                        Action::LetAgentsIn(folder.display().to_string()),
+                    )),
+                });
+            }
+        }
+        Err(unreadable) => body.push(Block::Alert {
+            tone: Tone::Error,
+            text: unreadable.clone(),
+            button: Some(("Start a new list".into(), Action::ResetAgentsList)),
+        }),
     }
-    vec![Block::Table(table)]
+    body.extend(model.agents_note.map(|note| Block::Alert {
+        tone: Tone::Info,
+        text: note.to_string(),
+        button: None,
+    }));
+    body.push(Block::Buttons(vec![Press::new(
+        "Add folder…",
+        Action::PickAgentsFolder,
+    )]));
+    card("Kept from coding agents", body)
 }
 
 /// The version, what the last check found, and whether the app checks by
@@ -1052,6 +1112,8 @@ mod tests {
         saved: Option<cw_client::Remote>,
         connect: Option<Note>,
         repos: Vec<(String, String)>,
+        agents_off: Result<Vec<PathBuf>, String>,
+        agents_note: Option<String>,
         update: update::State,
         auto_update: bool,
         autostart: Option<bool>,
@@ -1078,6 +1140,8 @@ mod tests {
                 saved: None,
                 connect: None,
                 repos: vec![("demo".into(), "C:/demo".into())],
+                agents_off: Ok(Vec::new()),
+                agents_note: None,
                 update: update::State::UpToDate,
                 auto_update: true,
                 autostart: Some(false),
@@ -1110,6 +1174,8 @@ mod tests {
                     saved_remote: self.saved.as_ref(),
                     connect: self.connect.as_ref(),
                     repos: &self.repos,
+                    agents_off: &self.agents_off,
+                    agents_note: self.agents_note.as_deref(),
                     update: &self.update,
                     auto_update: self.auto_update,
                     autostart: self.autostart,
@@ -1808,6 +1874,73 @@ mod tests {
             "Address: <typed> [CODEWIKI_URL is set and wins over an address saved here]"
         ));
         assert!(!doc.actions().contains(&Action::ConnectRemote));
+    }
+
+    const AGENTS_LINE: &str = "Claude Code and Codex get no CodeWiki tools in these folders and everything below them. The app and the command line still work there.";
+
+    fn missing_folder() -> PathBuf {
+        std::env::temp_dir().join("codewiki-no-such-folder-for-a-test")
+    }
+
+    #[test]
+    fn agents_card_lists_entries_with_remove() {
+        let mut fixture = Fixture::new();
+        let here = std::env::temp_dir();
+        fixture.agents_off = Ok(vec![here.clone()]);
+        let doc = fixture.page(Category::Repositories);
+        let words = doc.words();
+        assert!(words.contains("Kept from coding agents"), "{words}");
+        assert!(words.contains(AGENTS_LINE), "{words}");
+        assert!(words.contains(&format!("{}: ", here.display())), "{words}");
+        assert!(!words.contains("Folder not found"), "{words}");
+        let actions = doc.actions();
+        assert!(actions.contains(&Action::LetAgentsIn(here.display().to_string())));
+        assert!(actions.contains(&Action::PickAgentsFolder));
+        assert!(!actions.contains(&Action::ResetAgentsList));
+    }
+
+    #[test]
+    fn agents_card_offers_add_folder_when_empty() {
+        let mut fixture = Fixture::new();
+        fixture.agents_off = Ok(Vec::new());
+        // The card stands even where no repository is registered.
+        fixture.repos.clear();
+        let doc = fixture.page(Category::Repositories);
+        let words = doc.words();
+        assert!(words.contains("Kept from coding agents"), "{words}");
+        assert!(words.contains(AGENTS_LINE), "{words}");
+        assert!(words.contains("Add folder…"), "{words}");
+        assert_eq!(doc.actions(), [Action::PickAgentsFolder]);
+    }
+
+    #[test]
+    fn agents_card_shows_a_broken_list_with_reset() {
+        let mut fixture = Fixture::new();
+        fixture.agents_off = Err(agents_unreadable(Path::new("C:/data/agents-off.json")));
+        let doc = fixture.page(Category::Repositories);
+        let words = doc.words();
+        assert!(
+            words.contains("CodeWiki's list of folders kept from coding agents (C:/data/agents-off.json) cannot be read; fix or delete it. Until then CodeWiki's tools are off for coding agents."),
+            "{words}"
+        );
+        assert!(doc.actions().contains(&Action::ResetAgentsList));
+        assert!(
+            doc.actions()
+                .iter()
+                .all(|action| !matches!(action, Action::LetAgentsIn(_)))
+        );
+    }
+
+    #[test]
+    fn agents_card_marks_a_missing_folder() {
+        let mut fixture = Fixture::new();
+        let gone = missing_folder();
+        fixture.agents_off = Ok(vec![gone.clone()]);
+        let words = fixture.page(Category::Repositories).words();
+        assert!(
+            words.contains(&format!("{}: Folder not found", gone.display())),
+            "{words}"
+        );
     }
 
     #[test]

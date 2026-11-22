@@ -75,19 +75,17 @@ Source: "{#Stage}\*"; DestDir: "{tmp}\pkg"; Flags: dontcopy recursesubdirs
 Filename: "{app}\codewiki-app.exe"; WorkingDir: "{app}"; Description: "Start CodeWiki"; Flags: postinstall nowait skipifsilent
 
 [UninstallDelete]
-; Only what CodeWiki leaves once uninstall.ps1 has run: the script itself,
-; uninstall.cmd, and what a self-update may leave (<name>.old, <name>.old2 ...
-; files and folders, and the .update folder). The wildcard goes to Windows'
-; FindFirstFile: "*.old???" is a last name part of .old and up to three more
-; characters, and filesandordirs deletes a matching folder with its contents.
+; Only what CodeWiki leaves once uninstall.ps1 has run: the script itself and
+; uninstall.cmd. uninstall.ps1 has already deleted what a self-update leaves
+; (<name>.old, <name>.old2 ... and the .update folder). No wildcard here:
+; "*.old???" matches a folder of the user's such as notes.older, and since
+; Windows matches short 8.3 names too, configs.oldversion as well.
 ; Then the folder, only if it is empty: anything else the user put there
 ; stays. Inno deletes its unins000.exe and unins000.dat itself and tries the
 ; folder again after that. None of this runs when uninstall.ps1 failed: the
 ; uninstaller aborts first.
 Type: files; Name: "{app}\uninstall.ps1"
 Type: files; Name: "{app}\uninstall.cmd"
-Type: filesandordirs; Name: "{app}\*.old???"
-Type: filesandordirs; Name: "{app}\.update"
 Type: dirifempty; Name: "{app}"
 
 [Code]

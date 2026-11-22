@@ -262,6 +262,28 @@ Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in 
 
 `plugins/codex/README.md` covers updating, removing, and the same setup without the plugin. The plugin's files are checked against Codex's source and by a test; it has not yet been run in a Codex session.
 
+### Keep coding agents out of a folder
+
+You can keep coding agents from using CodeWiki in a folder, for a project whose code or wiki must not reach an agent. The list is the file `agents-off.json` in the data folder (`%LOCALAPPDATA%\CodeWiki`, or `CODEWIKI_DATA_DIR`). An entry covers its folder and everything below it. Three ways manage the list:
+
+- **The app.** Settings → Repositories → "Kept from coding agents" adds and removes folders. On Home, a project's row has "Keep agents out" and "Let agents in", and the palette has "Keep agents out of this project" and "Let agents into this project". A project kept by a folder above it says so, and links to Settings.
+- **The command line.** `codewiki agents off [<folder>]`, `codewiki agents on [<folder>]`, `codewiki agents list` and `codewiki agents status [<folder>]`. Without a folder, the current one.
+- **The file.** Edit `agents-off.json` by hand: `{"version": 1, "folders": ["D:\\work\\secret"]}`.
+
+What an agent sees in a kept folder:
+
+- The session-start briefing prints nothing.
+- Every MCP tool refuses, with an answer that tells the agent that CodeWiki is turned off for this project. The skills tell the agent to stop using CodeWiki tools for the rest of the session. The same happens when a tool names a kept repository in `repo`, by path, id or name.
+- `list_repos`, `get_workspace` and `get_contracts` with `workspace: true` leave kept repositories out. One limit: a route of a visible repository that only a kept repository calls leaves the matched list and does not show as unconsumed.
+
+The app and the command line still work in a kept folder: the list keeps agents out, not you. The wiki and search of a project still include a kept subfolder of it, and an agent working in the project's root still gets CodeWiki; an entry inside a project does not stop tools on the project itself.
+
+A list that cannot be read keeps every agent out, until you fix or delete the file; Settings offers to start a new list.
+
+With a backend on another machine (see [Docker](#docker)), its repositories' paths cannot be matched against this machine's list. Only the folder the agent works in is checked, and no repository is hidden.
+
+Another way, without CodeWiki's list, is Claude Code's own per-project switch: set `"enabledPlugins": {"codewiki@codewiki": false}` in `.claude/settings.local.json` of the project (key and file from Claude Code's [settings reference](https://code.claude.com/docs/en/settings-reference)). Claude Code then does not load the plugin there at all. It covers Claude Code only; the list covers every agent that uses the bridge.
+
 ### Docker
 
 ```

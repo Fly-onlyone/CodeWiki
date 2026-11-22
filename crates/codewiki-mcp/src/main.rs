@@ -12,7 +12,9 @@ use std::sync::{Arc, Mutex};
 use cw_client::{Backend, encode};
 use rmcp::handler::server::tool::ToolCallContext;
 use rmcp::handler::server::wrapper::Parameters;
-use rmcp::model::{CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock};
+use rmcp::model::{
+    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ErrorCode,
+};
 use rmcp::service::RequestContext;
 use rmcp::transport::stdio;
 use rmcp::{
@@ -258,22 +260,38 @@ fn pretty(value: &Value) -> Result<CallToolResult, McpError> {
 impl Bridge {
     /// Run blocking backend work for one tool call. Failures are returned to
     /// the agent as tool errors it can read and act on.
+    ///
+    /// With folders on the list, the repository the call reaches is checked
+    /// once its id is known, and the call is refused when its folder is kept
+    /// from coding agents or holds a kept folder. `screen` decided on a lookup
+    /// of its own, or on none when the backend was not up yet, and `repo_id`
+    /// falls back to a repository's name when it cannot add a path; so only
+    /// the id the work is given is trusted. One listing serves the lookup of
+    /// an id or name and that check.
     async fn call<F>(&self, repo: Option<String>, work: F) -> Result<Value, McpError>
     where
         F: FnOnce(&Backend, &str) -> Result<Value, String> + Send + 'static,
     {
         let slot = self.backend.clone();
-        let outcome = tokio::task::spawn_blocking(move || {
-            let backend = connected(&slot)?;
+        tokio::task::spawn_blocking(move || {
+            let entries = listed_folders()?;
+            let backend = connected(&slot).map_err(failed)?;
             let cwd = std::env::current_dir()
-                .map_err(|e| format!("cannot read the working directory: {e}"))?;
+                .map_err(|e| failed(format!("cannot read the working directory: {e}")))?;
             // The backend gets what `screen` read: a registered repository's
             // id, or an absolute path against this session's folder, never a
             // word or relative path it would read against its own folder.
             let arg = repo.map(|r| guard::repo_arg(&r, &cwd));
-            let listing = match &arg {
-                Some(guard::RepoArg::IdOrName(_)) => backend.get("/v1/repos").ok(),
-                _ => None,
+            let listing = if !entries.is_empty() {
+                Some(
+                    backend
+                        .get("/v1/repos")
+                        .map_err(|e| failed(unchecked(&e)))?,
+                )
+            } else if matches!(arg, Some(guard::RepoArg::IdOrName(_))) {
+                backend.get("/v1/repos").ok()
+            } else {
+                None
             };
             let target = match &arg {
                 Some(arg) => guard::target(arg, listing.as_ref(), &cwd),
@@ -281,25 +299,79 @@ impl Bridge {
             };
             let id = match target {
                 guard::Target::Id(id) => id,
-                guard::Target::Path(path) => backend.repo_id(&path.to_string_lossy())?,
+                guard::Target::Path(path) => {
+                    backend.repo_id(&path.to_string_lossy()).map_err(failed)?
+                }
             };
-            work(&backend, &id)
+            if !entries.is_empty() {
+                let path = match listing.as_ref().and_then(|l| guard::path_of(l, &id)) {
+                    Some(path) => path,
+                    // Registered by this call, or since the listing.
+                    None => backend
+                        .get(&format!("/v1/repos/{id}"))
+                        .and_then(|repo| {
+                            repo["path"]
+                                .as_str()
+                                .map(PathBuf::from)
+                                .ok_or_else(|| format!("repository {id} has no path"))
+                        })
+                        .map_err(|e| failed(unchecked(&e)))?,
+                };
+                if cw_core::agents_off::blocking(&entries, &path).is_some() {
+                    return Err(refused(cw_core::agents_off::repo_refusal()));
+                }
+            }
+            work(&backend, &id).map_err(failed)
         })
         .await
-        .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?;
-        outcome.map_err(failed)
+        .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
     }
 
     /// [`Bridge::call`] for a request that concerns no single repository.
+    /// `work` gets the folders on the list, to leave out what they keep.
     async fn call_global<F>(&self, work: F) -> Result<Value, McpError>
     where
-        F: FnOnce(&Backend) -> Result<Value, String> + Send + 'static,
+        F: FnOnce(&Backend, &[PathBuf]) -> Result<Value, String> + Send + 'static,
     {
         let slot = self.backend.clone();
-        tokio::task::spawn_blocking(move || work(&connected(&slot)?))
-            .await
-            .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
-            .map_err(failed)
+        tokio::task::spawn_blocking(move || {
+            let entries = listed_folders()?;
+            let backend = connected(&slot).map_err(failed)?;
+            work(&backend, &entries).map_err(failed)
+        })
+        .await
+        .map_err(|e| McpError::internal_error(format!("tool task failed: {e}"), None))?
+    }
+}
+
+/// Why a call that must check the repository it reaches cannot go ahead.
+fn unchecked(error: &str) -> String {
+    format!(
+        "CodeWiki cannot check this repository against the folders kept from coding agents: {error}"
+    )
+}
+
+/// Marks an error that is a refusal, found once the backend has answered:
+/// [`answered`] gives the agent its text as a normal result.
+const REFUSED: &str = "codewiki_refused";
+
+/// A refusal that a tool's work returns as an error, to stop it there.
+fn refused(text: impl Into<String>) -> McpError {
+    McpError::new(
+        ErrorCode::INVALID_REQUEST,
+        text.into(),
+        Some(json!({ REFUSED: true })),
+    )
+}
+
+/// A tool call's response, with a refusal made the text an agent reads, as
+/// the refusals of `screen` are.
+fn answered(response: Result<CallToolResponse, McpError>) -> Result<CallToolResponse, McpError> {
+    match response {
+        Err(error) if error.data.as_ref().is_some_and(|d| d[REFUSED] == true) => {
+            Ok(CallToolResult::success(vec![ContentBlock::text(error.message)]).into())
+        }
+        other => other,
     }
 }
 
@@ -308,8 +380,12 @@ impl Bridge {
     ///
     /// The list is read on every call. The session folders and a path `repo`
     /// argument are checked without a backend; only an id or name `repo`
-    /// argument connects, for one `GET /v1/repos`, and when that fails the
-    /// session folders alone decide.
+    /// argument connects, for one `GET /v1/repos`. When that fails the
+    /// session folders alone decide here, and [`Bridge::call`] checks the
+    /// repository the call reaches. A session folder that is kept, or holds
+    /// a kept folder, refuses with the entry's path; a `repo` argument that
+    /// is or reaches such a folder refuses with no path, for that repository
+    /// alone.
     fn screen(&self, arguments: Option<&serde_json::Map<String, Value>>) -> Option<String> {
         let data = cw_core::paths::data_dir();
         let list = cw_core::agents_off::load(&data);
@@ -332,8 +408,9 @@ impl Bridge {
         // As a folder, without a backend: a path as written, a word under the
         // current folder (what it means when no repository answers to it).
         let direct = guard::direct_path(&arg, &cwd);
-        if let Some(entry) = cw_core::agents_off::covering(&entries, &direct) {
-            return Some(cw_core::agents_off::refusal(&entry));
+        let repo_refusal = || cw_core::agents_off::repo_refusal().to_string();
+        if cw_core::agents_off::blocking(&entries, &direct).is_some() {
+            return Some(repo_refusal());
         }
         // The backend falls back to a repository's name when it cannot add a
         // path, so a missing path is looked up by its last component too.
@@ -342,35 +419,43 @@ impl Bridge {
             .and_then(|backend| backend.get("/v1/repos"))
             .ok()?;
         let path = guard::resolve_id(&listing, &name)?;
-        cw_core::agents_off::covering(&entries, &path)
-            .map(|entry| cw_core::agents_off::refusal(&entry))
+        cw_core::agents_off::blocking(&entries, &path).map(|_| repo_refusal())
     }
 }
 
-/// The folders on the list; empty when it cannot be read, which `screen`
-/// already refused.
-fn listed_folders() -> Vec<PathBuf> {
-    cw_core::agents_off::load(&cw_core::paths::data_dir()).unwrap_or_default()
+/// The folders on the list. A list that cannot be read refuses the call, as
+/// `screen` does: it never passes for an empty one.
+fn listed_folders() -> Result<Vec<PathBuf>, McpError> {
+    let data = cw_core::paths::data_dir();
+    cw_core::agents_off::load(&data).map_err(|_| {
+        refused(cw_core::agents_off::unreadable(&cw_core::agents_off::file(
+            &data,
+        )))
+    })
 }
 
-/// The `/v1/repos` listing without the repositories on the list, and their
-/// names.
-fn visible_repos(backend: &Backend) -> Result<(Value, HashSet<String>), String> {
+/// The `/v1/repos` listing without the repositories whose folders `entries`
+/// keep or that hold one of them, and their names.
+fn visible_repos(
+    backend: &Backend,
+    entries: &[PathBuf],
+) -> Result<(Value, HashSet<String>), String> {
     let mut listing = backend.get("/v1/repos")?;
-    let hidden = guard::hide_repos(&mut listing, &listed_folders());
+    let hidden = guard::hide_repos(&mut listing, entries);
     Ok((listing, hidden))
 }
 
-/// Fetch `uri` and drop the repositories on the list from it with `hide`.
+/// Fetch `uri` and drop the repositories `entries` keep from it with `hide`.
 /// With an empty list the answer is returned as it is.
 fn get_visible(
     backend: &Backend,
+    entries: &[PathBuf],
     uri: &str,
     hide: fn(&mut Value, &HashSet<String>),
 ) -> Result<Value, String> {
     let mut view = backend.get(uri)?;
-    if !listed_folders().is_empty() {
-        hide(&mut view, &visible_repos(backend)?.1);
+    if !entries.is_empty() {
+        hide(&mut view, &visible_repos(backend, entries)?.1);
     }
     Ok(view)
 }
@@ -493,7 +578,7 @@ impl Bridge {
     async fn list_repos(&self) -> Result<CallToolResult, McpError> {
         pretty(
             &self
-                .call_global(|b| visible_repos(b).map(|(listing, _)| listing))
+                .call_global(|b, entries| visible_repos(b, entries).map(|(listing, _)| listing))
                 .await?,
         )
     }
@@ -503,7 +588,9 @@ impl Bridge {
     )]
     async fn get_workspace(&self) -> Result<CallToolResult, McpError> {
         let view = self
-            .call_global(|b| get_visible(b, "/v1/workspace", guard::hide_in_workspace))
+            .call_global(|b, entries| {
+                get_visible(b, entries, "/v1/workspace", guard::hide_in_workspace)
+            })
             .await?;
         let repos = rows(&view, "repos");
         if repos.is_empty() {
@@ -565,8 +652,13 @@ impl Bridge {
     ) -> Result<CallToolResult, McpError> {
         if p.workspace.unwrap_or(false) {
             let all = self
-                .call_global(|b| {
-                    get_visible(b, "/v1/workspace/contracts", guard::hide_in_contracts)
+                .call_global(|b, entries| {
+                    get_visible(
+                        b,
+                        entries,
+                        "/v1/workspace/contracts",
+                        guard::hide_in_contracts,
+                    )
                 })
                 .await?;
             return text(workspace_contracts_text(&all));
@@ -1670,7 +1762,7 @@ impl ServerHandler for Bridge {
             return Ok(CallToolResult::success(vec![ContentBlock::text(text)]).into());
         }
         let call = ToolCallContext::new(self, request, context);
-        Self::tool_router().call(call).await
+        answered(Self::tool_router().call(call).await)
     }
 }
 
@@ -1702,24 +1794,44 @@ mod tests {
     /// take this lock and put everything back.
     static PROCESS_STATE: Mutex<()> = Mutex::new(());
 
+    /// The variables a session sets, and puts back when it ends.
+    const SESSION_VARS: [&str; 4] = [
+        "CODEWIKI_DATA_DIR",
+        "CLAUDE_PROJECT_DIR",
+        "CODEWIKI_URL",
+        "CODEWIKI_TOKEN",
+    ];
+
     struct Session {
         _lock: std::sync::MutexGuard<'static, ()>,
         folder: PathBuf,
-        data: Option<std::ffi::OsString>,
-        project: Option<std::ffi::OsString>,
+        saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
     }
 
     impl Session {
         /// Work in `folder`, with `data` as the data folder and `project` as
-        /// `CLAUDE_PROJECT_DIR`.
-        #[allow(unsafe_code)]
+        /// `CLAUDE_PROJECT_DIR`, and no backend named.
         fn start(folder: &Path, data: &Path, project: Option<&str>) -> Session {
+            Session::start_with(folder, data, project, None)
+        }
+
+        /// [`Session::start`], with `backend` as `CODEWIKI_URL`: the bridge
+        /// then talks to it and never starts a backend of its own.
+        #[allow(unsafe_code)]
+        fn start_with(
+            folder: &Path,
+            data: &Path,
+            project: Option<&str>,
+            backend: Option<&str>,
+        ) -> Session {
             let lock = PROCESS_STATE.lock().unwrap_or_else(|e| e.into_inner());
             let session = Session {
                 _lock: lock,
                 folder: std::env::current_dir().unwrap(),
-                data: std::env::var_os("CODEWIKI_DATA_DIR"),
-                project: std::env::var_os("CLAUDE_PROJECT_DIR"),
+                saved: SESSION_VARS
+                    .iter()
+                    .map(|key| (*key, std::env::var_os(key)))
+                    .collect(),
             };
             std::env::set_current_dir(folder).unwrap();
             // SAFETY: every test that touches the environment holds PROCESS_STATE.
@@ -1728,6 +1840,16 @@ mod tests {
                 match project {
                     Some(dir) => std::env::set_var("CLAUDE_PROJECT_DIR", dir),
                     None => std::env::remove_var("CLAUDE_PROJECT_DIR"),
+                }
+                match backend {
+                    Some(url) => {
+                        std::env::set_var("CODEWIKI_URL", url);
+                        std::env::set_var("CODEWIKI_TOKEN", "stand-in-token");
+                    }
+                    None => {
+                        std::env::remove_var("CODEWIKI_URL");
+                        std::env::remove_var("CODEWIKI_TOKEN");
+                    }
                 }
             }
             session
@@ -1740,10 +1862,7 @@ mod tests {
             let _ = std::env::set_current_dir(&self.folder);
             // SAFETY: the lock held by this session is still held here.
             unsafe {
-                for (key, old) in [
-                    ("CODEWIKI_DATA_DIR", &self.data),
-                    ("CLAUDE_PROJECT_DIR", &self.project),
-                ] {
+                for (key, old) in &self.saved {
                     match old {
                         Some(value) => std::env::set_var(key, value),
                         None => std::env::remove_var(key),
@@ -1751,6 +1870,345 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// A backend on a local port that answers from `answer`, given a request
+    /// as `"GET /v1/repos"` and how many such requests came before it. It
+    /// answers `/v1/health` itself; it keeps every other request it is sent.
+    struct StandIn {
+        url: String,
+        seen: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl StandIn {
+        fn start(answer: impl Fn(&str, usize) -> (u16, Value) + Send + 'static) -> StandIn {
+            use std::io::{BufRead, BufReader, Read, Write};
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let url = format!("http://{}", listener.local_addr().unwrap());
+            let seen = Arc::new(Mutex::new(Vec::new()));
+            let kept = seen.clone();
+            std::thread::spawn(move || {
+                let mut counts = std::collections::HashMap::<String, usize>::new();
+                for stream in listener.incoming() {
+                    let Ok(stream) = stream else { return };
+                    let mut reader = BufReader::new(stream);
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).is_err() {
+                        continue;
+                    }
+                    let mut length = 0;
+                    loop {
+                        let mut header = String::new();
+                        if reader.read_line(&mut header).is_err() {
+                            break;
+                        }
+                        let header = header.trim_end();
+                        if header.is_empty() {
+                            break;
+                        }
+                        if let Some((name, value)) = header.split_once(':')
+                            && name.eq_ignore_ascii_case("content-length")
+                        {
+                            length = value.trim().parse().unwrap_or(0);
+                        }
+                    }
+                    // Closing on a body nobody read resets the connection.
+                    let _ = reader.read_exact(&mut vec![0; length]);
+                    let request = line
+                        .trim_end()
+                        .rsplit_once(' ')
+                        .map_or(line.trim_end(), |(request, _)| request)
+                        .to_string();
+                    let before = counts.entry(request.clone()).or_default();
+                    let count = *before;
+                    *before += 1;
+                    let (status, body) = if request == "GET /v1/health" {
+                        (200, json!({ "status": "ok", "version": "0.0.1" }))
+                    } else {
+                        kept.lock().unwrap().push(request.clone());
+                        answer(&request, count)
+                    };
+                    let body = body.to_string();
+                    let mut stream = reader.into_inner();
+                    let _ = write!(
+                        stream,
+                        "HTTP/1.1 {status} Stand-in\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = stream.flush();
+                }
+            });
+            StandIn { url, seen }
+        }
+
+        /// The requests it was sent, `/v1/health` left out.
+        fn seen(&self) -> Vec<String> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    /// The `/v1/repos` listing of a scene: `closed` is on the list, `holder`
+    /// (the scene's root) holds it, `open` is neither.
+    fn repos(root: &Path, closed: &Path, open: &Path) -> Value {
+        json!([
+            { "id": "closed-1", "name": "closed", "path": closed },
+            { "id": "holder-1", "name": "holder", "path": root },
+            { "id": "open-1", "name": "open", "path": open },
+        ])
+    }
+
+    fn run<T>(future: impl std::future::Future<Output = T>) -> T {
+        tokio::runtime::Builder::new_multi_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(future)
+    }
+
+    /// What a tool call says to the agent: its text, or its error.
+    fn said(result: Result<CallToolResult, McpError>) -> String {
+        match result {
+            Ok(result) => result
+                .content
+                .iter()
+                .filter_map(|block| block.as_text())
+                .map(|text| text.text.clone())
+                .collect(),
+            Err(error) => error.message.into_owned(),
+        }
+    }
+
+    fn overview_of(repo: &str) -> Parameters<RepoParam> {
+        Parameters(RepoParam {
+            repo: Some(repo.to_string()),
+        })
+    }
+
+    fn repo_refusal() -> String {
+        cw_core::agents_off::repo_refusal().to_string()
+    }
+
+    #[test]
+    fn an_id_or_name_naming_a_kept_repo_is_refused_after_one_lookup() {
+        let (root, data, closed, open) = scene("by-id");
+        let listing = repos(&root, &closed, &open);
+        let backend = StandIn::start(move |request, _| match request {
+            "GET /v1/repos" => (200, listing.clone()),
+            _ => (404, json!({ "error": "not here" })),
+        });
+        let session = Session::start_with(&open, &data, None, Some(&backend.url));
+        let bridge = Bridge::default();
+        // By id, by name in any case, and a repository that holds the entry.
+        for repo in ["closed-1", "CLOSED", "holder-1", "holder"] {
+            let args = json!({ "repo": repo });
+            assert_eq!(
+                bridge.screen(args.as_object()),
+                Some(repo_refusal()),
+                "{repo}"
+            );
+        }
+        // One lookup each, and nothing else: no registration, no tool.
+        assert_eq!(backend.seen(), vec!["GET /v1/repos"; 4]);
+        let fine = json!({ "repo": "open-1" });
+        assert_eq!(bridge.screen(fine.as_object()), None);
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn call_refuses_a_kept_repo_that_screen_could_not_look_up() {
+        let (root, data, closed, open) = scene("late");
+        let listing = repos(&root, &closed, &open);
+        // The backend is still starting when `screen` asks, then answers.
+        let backend = StandIn::start(move |request, count| match request {
+            "GET /v1/repos" if count == 0 => (500, json!({ "error": "starting" })),
+            "GET /v1/repos" => (200, listing.clone()),
+            _ => (200, json!({ "home": "# Home", "status": {} })),
+        });
+        let session = Session::start_with(&open, &data, None, Some(&backend.url));
+        let bridge = Bridge::default();
+        let args = json!({ "repo": "closed-1" });
+        assert_eq!(bridge.screen(args.as_object()), None);
+        let answer = said(run(bridge.get_overview(overview_of("closed-1"))));
+        assert_eq!(answer, repo_refusal());
+        assert!(
+            backend.seen().iter().all(|r| !r.contains("overview")),
+            "{:?}",
+            backend.seen()
+        );
+        // An open repository is not held up by the check.
+        let answer = said(run(bridge.get_overview(overview_of("open-1"))));
+        assert!(answer.starts_with("# Home"), "{answer}");
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_refusal_from_the_work_reaches_the_agent_as_a_normal_result() {
+        let Ok(CallToolResponse::Complete(result)) = answered(Err(refused(repo_refusal()))) else {
+            panic!("a refusal is not a result");
+        };
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(said(Ok(result)), repo_refusal());
+        // Any other error stays an error.
+        let other = answered(Err(failed("backend request failed".to_string())));
+        assert!(matches!(other, Err(e) if e.message == "backend request failed"));
+    }
+
+    #[test]
+    fn call_refuses_a_kept_repo_reached_by_the_name_fallback() {
+        let (root, data, closed, open) = scene("fallback");
+        // An existing folder, not kept, with the kept repository's name.
+        let namesake = root.join("other").join("closed");
+        std::fs::create_dir_all(&namesake).unwrap();
+        let listing = repos(&root, &closed, &open);
+        let backend = StandIn::start(move |request, _| match request {
+            "POST /v1/repos" => (500, json!({ "error": "cannot save repos.json" })),
+            "GET /v1/repos" => (200, listing.clone()),
+            _ => (200, json!({ "home": "# Home", "status": {} })),
+        });
+        let session = Session::start_with(&open, &data, None, Some(&backend.url));
+        let bridge = Bridge::default();
+        let path = namesake.to_string_lossy().into_owned();
+        let args = json!({ "repo": path });
+        assert_eq!(bridge.screen(args.as_object()), None);
+        let answer = said(run(bridge.get_overview(overview_of(&path))));
+        assert_eq!(answer, repo_refusal());
+        assert!(
+            backend.seen().iter().all(|r| !r.contains("overview")),
+            "{:?}",
+            backend.seen()
+        );
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn call_checks_a_repository_registered_by_the_call() {
+        let (root, data, closed, open) = scene("fresh");
+        let listing = repos(&root, &closed, &open);
+        let fresh = open.clone();
+        let backend = StandIn::start(move |request, _| match request {
+            "GET /v1/repos" => (200, listing.clone()),
+            "POST /v1/repos" => (
+                200,
+                json!({ "id": "fresh-1", "name": "open", "path": fresh }),
+            ),
+            "GET /v1/repos/fresh-1" => (200, json!({ "id": "fresh-1", "path": fresh })),
+            _ => (200, json!({ "home": "# Home", "status": {} })),
+        });
+        let session = Session::start_with(&open, &data, None, Some(&backend.url));
+        let bridge = Bridge::default();
+        let answer = said(run(
+            bridge.get_overview(Parameters(RepoParam { repo: None }))
+        ));
+        assert!(answer.starts_with("# Home"), "{answer}");
+        assert_eq!(
+            backend.seen(),
+            [
+                "GET /v1/repos",
+                "POST /v1/repos",
+                "GET /v1/repos/fresh-1",
+                "GET /v1/repos/fresh-1/overview"
+            ]
+        );
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cross_project_tools_leave_out_kept_and_holding_repos() {
+        let (root, data, closed, open) = scene("hide");
+        let listing = repos(&root, &closed, &open);
+        let backend = StandIn::start(move |request, _| match request {
+            "GET /v1/repos" => (200, listing.clone()),
+            "GET /v1/workspace" => (
+                200,
+                json!({
+                    "repos": [
+                        { "name": "closed", "id": "closed-1", "path": "c", "files": 1 },
+                        { "name": "holder", "id": "holder-1", "path": "h", "files": 2 },
+                        { "name": "open", "id": "open-1", "path": "o", "files": 3 },
+                    ],
+                    "shared_dependencies": [
+                        { "name": "serde", "repos": ["closed", "holder", "open"] },
+                    ],
+                }),
+            ),
+            "GET /v1/workspace/contracts" => (
+                200,
+                json!({
+                    "repos": [
+                        { "repo": "closed", "provided": 1, "consumed": 0 },
+                        { "repo": "holder", "provided": 2, "consumed": 0 },
+                        { "repo": "open", "provided": 3, "consumed": 0 },
+                    ],
+                    "errors": [], "matched": [], "unprovided": [], "unconsumed": [],
+                }),
+            ),
+            _ => (404, json!({ "error": "not here" })),
+        });
+        let session = Session::start_with(&open, &data, None, Some(&backend.url));
+        let bridge = Bridge::default();
+
+        let listed: Value = serde_json::from_str(&said(run(bridge.list_repos()))).unwrap();
+        let names: Vec<&str> = listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|r| r["name"].as_str())
+            .collect();
+        assert_eq!(names, ["open"]);
+
+        let workspace = said(run(bridge.get_workspace()));
+        assert!(workspace.starts_with("open (open-1)\n"), "{workspace}");
+        assert!(
+            !workspace.contains("closed") && !workspace.contains("holder"),
+            "{workspace}"
+        );
+        assert!(!workspace.contains("serde"), "{workspace}");
+
+        let contracts = said(run(bridge.get_contracts(Parameters(ContractsParams {
+            workspace: Some(true),
+            repo: None,
+        }))));
+        assert!(contracts.starts_with("open: 3 provided"), "{contracts}");
+        assert!(
+            !contracts.contains("closed") && !contracts.contains("holder"),
+            "{contracts}"
+        );
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cross_project_tools_refuse_when_the_list_is_broken() {
+        let (root, data, _, open) = scene("hide-broken");
+        let file = cw_core::agents_off::file(&data);
+        std::fs::write(&file, "{").unwrap();
+        let backend = StandIn::start(|_, _| (200, json!([])));
+        let session = Session::start_with(&open, &data, None, Some(&backend.url));
+        let bridge = Bridge::default();
+        let unreadable = cw_core::agents_off::unreadable(&file);
+        assert_eq!(said(run(bridge.list_repos())), unreadable);
+        assert_eq!(said(run(bridge.get_workspace())), unreadable);
+        assert!(backend.seen().is_empty(), "{:?}", backend.seen());
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_session_in_a_folder_that_holds_a_kept_one_is_refused() {
+        let (root, data, closed, _) = scene("holder");
+        let session = Session::start(&root, &data, None);
+        let bridge = Bridge::default();
+        assert_eq!(
+            bridge.screen(None),
+            Some(cw_core::agents_off::refusal(&closed))
+        );
+        assert!(bridge.backend.lock().unwrap().is_none());
+        drop(session);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     /// A fresh folder holding `data`, `closed` and `open`; `closed` is on the
@@ -1785,11 +2243,17 @@ mod tests {
         let (root, data, closed, open) = scene("repo");
         let session = Session::start(&open, &data, None);
         let bridge = Bridge::default();
-        let args = json!({ "repo": closed.join("sub").to_string_lossy() });
-        assert_eq!(
-            bridge.screen(args.as_object()),
-            Some(cw_core::agents_off::refusal(&closed))
-        );
+        // Below the entry, and a folder that holds it: refused for that
+        // repository alone, with no path named.
+        for repo in [closed.join("sub"), root.clone()] {
+            let args = json!({ "repo": repo.to_string_lossy() });
+            assert_eq!(
+                bridge.screen(args.as_object()),
+                Some(repo_refusal()),
+                "{}",
+                repo.display()
+            );
+        }
         // The open folder, and a path outside the list, are fine.
         assert_eq!(bridge.screen(None), None);
         let other = json!({ "repo": open.to_string_lossy() });

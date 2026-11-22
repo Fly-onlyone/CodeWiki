@@ -33,8 +33,10 @@ pub enum RepoArg {
     IdOrName(String),
 }
 
-/// A path when it is absolute, starts with `.`, or contains a separator;
-/// otherwise an id or name. A path is made absolute against `cwd`.
+/// A path when it is absolute, starts with a drive (`D:secret`, which
+/// Windows reads against that drive's current folder), starts with `.`, or
+/// contains a separator; otherwise an id or name. A path is made absolute
+/// against `cwd`, so a value with a drive is never taken for an id or name.
 pub fn repo_arg(value: &str, cwd: &Path) -> RepoArg {
     let path = Path::new(value);
     let has_drive = matches!(path.components().next(), Some(Component::Prefix(_)));
@@ -80,6 +82,13 @@ pub fn resolve_id(listing: &Value, id_or_name: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
+/// The `path` of the entry whose id is `id`; a name does not count.
+pub fn path_of(listing: &Value, id: &str) -> Option<PathBuf> {
+    listing.as_array()?.iter().find(|r| r["id"] == id)?["path"]
+        .as_str()
+        .map(PathBuf::from)
+}
+
 /// The folder a `repo` argument means when no registered repository answers
 /// to it: a path as it is, a bare word as a path under `cwd`. The backend
 /// would read a bare word against its own folder, so it is never sent one.
@@ -112,7 +121,8 @@ pub fn target(arg: &RepoArg, listing: Option<&Value>, cwd: &Path) -> Target {
     Target::Path(direct_path(arg, cwd))
 }
 
-/// Refused when the list cannot be read or covers any session folder.
+/// Refused when the list cannot be read, or when an entry covers a session
+/// folder or lies inside one; the refusal names that entry.
 pub fn verdict(
     list: &cw_core::Result<Vec<PathBuf>>,
     list_file: &Path,
@@ -122,21 +132,22 @@ pub fn verdict(
         Err(_) => Verdict::Refused(agents_off::unreadable(list_file)),
         Ok(entries) => folders
             .iter()
-            .find_map(|folder| agents_off::covering(entries, folder))
-            .map_or(Verdict::Open, |entry| {
-                Verdict::Refused(agents_off::refusal(&entry))
+            .find_map(|folder| agents_off::blocking(entries, folder))
+            .map_or(Verdict::Open, |block| {
+                Verdict::Refused(agents_off::refusal(block.entry()))
             }),
     }
 }
 
-/// Remove covered entries from a `/v1/repos` array; returns their names.
+/// Remove the entries of a `/v1/repos` array whose folder is covered or
+/// holds an entry; returns their names.
 pub fn hide_repos(listing: &mut Value, entries: &[PathBuf]) -> HashSet<String> {
     let mut hidden = HashSet::new();
     if let Some(rows) = listing.as_array_mut() {
         rows.retain(|row| {
             let covered = row["path"]
                 .as_str()
-                .is_some_and(|p| cw_core::agents_off::covering(entries, Path::new(p)).is_some());
+                .is_some_and(|p| agents_off::blocking(entries, Path::new(p)).is_some());
             if covered && let Some(name) = row["name"].as_str() {
                 hidden.insert(name.to_string());
             }
@@ -380,6 +391,38 @@ mod tests {
         assert_eq!(hidden, HashSet::from(["Clients".to_string()]));
         assert_eq!(l.as_array().unwrap().len(), 1);
         assert_eq!(l[0]["name"], "public");
+    }
+
+    #[test]
+    fn a_repo_that_holds_an_entry_leaves_the_listing() {
+        let mut l = listing();
+        let hidden = hide_repos(&mut l, &[p("D:\\work\\public\\vendor\\acme")]);
+        assert_eq!(hidden, HashSet::from(["public".to_string()]));
+        assert_eq!(l.as_array().unwrap().len(), 1);
+        assert_eq!(l[0]["name"], "Clients");
+    }
+
+    #[test]
+    fn a_session_folder_that_holds_an_entry_is_refused_by_that_entry() {
+        let list = Ok(vec![p("D:\\work\\clients\\acme")]);
+        let folders = session_folders(&p("D:\\work"), None);
+        assert_eq!(
+            verdict(&list, &p("list.json"), &folders),
+            Verdict::Refused(agents_off::refusal(&p("D:\\work\\clients\\acme")))
+        );
+        let sibling = session_folders(&p("D:\\work\\client"), None);
+        assert_eq!(verdict(&list, &p("list.json"), &sibling), Verdict::Open);
+    }
+
+    #[test]
+    fn the_path_of_an_id_is_matched_by_id_alone() {
+        assert_eq!(
+            path_of(&listing(), "cw-core-9bb4c92c"),
+            Some(p("D:\\work\\clients"))
+        );
+        // A name is not an id.
+        assert_eq!(path_of(&listing(), "public"), None);
+        assert_eq!(path_of(&json!({}), "pub-1"), None);
     }
 
     fn hidden_clients() -> HashSet<String> {

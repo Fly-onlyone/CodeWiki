@@ -17,7 +17,10 @@ param(
 $ErrorActionPreference = "Stop"
 $Target = (Resolve-Path $Target).Path
 
-if (-not (Test-Path (Join-Path $Target "codewiki-app.exe"))) {
+# uninstall.ps1 alone: an earlier run stopped after deleting the programs.
+# Each step below removes only what is there, so a second run finishes it.
+if (-not (Test-Path (Join-Path $Target "codewiki-app.exe")) -and
+    -not (Test-Path (Join-Path $Target "uninstall.ps1"))) {
     throw "$Target does not look like a CodeWiki installation"
 }
 

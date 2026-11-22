@@ -187,6 +187,32 @@ fn a_listed_vault_root_silences_the_hook() {
 }
 
 #[test]
+fn a_project_that_holds_a_listed_folder_gets_no_briefing() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    close_folders(data.path(), &[&project.path().join("src")]);
+    let output = codewiki(project.path(), data.path(), &["hook", "session-start"]);
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty(), "{}", stdout(&output));
+}
+
+#[test]
+fn a_vault_root_that_holds_a_listed_folder_silences_the_hook() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    // The session starts in `docs`; the vault root above it holds `src`.
+    std::fs::create_dir(project.path().join("docs")).unwrap();
+    close_folders(data.path(), &[&project.path().join("src")]);
+    let output = codewiki(
+        &project.path().join("docs"),
+        data.path(),
+        &["hook", "session-start"],
+    );
+    assert!(output.status.success());
+    assert!(output.stdout.is_empty(), "{}", stdout(&output));
+}
+
+#[test]
 fn a_broken_list_silences_the_hook() {
     let data = tempfile::tempdir().unwrap();
     let project = project_with_wiki(data.path());

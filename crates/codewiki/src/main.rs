@@ -174,10 +174,15 @@ enum AgentsAction {
 /// Run `codewiki agents`. A list that cannot be read is reported, never
 /// overwritten, and every action then fails.
 fn agents(action: AgentsAction, json: bool) -> ExitCode {
-    use cw_core::agents_off::{self, Added, Removed};
+    use cw_core::agents_off::{self, Added, Block, Removed};
     let data = cw_core::paths::data_dir();
     let broken = |_: cw_core::Error| {
         eprintln!("{}", agents_off::unreadable(&agents_off::file(&data)));
+        ExitCode::FAILURE
+    };
+    // The list was read; writing it failed.
+    let unwritten = |e: cw_core::Error| {
+        eprintln!("could not change the list of folders kept from coding agents: {e}");
         ExitCode::FAILURE
     };
     let here = || std::env::current_dir().unwrap_or_default();
@@ -185,6 +190,13 @@ fn agents(action: AgentsAction, json: bool) -> ExitCode {
         Some(folder) => agents_off::normalize(&folder, &here()),
         None => agents_off::normalize(&here(), &here()),
     };
+    // A change reads the list first, so that only a list that cannot be read
+    // is reported as one.
+    if matches!(action, AgentsAction::Off { .. } | AgentsAction::On { .. })
+        && let Err(e) = agents_off::load(&data)
+    {
+        return broken(e);
+    }
     match action {
         AgentsAction::Off { folder } => match agents_off::add(&data, &target(folder)) {
             Ok(Added::Added(folder)) => {
@@ -195,10 +207,16 @@ fn agents(action: AgentsAction, json: bool) -> ExitCode {
                 println!("already kept from coding agents by {}", entry.display());
                 ExitCode::SUCCESS
             }
-            Err(e) => broken(e),
+            Err(e) => unwritten(e),
         },
         AgentsAction::On { folder } => match agents_off::remove(&data, &target(folder.clone())) {
             Ok(Removed::Removed(entry)) => {
+                // A parent entry may cover the folder too.
+                let rest = agents_off::load(&data).unwrap_or_default();
+                if let Some(parent) = agents_off::covering(&rest, &target(folder)) {
+                    println!("still kept from coding agents by {}", parent.display());
+                    return ExitCode::FAILURE;
+                }
                 println!("coding agents allowed again: {}", entry.display());
                 ExitCode::SUCCESS
             }
@@ -213,7 +231,7 @@ fn agents(action: AgentsAction, json: bool) -> ExitCode {
                 );
                 ExitCode::FAILURE
             }
-            Err(e) => broken(e),
+            Err(e) => unwritten(e),
         },
         AgentsAction::List => match agents_off::load(&data) {
             Ok(entries) => {
@@ -232,13 +250,27 @@ fn agents(action: AgentsAction, json: bool) -> ExitCode {
         },
         AgentsAction::Status { folder } => match agents_off::load(&data) {
             Ok(entries) => {
-                let entry = agents_off::covering(&entries, &target(folder));
+                let block = agents_off::blocking(&entries, &target(folder));
                 if json {
-                    println!("{}", serde_json::json!({ "covered_by": entry }));
-                } else if let Some(entry) = entry {
-                    println!("kept from coding agents by {}", entry.display());
+                    let (covered_by, contains) = match &block {
+                        Some(Block::Covered(entry)) => (Some(entry), None),
+                        Some(Block::Contains(entry)) => (None, Some(entry)),
+                        None => (None, None),
+                    };
+                    println!(
+                        "{}",
+                        serde_json::json!({ "covered_by": covered_by, "contains": contains })
+                    );
                 } else {
-                    println!("open to coding agents");
+                    match &block {
+                        Some(Block::Covered(entry)) => {
+                            println!("kept from coding agents by {}", entry.display());
+                        }
+                        Some(Block::Contains(entry)) => {
+                            println!("kept from coding agents: contains {}", entry.display());
+                        }
+                        None => println!("open to coding agents"),
+                    }
                 }
                 ExitCode::SUCCESS
             }
@@ -270,13 +302,14 @@ fn session_start_hook(repo: &std::path::Path) {
         return;
     };
     let root = cw_wiki::briefing::vault_root(&start).unwrap_or_else(|| start.clone());
-    // A folder closed to coding agents gets no briefing, and neither does any
-    // run where the list cannot be read: when in doubt, say nothing.
+    // A folder closed to coding agents gets no briefing, nor one that holds
+    // a closed folder, and neither does any run where the list cannot be
+    // read: when in doubt, say nothing.
     match cw_core::agents_off::load(&cw_core::paths::data_dir()) {
         Err(_) => return,
         Ok(entries) => {
-            if cw_core::agents_off::covering(&entries, &start).is_some()
-                || cw_core::agents_off::covering(&entries, &root).is_some()
+            if cw_core::agents_off::blocking(&entries, &start).is_some()
+                || cw_core::agents_off::blocking(&entries, &root).is_some()
             {
                 return;
             }

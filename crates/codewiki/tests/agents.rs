@@ -123,6 +123,75 @@ fn on_a_child_of_a_parent_entry_exits_1() {
 }
 
 #[test]
+fn status_says_when_a_folder_holds_a_listed_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let child = dir.path().join("child");
+    std::fs::create_dir(&child).unwrap();
+    codewiki(&child, data.path(), &["agents", "off"]);
+    let entry = stdout(&codewiki(&child, data.path(), &["agents", "list"]));
+    let entry = entry.trim_end();
+
+    let status = codewiki(dir.path(), data.path(), &["agents", "status"]);
+    assert_eq!(status.status.code(), Some(0));
+    assert_eq!(
+        stdout(&status).trim_end(),
+        format!("kept from coding agents: contains {entry}")
+    );
+    let json = codewiki(dir.path(), data.path(), &["--json", "agents", "status"]);
+    let value: serde_json::Value = serde_json::from_str(&stdout(&json)).unwrap();
+    assert!(value["covered_by"].is_null(), "{value}");
+    assert_eq!(value["contains"], entry);
+
+    // A sibling with a common prefix holds nothing.
+    let sibling = dir.path().join("chil");
+    std::fs::create_dir(&sibling).unwrap();
+    let open = codewiki(&sibling, data.path(), &["agents", "status"]);
+    assert_eq!(stdout(&open).trim_end(), "open to coding agents");
+}
+
+#[test]
+fn on_says_when_a_parent_entry_still_covers_the_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    let child = dir.path().join("child");
+    std::fs::create_dir(&child).unwrap();
+    // The child first: adding the parent then keeps both entries.
+    codewiki(&child, data.path(), &["agents", "off"]);
+    codewiki(dir.path(), data.path(), &["agents", "off"]);
+    let list = stdout(&codewiki(dir.path(), data.path(), &["agents", "list"]));
+    let parent = list.lines().nth(1).expect("two entries").to_string();
+
+    let on = codewiki(&child, data.path(), &["agents", "on"]);
+    assert_eq!(on.status.code(), Some(1));
+    assert_eq!(
+        stdout(&on).trim_end(),
+        format!("still kept from coding agents by {parent}")
+    );
+    // The child's own entry is gone; the parent's stays.
+    let list = stdout(&codewiki(dir.path(), data.path(), &["agents", "list"]));
+    assert_eq!(list.trim_end(), parent);
+}
+
+#[test]
+fn a_failed_write_says_what_failed() {
+    let dir = tempfile::tempdir().unwrap();
+    let data = tempfile::tempdir().unwrap();
+    // The draft the list is written through cannot be made: a folder is in
+    // its place.
+    std::fs::create_dir(data.path().join("agents-off.json.tmp")).unwrap();
+    let off = codewiki(dir.path(), data.path(), &["agents", "off"]);
+    assert_eq!(off.status.code(), Some(1));
+    let text = stderr(&off);
+    assert!(!text.contains("cannot be read"), "{text}");
+    assert!(
+        text.contains("could not change the list of folders kept from coding agents")
+            && text.contains("agents-off.json.tmp"),
+        "{text}"
+    );
+}
+
+#[test]
 fn list_is_empty_at_first() {
     let dir = tempfile::tempdir().unwrap();
     let data = tempfile::tempdir().unwrap();

@@ -8,16 +8,29 @@ name: Release
 #
 # A pull request that changes the packaging, and a manual run, build the same
 # package as a dry run: it is kept as a workflow artifact and nothing is
-# published.
+# published. So does a push to main that changes the packaging.
+#
+# The package holds the zip (for self-update and installing by hand) and the
+# setup program (the file to download), each with a .sha256 file.
 
 on:
   push:
+    # GitHub does not evaluate path filters for pushes of tags, so a tag
+    # always runs.
     tags: ["v*"]
+    branches: [main]
+    paths:
+      - scripts/package.ps1
+      - scripts/install.ps1
+      - scripts/uninstall.ps1
+      - scripts/setup/**
+      - .github/workflows/release.yml
   pull_request:
     paths:
       - scripts/package.ps1
       - scripts/install.ps1
       - scripts/uninstall.ps1
+      - scripts/setup/**
       - .github/workflows/release.yml
   workflow_dispatch:
 
@@ -58,6 +71,7 @@ jobs:
           }
           "version=$version" >> $env:GITHUB_OUTPUT
           "zip=dist/CodeWiki-$version-windows-x64.zip" >> $env:GITHUB_OUTPUT
+          "setup=dist/CodeWiki-$version-windows-x64-setup.exe" >> $env:GITHUB_OUTPUT
 
       - name: Build and package
         shell: pwsh
@@ -66,17 +80,27 @@ jobs:
           # error reports on. A repository without the variable builds
           # programs that never report.
           CODEWIKI_SENTRY_DSN: ${{ vars.SENTRY_DSN }}
-        run: ./scripts/package.ps1
+          SETUP: ${{ steps.version.outputs.setup }}
+        run: |
+          ./scripts/package.ps1
+          # package.ps1 skips the setup program when it finds no Inno Setup
+          # compiler. A release must not go out without it.
+          $iscc = Get-Command ISCC.exe -ErrorAction SilentlyContinue
+          if ($iscc) { "Inno Setup compiler: $($iscc.Source)" }
+          if (-not (Test-Path $env:SETUP)) { throw "the setup program was not built: $env:SETUP" }
 
-      - name: Write the checksum
+      - name: Write the checksums
         shell: pwsh
         env:
           ZIP: ${{ steps.version.outputs.zip }}
+          SETUP: ${{ steps.version.outputs.setup }}
         run: |
-          $hash = (Get-FileHash -Algorithm SHA256 $env:ZIP).Hash.ToLowerInvariant()
-          # LF, not CRLF: `sha256sum -c` reads a carriage return as part of the name.
-          "$hash  $(Split-Path -Leaf $env:ZIP)`n" | Set-Content -NoNewline -Encoding ascii "$env:ZIP.sha256"
-          Get-Content "$env:ZIP.sha256"
+          foreach ($file in $env:ZIP, $env:SETUP) {
+            $hash = (Get-FileHash -Algorithm SHA256 $file).Hash.ToLowerInvariant()
+            # LF, not CRLF: `sha256sum -c` reads a carriage return as part of the name.
+            "$hash  $(Split-Path -Leaf $file)`n" | Set-Content -NoNewline -Encoding ascii "$file.sha256"
+            Get-Content "$file.sha256"
+          }
 
       - uses: actions/upload-artifact@v7
         with:
@@ -84,6 +108,8 @@ jobs:
           path: |
             ${{ steps.version.outputs.zip }}
             ${{ steps.version.outputs.zip }}.sha256
+            ${{ steps.version.outputs.setup }}
+            ${{ steps.version.outputs.setup }}.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -94,12 +120,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           ZIP: ${{ steps.version.outputs.zip }}
+          SETUP: ${{ steps.version.outputs.setup }}
         run: |
           $flags = @()
           # A version with a pre-release part (0.2.0-rc.1) is not the latest release.
           if ($env:VERSION.Contains('-')) { $flags += '--prerelease' }
-          gh release create $env:GITHUB_REF_NAME $env:ZIP "$env:ZIP.sha256" `
-            --title "CodeWiki $env:VERSION" --generate-notes --verify-tag @flags
+          $notes = "**Download ``CodeWiki-$env:VERSION-windows-x64-setup.exe``** and double-click it. The zip is for self-update and for installing by hand."
+          gh release create $env:GITHUB_REF_NAME $env:SETUP "$env:SETUP.sha256" $env:ZIP "$env:ZIP.sha256" `
+            --title "CodeWiki $env:VERSION" --notes $notes --generate-notes --verify-tag @flags
 
       # A secret cannot be named in a step's condition, and the token must not
       # reach the build above, whose build scripts see its environment.

@@ -165,7 +165,7 @@ fn codex_skills_are_named_after_their_folders() {
         names.push(folder);
     }
     names.sort();
-    assert_eq!(names, ["using-codewiki", "wiki-note-style"]);
+    assert_eq!(names, ["using-codewiki", "wiki-note-style", "write-notes"]);
 }
 
 /// Whether notes of `kind` follow a section template. A new kind does not
@@ -258,9 +258,20 @@ fn claude_skills_are_named_after_their_folders() {
 }
 
 #[test]
-fn write_notes_skill_follows_the_tools_and_the_limits() {
+fn write_notes_skills_follow_the_tools_and_the_limits() {
+    for (plugin, model) in [(CLAUDE, "claude-code"), (CODEX, "codex")] {
+        write_notes_skill_follows_the_tools_and_the_limits(plugin, model);
+    }
+    // Both plugins hand an agent the same pictures reference.
+    assert_eq!(
+        read(&format!("{CLAUDE}/skills/write-notes/pictures.md")),
+        read(&format!("{CODEX}/skills/write-notes/pictures.md"))
+    );
+}
+
+fn write_notes_skill_follows_the_tools_and_the_limits(plugin: &str, model: &str) {
     use NoteKind::*;
-    let skill = read(&format!("{CLAUDE}/skills/write-notes/SKILL.md"));
+    let skill = read(&format!("{plugin}/skills/write-notes/SKILL.md"));
     // Every tool it tells an agent to call is one the bridge has.
     let bridge = read("crates/codewiki-mcp/src/main.rs");
     for tool in [
@@ -276,7 +287,7 @@ fn write_notes_skill_follows_the_tools_and_the_limits() {
         );
     }
     // The arguments of those tools that the skill names.
-    for argument in ["folder", "files", "limit", "base", "read", "model"] {
+    for argument in ["folder", "files", "limit", "claim", "base", "read", "model"] {
         assert!(skill.contains(&format!("`{argument}`")), "{argument}");
         assert!(
             bridge.contains(&format!("    {argument}: ")),
@@ -307,13 +318,18 @@ fn write_notes_skill_follows_the_tools_and_the_limits() {
     // The numbers it states are the ones the backend holds an agent to.
     use cw_wiki::explanations::{DEFAULT_LIMIT, MAX_LIMIT, MAX_SECTION_WORDS};
     assert!(skill.contains(&format!("At most {MAX_SECTION_WORDS} words in a section")));
+    assert!(skill.contains("`claim` set to `true`"), "{plugin}");
+    assert!(
+        skill.contains(&format!("`model` set to `{model}`")),
+        "{plugin}"
+    );
     assert!(skill.contains(&format!("{DEFAULT_LIMIT} unless a number is given")));
     assert!(skill.contains(&format!("Never more than {MAX_LIMIT} in one run")));
     // It sends the agent to the reference beside it, which exists.
     assert!(skill.contains("`pictures.md`"));
     assert!(
         repo()
-            .join(CLAUDE)
+            .join(plugin)
             .join("skills/write-notes/pictures.md")
             .is_file()
     );
@@ -340,6 +356,8 @@ fn skills_stop_at_the_agents_refusal() {
     }
     for skill in [
         format!("{CLAUDE}/skills/write-notes/SKILL.md"),
+        format!("{CLAUDE}/agents/note-writer.md"),
+        format!("{CODEX}/skills/write-notes/SKILL.md"),
         format!("{CODEX}/skills/using-codewiki/SKILL.md"),
         format!("{CODEX}/skills/wiki-note-style/SKILL.md"),
     ] {
@@ -394,4 +412,21 @@ fn picture_reference_follows_the_library() {
             "{example}"
         );
     }
+}
+
+#[test]
+fn note_writer_agent_claims_and_names_its_model() {
+    let agent = read(&format!("{CLAUDE}/agents/note-writer.md"));
+    assert_eq!(frontmatter(&agent, "name").as_deref(), Some("note-writer"));
+    assert_eq!(frontmatter(&agent, "model").as_deref(), Some("sonnet"));
+    assert_eq!(frontmatter(&agent, "background").as_deref(), Some("true"));
+    let tools = frontmatter(&agent, "tools").expect("tools");
+    assert!(
+        tools.contains("mcp__plugin_codewiki_codewiki__*"),
+        "{tools}"
+    );
+    assert!(tools.contains("Skill"), "{tools}");
+    assert!(agent.contains("codewiki:write-notes"));
+    assert!(agent.contains("`claim: true`"));
+    assert!(agent.contains("`model: claude-code`"));
 }

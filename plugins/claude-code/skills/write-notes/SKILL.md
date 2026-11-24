@@ -33,12 +33,12 @@ The request: `$ARGUMENTS`
 | any other text | That one note, by name or by path. Skip the list and get its brief. |
 | a number at the end | The most notes to write. Never more than 20 in one run. |
 
-**Starting without being asked.** After finishing a code change, write the notes about the changed files, at most 3, and tell the user in one line that the notes were written. Do not start because the session briefing says notes wait: that line states a count. Writing many notes spends the user's usage allowance, so it needs their request.
+**Starting without being asked.** After finishing a code change, write the notes about the changed files, at most 3, and tell the user in one line that the notes were written. When the session briefing says auto explaining is on, follow it: in Claude Code it launches the `codewiki:note-writer` agent. Otherwise a count of waiting notes is not a request: writing many notes spends the user's usage allowance, so it needs their request.
 
 ## Procedure
 
 1. Call `sync_wiki` once. A note explained against old facts is refused.
-2. Call `list_waiting_notes` with the `folder`, `files` and `limit` of the request. Skip this for a single named note.
+2. Call `list_waiting_notes` with the `folder`, `files` and `limit` of the request, and `claim` set to `true`. The notes listed are kept for you for 30 minutes and other agents get other notes; submitting a note frees it. Skip this for a single named note.
 3. For each note, in the order listed:
    1. Call `get_note_brief`. If it starts with `STOP`, call `sync_wiki` and get the brief again.
    2. Read every file the brief lists, whole. Read further files when the answer is not in them: a caller, a type, a test. Keep the paths of those further files.

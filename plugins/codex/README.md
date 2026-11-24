@@ -28,7 +28,7 @@ Without that installation, add the repository in its place: `codex plugin market
 
 Then start a new Codex session in the repository.
 
-**Trust the hook once.** Codex skips a hook that comes with a plugin until you review and trust it. Run `/hooks` in Codex, and trust the `SessionStart` hook that runs `codewiki hook session-start --agent codex`. Do it again after an update changes the hook; this update did, because the command now ends in `--agent codex`, so trust it again in `/hooks`.
+**Trust the hook once.** Codex skips a hook that comes with a plugin until you review and trust it. Run `/hooks` in Codex, and trust the `SessionStart` hook that runs `codewiki hook session-start --agent codex`. Do it again after an update changes the hook. A hook you trusted before its command ended in `--agent codex` needs your trust again.
 
 ## Update or remove
 

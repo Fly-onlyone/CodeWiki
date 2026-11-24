@@ -1077,6 +1077,7 @@ impl AppView {
                     auto_update: update::auto_check(),
                     autostart: crate::autostart::enabled(),
                     open_last: crate::startup::open_last(),
+                    backdrop: crate::backdrop::shown(cx),
                     log_level: level,
                     log_level_locked: cw_core::logs::level_in_env().is_some(),
                     logs_dir: &logs_dir,

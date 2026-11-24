@@ -10,6 +10,7 @@
 
 mod autostart;
 mod backdrop;
+mod constellation;
 mod contrast;
 mod diagram_view;
 mod diagrams;
@@ -113,6 +114,8 @@ const CLEANUP_RETRIES: usize = 3;
 const CLEANUP_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
 /// How often the app asks the backend what it is doing, for the tray icon.
 const STATUS_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+/// The busy line while this app syncs a wiki.
+const SYNCING: &str = "Syncing wiki";
 /// The same, of a backend too old to say: it will not learn to.
 const OLD_BACKEND_PAUSE: std::time::Duration = std::time::Duration::from_secs(60);
 /// How often a running app looks whether the daily check for a newer release
@@ -332,6 +335,10 @@ struct AppView {
     page_slot: Rc<doc_view::PageSlot>,
     /// Whether this frame left a place for the page.
     page_placed: std::cell::Cell<bool>,
+    /// The page's clear margins, which the shell draws its sky in.
+    margins: Rc<backdrop::Margins>,
+    /// Whether this frame gave the page clear margins.
+    margins_placed: std::cell::Cell<bool>,
     /// Markdown of the current page, ready for the viewer.
     rendered: String,
     /// Diagrams of the current page, addressed by index from `rendered`.
@@ -509,6 +516,8 @@ impl AppView {
             doc_page,
             page_slot,
             page_placed: std::cell::Cell::new(false),
+            margins: Rc::default(),
+            margins_placed: std::cell::Cell::new(false),
             rendered: String::new(),
             diagrams: Vec::new(),
             diagram_store: diagrams::Diagrams::default(),
@@ -648,7 +657,10 @@ impl AppView {
                     Some(Ok(None)) => OLD_BACKEND_PAUSE,
                     _ => STATUS_PAUSE,
                 };
-                if this.update(cx, |this, _| this.take_status(answer)).is_err() {
+                if this
+                    .update(cx, |this, cx| this.take_status(answer, cx))
+                    .is_err()
+                {
                     return;
                 }
                 executor.timer(pause).await;
@@ -658,8 +670,13 @@ impl AppView {
     }
 
     /// Keep what the backend answered to `GET /v1/status`; `None` when it
-    /// was not asked. The window shows none of it, so nothing is redrawn.
-    fn take_status(&mut self, answer: Option<Result<Option<Value>, String>>) {
+    /// was not asked. The window shows none of it, so nothing is redrawn;
+    /// only the backdrop hears whether a wiki is being written.
+    fn take_status(
+        &mut self,
+        answer: Option<Result<Option<Value>, String>>,
+        cx: &mut Context<Self>,
+    ) {
         match answer {
             Some(Ok(Some(body))) => {
                 self.backend_status = status::parse(&body);
@@ -686,6 +703,16 @@ impl AppView {
             }
         }
         self.refresh_tray();
+        self.tell_backdrop(cx);
+    }
+
+    /// Tell the backdrop whether a wiki is being written: by this app's
+    /// sync, or by an update the backend runs for anybody, an agent's
+    /// included, as the last answer to `GET /v1/status` said.
+    fn tell_backdrop(&self, cx: &mut App) {
+        let writing =
+            self.busy.as_deref() == Some(SYNCING) || !self.backend_status.updating.is_empty();
+        backdrop::set_writing(writing, cx);
     }
 
     /// Carry out what reaches the app from outside GPUI, one event at a
@@ -878,6 +905,7 @@ impl AppView {
         };
         self.busy = Some(label.to_string());
         self.error = None;
+        self.tell_backdrop(cx);
         cx.notify();
         let label = label.to_string();
         cx.spawn(async move |this, cx| {
@@ -887,6 +915,7 @@ impl AppView {
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.busy = None;
+                this.tell_backdrop(cx);
                 match result {
                     Ok(value) => done(this, value, cx),
                     Err(message) => {
@@ -2349,7 +2378,7 @@ impl AppView {
             return;
         };
         self.run(
-            "Syncing wiki",
+            SYNCING,
             cx,
             move |b| b.post(&format!("/v1/repos/{}/update", repo.id), &json!({})),
             |this, report, cx| {
@@ -2576,6 +2605,11 @@ impl AppView {
                     "open the last repository at start: {}",
                     if *on { "on" } else { "off" }
                 );
+                cx.notify();
+            }
+            Action::Backdrop(on) => {
+                backdrop::set_shown(*on, cx);
+                log::info!("background graph: {}", if *on { "on" } else { "off" });
                 cx.notify();
             }
             Action::ErrorReports(on) => {
@@ -3499,20 +3533,91 @@ impl AppView {
 
     fn viewer(&self, cx: &mut Context<Self>) -> Div {
         let page = self.page_content(cx);
+        let margin = self.margin_width(cx);
+        // With clear margins the pane has no surface of its own: the bars
+        // above the page bring theirs, since their text runs into the
+        // margins, and the page lies on clear margins and a dense column.
+        let pane = self
+            .glass
+            .pane(glass::tinted_pane(cx.theme().background, cx));
+        let bar = move |bar: Div| bar.when(margin.is_some(), |bar| bar.bg(pane));
         v_flex()
             .flex_1()
             .min_w_0()
             .h_full()
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
+                this.child(bar(div().p_2().child(feedback::alert(
+                    Tone::Error,
+                    error,
+                    cx,
+                ))))
             })
             .when_some(self.proposal_actions(cx), |this, actions| {
-                this.child(actions)
+                this.child(bar(actions))
             })
             .when_some(self.agent_view_notice(cx), |this, notice| {
-                this.child(notice)
+                this.child(bar(notice))
             })
+            .child(self.on_reading_glass(page, margin, cx))
+    }
+
+    /// How wide the clear margins beside the page's reading column are, in
+    /// design units; `None` when the page gets none: the backdrop is off,
+    /// the page has no centred column (the graph, the settings, the editor),
+    /// or the pane is too narrow for them.
+    fn margin_width(&self, cx: &App) -> Option<f32> {
+        if !backdrop::shown(cx) || self.editing.is_some() {
+            return None;
+        }
+        let measure = match self.page {
+            Page::Graph | Page::Settings(_) => return None,
+            _ => reading_measure(&self.page),
+        };
+        glass::margin_width(reading::gutter(self.pane_width, measure))
+    }
+
+    /// `page` over the glass of a reading pane with clear margins `margin`
+    /// wide, which it tells the shell about, so that the sky shows in them.
+    /// Without margins, `page` alone: the pane under it has its surface.
+    fn on_reading_glass(
+        &self,
+        page: AnyElement,
+        margin: Option<f32>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(margin) = margin else {
+            return page;
+        };
+        self.margins_placed.set(true);
+        let margins = self.margins.clone();
+        // The sky shows in a margin and in its fade.
+        let clear = margin + glass::FADE;
+        let report = canvas(
+            move |bounds, _, cx| {
+                let width = px(clear).min(bounds.size.width / 2.);
+                let side = size(width, bounds.size.height);
+                let right = point(bounds.origin.x + bounds.size.width - width, bounds.origin.y);
+                margins.set(
+                    Some([Bounds::new(bounds.origin, side), Bounds::new(right, side)]),
+                    cx,
+                );
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .child(
+                glass::reading_surface(self.glass, margin, cx)
+                    .absolute()
+                    .inset_0()
+                    .child(report),
+            )
             .child(page)
+            .into_any_element()
     }
 
     /// The page itself: a note as Markdown with its illustration in it, or
@@ -3521,11 +3626,7 @@ impl AppView {
         let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
-        // Notes are prose; everything else is mostly tables and needs room.
-        let measure = match self.page {
-            Page::Note { .. } => reading::NOTE_MEASURE,
-            _ => reading::WIDE_MEASURE,
-        };
+        let measure = reading_measure(&self.page);
         let content = {
             match &self.page {
                 Page::Note { .. } => {
@@ -4257,6 +4358,7 @@ impl Render for AppView {
         // Read once so unused-field lints stay honest about what the UI shows.
         let _ = self.notes.iter().filter(|n| n.state == "stale").count();
         self.page_placed.set(false);
+        self.margins_placed.set(false);
         self.glass = glass::Levels::for_window(window, cx);
         // Components that draw their own surfaces read the levels from here.
         if cx.try_global::<glass::Levels>() != Some(&self.glass) {
@@ -4363,6 +4465,10 @@ impl Render for AppView {
         if !self.page_placed.get() {
             self.page_slot.set(None, cx);
         }
+        // Nor, without clear margins, any sky.
+        if !self.margins_placed.get() {
+            self.margins.set(None, cx);
+        }
         root
     }
 }
@@ -4459,6 +4565,15 @@ fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyEle
         .into_any_element()
 }
 
+/// The widest a line of `page` runs.
+fn reading_measure(page: &Page) -> f32 {
+    // Notes are prose; everything else is mostly tables and needs room.
+    match page {
+        Page::Note { .. } => reading::NOTE_MEASURE,
+        _ => reading::WIDE_MEASURE,
+    }
+}
+
 impl AppView {
     /// Whether the page takes the whole window, with no sidebar, toolbar,
     /// tabs or details: Home, the settings, and what shows before a
@@ -4474,16 +4589,25 @@ impl AppView {
 
     /// Everything below the title bar: sidebar, toolbar, tabs, page, details.
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // The pane's surface, unless the page lies on clear margins: then
+        // the page brings its own (`on_reading_glass`) and what is above or
+        // below it here takes this one.
+        let pane = self
+            .glass
+            .pane(glass::tinted_pane(cx.theme().background, cx));
+        let margins = self.margin_width(cx).is_some();
         if self.fills_window() {
             let column = v_flex()
                 .flex_1()
                 .min_h_0()
                 .w_full()
-                .bg(self
-                    .glass
-                    .pane(glass::tinted_pane(cx.theme().background, cx)))
+                .when(!margins, |column| column.bg(pane))
                 .when(self.busy.is_some(), |column| {
-                    column.child(feedback::linear_progress("busy", cx))
+                    column.child(
+                        div()
+                            .when(margins, |strip| strip.bg(pane))
+                            .child(feedback::linear_progress("busy", cx)),
+                    )
                 });
             if let Page::Settings(category) = self.page {
                 return column.child(self.settings_frame(category, window, cx));
@@ -4501,9 +4625,12 @@ impl AppView {
                         .child(self.page_view(cx)),
                 )
                 .when(home, |column| {
-                    column
-                        .child(glass::hairline(cx))
-                        .child(h_flex().child(self.settings_entry(cx)))
+                    column.child(
+                        v_flex()
+                            .when(margins, |foot| foot.bg(pane))
+                            .child(glass::hairline(cx))
+                            .child(h_flex().child(self.settings_entry(cx))),
+                    )
                 });
         }
         h_flex()
@@ -4547,9 +4674,7 @@ impl AppView {
                                     .flex_1()
                                     .min_w_0()
                                     .h_full()
-                                    .bg(self
-                                        .glass
-                                        .pane(glass::tinted_pane(cx.theme().background, cx)))
+                                    .when(!margins, |pane_view| pane_view.bg(pane))
                                     .child(if matches!(self.page, Page::Graph) {
                                         self.graph_view(window, cx)
                                     } else {
@@ -4606,6 +4731,7 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         motion::init(cx);
+        backdrop::init(cx);
         fonts::register(cx);
         themes::init(cx);
         // After the themes: zoom takes the theme's sizes as they are now as
@@ -4645,6 +4771,7 @@ fn main() {
                 view
             });
             let page = app.read(cx).doc_page.clone();
+            let margins = app.read(cx).margins.clone();
             // Closing the window hides it; the app stays in the tray, where
             // Quit ends it. The window is never really closed, so nothing in
             // it is lost: not the page, not unsaved edits. Without a tray
@@ -4697,13 +4824,13 @@ fn main() {
                 }
             })
             .detach();
-            // The shell draws the drifting backdrop, the app over it, and
-            // the generated page in the place the app leaves for it.
+            // The shell draws the drifting backdrop and its sky, the app over
+            // them, and the generated page in the place the app leaves for it.
             let bar = {
                 let app = app.clone();
                 Box::new(move |window: &mut Window, cx: &mut App| title_bar(&app, window, cx))
             };
-            cx.new(|cx| backdrop::Shell::new(app, bar, page, slot, window, cx))
+            cx.new(|cx| backdrop::Shell::new(app, bar, page, slot, margins, window, cx))
         })
         .expect("failed to open the main window");
         // gpui-kit paints the theme background over the whole window, which

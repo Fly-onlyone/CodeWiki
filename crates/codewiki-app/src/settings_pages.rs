@@ -95,6 +95,8 @@ pub struct Model<'a> {
     pub autostart: Option<bool>,
     /// Whether the app starts on the wiki map of the repository it opens.
     pub open_last: bool,
+    /// Whether coding agents explain waiting notes at the start of a session.
+    pub auto_explain: bool,
     /// The level of the app's log, by its name, and whether `CODEWIKI_LOG`
     /// fixes it.
     pub log_level: &'a str,
@@ -868,8 +870,23 @@ fn repositories(model: &Model) -> Vec<Block> {
         }
         blocks.push(Block::Table(table));
     }
+    blocks.push(auto_explain_card(model));
     blocks.push(agents_card(model));
     blocks
+}
+
+/// The switch that lets coding agents explain waiting notes on their own.
+fn auto_explain_card(model: &Model) -> Block {
+    card(
+        "Auto explaining",
+        vec![Block::Switch {
+            label: "Explain waiting notes at the start of a session".into(),
+            help: Some("A coding agent with the CodeWiki plugin explains up to 20 waiting notes in the background when a session starts. Folders kept from coding agents are left out.".into()),
+            on: model.auto_explain,
+            action: Action::AutoExplain(!model.auto_explain),
+            locked: None,
+        }],
+    )
 }
 
 /// The folders kept from coding agents, with what takes one off the list or
@@ -1129,6 +1146,7 @@ mod tests {
         auto_update: bool,
         autostart: Option<bool>,
         open_last: bool,
+        auto_explain: bool,
         log_level_locked: bool,
         error_reports: Reporting,
         error_reports_on: bool,
@@ -1157,6 +1175,7 @@ mod tests {
                 auto_update: true,
                 autostart: Some(false),
                 open_last: false,
+                auto_explain: true,
                 log_level_locked: false,
                 error_reports: Reporting::Switch,
                 error_reports_on: false,
@@ -1191,6 +1210,7 @@ mod tests {
                     auto_update: self.auto_update,
                     autostart: self.autostart,
                     open_last: self.open_last,
+                    auto_explain: self.auto_explain,
                     log_level: "info",
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
@@ -1276,6 +1296,28 @@ mod tests {
         let on = fixture.page(Category::Appearance);
         assert!(on.words().contains("Open the last repository: on"));
         assert!(on.actions().contains(&Action::OpenLast(false)));
+    }
+
+    #[test]
+    fn repositories_offers_the_auto_explaining_switch() {
+        let mut fixture = Fixture::new();
+        let on = fixture.page(Category::Repositories);
+        let words = on.words();
+        assert!(words.contains("Auto explaining"), "{words}");
+        assert!(
+            words.contains("Explain waiting notes at the start of a session: on"),
+            "{words}"
+        );
+        assert!(words.contains("explains up to 20 waiting notes in the background"));
+        assert!(on.actions().contains(&Action::AutoExplain(false)));
+
+        fixture.auto_explain = false;
+        let off = fixture.page(Category::Repositories);
+        assert!(
+            off.words()
+                .contains("Explain waiting notes at the start of a session: off")
+        );
+        assert!(off.actions().contains(&Action::AutoExplain(true)));
     }
 
     #[test]
@@ -1927,7 +1969,10 @@ mod tests {
         assert!(words.contains("Kept from coding agents"), "{words}");
         assert!(words.contains(AGENTS_LINE), "{words}");
         assert!(words.contains("Add folder…"), "{words}");
-        assert_eq!(doc.actions(), [Action::PickAgentsFolder]);
+        assert_eq!(
+            doc.actions(),
+            [Action::AutoExplain(false), Action::PickAgentsFolder]
+        );
     }
 
     #[test]

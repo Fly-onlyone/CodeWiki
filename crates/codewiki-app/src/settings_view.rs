@@ -91,6 +91,8 @@ pub struct State {
     agents_off: Result<Vec<KeptFolder>, String>,
     /// What the last change to that list answered, when it is worth saying.
     agents_note: Option<String>,
+    /// Whether coding agents explain waiting notes at the start of a session.
+    auto_explain: bool,
     menu: Option<OpenMenu>,
     /// Holds the focus while the list of a select is open.
     menu_focus: FocusHandle,
@@ -140,6 +142,7 @@ impl State {
             connect: None,
             agents_off: read_agents_off(),
             agents_note: None,
+            auto_explain: cw_core::auto_explain::load(&cw_core::paths::data_dir()),
             menu: None,
             menu_focus,
         };
@@ -774,6 +777,21 @@ impl AppView {
                 log::info!("opening the data folder {}", dir.display());
                 cx.open_with_system(&dir);
             }
+            Action::AutoExplain(on) => {
+                match cw_core::auto_explain::save(&cw_core::paths::data_dir(), *on) {
+                    Ok(()) => {
+                        log::info!("auto explaining is now {}", if *on { "on" } else { "off" });
+                        self.settings.auto_explain = *on;
+                        self.auto_explain_on = *on;
+                    }
+                    Err(error) => {
+                        log::warn!("auto explaining could not be saved: {error}");
+                        self.settings.error =
+                            Some("Could not save the auto explaining switch.".into());
+                    }
+                }
+                cx.notify();
+            }
             Action::KeepAgentsOut(folder) => self.keep_agents_out(folder, cx),
             Action::LetAgentsIn(folder) => self.let_agents_in(folder, cx),
             Action::PickAgentsFolder => self.pick_agents_folder(cx),
@@ -1078,6 +1096,7 @@ impl AppView {
                     auto_update: update::auto_check(),
                     autostart: crate::autostart::enabled(),
                     open_last: crate::startup::open_last(),
+                    auto_explain: self.settings.auto_explain,
                     log_level: level,
                     log_level_locked: cw_core::logs::level_in_env().is_some(),
                     logs_dir: &logs_dir,

@@ -35,6 +35,9 @@ pub enum Action {
     AutoUpdate(bool),
     /// Start the app when the user signs in to Windows, or stop doing so.
     Autostart(bool),
+    /// Let coding agents explain waiting notes by themselves at the start of a
+    /// session, or stop them.
+    AutoExplain(bool),
     /// Start the app on the wiki map of the repository it opens, or on Home.
     OpenLast(bool),
     /// Send error reports to Sentry from the next start on, or stop at once.

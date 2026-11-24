@@ -38,6 +38,7 @@ mod settings_view;
 mod standard;
 mod startup;
 mod status;
+mod suggest;
 mod themes;
 mod tray;
 mod update;
@@ -62,6 +63,7 @@ use serde_json::{Value, json};
 
 use doc::{Action, Doc};
 use markdown::NOTE_SCHEME;
+use mui::autocomplete::{Choice, Group, Listbox};
 use mui::button::{Button, IconButton};
 use mui::feedback::{self, Tone};
 use mui::list::{self, ListFolder, ListItemButton};
@@ -320,6 +322,8 @@ struct AppView {
     /// Where the app stands with updates.
     update: update::State,
     search: Entity<InputState>,
+    /// What the search field suggests while it is typed in.
+    suggestions: suggest::Suggestions,
     /// Bumped on every page change so the viewer rebuilds its state.
     page_serial: usize,
     /// The generated page. The shell draws it, in the place this view
@@ -410,9 +414,30 @@ impl AppView {
             cx.new(|cx| InputState::new(window, cx).placeholder("Search notes, symbols, files…"));
         let subscription =
             cx.subscribe_in(&search, window, |this, input, event: &InputEvent, _, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    let query = input.read(cx).value().to_string();
-                    this.run_search(query, cx);
+                let text = input.read(cx).value().to_string();
+                match event {
+                    InputEvent::Change => this.suggest(text, cx),
+                    // The highlighted suggestion, or every hit of the text.
+                    InputEvent::PressEnter { .. } => {
+                        let chosen = this.suggestions.chosen().map(|hit| hit.action.clone());
+                        this.suggestions.close();
+                        match chosen {
+                            Some(action) => this.run_action(&action, cx),
+                            None => this.run_search(text, cx),
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if this.suggestions.reopen(&text) {
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Blur => {
+                        if this.suggestions.is_open() {
+                            this.suggestions.close();
+                            cx.notify();
+                        }
+                    }
                 }
             });
         let palette_input =
@@ -479,6 +504,7 @@ impl AppView {
             error: None,
             update: update::State::NotInstalled,
             search,
+            suggestions: suggest::Suggestions::default(),
             page_serial: 0,
             doc_page,
             page_slot,
@@ -2236,6 +2262,58 @@ impl AppView {
         );
     }
 
+    /// Look up the search field's `text` once typing pauses, and list its
+    /// hits under the field. Each change replaces the lookup before it, so
+    /// only the latest text's hits are shown. The lookup is quiet: it sets no
+    /// busy line and no error, and a failed one only closes the list.
+    fn suggest(&mut self, text: String, cx: &mut Context<Self>) {
+        let query = text.trim().to_string();
+        let (Some(repo), Some(backend)) = (self.repo.clone(), self.backend.clone()) else {
+            return;
+        };
+        if query.is_empty() || self.update.installing() {
+            self.suggestions.clear();
+            cx.notify();
+            return;
+        }
+        self.suggestions.typed();
+        cx.notify();
+        self.suggestions.task = Some(cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            executor.timer(suggest::PAUSE).await;
+            let path = format!(
+                "/v1/repos/{}/search?q={}&limit={}&mode=text",
+                repo.id,
+                encode(&query),
+                suggest::LIMIT
+            );
+            let answer = executor.spawn(async move { backend.get(&path) }).await;
+            _ = this.update(cx, |this, cx| {
+                if this.search.read(cx).value().trim() != query {
+                    return;
+                }
+                match answer {
+                    Ok(hits) => this.suggestions.show(&query, &hits),
+                    Err(message) => {
+                        log::debug!("no suggestions for '{query}': {message}");
+                        this.suggestions.close();
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Open the suggestion at `index`, as the list counts its rows.
+    fn choose_suggestion(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(action) = self.suggestions.target(index).map(|hit| hit.action.clone()) else {
+            return;
+        };
+        self.suggestions.close();
+        self.run_action(&action, cx);
+        cx.notify();
+    }
+
     fn run_search(&mut self, query: String, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -2683,12 +2761,29 @@ impl AppView {
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .px_1()
-                    .child(TextField::new("search", &self.search).icon(icons::SEARCH)),
-            )
+            .child(div().flex_1().px_1().child({
+                let view = cx.entity_id();
+                self.suggestions
+                    .anchor
+                    .track(
+                        TextField::new("search", &self.search).icon(icons::SEARCH),
+                        // The open list follows the field when the
+                        // window is resized.
+                        move |_, cx| doc_view::notify_after_draw(view, cx),
+                    )
+                    .w_full()
+                    // A press on the field that already has the focus shows
+                    // its list again, as in MUI.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            let text = this.search.read(cx).value().to_string();
+                            if !this.suggestions.is_open() && this.suggestions.reopen(&text) {
+                                cx.notify();
+                            }
+                        }),
+                    )
+            }))
             .when_some(self.busy.clone(), |this, busy| {
                 this.child(
                     div()
@@ -2949,6 +3044,35 @@ impl AppView {
                 ),
         )
         .with_priority(1)
+    }
+
+    /// The search field's suggestions, under the field, while their list is
+    /// open and the palette is not.
+    fn suggestions_view(&self, cx: &mut Context<Self>) -> Option<Listbox> {
+        if !self.suggestions.is_open() || self.palette_open {
+            return None;
+        }
+        let mut listbox = Listbox::new("suggestions", self.suggestions.anchor.get()?)
+            .highlighted(self.suggestions.highlighted())
+            .empty("No results");
+        for (heading, hits) in self.suggestions.groups() {
+            let choices = hits
+                .iter()
+                .map(|hit| {
+                    let choice = Choice::new(hit.icon, hit.label.clone()).code(hit.code);
+                    if hit.detail.is_empty() {
+                        choice
+                    } else {
+                        choice.secondary(hit.detail.clone())
+                    }
+                })
+                .collect();
+            listbox = listbox.group(Group::new(*heading, choices));
+        }
+        let view = cx.entity().downgrade();
+        Some(listbox.on_select(move |index, _, cx| {
+            _ = view.update(cx, |this, cx| this.choose_suggestion(index, cx));
+        }))
     }
 
     /// The diagram viewer, drawn over everything else: a diagram of the note
@@ -4183,11 +4307,16 @@ impl Render for AppView {
                 cx.listener(|this, _: &ToggleDetails, _, cx| this.toggle_pane(Pane::Details, cx)),
             )
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(None, cx)))
-            // The palette's input would otherwise use these keys itself.
+            // The inputs of the palette and of the search field would
+            // otherwise use these keys themselves.
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                 if this.palette_open {
                     this.toggle_palette(window, cx);
                     cx.stop_propagation();
+                } else if this.suggestions.is_open() {
+                    this.suggestions.close();
+                    cx.stop_propagation();
+                    cx.notify();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveDown, _, cx| {
@@ -4197,11 +4326,19 @@ impl Render for AppView {
                         (this.palette_selected + 1).min(count.saturating_sub(1));
                     cx.stop_propagation();
                     cx.notify();
+                } else if this.suggestions.is_open() {
+                    this.suggestions.down();
+                    cx.stop_propagation();
+                    cx.notify();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
                 if this.palette_open {
                     this.palette_selected = this.palette_selected.saturating_sub(1);
+                    cx.stop_propagation();
+                    cx.notify();
+                } else if this.suggestions.is_open() {
+                    this.suggestions.up();
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -4216,6 +4353,7 @@ impl Render for AppView {
             })
             // The list of a select of the Settings page, while one is open.
             .children(self.settings_menu_view(cx))
+            .children(self.suggestions_view(cx))
             .children(diagram_viewer)
             // The place of the title bar, which the shell draws.
             .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())

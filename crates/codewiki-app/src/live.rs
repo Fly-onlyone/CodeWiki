@@ -47,17 +47,146 @@ fn file_row(path: &str) -> Row {
     Row::new(icons::FILE, path, Action::File(path.to_string())).code()
 }
 
-/// Rows that open notes, named by the note's file name.
+/// The file name of a note's vault path, without `.md`.
+fn note_stem(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.strip_suffix(".md").unwrap_or(name)
+}
+
+/// Rows that open notes, named by the note's file name. The row opens the
+/// note by its whole vault path: the backend finds a note by that or by its
+/// bare name, and a folder path without `.md` is neither.
 fn note_rows(paths: &Value) -> Vec<Row> {
     list(paths)
         .into_iter()
         .filter_map(Value::as_str)
-        .map(|path| {
-            let target = path.trim_end_matches(".md");
-            let stem = target.rsplit('/').next().unwrap_or(target);
-            Row::new(icons::NOTE, stem, Action::Note(target.to_string()))
+        .map(|path| Row::new(icons::NOTE, note_stem(path), Action::Note(path.to_string())))
+        .collect()
+}
+
+/// The kinds of search hit, in the order they are listed, with the heading
+/// over each.
+const HIT_GROUPS: [(&str, &str); 3] = [("note", "Notes"), ("symbol", "Symbols"), ("file", "Files")];
+
+/// The hits of `GET /search` that the app opens, under the heading of their
+/// kind, in the order of [`HIT_GROUPS`] and then of the backend's ranking. A
+/// kind with no hit has no group.
+pub fn hit_groups(hits: &Value) -> Vec<(&'static str, Vec<HitTarget>)> {
+    let hits = list(hits);
+    HIT_GROUPS
+        .into_iter()
+        .filter_map(|(kind, heading)| {
+            let targets: Vec<HitTarget> = hits
+                .iter()
+                .filter(|hit| hit["kind"] == kind)
+                .filter_map(|hit| hit_target(hit))
+                .collect();
+            (!targets.is_empty()).then_some((heading, targets))
         })
         .collect()
+}
+
+/// What a search hit opens, and how a list names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HitTarget {
+    pub icon: icons::Glyph,
+    pub label: String,
+    /// A line under the label: the note's text around the match, or the
+    /// symbol's qualified name. Empty when there is none.
+    pub detail: String,
+    /// The label is code: a symbol or a path.
+    pub code: bool,
+    pub action: Action,
+}
+
+/// What `hit`, one result of `GET /search`, opens; `None` for a kind of hit
+/// the app does not open.
+pub fn hit_target(hit: &Value) -> Option<HitTarget> {
+    let key = string(hit, "key");
+    let (icon, label, detail, code, action) = match string(hit, "kind") {
+        "note" => (
+            icons::NOTE,
+            hit["title"]
+                .as_str()
+                .filter(|title| !title.is_empty())
+                .unwrap_or(note_stem(key))
+                .to_string(),
+            plain_snippet(string(hit, "snippet")),
+            false,
+            Action::Note(key.to_string()),
+        ),
+        "symbol" => (
+            icons::SYMBOL,
+            key.rsplit("::").next().unwrap_or(key).to_string(),
+            key.to_string(),
+            true,
+            Action::Symbol(key.to_string()),
+        ),
+        "file" => (
+            icons::FILE,
+            key.to_string(),
+            String::new(),
+            true,
+            Action::File(key.to_string()),
+        ),
+        _ => return None,
+    };
+    Some(HitTarget {
+        icon,
+        label,
+        detail,
+        code,
+        action,
+    })
+}
+
+/// The Markdown of a note's search snippet as plain text on one line: no
+/// frontmatter, heading or quote marks, list bullets, rules, table pipes,
+/// link brackets, code ticks or `**` emphasis. A snippet is a window of the note, with its lines
+/// kept (a text match) or flattened (the opening of a note only the embedder
+/// found), so a block or link it cuts off keeps its text.
+pub fn plain_snippet(snippet: &str) -> String {
+    let mut text = snippet.trim_start();
+    if let Some(rest) = text.strip_prefix("---") {
+        // Frontmatter with its closing fence: none of it is prose.
+        text = match rest.find("---") {
+            Some(end) => &rest[end + 3..],
+            None => rest,
+        };
+    }
+    let unlinked = unlink(text);
+    let marks = |c: char| matches!(c, '#' | '>' | '-' | '*' | '+' | '|' | ':');
+    unlinked
+        .split_whitespace()
+        .filter(|word| !word.chars().all(marks))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('`', "")
+        .replace("**", "")
+}
+
+/// `text` with each `[[target]]` written as its target, and each
+/// `[[target|alias]]` as its alias.
+fn unlink(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        out.push_str(&rest[..start]);
+        let link = &rest[start + 2..];
+        match link.find("]]") {
+            Some(end) => {
+                let inner = &link[..end];
+                out.push_str(inner.rsplit('|').next().unwrap_or(inner));
+                rest = &link[end + 2..];
+            }
+            None => {
+                out.push_str(link);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A heading over rows, or nothing when there are no rows.
@@ -128,31 +257,20 @@ pub fn symbol_page(detail: &Value) -> Doc {
 /// Search results, grouped by what was found.
 pub fn search_page(query: &str, hits: &Value) -> Doc {
     let mut doc = Doc::new(format!("Search: {query}"));
-    let hits = list(hits);
-    if hits.is_empty() {
+    if list(hits).is_empty() {
         doc.push(Block::Empty("No results.".into()));
         return doc;
     }
-    for (kind, heading) in [("note", "Notes"), ("symbol", "Symbols"), ("file", "Files")] {
-        let rows = hits
-            .iter()
-            .filter(|hit| hit["kind"] == kind)
-            .map(|hit| {
-                let key = string(hit, "key");
-                match kind {
-                    "note" => {
-                        let title = hit["title"].as_str().unwrap_or(key);
-                        let target = key.trim_end_matches(".md").to_string();
-                        let row = Row::new(icons::NOTE, title, Action::Note(target));
-                        let snippet = string(hit, "snippet").replace('\n', " ");
-                        if snippet.is_empty() {
-                            row
-                        } else {
-                            row.detail(snippet)
-                        }
-                    }
-                    "symbol" => symbol_row(key, key),
-                    _ => file_row(key),
+    for (heading, targets) in hit_groups(hits) {
+        let rows = targets
+            .into_iter()
+            .map(|target| {
+                let row = Row::new(target.icon, target.label, target.action);
+                let row = if target.code { row.code() } else { row };
+                if target.detail.is_empty() {
+                    row
+                } else {
+                    row.detail(target.detail)
                 }
             })
             .collect();
@@ -1080,7 +1198,7 @@ mod tests {
         );
         let actions = page.actions();
         assert!(actions.contains(&Action::Symbol("demo::core::compute".into())));
-        assert!(actions.contains(&Action::Note("01-Core/demo/Core Module".into())));
+        assert!(actions.contains(&Action::Note("01-Core/demo/Core Module.md".into())));
         assert!(actions.contains(&Action::File("src/cli.rs".into())));
     }
 
@@ -1112,8 +1230,12 @@ mod tests {
             [
                 Action::File("src/math.rs".into()),
                 Action::Symbol("demo::run".into()),
-                Action::Note("01-Core/demo/Math Module".into())
+                Action::Note("01-Core/demo/Math Module.md".into())
             ]
+        );
+        assert!(
+            words.contains("Math Module"),
+            "a note row is named by its file name"
         );
 
         let hits = json!([
@@ -1129,12 +1251,87 @@ mod tests {
         assert_eq!(
             search.actions(),
             [
-                Action::Note("a/B".into()),
+                Action::Note("a/B.md".into()),
                 Action::Symbol("demo::run".into()),
                 Action::File("src/lib.rs".into())
             ]
         );
         assert!(search_page("q", &json!([])).words().contains("No results."));
+    }
+
+    #[test]
+    fn a_note_hit_opens_the_note_by_its_vault_path() {
+        // The backend finds a note by its whole vault path or by its bare
+        // name; a folder path without `.md` is neither.
+        let hits = json!([{"kind": "note", "key": "01-Backend/exchange/OKX REST Client.md",
+            "title": "OKX REST Client", "snippet": ""}]);
+        assert_eq!(
+            search_page("okx", &hits).actions(),
+            [Action::Note(
+                "01-Backend/exchange/OKX REST Client.md".into()
+            )]
+        );
+        let target = hit_target(&hits[0]).unwrap();
+        assert_eq!(target.label, "OKX REST Client");
+        assert_eq!(
+            target.action,
+            Action::Note("01-Backend/exchange/OKX REST Client.md".into())
+        );
+    }
+
+    #[test]
+    fn hit_targets_name_what_each_hit_opens() {
+        let symbol = hit_target(&json!({"kind": "symbol", "key": "app::okx::OKXClient"})).unwrap();
+        assert_eq!(
+            (symbol.label.as_str(), symbol.detail.as_str(), symbol.code),
+            ("OKXClient", "app::okx::OKXClient", true)
+        );
+        assert_eq!(symbol.action, Action::Symbol("app::okx::OKXClient".into()));
+        let file = hit_target(&json!({"kind": "file", "key": "src/okx.py"})).unwrap();
+        assert_eq!((file.label.as_str(), file.code), ("src/okx.py", true));
+        assert_eq!(file.action, Action::File("src/okx.py".into()));
+        let untitled = hit_target(&json!({"kind": "note", "key": "a/Plain Note.md"})).unwrap();
+        assert_eq!(untitled.label, "Plain Note");
+        assert!(hit_target(&json!({"kind": "commit", "key": "abc"})).is_none());
+    }
+
+    #[test]
+    fn a_snippet_reads_as_plain_text() {
+        assert_eq!(
+            plain_snippet(
+                "---\ntags: [integrations]\n---\n# python-okx SDK\n> Official SDK for [[OKX Exchange]] — `REST` **clients**.\n## Used for\n- Placing orders"
+            ),
+            "python-okx SDK Official SDK for OKX Exchange — REST clients. Used for Placing orders"
+        );
+        // A hit that only the embedder found carries the note's opening with
+        // its whitespace flattened.
+        assert_eq!(
+            plain_snippet(
+                "--- tags: [core, demo] --- # Math Module > Arithmetic helpers. ## Source - `src/math.rs` — module `demo::math` ---"
+            ),
+            "Math Module Arithmetic helpers. Source src/math.rs — module demo::math"
+        );
+        assert_eq!(
+            plain_snippet("see [[01-Core/Parser|the parser]] and [[Lexer"),
+            "see the parser and Lexer",
+            "an alias names a link; a link cut off by the snippet keeps its text"
+        );
+        assert_eq!(
+            plain_snippet("---\ntags: [a]"),
+            "tags: [a]",
+            "frontmatter cut off by the snippet keeps its text"
+        );
+        assert_eq!(plain_snippet(" … a **b**\n\n  c … "), "… a b c …");
+        assert_eq!(
+            plain_snippet("root. | Task | Command | |---|---| | Re"),
+            "root. Task Command Re",
+            "a table keeps its cells"
+        );
+        assert_eq!(
+            plain_snippet("calls `__init__` once"),
+            "calls __init__ once",
+            "underscores are code more often than emphasis"
+        );
     }
 
     #[test]

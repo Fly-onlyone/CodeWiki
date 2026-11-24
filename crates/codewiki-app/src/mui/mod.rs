@@ -8,6 +8,7 @@
 //! Three things GPUI cannot do shape the result: it cannot scale an element,
 //! blur what is behind one, or space letters apart.
 
+pub mod autocomplete;
 pub mod base;
 pub mod button;
 pub mod feedback;

@@ -872,6 +872,25 @@ async fn full_repository_flow() {
             .any(|x| x["key"] == "demo::math::double"),
         "{hits}"
     );
+    // Text mode matches the start of words and embeds nothing: a word typed
+    // half-way finds the symbol, another form of the word does not. (The
+    // default mode finds that form through the word-form embedder, but the
+    // embedder is one slot for the whole process, which other tests of this
+    // file change while this one runs, so that is not asserted here.)
+    let found = |hits: &Value| {
+        hits.as_array()
+            .unwrap()
+            .iter()
+            .any(|x| x["key"] == "demo::math::double")
+    };
+    let typed = h
+        .get(&format!("/v1/repos/{id}/search?q=doub&mode=text"))
+        .await;
+    assert!(found(&typed), "{typed}");
+    let other_form = h
+        .get(&format!("/v1/repos/{id}/search?q=doubling&mode=text"))
+        .await;
+    assert!(!found(&other_form), "{other_form}");
 
     let symbol = h.get(&format!("/v1/repos/{id}/symbol?name=double")).await;
     assert_eq!(symbol["symbol"]["qualified"], "demo::math::double");

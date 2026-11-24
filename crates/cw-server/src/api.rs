@@ -867,6 +867,11 @@ struct SearchQuery {
     kind: Option<String>,
     #[serde(default = "default_search_limit")]
     limit: usize,
+    /// `text` searches the words alone and sends nothing to the embedder:
+    /// fast enough to ask again at each pause in typing. Anything else, or
+    /// nothing, merges in the embedder's matches.
+    #[serde(default)]
+    mode: Option<String>,
 }
 
 fn default_search_limit() -> usize {
@@ -880,7 +885,12 @@ async fn search(
 ) -> Api<Vec<cw_index::Hit>> {
     blocking(move || {
         let index = Repo::open(&state, &id)?.index()?;
-        cw_wiki::semantic::search(&index, &q.q, q.kind.as_deref(), q.limit.min(100))
+        let (kind, limit) = (q.kind.as_deref(), q.limit.min(100));
+        if q.mode.as_deref() == Some("text") {
+            cw_wiki::semantic::search_with(&index, None, &q.q, kind, limit)
+        } else {
+            cw_wiki::semantic::search(&index, &q.q, kind, limit)
+        }
     })
     .await
 }

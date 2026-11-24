@@ -32,6 +32,9 @@ pub(crate) struct Activity {
     last_bridge_call: AtomicU64,
     updates: Mutex<Vec<RunningUpdate>>,
     next_key: AtomicU64,
+    /// Counts every change to the notes that wait: a client that sees it
+    /// move asks again.
+    notes: AtomicU64,
 }
 
 /// Marks an update as running until it is dropped, a panic included.
@@ -55,6 +58,12 @@ impl Activity {
     pub fn bridge_called(&self) {
         // Never 0, which means "never", even on a clock set to the epoch.
         self.last_bridge_call.store(now().max(1), Ordering::Relaxed);
+    }
+
+    /// Record that the notes that wait changed: a note was written, claimed,
+    /// freed or reviewed, or an update ran.
+    pub fn notes_changed(&self) {
+        self.notes.fetch_add(1, Ordering::Relaxed);
     }
 
     /// Record an update of `repo` as running, from now until the guard is
@@ -94,6 +103,7 @@ impl Activity {
             "now": now(),
             "updates": updates,
             "bridge": { "last_call": last_call },
+            "notes_rev": self.notes.load(Ordering::Relaxed),
         })
     }
 }

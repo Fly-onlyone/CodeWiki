@@ -14,6 +14,7 @@
 
 mod activity;
 mod api;
+mod claims;
 mod embed_job;
 mod repos;
 mod settings;
@@ -90,6 +91,9 @@ pub(crate) struct Inner {
     pub stop: Notify,
     /// Running updates and the last bridge call, for `GET /v1/status`.
     pub activity: activity::Activity,
+    /// Waiting notes lent to agents. Lock order: `write_lock` first, this
+    /// inside it, held briefly; nothing takes them the other way round.
+    pub claims: Mutex<claims::Claims>,
     /// The background embedding job that runs, or the last that ran.
     pub jobs: embed_job::Jobs,
     /// Updates of a wiki finished since the start. A background embedding
@@ -107,6 +111,7 @@ fn state(config: ServerConfig) -> AppState {
         settings_lock: Mutex::new(()),
         stop: Notify::new(),
         activity: activity::Activity::default(),
+        claims: Mutex::new(claims::Claims::default()),
         jobs: embed_job::Jobs::default(),
         updates: AtomicU64::new(0),
     }))

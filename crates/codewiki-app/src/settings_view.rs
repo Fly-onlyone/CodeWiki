@@ -274,6 +274,8 @@ impl AppView {
         self.settings.last = category;
         self.settings.connect = None;
         self.reload_agents_off();
+        // The switch is a file another program may change.
+        self.settings.auto_explain = cw_core::auto_explain::load(&cw_core::paths::data_dir());
         // The address of the saved backend, to see and to change.
         let saved = cw_client::saved_remote().map(|remote| remote.url);
         self.settings
@@ -302,6 +304,7 @@ impl AppView {
         }
         if category == Category::Repositories {
             self.reload_agents_off();
+            self.settings.auto_explain = cw_core::auto_explain::load(&cw_core::paths::data_dir());
         }
         self.settings.last = category;
         self.page = Page::Settings(category);

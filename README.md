@@ -120,6 +120,8 @@ A note about a package from outside the repository (an integration) says what th
 
 **When the code changes.** `codewiki update` writes the facts of an explained note anew and keeps the agent's sections and pictures as they are. The explanation was written from the files as they were, so the note is marked: its explanation may be behind. The app says so in the note's details, and such notes come first when an agent asks what waits. `/codewiki:write-notes changed` writes the notes about the files that changed. After a code change of its own, Claude writes the notes about the files it changed, at most three, without being asked.
 
+**Auto explaining.** It is on by default. When a session starts fresh (startup, resume or `/clear`), the briefing tells the agent to explain the waiting notes by itself: Claude Code starts the `codewiki:note-writer` agent in the background on Sonnet when you send your first message, and Codex uses its `write-notes` skill after your first request. It writes at most 20 notes per session, stale ones first, so it uses your allowance; a session in plan mode or in a linked git worktree is not asked, and neither is a folder you keep from coding agents. Several sessions at once get different notes: a listed note is lent to one agent for 30 minutes. Turn it off in Settings → Repositories → "Auto explaining". The toolbar shows "To explain (N)" while notes wait; it opens the Waiting notes page, which lists them. The count follows updates the app's backend runs; one run on the command line or an edit in Obsidian shows after the next change or after you reopen the repository.
+
 **What CodeWiki checks.** A submission is refused, with every fault named, when a section is not one of the agent's, holds a `#` or `##` heading or more than 300 words, links to a note that does not exist, or breaks the house style; when a picture uses a component that does not exist or is too large; or when the note or its code changed since the agent read it.
 
 **What a coding agent gets.** The MCP tool `read_note` gives an agent a note without its pictures. While How it works is only the list of calls that rules write, it is left out too: the agent reads the calls in the code it is about to edit. Once an agent explained that section, it is always included. `read_note` with `full: true` gives the whole text. In the app, "Agent view" in a note's toolbar shows the same.
@@ -203,7 +205,7 @@ For each note Claude reads its source files, writes the sections that are its ow
 1. how many notes the wiki has, and its home note, `obsidian/_HOME.md`;
 2. whether the wiki is up to date with `HEAD`. It is stale only when files outside `obsidian/` changed since the commit the wiki was written from, so committing the wiki itself does not make it stale. Without git, the line says the wiki cannot be compared;
 3. how many proposals wait for review;
-4. how many notes wait for an explanation, when any does. The line states a count; it tells Claude to write notes when you ask, or for files it changed;
+4. how many notes wait for an explanation, when any does. The line states a count. It tells Claude to write notes when you ask, or for files it changed, and, when auto explaining is on and the session is fresh, to start the note-writer;
 5. that `get_overview` and `get_context` answer from the wiki, and that Claude should call them before it explores the code by hand.
 
 In a repository with no wiki yet, the briefing is two lines: there is no wiki, and `sync_wiki` writes one.
@@ -248,8 +250,9 @@ claude plugin marketplace remove codewiki
 
 ### Codex plugin
 
-The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and two skills. It has no skill for writing notes yet: Codex reads the wiki, and the tools that write notes are there without a procedure for them.
+The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and three skills.
 
+- `write-notes` writes the explanations of waiting notes, as the Claude Code skill does. With auto explaining on, the briefing tells Codex to use it after your first request;
 - `using-codewiki` says which tool to call at each step of a change, and when to write or refresh the wiki with `sync_wiki`;
 - `wiki-note-style` holds the house style of CodeWiki's notes, for when Codex edits a note in `obsidian/` by hand.
 
@@ -262,7 +265,7 @@ codex plugin add codewiki@codewiki
 
 Without the Windows package, add the repository instead: `codex plugin marketplace add Fly-onlyone/CodeWiki`.
 
-Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in Codex once and trust the `SessionStart` hook that runs `codewiki hook session-start`.
+Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in Codex once and trust the `SessionStart` hook that runs `codewiki hook session-start --agent codex`. After an update that changed the hook, trust it again.
 
 `plugins/codex/README.md` covers updating, removing, and the same setup without the plugin. The plugin's files are checked against Codex's source and by a test; it has not yet been run in a Codex session.
 

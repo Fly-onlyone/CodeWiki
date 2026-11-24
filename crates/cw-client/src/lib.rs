@@ -6,7 +6,8 @@
 mod remote;
 
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Child, Command, Stdio};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
@@ -172,6 +173,49 @@ fn is_older(theirs: &str, ours: &str) -> bool {
 /// finishes the requests it is running.
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// The backend this process started last. While it runs and has not answered
+/// yet, a second start would only race it: `codewiki serve` takes no lock of
+/// its own, and the two would write `backend.json` in turn. The app may try
+/// twice at once, by itself and by the user's "Try again".
+static STARTED: Mutex<Option<Child>> = Mutex::new(None);
+
+fn started() -> MutexGuard<'static, Option<Child>> {
+    STARTED.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Start `codewiki serve` in the background.
+fn spawn_backend() -> Result<Child, String> {
+    let binary = codewiki_binary();
+    log::info!("starting a backend: {}", binary.display());
+    let mut serve = Command::new(&binary);
+    serve
+        .arg("serve")
+        // The backend writes `backend.log` itself, in the folder this
+        // program logs to, a relative `CODEWIKI_LOG_DIR` included.
+        .env(cw_core::logs::LOG_DIR_ENV, cw_core::logs::dir())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        // Not inherited: a pipe from here that nobody reads any more (an
+        // IDE that stopped this program, an agent host) fills up and
+        // stalls the backend. Its own log has what it reports.
+        .stderr(Stdio::null());
+    // `codewiki` is a console program. Started by the desktop app, which
+    // has no console, it would get a console window of its own: a black
+    // terminal on top of the app, and on Windows 11 the backend then waits
+    // for that terminal before it serves (147 s on a slow machine, against
+    // 0.6 s without one, in a clean-Windows test on 2026-11-13). Closing
+    // the terminal would also stop the backend.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        serve.creation_flags(CREATE_NO_WINDOW);
+    }
+    serve
+        .spawn()
+        .map_err(|e| format!("could not start the backend ({}): {e}", binary.display()))
+}
+
 /// The `codewiki` binary: beside this executable when installed together,
 /// otherwise whatever `PATH` provides.
 fn codewiki_binary() -> PathBuf {
@@ -224,6 +268,32 @@ impl Backend {
         )
     }
 
+    /// Find a backend that runs, and never start one: the one named by
+    /// `CODEWIKI_URL` or in the app's settings, or else the one on this
+    /// machine that `backend.json` names, when it answers `/v1/health`.
+    /// `Ok(None)` when nothing is named and no backend runs here.
+    pub fn find() -> Result<Option<Self>, String> {
+        Self::find_in(&cw_core::paths::data_dir(), process_env)
+    }
+
+    fn find_in(
+        data_dir: &Path,
+        env: impl Fn(&str) -> Option<String>,
+    ) -> Result<Option<Self>, String> {
+        if let Some(named) = Self::named(data_dir, env) {
+            return named.map(Some);
+        }
+        Ok(Self::running_in(data_dir).map(|(backend, _)| backend))
+    }
+
+    /// The backend that `backend.json` in `data_dir` names, with the version
+    /// it reports, when it answers.
+    fn running_in(data_dir: &Path) -> Option<(Self, String)> {
+        let (url, token) = read_backend_file(data_dir)?;
+        let version = health_version(&url)?;
+        Some((Self::new(url, token, Origin::Local), version))
+    }
+
     /// Find a backend, starting a local one if needed.
     pub fn connect() -> Result<Self, String> {
         let data_dir = cw_core::paths::data_dir();
@@ -242,13 +312,7 @@ impl Backend {
             }
             return named;
         }
-        let live_with_version = || {
-            let (url, token) = read_backend_file(&data_dir)?;
-            let version = health_version(&url)?;
-            Some((Self::new(url, token, Origin::Local), version))
-        };
-        let live = || live_with_version().map(|(backend, _)| backend);
-        if let Some((backend, version)) = live_with_version() {
+        if let Some((backend, version)) = Self::running_in(&data_dir) {
             // A backend from before an update keeps serving the old code.
             // Replace it, but never one that is newer: an older client must
             // not stop the backend a newer one started.
@@ -260,51 +324,45 @@ impl Backend {
             }
             log::info!("stopped the older backend {version} at {}", backend.url);
         }
-        // No live backend: a stale file would only mislead the wait below.
-        let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
-        let binary = codewiki_binary();
-        log::info!("starting a backend: {}", binary.display());
-        let mut serve = Command::new(&binary);
-        serve
-            .arg("serve")
-            // The backend writes `backend.log` itself, in the folder this
-            // program logs to, a relative `CODEWIKI_LOG_DIR` included.
-            .env(cw_core::logs::LOG_DIR_ENV, cw_core::logs::dir())
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            // Not inherited: a pipe from here that nobody reads any more (an
-            // IDE that stopped this program, an agent host) fills up and
-            // stalls the backend. Its own log has what it reports.
-            .stderr(Stdio::null());
-        // `codewiki` is a console program. Started by the desktop app, which
-        // has no console, it would get a console window of its own: a black
-        // terminal on top of the app, and on Windows 11 the backend then waits
-        // for that terminal before it serves (147 s on a slow machine, against
-        // 0.6 s without one, in a clean-Windows test on 2026-11-13). Closing
-        // the terminal would also stop the backend.
-        #[cfg(windows)]
+        Self::start(&data_dir)
+    }
+
+    /// Start the backend on this machine and wait until it answers. While
+    /// the one this process started last still runs, that one is waited for
+    /// instead of starting a second.
+    fn start(data_dir: &Path) -> Result<Self, String> {
+        let live = || Self::running_in(data_dir).map(|(backend, _)| backend);
         {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            serve.creation_flags(CREATE_NO_WINDOW);
+            let mut started = started();
+            let starting = started
+                .as_mut()
+                .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+            if starting {
+                log::info!("waiting for the backend this program started");
+            } else {
+                // No live backend: a stale file would only mislead the wait
+                // below. Not while one starts: the file may be its own.
+                let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
+                *started = Some(spawn_backend()?);
+            }
         }
-        let mut child = serve
-            .spawn()
-            .map_err(|e| format!("could not start the backend ({}): {e}", binary.display()))?;
         let log = cw_core::logs::path("backend");
-        let started = Instant::now();
-        while started.elapsed() < STARTUP_TIMEOUT {
+        let waited = Instant::now();
+        while waited.elapsed() < STARTUP_TIMEOUT {
             if let Some(backend) = live() {
                 log::info!(
                     "the backend at {} answered after {} ms",
                     backend.url,
-                    started.elapsed().as_millis()
+                    waited.elapsed().as_millis()
                 );
                 return Ok(backend);
             }
             // A backend that has ended will never answer; say so now rather
             // than at the end of the wait.
-            if let Ok(Some(status)) = child.try_wait() {
+            let ended = started()
+                .as_mut()
+                .and_then(|child| child.try_wait().ok().flatten());
+            if let Some(status) = ended {
                 // Another client may have started one at the same moment.
                 return live().ok_or_else(|| {
                     format!(
@@ -775,6 +833,43 @@ mod tests {
             check_remote_in(&dir, &format!("{url}/"), Some("right")).as_deref(),
             Ok("0.0.1")
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_uses_a_running_backend_and_starts_none() {
+        let dir = temp_dir("find");
+        // Nothing is named and nothing runs: not found, and nothing started.
+        assert!(matches!(Backend::find_in(&dir, no_env), Ok(None)));
+        assert!(started().is_none());
+        assert!(std::fs::read_dir(&dir).unwrap().next().is_none());
+
+        // `backend.json` names a backend that answers: that one, with its
+        // token.
+        let url = guarded_backend("right");
+        let file = serde_json::json!({ "url": url, "token": "right" });
+        std::fs::write(dir.join(BACKEND_FILE), file.to_string()).unwrap();
+        let found = Backend::find_in(&dir, no_env).unwrap().unwrap();
+        assert_eq!(found.url(), url);
+        assert_eq!(found.origin(), Origin::Local);
+        assert_eq!(found.get("/v1/repos"), Ok(serde_json::json!([])));
+
+        // A named backend wins, as in `connect`.
+        let env = |name: &str| match name {
+            "CODEWIKI_URL" => Some("http://docker:7411".to_string()),
+            "CODEWIKI_TOKEN" => Some("from-env".to_string()),
+            _ => None,
+        };
+        let named = Backend::find_in(&dir, env).unwrap().unwrap();
+        assert_eq!(named.origin(), Origin::Env);
+
+        // The file names a backend that is gone: not found, and the file is
+        // left for whoever starts the next one.
+        let file = serde_json::json!({ "url": dead_address(), "token": "t" });
+        std::fs::write(dir.join(BACKEND_FILE), file.to_string()).unwrap();
+        assert!(matches!(Backend::find_in(&dir, no_env), Ok(None)));
+        assert!(dir.join(BACKEND_FILE).exists());
+        assert!(started().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -7,7 +7,7 @@ mod guard;
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use cw_client::{Backend, encode};
 use rmcp::handler::server::tool::ToolCallContext;
@@ -197,6 +197,9 @@ struct WaitingParams {
     /// How many notes to list, 1 to 20. Defaults to 5.
     #[serde(default)]
     limit: Option<u32>,
+    /// True when you will write the listed notes now: they are kept for you for 30 minutes and other agents get other notes; submitting one frees it.
+    #[serde(default)]
+    claim: Option<bool>,
     /// Repository root path. Defaults to the directory the agent runs in.
     #[serde(default)]
     repo: Option<String>,
@@ -1418,7 +1421,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "List the wiki notes that wait for you to explain them. CodeWiki writes each note's facts from the code; what the thing is for and how it works is yours to write. Notes whose explanation may be behind the code come first, then notes never explained. Narrow the list with `folder` or `files`. Then call get_note_brief for a note."
+        description = "List the wiki notes that wait for you to explain them. CodeWiki writes each note's facts from the code; what the thing is for and how it works is yours to write. Notes whose explanation may be behind the code come first, then notes never explained. Narrow the list with `folder` or `files`. Pass `claim: true` when you will write the listed notes now: they are kept for you for 30 minutes and other agents get other notes. Then call get_note_brief for a note."
     )]
     async fn list_waiting_notes(
         &self,
@@ -1435,12 +1438,16 @@ impl Bridge {
         if let Some(limit) = p.limit {
             query.push(format!("limit={limit}"));
         }
+        let claim = p.claim == Some(true);
+        if claim {
+            query.push(format!("agent={}", encode(agent_id())));
+        }
         let queue = self
             .call(p.repo, move |b, id| {
                 b.get(&format!("/v1/repos/{id}/explanations?{}", query.join("&")))
             })
             .await?;
-        text(waiting_text(&queue))
+        text(waiting_text(&queue, claim))
     }
 
     #[tool(
@@ -1489,13 +1496,29 @@ impl Bridge {
         let outcome = self
             .call(p.repo, move |b, id| {
                 b.put(
-                    &format!("/v1/repos/{id}/explanation?path={}", encode(&note)),
+                    &format!(
+                        "/v1/repos/{id}/explanation?path={}&agent={}",
+                        encode(&note),
+                        encode(agent_id())
+                    ),
                     &body,
                 )
             })
             .await?;
         text(outcome_text(&outcome))
     }
+}
+
+/// Names this bridge process to the backend, so it can keep notes for it. Made once.
+fn agent_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{}-{nanos}", std::process::id())
+    })
 }
 
 /// How many notes wait for an agent, in words; empty when none does.
@@ -1539,14 +1562,21 @@ fn sync_text(report: &Value) -> String {
     summary
 }
 
-/// The queue of notes that wait, for an agent to read.
-fn waiting_text(queue: &Value) -> String {
+/// The queue of notes that wait, for an agent to read. `claimed` tells that
+/// the listing asked to keep the notes for this agent.
+fn waiting_text(queue: &Value, claimed: bool) -> String {
     let notes = rows(queue, "notes");
     let waiting = waiting_line(&queue["waiting"]);
     if waiting.is_empty() {
         return "No note waits for an explanation.\n".to_string();
     }
     let mut body = format!("{waiting}\n");
+    let others = queue["claimed"].as_u64().unwrap_or(0);
+    if others > 0 {
+        body.push_str(&format!(
+            "{others} more are being written by another agent.\n"
+        ));
+    }
     if notes.is_empty() {
         body.push_str("None of them fits what you asked for.\n");
         return body;
@@ -1556,6 +1586,12 @@ fn waiting_text(queue: &Value) -> String {
         queue["matching"].as_u64().unwrap_or(0),
         notes.len()
     ));
+    if claimed {
+        body.push_str(&format!(
+            "These notes are kept for you for {} minutes.\n\n",
+            cw_core::CLAIM_MINUTES
+        ));
+    }
     for (index, note) in notes.iter().enumerate() {
         let why = match field(note, "why") {
             "behind" => "behind the code",
@@ -2351,16 +2387,19 @@ mod tests {
 
     #[test]
     fn the_queue_reads_as_a_list_of_work() {
-        let body = waiting_text(&json!({
-            "waiting": { "behind": 1, "unexplained": 7 },
-            "matching": 3,
-            "notes": [
-                { "path": "01-Core/app/Tray Module.md", "why": "behind",
-                  "behind": ["src/tray.rs changed"], "sources": ["src/tray.rs"] },
-                { "path": "01-Core/app/Autostart Module.md", "why": "unexplained",
-                  "sources": ["src/autostart.rs", "src/main.rs"] },
-            ],
-        }));
+        let body = waiting_text(
+            &json!({
+                "waiting": { "behind": 1, "unexplained": 7 },
+                "matching": 3,
+                "notes": [
+                    { "path": "01-Core/app/Tray Module.md", "why": "behind",
+                      "behind": ["src/tray.rs changed"], "sources": ["src/tray.rs"] },
+                    { "path": "01-Core/app/Autostart Module.md", "why": "unexplained",
+                      "sources": ["src/autostart.rs", "src/main.rs"] },
+                ],
+            }),
+            false,
+        );
         assert!(
             body.starts_with(
                 "8 notes wait for an explanation: 1 behind the code, 7 never explained.\n3 fit what you asked for; the first 2:\n\n1. 01-Core/app/Tray Module.md  (behind the code)\n   - src/tray.rs changed\n   about: src/tray.rs\n2. 01-Core/app/Autostart Module.md  (never explained)\n   about: src/autostart.rs, src/main.rs\n"
@@ -2369,16 +2408,58 @@ mod tests {
         );
         assert!(body.contains("call get_note_brief"), "{body}");
         assert_eq!(
-            waiting_text(&json!({ "waiting": { "behind": 0, "unexplained": 0 }, "notes": [] })),
+            waiting_text(
+                &json!({ "waiting": { "behind": 0, "unexplained": 0 }, "notes": [] }),
+                false
+            ),
             "No note waits for an explanation.\n"
         );
-        let none = waiting_text(&json!({
-            "waiting": { "behind": 0, "unexplained": 2 }, "matching": 0, "notes": [],
-        }));
+        let none = waiting_text(
+            &json!({
+                "waiting": { "behind": 0, "unexplained": 2 }, "matching": 0, "notes": [],
+            }),
+            false,
+        );
         assert!(
             none.ends_with("None of them fits what you asked for.\n"),
             "{none}"
         );
+    }
+
+    #[test]
+    fn the_queue_tells_about_claimed_notes() {
+        let queue = json!({
+            "waiting": { "behind": 0, "unexplained": 4 },
+            "matching": 2,
+            "claimed": 2,
+            "notes": [
+                { "path": "01-Core/a.md", "why": "unexplained", "sources": ["a.rs"] },
+            ],
+        });
+        let plain = waiting_text(&queue, false);
+        assert!(
+            plain.contains("2 more are being written by another agent.\n"),
+            "{plain}"
+        );
+        assert!(!plain.contains("kept for you"), "{plain}");
+        let kept = waiting_text(&queue, true);
+        assert!(
+            kept.contains("These notes are kept for you for 30 minutes.\n"),
+            "{kept}"
+        );
+        let none = waiting_text(
+            &json!({ "waiting": { "behind": 0, "unexplained": 4 }, "notes": [] }),
+            false,
+        );
+        assert!(!none.contains("another agent"), "{none}");
+    }
+
+    #[test]
+    fn the_agent_id_is_made_once() {
+        let id = agent_id();
+        assert!(!id.is_empty());
+        assert!(id.starts_with(&format!("{}-", std::process::id())));
+        assert_eq!(id, agent_id());
     }
 
     #[test]

@@ -252,8 +252,16 @@ fn lock_claims(state: &AppState) -> std::sync::MutexGuard<'_, crate::claims::Cla
 /// in its tray icon. Unlike `/v1/health` it needs the token.
 async fn backend_status(State(state): State<AppState>) -> Json<Value> {
     // A claim that ran out frees its note, which the count of waiting notes
-    // shows.
-    if lock_claims(&state).expire(Instant::now()) {
+    // shows. A lister holds the claims while it reads the vault, and expires
+    // them itself; this async handler never waits for it.
+    let expired = match state.0.claims.try_lock() {
+        Ok(mut claims) => claims.expire(Instant::now()),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            poisoned.into_inner().expire(Instant::now())
+        }
+        Err(std::sync::TryLockError::WouldBlock) => false,
+    };
+    if expired {
         state.0.activity.notes_changed();
     }
     let mut report = state.0.activity.report();
@@ -780,9 +788,15 @@ async fn write_explanation(
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         let outcome = explanations::submit(&repo.root, &q.path, &body)?;
-        if matches!(outcome, explanations::Outcome::Saved { .. }) {
-            service::index_notes(&repo.root, &mut repo.index()?)?;
-        }
+        let indexed = if matches!(outcome, explanations::Outcome::Saved { .. }) {
+            repo.index()
+                .and_then(|mut index| service::index_notes(&repo.root, &mut index))
+                .map(|_| ())
+        } else {
+            Ok(())
+        };
+        // The note is written or queued whatever the index makes of it, so
+        // its claim goes and `notes_rev` moves even when indexing failed.
         if let explanations::Outcome::Saved { path, .. }
         | explanations::Outcome::Proposed { path, .. } = &outcome
         {
@@ -796,6 +810,7 @@ async fn write_explanation(
             drop(claims);
             state.0.activity.notes_changed();
         }
+        indexed?;
         Ok(outcome)
     })
     .await

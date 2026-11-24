@@ -10,7 +10,10 @@
 //! backend does not keep serving.
 //!
 //! `GET /v1/status` says what the backend is doing: the wiki updates that are
-//! running and when an agent's MCP bridge last called (`activity`).
+//! running and when an agent's MCP bridge last called (`activity`). Its
+//! `notes_rev` is a counter that moves whenever a vault or a claim on a
+//! waiting note changes, so a client knows when to list the waiting notes
+//! again.
 
 mod activity;
 mod api;

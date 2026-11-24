@@ -1864,8 +1864,11 @@ async fn a_saved_note_frees_its_claim_and_moves_notes_rev() {
     assert_eq!(outcome["outcome"], "saved", "{outcome}");
     assert!(notes_rev(&h).await > before);
 
-    // Nothing is held any more.
+    // The saved note waits no more, and no other note was held: no row is
+    // marked. The release itself is `Claims::release`'s unit test; the test
+    // below shows a claim that a submission keeps.
     let all = h.get(&format!("{list}?all=true")).await;
+    assert!(!paths(&all).contains(&path), "{all}");
     assert!(
         all["notes"]
             .as_array()
@@ -1874,4 +1877,47 @@ async fn a_saved_note_frees_its_claim_and_moves_notes_rev() {
             .all(|n| n["claimed"].is_null()),
         "{all}"
     );
+}
+
+#[tokio::test]
+async fn a_submission_with_faults_keeps_its_claim() {
+    no_model_server();
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let list = format!("/v1/repos/{id}/explanations");
+
+    let a = h
+        .get(&format!("{list}?agent=a&files=src/math.rs&limit=1"))
+        .await;
+    let path = paths(&a).remove(0);
+    let encoded = path.replace(' ', "%20");
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={encoded}"))
+        .await;
+    let outcome = h
+        .put(
+            &format!("/v1/repos/{id}/explanation?path={encoded}&agent=a"),
+            json!({
+                "base": brief["base"],
+                "sections": [{ "heading": "Items", "text": "Mine." }],
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "issues", "{outcome}");
+
+    // The note is still lent to the agent: marked in the full list, and left
+    // out for another agent.
+    let all = h.get(&format!("{list}?all=true")).await;
+    let row = all["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"] == path.as_str())
+        .unwrap_or_else(|| panic!("{path} waits: {all}"));
+    assert_eq!(row["claimed"], true, "{all}");
+    let b = h
+        .get(&format!("{list}?agent=b&files=src/math.rs&limit=1"))
+        .await;
+    assert!(!paths(&b).contains(&path), "{b}");
 }

@@ -10,6 +10,7 @@
 
 mod autostart;
 mod backdrop;
+mod connection;
 mod contrast;
 mod diagram_view;
 mod diagrams;
@@ -311,6 +312,8 @@ struct AppView {
     backend_status: status::Backend,
     /// The backend did not answer the last time it was asked.
     backend_silent: bool,
+    /// When and how to try the backend again after it was lost.
+    connection: connection::Supervisor,
     /// The toasts in the window's corner, and the notices sent to Windows.
     toasts: toasts::Toasts,
     /// The window, to tell whether it is on screen. `None` when Windows does
@@ -482,6 +485,7 @@ impl AppView {
             tray: None,
             backend_status: status::Backend::default(),
             backend_silent: false,
+            connection: connection::Supervisor::default(),
             toasts: toasts::Toasts::default(),
             hwnd: win32::hwnd(window),
             identity_set: false,
@@ -620,6 +624,8 @@ impl AppView {
 
     /// Ask the backend every few seconds what it is doing, for as long as
     /// the app runs: the tray icon says it, also while the window is hidden.
+    /// The same loop tries to reach a backend that was lost, or never
+    /// reached, again (`supervise`).
     fn start_status_poll(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let executor = cx.background_executor().clone();
@@ -638,27 +644,41 @@ impl AppView {
                     Some(Ok(None)) => OLD_BACKEND_PAUSE,
                     _ => STATUS_PAUSE,
                 };
-                if this
-                    .update(cx, |this, cx| this.take_status(answer, cx))
-                    .is_err()
-                {
+                let Ok(due) = this.update(cx, |this, cx| {
+                    this.take_status(answer, cx);
+                    this.supervise(cx)
+                }) else {
                     return;
-                }
-                executor.timer(pause).await;
+                };
+                executor
+                    .timer(due.map_or(pause, |due| due.min(pause)))
+                    .await;
             }
         })
         .detach();
     }
 
     /// Keep what the backend answered to `GET /v1/status`; `None` when it
-    /// was not asked. The window shows none of it, so nothing is redrawn.
-    // `cx` is for the notices the next tasks raise from what the backend says.
-    #[allow(unused_variables)]
+    /// was not asked. The window shows none of it, so nothing is redrawn,
+    /// unless the backend has just been lost: a banner then says so.
     fn take_status(
         &mut self,
         answer: Option<Result<Option<Value>, String>>,
         cx: &mut Context<Self>,
     ) {
+        let poll = match &answer {
+            Some(Ok(_)) => connection::Poll::Answered,
+            Some(Err(_)) => connection::Poll::Silent,
+            None => connection::Poll::NotAsked,
+        };
+        let remote = self.backend.as_ref().is_some_and(Backend::is_remote);
+        if self
+            .connection
+            .polled(poll, remote, std::time::Instant::now())
+        {
+            log::warn!("the backend stopped answering; trying to reach it again");
+            cx.notify();
+        }
         match answer {
             Some(Ok(Some(body))) => {
                 self.backend_status = status::parse(&body);
@@ -774,8 +794,6 @@ impl AppView {
     /// Tell the user something: a toast in the window's corner while the
     /// window is on screen, a Windows notification while it is hidden or
     /// minimized.
-    // The tasks that follow are the callers.
-    #[allow(dead_code)]
     fn notify_user(&mut self, notice: toasts::Notice, cx: &mut Context<Self>) {
         let on_screen = self
             .hwnd
@@ -1009,35 +1027,20 @@ impl AppView {
     }
 
     fn connect(&mut self, cx: &mut Context<Self>) {
+        let seq = self.connection.seq();
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
-                .spawn(async move {
-                    let backend = Backend::connect()?;
-                    // Register the startup folder; failure here is not fatal,
-                    // the user may have other repositories.
-                    let opened = startup::repo().and_then(|path| backend.repo_id(&path).ok());
-                    let (repos, missing) = registered_repos(&backend)?;
-                    Ok::<_, String>((backend, repos, missing, opened))
-                })
+                .spawn(async move { reach(connection::Attempt::Full, true) })
                 .await;
             _ = this.update(cx, |this, cx| {
+                // The user chose another backend since: its connect decides.
+                if !this.connection.is_current(seq) {
+                    return;
+                }
                 this.busy = None;
                 match result {
-                    Ok((backend, repos, missing, opened)) => {
-                        this.backend = Some(backend);
-                        this.take_repos(repos, missing);
-                        let first = opened
-                            .and_then(|id| this.repos.iter().find(|r| r.id == id).cloned())
-                            .or_else(|| this.newest_recent());
-                        match first {
-                            Some(repo) => this.select_repo(repo, Landing::Startup, cx),
-                            None => this.set_page(Page::Home, false),
-                        }
-                        if let Some(request) = this.pending_request.take() {
-                            this.open_request(request, cx);
-                        }
-                    }
+                    Ok(reached) => this.take_connection(reached, cx),
                     Err(message) => {
                         log::error!("the backend is not reachable: {message}");
                         this.error = Some(message);
@@ -1056,6 +1059,8 @@ impl AppView {
                             ))),
                             false,
                         );
+                        // The page says the app keeps trying.
+                        this.connection.offline(std::time::Instant::now());
                     }
                 }
                 cx.notify();
@@ -1064,12 +1069,158 @@ impl AppView {
         .detach();
     }
 
+    /// Use a backend reached at start, or after the user chose another: open
+    /// the folder the app was started on, else the repository opened last,
+    /// else Home; then what a second launch asked for meanwhile.
+    fn take_connection(&mut self, reached: Reached, cx: &mut Context<Self>) {
+        let (backend, repos, missing, opened) = reached;
+        self.backend = Some(backend);
+        self.take_repos(repos, missing);
+        let first = opened
+            .and_then(|id| self.repos.iter().find(|r| r.id == id).cloned())
+            .or_else(|| self.newest_recent());
+        match first {
+            Some(repo) => self.select_repo(repo, Landing::Startup, cx),
+            None => self.set_page(Page::Home, false),
+        }
+        if let Some(request) = self.pending_request.take() {
+            self.open_request(request, cx);
+        }
+    }
+
+    /// Make the attempt to reach the backend again that is due, if one is,
+    /// in a task of its own: a start may take half a minute, and the status
+    /// polls go on meanwhile. Returns how long until the next is due.
+    fn supervise(&mut self, cx: &mut Context<Self>) -> Option<std::time::Duration> {
+        // Not while an update is installed: it stops the backend.
+        if self.update.installing() {
+            return None;
+        }
+        let now = std::time::Instant::now();
+        if let Some((attempt, seq)) = self.connection.due(now) {
+            // Reached from the offline page, the backend is used as at start.
+            let startup = self.connection.lost() == Some(connection::Lost::Startup);
+            log::debug!("trying to reach the backend again: {attempt:?}");
+            cx.spawn(async move |this, cx| {
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { reach(attempt, startup) })
+                    .await;
+                _ = this.update(cx, |this, cx| this.take_attempt(seq, result, cx));
+            })
+            .detach();
+        }
+        self.connection.until_due(now)
+    }
+
+    /// Take what attempt `seq` to reach the backend again found. A result
+    /// the user overtook, by choosing another backend or pressing "Try
+    /// again", is dropped.
+    fn take_attempt(&mut self, seq: u64, result: Result<Reached, String>, cx: &mut Context<Self>) {
+        let reached = match result {
+            Ok(reached) => reached,
+            Err(message) => {
+                if self.connection.failed(seq, std::time::Instant::now()) {
+                    log::debug!("the backend is still not reachable: {message}");
+                }
+                return;
+            }
+        };
+        let Some(lost) = self.connection.succeeded(seq) else {
+            return;
+        };
+        log::info!("reached the backend at {}", reached.0.url());
+        let title = match lost {
+            connection::Lost::Startup => {
+                self.error = None;
+                self.take_connection(reached, cx);
+                "Connected"
+            }
+            connection::Lost::MidSession => {
+                let (backend, repos, missing, _) = reached;
+                self.backend = Some(backend);
+                self.backend_silent = false;
+                self.take_repos(repos, missing);
+                self.reload_repo(cx);
+                "Reconnected"
+            }
+        };
+        self.notify_user(
+            toasts::Notice {
+                key: "backend".into(),
+                tone: Tone::Success,
+                title: title.into(),
+                body: None,
+                action: None,
+            },
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// Load the open repository's notes and proposals again once the backend
+    /// is back: quietly, with no progress bar, and the page and any message
+    /// kept. A repository the backend no longer has leaves for Home.
+    fn reload_repo(&mut self, cx: &mut Context<Self>) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
+        if !self.repos.iter().any(|known| known.id == repo.id) {
+            log::warn!("the backend no longer has the repository {}", repo.name);
+            if self.can_leave() {
+                self.close_repo();
+                self.set_page(Page::Home, false);
+            }
+            return;
+        }
+        let id = repo.id.clone();
+        self.settings_request(
+            cx,
+            move |b| load_notes(b, &repo.id),
+            move |this, result, _| match result {
+                // Unless another repository was opened meanwhile.
+                Ok(_) if this.repo.as_ref().is_none_or(|open| open.id != id) => {}
+                Ok((notes, proposals)) => this.take_notes(&notes, &proposals),
+                Err(error) => log::warn!("could not load the notes again: {error}"),
+            },
+        );
+    }
+
+    /// Forget the open repository, its notes and its tabs.
+    fn close_repo(&mut self) {
+        self.repo = None;
+        self.notes.clear();
+        self.notes_loaded = false;
+        self.pending_proposals.clear();
+        self.history.clear();
+        self.tabs = vec![Tab {
+            page: Page::Message(String::new()),
+            history: Vec::new(),
+        }];
+        self.active_tab = 0;
+    }
+
+    /// The line above the page while the backend in use does not answer and
+    /// the app tries to reach it again.
+    fn reconnect_banner(&self, cx: &App) -> Option<Div> {
+        (self.connection.lost() == Some(connection::Lost::MidSession)).then(|| {
+            div().p_2().child(feedback::alert(
+                Tone::Warning,
+                "Backend not reachable, reconnecting…",
+                cx,
+            ))
+        })
+    }
+
     /// Try the backend again after it could not be reached. Does nothing
-    /// while connected or while another attempt runs.
+    /// while connected or while another connect runs; what an automatic
+    /// attempt under way finds is dropped.
     fn reconnect(&mut self, cx: &mut Context<Self>) {
         if self.backend.is_some() || self.busy.is_some() {
             return;
         }
+        // At once, and the waits of the automatic attempts start over.
+        self.connection.restart();
         self.busy = Some("Connecting".into());
         self.error = None;
         self.set_page(Page::Message(String::new()), false);
@@ -1476,26 +1627,9 @@ impl AppView {
         self.run(
             "Loading",
             cx,
-            move |b| {
-                let notes = b.get(&format!("/v1/repos/{}/notes", repo.id))?;
-                let proposals = b.get(&format!("/v1/repos/{}/proposals", repo.id))?;
-                Ok((notes, proposals))
-            },
+            move |b| load_notes(b, &repo.id),
             move |this, (notes, proposals), cx| {
-                this.notes = parse_notes(&notes);
-                this.notes_loaded = true;
-                this.pending_proposals = proposals
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter(|p| p["status"] == "pending")
-                    .filter_map(|p| {
-                        Some((
-                            p["id"].as_str()?.to_string(),
-                            p["note_path"].as_str()?.to_string(),
-                        ))
-                    })
-                    .collect();
+                this.take_notes(&notes, &proposals);
                 match landing {
                     Landing::Stay => {}
                     _ if this.notes.is_empty() => {
@@ -1507,6 +1641,25 @@ impl AppView {
                 }
             },
         );
+    }
+
+    /// Keep the open repository's notes and pending proposals, as the backend
+    /// listed them.
+    fn take_notes(&mut self, notes: &Value, proposals: &Value) {
+        self.notes = parse_notes(notes);
+        self.notes_loaded = true;
+        self.pending_proposals = proposals
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|p| p["status"] == "pending")
+            .filter_map(|p| {
+                Some((
+                    p["id"].as_str()?.to_string(),
+                    p["note_path"].as_str()?.to_string(),
+                ))
+            })
+            .collect();
     }
 
     /// Show the view the launch named (its second argument, or that of the
@@ -4152,6 +4305,36 @@ fn registered_repos(backend: &Backend) -> Result<(Vec<Repo>, Vec<Repo>), String>
     Ok(parse_repos(&backend.get("/v1/repos")?))
 }
 
+/// A backend just reached, with its registered repositories (those whose
+/// folders are there, and those whose folders are not found) and the id of
+/// the folder the app was started on.
+type Reached = (Backend, Vec<Repo>, Vec<Repo>, Option<String>);
+
+/// Reach a backend as `attempt` allows and list its repositories. With
+/// `register`, also register the folder the app was started on; failure
+/// there is not fatal, the user may have other repositories. Blocks; run it
+/// off the UI thread.
+fn reach(attempt: connection::Attempt, register: bool) -> Result<Reached, String> {
+    let backend = match attempt {
+        connection::Attempt::Full => Backend::connect()?,
+        connection::Attempt::ProbeOnly => Backend::find()?.ok_or("no backend is running")?,
+    };
+    let opened = register
+        .then(startup::repo)
+        .flatten()
+        .and_then(|path| backend.repo_id(&path).ok());
+    let (repos, missing) = registered_repos(&backend)?;
+    Ok((backend, repos, missing, opened))
+}
+
+/// The notes of repository `id` and its proposals. Blocks; run it off the
+/// UI thread.
+fn load_notes(backend: &Backend, id: &str) -> Result<(Value, Value), String> {
+    let notes = backend.get(&format!("/v1/repos/{id}/notes"))?;
+    let proposals = backend.get(&format!("/v1/repos/{id}/proposals"))?;
+    Ok((notes, proposals))
+}
+
 fn parse_notes(value: &Value) -> Vec<NoteInfo> {
     value
         .as_array()
@@ -4482,7 +4665,8 @@ impl AppView {
                     .pane(glass::tinted_pane(cx.theme().background, cx)))
                 .when(self.busy.is_some(), |column| {
                     column.child(feedback::linear_progress("busy", cx))
-                });
+                })
+                .children(self.reconnect_banner(cx));
             if let Page::Settings(category) = self.page {
                 return column.child(self.settings_frame(category, window, cx));
             }
@@ -4534,6 +4718,7 @@ impl AppView {
                         column.child(feedback::linear_progress("busy", cx))
                     })
                     .child(self.tab_bar(cx))
+                    .children(self.reconnect_banner(cx))
                     .child(
                         h_flex()
                             .flex_1()

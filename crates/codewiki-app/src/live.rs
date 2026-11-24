@@ -651,8 +651,8 @@ fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a
     ordered
 }
 
-/// The page shown when no backend could be reached: where its log is, and a
-/// button that tries again.
+/// The page shown when no backend could be reached: that the app keeps
+/// looking for one, where its log is, and a button that tries again at once.
 ///
 /// `remote` is the address of the backend saved in the settings, when that
 /// is the one that did not answer. The app does not go back to a backend on
@@ -660,6 +660,7 @@ fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a
 /// offers it.
 pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc {
     let mut doc = message_page("The backend is not reachable.");
+    doc.push(Block::Text(vec![text("CodeWiki keeps trying to connect.")]));
     if let Some(remote) = remote {
         doc.push(Block::Text(vec![
             text("The backend at "),
@@ -693,6 +694,13 @@ mod tests {
     fn the_offline_page_names_the_log_and_offers_to_try_again() {
         let page = offline_page(r"C:\data\logs\backend.log", r"C:\data\logs", None);
         assert!(page.words().contains("not reachable"));
+        // The app looks for the backend by itself; the button need not be
+        // pressed.
+        assert!(
+            page.words().contains("CodeWiki keeps trying to connect."),
+            "{}",
+            page.words()
+        );
         assert!(page.words().contains(r"C:\data\logs\backend.log"));
         assert!(page.words().contains(r"Logs folder: C:\data\logs"));
         assert_eq!(page.actions(), [Action::Reconnect, Action::OpenLogs]);

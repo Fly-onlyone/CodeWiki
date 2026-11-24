@@ -39,7 +39,7 @@ use crate::settings::{Category, FieldId, Note};
 use crate::settings_layout as layout;
 use crate::settings_pages::{self, KeptFolder, Model, Tested};
 use crate::zoom::px;
-use crate::{AppView, Page, Tab, glass, icons, motion, prefs, themes, update, zoom};
+use crate::{AppView, Page, glass, icons, motion, prefs, themes, update, zoom};
 
 /// The name the app's log level is saved under (`prefs.rs`).
 pub const LOG_LEVEL_PREF: &str = "log_level";
@@ -321,12 +321,13 @@ impl AppView {
 
     /// Run a request to the backend off the UI thread and hand over what
     /// came back, an error included. Unlike `run`, it shows no progress bar
-    /// and leaves the reporting to `done`: a setting says its own news.
-    fn settings_request(
+    /// and leaves the reporting to `done`: a setting says its own news. A
+    /// reload after the backend came back is as quiet.
+    pub(crate) fn settings_request<T: Send + 'static>(
         &mut self,
         cx: &mut Context<Self>,
-        work: impl FnOnce(&Backend) -> Result<Value, String> + Send + 'static,
-        done: impl FnOnce(&mut Self, Result<Value, String>, &mut Context<Self>) + 'static,
+        work: impl FnOnce(&Backend) -> Result<T, String> + Send + 'static,
+        done: impl FnOnce(&mut Self, Result<T, String>, &mut Context<Self>) + 'static,
     ) {
         let Some(backend) = self.backend.clone() else {
             done(
@@ -606,19 +607,12 @@ impl AppView {
     /// Forget what the app holds of the backend it used, and connect anew:
     /// to the saved backend, or to the one on this machine.
     fn switch_backend(&mut self, cx: &mut Context<Self>) {
+        // An attempt still under way must not bring back the backend left.
+        self.connection.restart();
         self.backend = None;
-        self.repo = None;
         self.repos.clear();
         self.missing.clear();
-        self.notes.clear();
-        self.notes_loaded = false;
-        self.pending_proposals.clear();
-        self.history.clear();
-        self.tabs = vec![Tab {
-            page: Page::Message(String::new()),
-            history: Vec::new(),
-        }];
-        self.active_tab = 0;
+        self.close_repo();
         self.settings.backend = None;
         self.busy = Some("Connecting".into());
         self.error = None;

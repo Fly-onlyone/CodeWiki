@@ -619,6 +619,7 @@ impl AppView {
             history: Vec::new(),
         }];
         self.active_tab = 0;
+        self.forget_waiting();
         self.settings.backend = None;
         self.busy = Some("Connecting".into());
         self.error = None;

@@ -57,6 +57,9 @@ app_icons! {
     HOTSPOTS = "local-fire-department",
     SYNC = "sync",
     REVIEW = "fact-check",
+    // The notes that wait for a coding agent to explain them. Not the
+    // agent's own icon: the agent view's button stands beside it.
+    WAITING = "pending-actions",
     THEME = "palette",
     NEW_TAB = "add",
     SEARCH = "search",
@@ -156,6 +159,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::Refactor => REFACTOR,
         Command::Workspace => WORKSPACE,
         Command::Contracts => CONTRACTS,
+        Command::Waiting => WAITING,
         Command::Settings(None) => SETTINGS,
         Command::Settings(Some(category)) => category.icon(),
         Command::Motion(_) => MOTION,

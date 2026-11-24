@@ -255,6 +255,9 @@ enum Page {
     /// repositories. Its page is built from the app's state on every frame,
     /// so going back to it never shows an old list.
     Home,
+    /// The notes that wait for a coding agent to explain them. Built on
+    /// every frame too, from `waiting`, so it follows the backend.
+    Waiting,
     /// The settings, at one of their categories. Built on every frame too,
     /// and drawn by this view itself (`settings_view.rs`).
     Settings(settings::Category),
@@ -307,6 +310,16 @@ struct AppView {
     backend_status: status::Backend,
     /// The backend did not answer the last time it was asked.
     backend_silent: bool,
+    /// The open repository's notes that wait for a coding agent: the last
+    /// answer to `GET /explanations?all=true`, `None` until one came.
+    waiting: Option<Value>,
+    /// The backend's `notes_rev` that `waiting` was last asked for.
+    waiting_seen: Option<u64>,
+    /// The lookup of `waiting` under way; a newer one replaces it.
+    waiting_task: Option<Task<()>>,
+    /// Whether auto explaining is on, read when the Waiting notes page
+    /// opens.
+    auto_explain_on: bool,
     focus: FocusHandle,
     theme_menu_open: bool,
     /// The row of the theme menu that the keys act on.
@@ -494,6 +507,10 @@ impl AppView {
             tray: None,
             backend_status: status::Backend::default(),
             backend_silent: false,
+            waiting: None,
+            waiting_seen: None,
+            waiting_task: None,
+            auto_explain_on: read_auto_explain(),
             focus: cx.focus_handle(),
             theme_menu_open: false,
             theme_menu_highlight: 0,
@@ -648,7 +665,10 @@ impl AppView {
                     Some(Ok(None)) => OLD_BACKEND_PAUSE,
                     _ => STATUS_PAUSE,
                 };
-                if this.update(cx, |this, _| this.take_status(answer)).is_err() {
+                if this
+                    .update(cx, |this, cx| this.take_status(answer, cx))
+                    .is_err()
+                {
                     return;
                 }
                 executor.timer(pause).await;
@@ -658,8 +678,14 @@ impl AppView {
     }
 
     /// Keep what the backend answered to `GET /v1/status`; `None` when it
-    /// was not asked. The window shows none of it, so nothing is redrawn.
-    fn take_status(&mut self, answer: Option<Result<Option<Value>, String>>) {
+    /// was not asked. The window shows none of it, so nothing is redrawn,
+    /// except the waiting notes: they are read again when the backend says
+    /// a vault or an agent's hold on a note changed.
+    fn take_status(
+        &mut self,
+        answer: Option<Result<Option<Value>, String>>,
+        cx: &mut Context<Self>,
+    ) {
         match answer {
             Some(Ok(Some(body))) => {
                 self.backend_status = status::parse(&body);
@@ -670,6 +696,7 @@ impl AppView {
                     updating: Vec::new(),
                     bridge: status::Bridge::OldBackend,
                     model_job: None,
+                    notes_rev: None,
                 };
                 self.backend_silent = false;
             }
@@ -685,7 +712,73 @@ impl AppView {
                 self.backend_silent = false;
             }
         }
+        // A backend that does not count, or did not answer, changes nothing:
+        // what `refresh` read stays.
+        if let Some(rev) = self.backend_status.notes_rev
+            && self.waiting_seen != Some(rev)
+        {
+            self.waiting_seen = Some(rev);
+            self.load_waiting(cx);
+        }
         self.refresh_tray();
+    }
+
+    /// Read the open repository's notes that wait for a coding agent, for
+    /// the toolbar's count and the Waiting notes page. The lookup is quiet,
+    /// as the search suggestions are: it sets no busy line and no error, and
+    /// a failed one keeps what was read before.
+    fn load_waiting(&mut self, cx: &mut Context<Self>) {
+        let (Some(repo), Some(backend)) = (self.repo.clone(), self.backend.clone()) else {
+            return;
+        };
+        if self.update.installing() {
+            return;
+        }
+        let id = repo.id;
+        self.waiting_task = Some(cx.spawn(async move |this, cx| {
+            let path = format!("/v1/repos/{id}/explanations?all=true");
+            let answer = cx
+                .background_executor()
+                .spawn(async move { backend.get(&path) })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                // Another repository was opened meanwhile.
+                if this.repo.as_ref().map(|repo| repo.id.as_str()) != Some(id.as_str()) {
+                    return;
+                }
+                match answer {
+                    Ok(queue) => {
+                        this.waiting = Some(queue);
+                        cx.notify();
+                    }
+                    Err(message) => log::debug!("the waiting notes were not read: {message}"),
+                }
+            });
+        }));
+    }
+
+    /// Forget the waiting notes of the repository that is left, so that
+    /// none of them show for the next one until its own are read.
+    fn forget_waiting(&mut self) {
+        self.waiting = None;
+        self.waiting_seen = None;
+        self.waiting_task = None;
+    }
+
+    /// Show the notes that wait for a coding agent, and read them again.
+    fn open_waiting(&mut self, cx: &mut Context<Self>) {
+        if self.repo.is_none() {
+            return;
+        }
+        if matches!(self.page, Page::Waiting) {
+            // `show_page` reads the switch when the page opens; it may have
+            // changed since.
+            self.auto_explain_on = read_auto_explain();
+        } else {
+            self.set_page(Page::Waiting, true);
+        }
+        self.load_waiting(cx);
+        cx.notify();
     }
 
     /// Carry out what reaches the app from outside GPUI, one event at a
@@ -1357,11 +1450,13 @@ impl AppView {
         }
         self.tabs.truncate(1);
         self.active_tab = 0;
+        self.forget_waiting();
         self.refresh(landing, cx);
     }
 
     /// Reload the note list and proposals, then go where `landing` says. A
-    /// repository with no wiki lands on Home, which offers to sync it.
+    /// repository with no wiki lands on Home, which offers to sync it. The
+    /// waiting notes are read beside them.
     fn refresh(&mut self, landing: Landing, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -1400,6 +1495,7 @@ impl AppView {
                 }
             },
         );
+        self.load_waiting(cx);
     }
 
     /// Show the view the launch named (its second argument, or that of the
@@ -1450,6 +1546,7 @@ impl AppView {
             "themes:" => Some(Command::Themes),
             "decisions:" => Some(Command::Decisions),
             "health:" => Some(Command::Health),
+            "waiting:" => Some(Command::Waiting),
             "dead-code:" => Some(Command::DeadCode),
             "drift:" => Some(Command::Drift),
             "tests:" => Some(Command::Tests),
@@ -1603,6 +1700,11 @@ impl AppView {
         // The diagram in the viewer belongs to the page that was left.
         self.diagram_open = false;
         self.diagram_viewer = None;
+        // The switch is a file another program may change; read it whenever
+        // the page opens, by a click, Back or a tab.
+        if matches!(self.page, Page::Waiting) {
+            self.auto_explain_on = read_auto_explain();
+        }
         self.prepare_page();
     }
 
@@ -1828,6 +1930,7 @@ impl AppView {
                 pages::contracts_page,
                 cx,
             ),
+            Command::Waiting => self.open_waiting(cx),
             Command::Ownership => {
                 self.open_report("Ownership", "history", pages::ownership_page, cx)
             }
@@ -1993,6 +2096,7 @@ impl AppView {
             | Page::Proposal { .. }
             | Page::Graph
             | Page::Home
+            | Page::Waiting
             | Page::Settings(_) => String::new(),
         };
     }
@@ -2923,6 +3027,15 @@ impl AppView {
                         }
                     })),
             )
+            .child({
+                let n = live::waiting_count(self.waiting.as_ref());
+                Button::new("to-explain")
+                    .icon(icons::WAITING)
+                    .label(format!("To explain ({n})"))
+                    .small()
+                    .disabled(n == 0)
+                    .on_click(cx.listener(|this, _, _, cx| this.open_waiting(cx)))
+            })
             .child(
                 IconButton::new("toggle-details", icons::DETAILS)
                     .tooltip(if self.details_open {
@@ -3584,6 +3697,10 @@ impl AppView {
                     return self.doc_element(&Rc::new(live::message_page(message)), cx);
                 }
                 Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
+                Page::Waiting => {
+                    let doc = live::waiting_page(self.waiting.as_ref(), self.auto_explain_on);
+                    return self.doc_element(&Rc::new(doc), cx);
+                }
                 // Each has a view of its own (`graph_view`, `settings_frame`).
                 Page::Graph | Page::Settings(_) => div().into_any_element(),
             }
@@ -4098,6 +4215,14 @@ impl AppView {
                         .child("Drag to pan, scroll to zoom, click a node to open it. Size shows how much depends on a symbol; color shows its cluster."),
                 );
             }
+            Page::Waiting => {
+                pane = pane
+                    .child(heading("LIVE VIEW"))
+                    .child(div().text_sm().child("Waiting notes"))
+                    .child(div().text_xs().text_color(muted).child(
+                        "The list changes by itself when an agent takes or explains a note, and after a sync.",
+                    ));
+            }
             Page::Message(_) | Page::Notice(_) | Page::Home | Page::Settings(_) => {}
         }
         // Home lists the repositories itself.
@@ -4146,6 +4271,12 @@ fn registered_repos(backend: &Backend) -> Result<(Vec<Repo>, Vec<Repo>), String>
     Ok(parse_repos(&backend.get("/v1/repos")?))
 }
 
+/// Whether auto explaining is on: `auto-explain.txt` in the data directory,
+/// which the app reads itself, as it does the folders kept from agents.
+fn read_auto_explain() -> bool {
+    cw_core::auto_explain::load(&cw_core::paths::data_dir())
+}
+
 fn parse_notes(value: &Value) -> Vec<NoteInfo> {
     value
         .as_array()
@@ -4192,6 +4323,7 @@ fn page_title(page: &Page) -> String {
     match page {
         Page::Message(_) | Page::Notice(_) => "CodeWiki".into(),
         Page::Home => "Home".into(),
+        Page::Waiting => "Waiting notes".into(),
         Page::Note { path, .. } => {
             let name = path.rsplit('/').next().unwrap_or(path);
             match name.trim_end_matches(".md") {

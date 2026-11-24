@@ -351,13 +351,26 @@ fn session_start_hook(repo: &std::path::Path, agent: HookAgent) {
         HookAgent::ClaudeCode => Host::ClaudeCode,
         HookAgent::Codex => Host::Codex,
     };
-    let input = hook_input().unwrap_or(serde_json::Value::Null);
-    let source = input["source"].as_str();
-    let plan = input["permission_mode"] == "plan";
     let auto_on = cw_core::auto_explain::load(&data);
-    // Only a session that would be ordered needs the git call.
+    // What the host pipes in only decides whether to order a batch: with
+    // auto explaining off, stdin is not read at all.
+    let input = if auto_on {
+        hook_input().unwrap_or(serde_json::Value::Null)
+    } else {
+        serde_json::Value::Null
+    };
+    let source = input["source"].as_str();
+    // Claude Code may leave `permission_mode` out; the order itself tells the
+    // agent to skip it in plan mode.
+    let plan = input["permission_mode"] == "plan";
+    // Only a session that would be ordered needs the git call. The session's
+    // own folder is asked first: a worktree inside the main checkout, with
+    // no vault of its own, finds the main checkout's vault as its root.
     let mut explain = explain_for(host, auto_on, source, plan, false);
-    if explain != Explain::Facts && cw_wiki::git::is_linked_worktree(&root) {
+    if explain != Explain::Facts
+        && (cw_wiki::git::is_linked_worktree(&start)
+            || (root != start && cw_wiki::git::is_linked_worktree(&root)))
+    {
         explain = Explain::Facts;
     }
     if let Ok(text) = cw_wiki::briefing::session_start(&root, explain) {

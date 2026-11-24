@@ -336,25 +336,27 @@ fn the_switch_off_gives_the_facts() {
     );
 }
 
+/// Run git in `dir` with a fixed author, and fail the test when it fails.
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Ann", "-c", "user.email=dev@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 #[test]
 fn a_linked_worktree_gets_the_facts() {
     let data = tempfile::tempdir().unwrap();
     let project = project_with_wiki(data.path());
-    let git = |dir: &Path, args: &[&str]| {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(dir)
-            .args(["-c", "user.name=Ann", "-c", "user.email=dev@example.com"])
-            .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
-            .args(args)
-            .output()
-            .expect("git is installed");
-        assert!(
-            output.status.success(),
-            "git {args:?}: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-    };
     git(project.path(), &["init", "-q", "-b", "main"]);
     git(project.path(), &["add", "-A", "-f"]);
     git(project.path(), &["commit", "-q", "-m", "first"]);
@@ -388,6 +390,70 @@ fn a_linked_worktree_gets_the_facts() {
     let text = stdout(&output);
     assert!(
         text.contains(FACTS) && !text.contains("note-writer"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_worktree_inside_the_checkout_with_no_vault_gets_the_facts() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    // The vault is not committed, so the worktree has none and the hook
+    // finds the main checkout's vault above it.
+    git(project.path(), &["init", "-q", "-b", "main"]);
+    git(project.path(), &["add", "Cargo.toml", "src"]);
+    git(project.path(), &["commit", "-q", "-m", "first"]);
+    let linked = project.path().join(".claude/worktrees/x");
+    git(
+        project.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    assert!(!linked.join("obsidian").exists());
+    // The main checkout is ordered.
+    let main = hook_with_stdin(
+        project.path(),
+        data.path(),
+        &["hook", "session-start"],
+        &start("startup"),
+    );
+    assert!(stdout(&main).contains("note-writer"), "{}", stdout(&main));
+    // The host names the worktree as the project folder and runs the hook
+    // from somewhere else.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codewiki"))
+        .current_dir(elsewhere.path())
+        .args(["hook", "session-start"])
+        .env("CODEWIKI_DATA_DIR", data.path())
+        .env("CLAUDE_PROJECT_DIR", &linked)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the codewiki binary runs");
+    let _ = child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(start("startup").as_bytes());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let text = stdout(&output);
+    // The briefing is the main checkout's wiki, without the order.
+    assert!(
+        text.contains("Its home note is `obsidian/_HOME.md`."),
+        "{text}"
+    );
+    assert!(
+        text.contains(FACTS) && !text.contains("codewiki:note-writer"),
         "{text}"
     );
 }

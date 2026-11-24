@@ -95,6 +95,8 @@ pub struct Model<'a> {
     pub autostart: Option<bool>,
     /// Whether the app starts on the wiki map of the repository it opens.
     pub open_last: bool,
+    /// Whether the backdrop and its sky of notes are drawn.
+    pub backdrop: bool,
     /// The level of the app's log, by its name, and whether `CODEWIKI_LOG`
     /// fixes it.
     pub log_level: &'a str,
@@ -168,6 +170,13 @@ fn appearance(model: &Model) -> Vec<Block> {
                     code("%APPDATA%\\CodeWiki"),
                     text(", in the same JSON format."),
                 ]),
+                Block::Switch {
+                    label: "Background graph".into(),
+                    help: Some("Notes and links behind the glass, beside the page".into()),
+                    on: model.backdrop,
+                    action: Action::Backdrop(!model.backdrop),
+                    locked: None,
+                },
             ],
         ),
         card(
@@ -1129,6 +1138,7 @@ mod tests {
         auto_update: bool,
         autostart: Option<bool>,
         open_last: bool,
+        backdrop: bool,
         log_level_locked: bool,
         error_reports: Reporting,
         error_reports_on: bool,
@@ -1157,6 +1167,7 @@ mod tests {
                 auto_update: true,
                 autostart: Some(false),
                 open_last: false,
+                backdrop: true,
                 log_level_locked: false,
                 error_reports: Reporting::Switch,
                 error_reports_on: false,
@@ -1191,6 +1202,7 @@ mod tests {
                     auto_update: self.auto_update,
                     autostart: self.autostart,
                     open_last: self.open_last,
+                    backdrop: self.backdrop,
                     log_level: "info",
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
@@ -1276,6 +1288,27 @@ mod tests {
         let on = fixture.page(Category::Appearance);
         assert!(on.words().contains("Open the last repository: on"));
         assert!(on.actions().contains(&Action::OpenLast(false)));
+    }
+
+    #[test]
+    fn the_background_graph_can_be_turned_off_and_on() {
+        let mut fixture = Fixture::new();
+        let on = fixture.page(Category::Appearance);
+        assert!(
+            on.words().contains("Background graph: on"),
+            "{}",
+            on.words()
+        );
+        assert!(
+            on.words()
+                .contains("Notes and links behind the glass, beside the page")
+        );
+        assert!(on.actions().contains(&Action::Backdrop(false)));
+
+        fixture.backdrop = false;
+        let off = fixture.page(Category::Appearance);
+        assert!(off.words().contains("Background graph: off"));
+        assert!(off.actions().contains(&Action::Backdrop(true)));
     }
 
     #[test]

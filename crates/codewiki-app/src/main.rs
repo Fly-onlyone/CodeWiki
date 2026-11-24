@@ -932,7 +932,6 @@ impl AppView {
                     }
                     Err(message) => {
                         log::error!("the backend is not reachable: {message}");
-                        this.error = Some(message);
                         let log = cw_core::logs::path("backend").display().to_string();
                         let logs = cw_core::logs::dir().display().to_string();
                         // The backend saved in the settings, when it is the
@@ -948,6 +947,8 @@ impl AppView {
                             ))),
                             false,
                         );
+                        // After the page change, which clears the error.
+                        this.error = Some(message);
                     }
                 }
                 cx.notify();
@@ -1591,6 +1592,9 @@ impl AppView {
 
     /// Rebuild the viewer for `self.page` after it changed.
     fn show_page(&mut self) {
+        // An error is about the page it was met on: the next page, Back or
+        // another tab does not carry it along.
+        self.error = None;
         self.page_serial += 1;
         self.figures = match &self.page {
             Page::Note { figures, .. } => figures.clone(),

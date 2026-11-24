@@ -39,6 +39,7 @@ mod standard;
 mod startup;
 mod status;
 mod themes;
+mod toasts;
 mod tray;
 mod update;
 mod win32;
@@ -161,6 +162,11 @@ enum Event {
     /// Ctrl+C or Ctrl+Break in the console a dev build runs in, as an IDE's
     /// Stop sends: end the app as the tray's Quit does.
     Quit,
+    /// The user clicked a Windows notification, or one of its buttons.
+    Notification {
+        tag: String,
+        action_id: Option<String>,
+    },
 }
 
 #[derive(Clone)]
@@ -305,6 +311,13 @@ struct AppView {
     backend_status: status::Backend,
     /// The backend did not answer the last time it was asked.
     backend_silent: bool,
+    /// The toasts in the window's corner, and the notices sent to Windows.
+    toasts: toasts::Toasts,
+    /// The window, to tell whether it is on screen. `None` when Windows does
+    /// not name it.
+    hwnd: Option<win32::Hwnd>,
+    /// Whether the app has told Windows its name, which a notification needs.
+    identity_set: bool,
     focus: FocusHandle,
     theme_menu_open: bool,
     /// The row of the theme menu that the keys act on.
@@ -469,6 +482,9 @@ impl AppView {
             tray: None,
             backend_status: status::Backend::default(),
             backend_silent: false,
+            toasts: toasts::Toasts::default(),
+            hwnd: win32::hwnd(window),
+            identity_set: false,
             focus: cx.focus_handle(),
             theme_menu_open: false,
             theme_menu_highlight: 0,
@@ -622,7 +638,10 @@ impl AppView {
                     Some(Ok(None)) => OLD_BACKEND_PAUSE,
                     _ => STATUS_PAUSE,
                 };
-                if this.update(cx, |this, _| this.take_status(answer)).is_err() {
+                if this
+                    .update(cx, |this, cx| this.take_status(answer, cx))
+                    .is_err()
+                {
                     return;
                 }
                 executor.timer(pause).await;
@@ -633,7 +652,13 @@ impl AppView {
 
     /// Keep what the backend answered to `GET /v1/status`; `None` when it
     /// was not asked. The window shows none of it, so nothing is redrawn.
-    fn take_status(&mut self, answer: Option<Result<Option<Value>, String>>) {
+    // `cx` is for the notices the next tasks raise from what the backend says.
+    #[allow(unused_variables)]
+    fn take_status(
+        &mut self,
+        answer: Option<Result<Option<Value>, String>>,
+        cx: &mut Context<Self>,
+    ) {
         match answer {
             Some(Ok(Some(body))) => {
                 self.backend_status = status::parse(&body);
@@ -736,7 +761,114 @@ impl AppView {
                 log::info!("asked to stop from the console");
                 self.quit(cx)
             }
+            Event::Notification { tag, action_id } => {
+                log::info!("a Windows notification was clicked: {tag}");
+                if let Some(action) = self.toasts.route(&tag, action_id.as_deref()) {
+                    self.run_action(&action, cx);
+                }
+                true
+            }
         }
+    }
+
+    /// Tell the user something: a toast in the window's corner while the
+    /// window is on screen, a Windows notification while it is hidden or
+    /// minimized.
+    // The tasks that follow are the callers.
+    #[allow(dead_code)]
+    fn notify_user(&mut self, notice: toasts::Notice, cx: &mut Context<Self>) {
+        let on_screen = self
+            .hwnd
+            .is_none_or(|hwnd| win32::is_visible(hwnd) && !win32::is_minimized(hwnd));
+        if on_screen {
+            let key = notice.key.clone();
+            let seq = self.toasts.push(notice);
+            log::info!("toast {key}");
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(mui::motion::scaled(mui::motion::TOAST_HOLD))
+                    .await;
+                this.update(cx, |this, cx| {
+                    if this.toasts.expire(seq) {
+                        cx.notify();
+                    }
+                })
+                .ok();
+            })
+            .detach();
+            cx.notify();
+        } else {
+            log::info!("Windows notification {}", notice.key);
+            self.show_system_notification(&notice, cx);
+            self.toasts.sent(&notice);
+        }
+    }
+
+    /// The toasts in the window's corner, drawn over everything, with the
+    /// ones just taken off fading out. `None` when there are none.
+    fn toasts_view(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let mut cards = Vec::new();
+        let leaving = self.toasts.leaving().iter().map(|toast| (toast, false));
+        let shown = self.toasts.shown().iter().map(|toast| (toast, true));
+        for (toast, present) in leaving.chain(shown) {
+            let id = ElementId::from(("toast", toast.seq as usize));
+            let sample = Presence::new(id.clone(), present)
+                .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+                .sample(window, cx);
+            if !sample.should_render() {
+                continue;
+            }
+            let key = toast.notice.key.clone();
+            let notice = &toast.notice;
+            let action = notice.action.as_ref().map(|(label, action)| {
+                let (action, key) = (action.clone(), key.clone());
+                let run: mui::base::OnClick =
+                    Rc::new(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.run_action(&action, cx);
+                        this.dismiss_toast(&key, cx);
+                    }));
+                (SharedString::from(label.clone()), run)
+            });
+            let close: mui::base::OnClick = Rc::new(
+                cx.listener(move |this, _: &ClickEvent, _, cx| this.dismiss_toast(&key, cx)),
+            );
+            let content = mui::snackbar::Content {
+                tone: notice.tone,
+                title: notice.title.clone().into(),
+                body: notice.body.clone().map(SharedString::from),
+                action,
+                on_close: close,
+            };
+            cards.push(
+                div()
+                    .opacity(sample.progress)
+                    .child(mui::snackbar::snackbar(id.clone(), content, cx).enter(id, Enter::TOAST))
+                    .into_any_element(),
+            );
+        }
+        // Drawn after the page, as the palette is: the shell paints the
+        // generated page over the app's own view.
+        (!cards.is_empty()).then(|| deferred(mui::snackbar::stack(cards)).into_any_element())
+    }
+
+    /// Take a toast off, and draw the window again.
+    fn dismiss_toast(&mut self, key: &str, cx: &mut Context<Self>) {
+        if self.toasts.dismiss(key) {
+            cx.notify();
+        }
+    }
+
+    /// Show a notice as a Windows notification.
+    fn show_system_notification(&mut self, notice: &toasts::Notice, cx: &mut Context<Self>) {
+        // Windows shows a notification only of an app it knows by name. The
+        // name is given here, not at start: it also decides which taskbar
+        // button the window belongs to, and this way that is touched once in
+        // the life of an installation instead of on every start.
+        if !self.identity_set {
+            cx.set_app_identity(APP_IDENTITY, "CodeWiki");
+            self.identity_set = true;
+        }
+        cx.show_system_notification(toasts::system(notice));
     }
 
     /// The window has just been hidden. The first time ever, say that the
@@ -748,18 +880,20 @@ impl AppView {
             return;
         }
         prefs::write(TRAY_HINT, "shown");
-        // Windows shows a notification only of an app it knows by name. The
-        // name is given here, not at start: it also decides which taskbar
-        // button the window belongs to, and this way that is touched once in
-        // the life of an installation instead of on every start.
-        cx.set_app_identity(APP_IDENTITY, "CodeWiki");
-        cx.show_system_notification(SystemNotification {
-            tag: TRAY_HINT.into(),
-            title: "CodeWiki is still running".into(),
-            body: "Click its icon in the notification area to open it again, right-click the icon to quit."
-                .into(),
-            actions: Vec::new(),
-        });
+        // The window was just hidden, so this one always goes to Windows.
+        self.show_system_notification(
+            &toasts::Notice {
+                key: TRAY_HINT.into(),
+                tone: Tone::Info,
+                title: "CodeWiki is still running".into(),
+                body: Some(
+                    "Click its icon in the notification area to open it again, right-click the icon to quit."
+                        .into(),
+                ),
+                action: None,
+            },
+            cx,
+        );
     }
 
     /// Carry out a row of the tray menu. Returns whether the window is to be
@@ -4164,6 +4298,7 @@ impl Render for AppView {
             .should_render()
             .then(|| self.diagram_viewer_view(diagram.progress, cx))
             .flatten();
+        let toasts = self.toasts_view(window, cx);
         let root = v_flex()
             .id("root")
             .relative()
@@ -4217,6 +4352,7 @@ impl Render for AppView {
             // The list of a select of the Settings page, while one is open.
             .children(self.settings_menu_view(cx))
             .children(diagram_viewer)
+            .children(toasts)
             // The place of the title bar, which the shell draws.
             .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())
             .child(glass::hairline(cx))
@@ -4529,11 +4665,16 @@ fn main() {
                     })
                 }
             });
-            // A click on the one notification the app shows, that it is
-            // still running, opens the window.
+            // A click on a Windows notification opens the window, and runs
+            // the notice's action if it has one.
             cx.on_system_notification_response({
                 let to_app = to_app.clone();
-                move |_, _| _ = to_app.try_send(Event::Show)
+                move |response, _| {
+                    _ = to_app.try_send(Event::Notification {
+                        tag: response.tag.to_string(),
+                        action_id: response.action_id.map(|id| id.to_string()),
+                    })
+                }
             });
             // The backend ends with the app. It finishes what it is doing
             // first (an update of the wiki, say) and then exits by itself;

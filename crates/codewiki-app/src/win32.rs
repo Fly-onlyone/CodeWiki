@@ -18,8 +18,8 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::System::Console::{CTRL_BREAK_EVENT, CTRL_C_EVENT, SetConsoleCtrlHandler};
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AllowSetForegroundWindow, CallWindowProcW, DefWindowProcW, GWLP_WNDPROC, GetSystemMetrics,
-    IsWindowVisible, SM_CXSMICON, SPI_GETWHEELSCROLLLINES, SW_HIDE, SW_SHOW, SetWindowLongPtrW,
-    ShowWindow, SystemParametersInfoW, WM_CLOSE, WNDPROC,
+    IsIconic, IsWindowVisible, SM_CXSMICON, SPI_GETWHEELSCROLLLINES, SW_HIDE, SW_SHOW,
+    SetWindowLongPtrW, ShowWindow, SystemParametersInfoW, WM_CLOSE, WNDPROC,
 };
 
 /// A window of this process, as Windows names it. Only [`hwnd`] makes one,
@@ -64,6 +64,12 @@ pub fn show(window: Hwnd) {
 pub fn is_visible(window: Hwnd) -> bool {
     // SAFETY: as for `hide`; the call only reads the window's state.
     unsafe { IsWindowVisible(window.raw()) != 0 }
+}
+
+/// Whether the window is minimized to the taskbar.
+pub fn is_minimized(window: Hwnd) -> bool {
+    // SAFETY: as for `hide`; the call only reads the window's state.
+    unsafe { IsIconic(window.raw()) != 0 }
 }
 
 /// The window procedure the tray icon's window had before [`keep_open`]

@@ -49,7 +49,8 @@ impl Tone {
         }
     }
 
-    fn icon(self) -> Glyph {
+    /// The icon an alert of this tone starts with.
+    pub fn icon(self) -> Glyph {
         match self {
             Self::Success => icons::SUCCESS,
             Self::Warning => icons::WARNING,

@@ -16,6 +16,7 @@ pub mod menu;
 pub mod motion;
 pub mod ripple;
 pub mod select;
+pub mod snackbar;
 pub mod surfaces;
 pub mod switch;
 pub mod tabs;

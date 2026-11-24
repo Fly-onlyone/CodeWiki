@@ -67,6 +67,11 @@ pub const NOTE_HOLD: Duration = Duration::from_millis(2500);
 /// wheel turns, and gone soon after it stops.
 pub const LEVEL_HOLD: Duration = Duration::from_millis(1500);
 
+/// How long a toast stays on screen. Not a motion: the `autoHideDuration` of
+/// MUI's Snackbar docs example (`autoHideDuration={6000}`), long enough to read
+/// a title and a line under it.
+pub const TOAST_HOLD: Duration = Duration::from_millis(6000);
+
 /// Springs settle to within this share of their travel.
 const EPSILON: f32 = 0.001;
 
@@ -208,6 +213,10 @@ impl Enter {
     /// A menu under its button. MUI grows a menu out of its anchor
     /// (`Grow/Grow.js`), which is a scale; this is the drop that is left.
     pub const MENU: Self = Self::rise(-8.0, SNAPPY);
+
+    /// A toast in the window's corner. MUI grows a Snackbar in (`Grow/Grow.js`),
+    /// which is a scale; this is the short rise that is left.
+    pub const TOAST: Self = Self::rise(16.0, SNAPPY);
 
     /// Comes up from `distance` pixels below.
     pub const fn rise(distance: f32, spring: Spring) -> Self {
@@ -382,7 +391,13 @@ mod tests {
 
     #[test]
     fn an_entrance_ends_in_place_and_fully_visible() {
-        for enter in [Enter::PAGE, Enter::MENU, Enter::card(4), Enter::row(2)] {
+        for enter in [
+            Enter::PAGE,
+            Enter::MENU,
+            Enter::TOAST,
+            Enter::card(4),
+            Enter::row(2),
+        ] {
             let (x, y, opacity) = enter.at(0.0);
             assert_eq!((x, y), enter.from);
             assert_eq!(opacity, 0.0);
@@ -399,6 +414,10 @@ mod tests {
         assert_eq!(Enter::PAGE.from, (0.0, 30.0));
         assert_eq!(Enter::card(0).from, (0.0, 40.0));
         assert_eq!(Enter::row(0).from, (-20.0, 0.0));
+        // A toast rises into its corner from below, and stays six seconds.
+        assert_eq!(Enter::TOAST.from, (0.0, 16.0));
+        assert_eq!(Enter::TOAST.spring, SNAPPY);
+        assert_eq!(TOAST_HOLD, Duration::from_secs(6));
         assert_eq!(Enter::card(2).delay, Duration::from_millis(160));
         assert_eq!(Enter::row(2).delay, Duration::from_millis(60));
     }

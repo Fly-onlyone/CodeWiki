@@ -5,8 +5,9 @@
 
 mod guard;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use cw_client::{Backend, encode};
@@ -28,6 +29,8 @@ use serde_json::{Value, json};
 struct Bridge {
     /// Connected lazily so listing tools never starts a backend.
     backend: Arc<Mutex<Option<Backend>>>,
+    /// The agent id each note claimed through this bridge was listed under.
+    claims: Arc<ClaimIds>,
 }
 
 /// The backend in `slot`, connecting on first use. Only a success is kept:
@@ -1439,12 +1442,18 @@ impl Bridge {
             query.push(format!("limit={limit}"));
         }
         let claim = p.claim == Some(true);
-        if claim {
-            query.push(format!("agent={}", encode(agent_id())));
+        let listing = claim.then(|| self.claims.next());
+        if let Some(agent) = &listing {
+            query.push(format!("agent={}", encode(agent)));
         }
+        let claims = self.claims.clone();
         let queue = self
             .call(p.repo, move |b, id| {
-                b.get(&format!("/v1/repos/{id}/explanations?{}", query.join("&")))
+                let queue = b.get(&format!("/v1/repos/{id}/explanations?{}", query.join("&")))?;
+                if let Some(agent) = &listing {
+                    claims.hold(id, agent, &queue);
+                }
+                Ok(queue)
             })
             .await?;
         text(waiting_text(&queue, claim))
@@ -1493,23 +1502,113 @@ impl Bridge {
             "read": p.read.unwrap_or_default(),
             "model": p.model,
         });
+        let claims = self.claims.clone();
         let outcome = self
             .call(p.repo, move |b, id| {
-                b.put(
+                // The id the note was listed under, so that the backend
+                // renews that listing's other notes.
+                let agent = claims.agent_for(id, &note);
+                let outcome = b.put(
                     &format!(
                         "/v1/repos/{id}/explanation?path={}&agent={}",
                         encode(&note),
-                        encode(agent_id())
+                        encode(&agent)
                     ),
                     &body,
-                )
+                )?;
+                claims.settle(id, &note, &outcome);
+                Ok(outcome)
             })
             .await?;
         text(outcome_text(&outcome))
     }
 }
 
-/// Names this bridge process to the backend, so it can keep notes for it. Made once.
+/// The agent ids this bridge lists notes under. Every listing that claims
+/// gets an id of its own: the main agent, its background note writer and a
+/// note writer launched after `/clear` all run through one bridge, and with
+/// one id for all of them a second batch was handed the notes the first
+/// still held. A submission sends the id its note was listed under.
+#[derive(Default)]
+struct ClaimIds {
+    /// How many ids were made.
+    made: AtomicU64,
+    /// (repository id, note path in the vault) to the id the note was
+    /// listed under.
+    held: Mutex<HashMap<(String, String), String>>,
+}
+
+impl ClaimIds {
+    /// A new id for one listing: `<pid>-<start nanos>-<count>`, some 50
+    /// characters at the most, within the backend's 64.
+    fn next(&self) -> String {
+        let count = self.made.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("{}-{count}", agent_id())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), String>> {
+        self.held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Note that the notes `queue` lists in `repo` were listed under `agent`.
+    fn hold(&self, repo: &str, agent: &str, queue: &Value) {
+        let mut held = self.lock();
+        for note in rows(queue, "notes") {
+            let path = field(note, "path");
+            if !path.is_empty() {
+                held.insert((repo.to_string(), path.to_string()), agent.to_string());
+            }
+        }
+    }
+
+    /// The id to submit `note` under: the id of the listing that claimed it,
+    /// or the bridge's own when it was not claimed through this bridge.
+    fn agent_for(&self, repo: &str, note: &str) -> String {
+        let held = self.lock();
+        held_key(&held, repo, note)
+            .and_then(|key| held.get(&key).cloned())
+            .unwrap_or_else(|| agent_id().to_string())
+    }
+
+    /// Forget the note an answer saved or proposed: the backend freed it.
+    fn settle(&self, repo: &str, note: &str, outcome: &Value) {
+        if !matches!(field(outcome, "outcome"), "saved" | "proposed") {
+            return;
+        }
+        let mut held = self.lock();
+        held.remove(&(repo.to_string(), field(outcome, "path").to_string()));
+        if let Some(key) = held_key(&held, repo, note) {
+            held.remove(&key);
+        }
+    }
+}
+
+/// The key of the note that `note` names in `repo`, read as the backend
+/// reads it: a vault path, or a note's name, which is its file name without
+/// `.md` in any case.
+fn held_key(
+    held: &HashMap<(String, String), String>,
+    repo: &str,
+    note: &str,
+) -> Option<(String, String)> {
+    let exact = (repo.to_string(), note.to_string());
+    if held.contains_key(&exact) {
+        return Some(exact);
+    }
+    let wanted = note.trim_end_matches(".md").to_lowercase();
+    held.keys()
+        .find(|(r, path)| {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            r == repo && name.trim_end_matches(".md").to_lowercase() == wanted
+        })
+        .cloned()
+}
+
+/// Names this bridge process to the backend, so it can keep notes for it. Made
+/// once. A listing that claims adds a count to it ([`ClaimIds::next`]); a
+/// note not claimed through this bridge is submitted under it alone.
 fn agent_id() -> &'static str {
     static ID: OnceLock<String> = OnceLock::new();
     ID.get_or_init(|| {
@@ -1572,14 +1671,20 @@ fn waiting_text(queue: &Value, claimed: bool) -> String {
     }
     let mut body = format!("{waiting}\n");
     let others = queue["claimed"].as_u64().unwrap_or(0);
+    if notes.is_empty() {
+        if others > 0 {
+            body.push_str(&format!(
+                "None is free now: another agent is writing the {others} that fit what you asked for.\n"
+            ));
+        } else {
+            body.push_str("None of them fits what you asked for.\n");
+        }
+        return body;
+    }
     if others > 0 {
         body.push_str(&format!(
             "{others} more are being written by another agent.\n"
         ));
-    }
-    if notes.is_empty() {
-        body.push_str("None of them fits what you asked for.\n");
-        return body;
     }
     body.push_str(&format!(
         "{} fit what you asked for; the first {}:\n\n",
@@ -2443,15 +2548,32 @@ mod tests {
         );
         assert!(!plain.contains("kept for you"), "{plain}");
         let kept = waiting_text(&queue, true);
-        assert!(
-            kept.contains("These notes are kept for you for 30 minutes.\n"),
-            "{kept}"
+        let minutes = format!(
+            "These notes are kept for you for {} minutes.\n",
+            cw_core::CLAIM_MINUTES
         );
+        assert!(kept.contains(&minutes), "{kept}");
         let none = waiting_text(
             &json!({ "waiting": { "behind": 0, "unexplained": 4 }, "notes": [] }),
             false,
         );
         assert!(!none.contains("another agent"), "{none}");
+        // Every note that fits is held: none is free, though some fit.
+        let busy = waiting_text(
+            &json!({
+                "waiting": { "behind": 0, "unexplained": 4 }, "matching": 3,
+                "claimed": 3, "notes": [],
+            }),
+            true,
+        );
+        assert!(
+            busy.ends_with(
+                "None is free now: another agent is writing the 3 that fit what you asked for.\n"
+            ),
+            "{busy}"
+        );
+        assert!(!busy.contains("None of them fits"), "{busy}");
+        assert!(!busy.contains("kept for you"), "{busy}");
     }
 
     #[test]
@@ -2460,6 +2582,60 @@ mod tests {
         assert!(!id.is_empty());
         assert!(id.starts_with(&format!("{}-", std::process::id())));
         assert_eq!(id, agent_id());
+    }
+
+    #[test]
+    fn each_claiming_listing_has_an_id_of_its_own() {
+        let claims = ClaimIds::default();
+        let (first, second) = (claims.next(), claims.next());
+        assert_ne!(first, second);
+        for id in [&first, &second] {
+            assert!(id.starts_with(&format!("{}-", agent_id())), "{id}");
+            assert!(id.chars().count() <= 64, "{id}");
+        }
+        let tray = "01-Core/app/Tray Module.md";
+        let autostart = "01-Core/app/Autostart Module.md";
+        claims.hold("r1", &first, &json!({ "notes": [{ "path": tray }] }));
+        claims.hold("r1", &second, &json!({ "notes": [{ "path": autostart }] }));
+        // A listed note goes with its listing's id, named by path or by name.
+        assert_eq!(claims.agent_for("r1", tray), first);
+        assert_eq!(claims.agent_for("r1", "Tray Module"), first);
+        assert_eq!(claims.agent_for("r1", "autostart module.md"), second);
+        // A note not claimed here, or in another repository, goes with the
+        // bridge's own id.
+        assert_eq!(claims.agent_for("r1", "01-Core/Other.md"), agent_id());
+        assert_eq!(claims.agent_for("r2", tray), agent_id());
+    }
+
+    #[test]
+    fn a_saved_or_proposed_note_is_forgotten_and_a_fault_keeps_it() {
+        let claims = ClaimIds::default();
+        let id = claims.next();
+        let tray = "01-Core/app/Tray Module.md";
+        let autostart = "01-Core/app/Autostart Module.md";
+        claims.hold(
+            "r1",
+            &id,
+            &json!({ "notes": [{ "path": tray }, { "path": autostart }] }),
+        );
+        claims.settle(
+            "r1",
+            "Tray Module",
+            &json!({ "outcome": "issues", "issues": ["Items is not yours"] }),
+        );
+        assert_eq!(claims.agent_for("r1", tray), id);
+        claims.settle(
+            "r1",
+            "Tray Module",
+            &json!({ "outcome": "saved", "path": tray }),
+        );
+        assert_eq!(claims.agent_for("r1", tray), agent_id());
+        claims.settle(
+            "r1",
+            autostart,
+            &json!({ "outcome": "proposed", "path": autostart }),
+        );
+        assert_eq!(claims.agent_for("r1", autostart), agent_id());
     }
 
     #[test]

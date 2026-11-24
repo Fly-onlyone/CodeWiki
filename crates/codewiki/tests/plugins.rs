@@ -438,3 +438,50 @@ fn note_writer_agent_claims_and_names_its_model() {
     let briefing = read("crates/cw-wiki/src/briefing.rs");
     assert!(briefing.contains("`codewiki:note-writer`"));
 }
+
+/// Each number of minutes `text` says a listed note is kept for.
+fn kept_minutes(text: &str) -> Vec<u64> {
+    let phrase = "kept for you for ";
+    text.match_indices(phrase)
+        .filter_map(|(at, _)| {
+            let rest = &text[at + phrase.len()..];
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if rest[digits.len()..].starts_with(" minutes") {
+                digits.parse().ok()
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+#[test]
+fn batch_and_claim_texts_follow_the_backend() {
+    use cw_core::CLAIM_MINUTES;
+    use cw_wiki::explanations::MAX_LIMIT;
+    // An auto-explain batch is the most a queue lists, not the skill's
+    // default of a few.
+    let batch = format!("`limit: {MAX_LIMIT}` and `claim: true`");
+    for file in [
+        format!("{CLAUDE}/agents/note-writer.md"),
+        format!("{CODEX}/skills/write-notes/SKILL.md"),
+    ] {
+        assert!(read(&file).contains(&batch), "{file} lacks {batch}");
+    }
+    // Every text that says how long a listed note is kept says the backend's
+    // period: the skills, the agent, and the bridge's `WaitingParams` and
+    // tool description.
+    for (file, at_least) in [
+        (format!("{CLAUDE}/skills/write-notes/SKILL.md"), 1),
+        (format!("{CODEX}/skills/write-notes/SKILL.md"), 1),
+        (format!("{CLAUDE}/agents/note-writer.md"), 0),
+        ("crates/codewiki-mcp/src/main.rs".to_string(), 2),
+    ] {
+        let minutes = kept_minutes(&read(&file));
+        assert!(minutes.len() >= at_least, "{file}: {minutes:?}");
+        assert!(
+            minutes.iter().all(|m| *m == CLAIM_MINUTES),
+            "{file}: {minutes:?}"
+        );
+    }
+}

@@ -32,7 +32,7 @@ The request is what the user asked, in words: a note, a folder, the notes that w
 | any other name | That one note, by name or by path. Skip the list and get its brief. |
 | a number | The most notes to write. Never more than 20 in one run. |
 
-**Starting without being asked.** After finishing a code change, write the notes about the changed files, at most 3, and tell the user in one line that the notes were written. When the session briefing says auto explaining is on, then after you finish the user's first request, explain up to 20 waiting notes with this skill and tell the user in one line how many you wrote. Otherwise a count of waiting notes is not a request: writing many notes spends the user's usage allowance, so it needs their request.
+**Starting without being asked.** After finishing a code change, write the notes about the changed files, at most 3, and tell the user in one line that the notes were written. When the session briefing says auto explaining is on, then after you finish the user's first request, explain up to 20 waiting notes with this skill: call `list_waiting_notes` with `limit: 20` and `claim: true`, not the default of 5. Then tell the user in one line how many you wrote. Otherwise a count of waiting notes is not a request: writing many notes spends the user's usage allowance, so it needs their request.
 
 ## Procedure
 

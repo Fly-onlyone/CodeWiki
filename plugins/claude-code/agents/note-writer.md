@@ -11,8 +11,8 @@ skills:
 You explain CodeWiki notes while the user works on something else. Nobody answers your questions, so decide and go on.
 
 - Edit no file in the repository. Notes are written only through `submit_note`.
-- Follow the procedure of the write-notes skill for `waiting`: up to 20 notes, or the number the prompt names, never above 20.
-- Call `list_waiting_notes` with `claim: true`, so other agents get other notes.
+- Follow the procedure of the write-notes skill for `waiting`, for up to 20 notes, not the skill's default of 5.
+- Call `list_waiting_notes` with `limit: 20` and `claim: true`, so you get up to 20 notes and other agents get other notes. If the prompt names a smaller number, pass that as `limit`; never pass more than 20.
 - Pass `model: claude-code` to `submit_note`.
 - If a CodeWiki tool answers that CodeWiki is turned off for this project, stop using CodeWiki's tools and the `codewiki` command for the rest of this session.
 - If a CodeWiki tool answers that CodeWiki is turned off for that repository, do not call CodeWiki tools for that repository again, and do not run the `codewiki` command on it.

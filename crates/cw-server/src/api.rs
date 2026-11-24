@@ -682,6 +682,7 @@ async fn list_explanations(
                 .map(str::to_string)
                 .collect(),
             limit: q.limit,
+            claimed: Vec::new(),
         };
         explanations::queue(&Repo::open(&state, &id)?.root, &scope)
     })

@@ -52,3 +52,24 @@ pub fn changed_files(root: &Path, base: &str) -> Option<Vec<String>> {
             .collect(),
     )
 }
+
+/// True when `root` is a linked worktree: its git directory is not the
+/// repository's common one. Any failure counts as false.
+pub fn is_linked_worktree(root: &Path) -> bool {
+    let Some(out) = run(root, &["rev-parse", "--git-dir", "--git-common-dir"]) else {
+        return false;
+    };
+    let mut dirs = out.lines().map(|line| {
+        let path = Path::new(line.trim());
+        let full = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            root.join(path)
+        };
+        full.canonicalize().ok()
+    });
+    match (dirs.next().flatten(), dirs.next().flatten()) {
+        (Some(git_dir), Some(common)) => git_dir != common,
+        _ => false,
+    }
+}

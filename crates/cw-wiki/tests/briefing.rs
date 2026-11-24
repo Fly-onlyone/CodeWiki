@@ -177,3 +177,33 @@ fn a_folder_without_git_is_not_called_stale() {
     assert!(text.contains("no git HEAD"), "{text}");
     assert!(!text.contains("stale"), "{text}");
 }
+
+#[test]
+fn a_linked_worktree_is_told_from_the_main_checkout() {
+    let dir = tempfile::tempdir().unwrap();
+    let main = dir.path().join("main");
+    fs::create_dir(&main).unwrap();
+    git(&main, &["init", "-q", "-b", "main"]);
+    write(&main, "a.txt", "one\n");
+    git(&main, &["add", "-A"]);
+    git(&main, &["commit", "-q", "-m", "first"]);
+    assert!(!cw_wiki::git::is_linked_worktree(&main));
+
+    let linked = dir.path().join("linked");
+    git(
+        &main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    assert!(cw_wiki::git::is_linked_worktree(&linked));
+    assert!(!cw_wiki::git::is_linked_worktree(&main));
+
+    let bare = tempfile::tempdir().unwrap();
+    assert!(!cw_wiki::git::is_linked_worktree(bare.path()));
+}

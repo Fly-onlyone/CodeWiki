@@ -8,7 +8,8 @@ use std::process::Command;
 
 use cw_index::Index;
 use cw_vault::proposal;
-use cw_wiki::{briefing, service};
+use cw_wiki::briefing::{self, Explain};
+use cw_wiki::service;
 
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")
@@ -69,13 +70,13 @@ fn reports_a_missing_wiki_then_its_state() {
     );
     commit(r, "first");
 
-    let none = briefing::session_start(r).unwrap();
+    let none = briefing::session_start(r, Explain::Facts).unwrap();
     assert!(none.contains("no wiki has been generated"), "{none}");
     assert!(none.contains("`sync_wiki`") && none.contains("`get_overview`"));
     assert_eq!(briefing::vault_root(r), None);
 
     update(r);
-    let fresh = briefing::session_start(r).unwrap();
+    let fresh = briefing::session_start(r, Explain::Facts).unwrap();
     assert!(
         fresh.contains("Its home note is `obsidian/_HOME.md`."),
         "{fresh}"
@@ -87,7 +88,7 @@ fn reports_a_missing_wiki_then_its_state() {
     // Committing the wiki itself moves HEAD but changes no code, so the wiki
     // is still current.
     commit(r, "add the wiki");
-    let committed = briefing::session_start(r).unwrap();
+    let committed = briefing::session_start(r, Explain::Facts).unwrap();
     assert!(
         committed.contains("The wiki is up to date with the code at HEAD."),
         "{committed}"
@@ -133,7 +134,7 @@ fn reports_a_missing_wiki_then_its_state() {
     update(r);
     assert_eq!(proposal::list(&r.join("obsidian")).unwrap().len(), 1);
     commit(r, "second");
-    let stale = briefing::session_start(r).unwrap();
+    let stale = briefing::session_start(r, Explain::Facts).unwrap();
     assert!(stale.contains("The wiki is stale"), "{stale}");
     assert!(stale.contains("Pending proposals: 1 ("), "{stale}");
 }
@@ -146,7 +147,7 @@ fn the_line_about_waiting_notes_goes_when_none_waits() {
     write(r, "src/lib.rs", "//! Demo crate.\npub fn run() {}\n");
     update(r);
     assert!(
-        briefing::session_start(r)
+        briefing::session_start(r, Explain::Facts)
             .unwrap()
             .contains("Notes waiting for an explanation:")
     );
@@ -161,9 +162,51 @@ fn the_line_about_waiting_notes_goes_when_none_waits() {
         });
     }
     meta.save(&vault).unwrap();
-    let text = briefing::session_start(r).unwrap();
-    assert!(!text.contains("waiting for an explanation"), "{text}");
-    assert!(text.contains("Pending proposals: 0.\n"), "{text}");
+    for explain in [Explain::Facts, Explain::ClaudeCode, Explain::Codex] {
+        let text = briefing::session_start(r, explain).unwrap();
+        assert!(
+            !text.contains("waiting for an explanation") && !text.contains("auto explaining"),
+            "{explain:?}: {text}"
+        );
+        assert!(text.contains("Pending proposals: 0.\n"), "{text}");
+    }
+}
+
+#[test]
+fn the_waiting_line_orders_a_batch_for_each_host() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Cargo.toml", "[package]\nname = \"demo\"\n");
+    write(r, "src/lib.rs", "//! Demo crate.\npub fn run() {}\n");
+    update(r);
+    let max = cw_wiki::explanations::MAX_LIMIT.to_string();
+
+    let facts = briefing::session_start(r, Explain::Facts).unwrap();
+    assert!(facts.contains("write notes when the user asks"), "{facts}");
+    assert!(!facts.contains("auto explaining"), "{facts}");
+
+    let claude = briefing::session_start(r, Explain::ClaudeCode).unwrap();
+    assert!(
+        claude.contains("`codewiki:note-writer`")
+            && claude.contains(&max)
+            && claude.contains("plan mode"),
+        "{claude}"
+    );
+    assert!(
+        !claude.contains("write notes when the user asks"),
+        "{claude}"
+    );
+
+    let codex = briefing::session_start(r, Explain::Codex).unwrap();
+    assert!(
+        codex.contains("`write-notes`") && codex.contains(&max),
+        "{codex}"
+    );
+    assert!(!codex.contains("note-writer"), "{codex}");
+
+    for text in [&facts, &claude, &codex] {
+        assert!(text.lines().count() <= 5, "{text}");
+    }
 }
 
 #[test]
@@ -173,7 +216,7 @@ fn a_folder_without_git_is_not_called_stale() {
     write(r, "Cargo.toml", "[package]\nname = \"demo\"\n");
     write(r, "src/lib.rs", "//! Demo crate.\npub fn run() {}\n");
     update(r);
-    let text = briefing::session_start(r).unwrap();
+    let text = briefing::session_start(r, Explain::Facts).unwrap();
     assert!(text.contains("no git HEAD"), "{text}");
     assert!(!text.contains("stale"), "{text}");
 }

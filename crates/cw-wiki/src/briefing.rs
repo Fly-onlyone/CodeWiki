@@ -26,6 +26,60 @@ fn short(commit: &str) -> &str {
     commit.get(..10).unwrap_or(commit)
 }
 
+/// The agent host a briefing is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Host {
+    ClaudeCode,
+    Codex,
+}
+
+/// What the line about waiting notes asks of the agent.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Explain {
+    /// A fact only.
+    Facts,
+    /// Launch the plugin agent in the background.
+    ClaudeCode,
+    /// Use the `write-notes` skill after the first request.
+    Codex,
+}
+
+/// Whether the waiting-notes line orders a batch: only when auto explaining is
+/// on, the session starts fresh (`startup`, `resume`, `clear`), it is not in
+/// plan mode and not in a linked worktree.
+pub fn explain_for(
+    host: Host,
+    auto_on: bool,
+    source: Option<&str>,
+    plan: bool,
+    worktree: bool,
+) -> Explain {
+    let fresh = matches!(source, Some("startup" | "resume" | "clear"));
+    if !auto_on || !fresh || plan || worktree {
+        return Explain::Facts;
+    }
+    match host {
+        Host::ClaudeCode => Explain::ClaudeCode,
+        Host::Codex => Explain::Codex,
+    }
+}
+
+fn explain_sentence(explain: Explain) -> String {
+    let max = crate::explanations::MAX_LIMIT;
+    match explain {
+        Explain::Facts => {
+            "This line says what waits; write notes when the user asks, or for files you changed."
+                .to_string()
+        }
+        Explain::ClaudeCode => format!(
+            "The user turned on auto explaining: when the user sends their first message, unless you are in plan mode, launch the `codewiki:note-writer` agent in the background to explain up to {max} waiting notes, stale first, tell the user in one line that it is writing wiki notes, then go on with their request. Do not write these notes yourself."
+        ),
+        Explain::Codex => format!(
+            "The user turned on auto explaining: after you finish the user's first request, unless you are in plan mode, explain up to {max} waiting notes, stale first, with the `write-notes` skill, and tell the user in one line how many you wrote."
+        ),
+    }
+}
+
 /// Plain-text briefing for an agent starting work in the repository at
 /// `root`: whether a wiki exists, where its home note is, whether it is
 /// behind `HEAD`, how many proposals wait for review, how many notes wait
@@ -34,8 +88,11 @@ fn short(commit: &str) -> &str {
 /// The lines state facts; an agent host adds them to the session as context.
 /// The line about waiting notes is a fact too, and says so: an agent that
 /// took it as an order would spend its user's allowance on notes at the
-/// start of every session.
-pub fn session_start(root: &Path) -> Result<String> {
+/// start of every session. It becomes an order for a bounded batch only when
+/// the user turned auto explaining on (`cw_core::auto_explain`), the session
+/// starts fresh (startup, resume, clear), is not in plan mode and is not in a
+/// linked worktree; `explain` says which, see [`explain_for`].
+pub fn session_start(root: &Path, explain: Explain) -> Result<String> {
     let vault = root.join(VAULT_DIR);
     let meta = VaultMeta::load(&vault)?;
     let home = vault.join(HOME_NOTE);
@@ -78,14 +135,59 @@ pub fn session_start(root: &Path) -> Result<String> {
     let waiting = crate::explanations::waiting_counts(root)?;
     if waiting.total() > 0 {
         out.push_str(&format!(
-            "Notes waiting for an explanation: {} ({} whose explanation may be behind the code, {} never explained). CodeWiki writes each note's facts from the code; what the thing is for and how it works is written by a coding agent, with the MCP tools `list_waiting_notes`, `get_note_brief` and `submit_note`. This line says what waits; write notes when the user asks, or for files you changed.\n",
+            "Notes waiting for an explanation: {} ({} whose explanation may be behind the code, {} never explained). CodeWiki writes each note's facts from the code; what the thing is for and how it works is written by a coding agent, with the MCP tools `list_waiting_notes`, `get_note_brief` and `submit_note`. {}\n",
             waiting.total(),
             waiting.behind,
-            waiting.unexplained
+            waiting.unexplained,
+            explain_sentence(explain)
         ));
     }
     out.push_str(
         "The CodeWiki MCP tools `get_overview` (architecture and index status) and `get_context` (what to know before touching a file or symbol) answer from this wiki. Call them before exploring the code by hand.\n",
     );
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const START: Option<&str> = Some("startup");
+
+    #[test]
+    fn fresh_sessions_get_the_order_of_their_host() {
+        for source in ["startup", "resume", "clear"] {
+            assert_eq!(
+                explain_for(Host::ClaudeCode, true, Some(source), false, false),
+                Explain::ClaudeCode
+            );
+            assert_eq!(
+                explain_for(Host::Codex, true, Some(source), false, false),
+                Explain::Codex
+            );
+        }
+    }
+
+    #[test]
+    fn everything_else_gets_the_facts() {
+        for source in [Some("compact"), Some("fork"), Some("other"), None] {
+            assert_eq!(
+                explain_for(Host::ClaudeCode, true, source, false, false),
+                Explain::Facts,
+                "{source:?}"
+            );
+        }
+        assert_eq!(
+            explain_for(Host::Codex, true, START, true, false),
+            Explain::Facts
+        );
+        assert_eq!(
+            explain_for(Host::Codex, true, START, false, true),
+            Explain::Facts
+        );
+        assert_eq!(
+            explain_for(Host::ClaudeCode, false, START, false, false),
+            Explain::Facts
+        );
+    }
 }

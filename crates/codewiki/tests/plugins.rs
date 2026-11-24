@@ -71,7 +71,12 @@ fn both_plugins_start_the_same_server_and_hook() {
             .flat_map(|group| group["hooks"].as_array().into_iter().flatten())
             .filter_map(|hook| hook["command"].as_str())
             .collect();
-        assert_eq!(commands, ["codewiki hook session-start"], "{plugin}");
+        let expected = if plugin == CODEX {
+            "codewiki hook session-start --agent codex"
+        } else {
+            "codewiki hook session-start"
+        };
+        assert_eq!(commands, [expected], "{plugin}");
     }
 }
 
@@ -429,4 +434,7 @@ fn note_writer_agent_claims_and_names_its_model() {
     assert!(agent.contains("codewiki:write-notes"));
     assert!(agent.contains("`claim: true`"));
     assert!(agent.contains("`model: claude-code`"));
+    // The briefing names the agent as the plugin namespaces it.
+    let briefing = read("crates/cw-wiki/src/briefing.rs");
+    assert!(briefing.contains("`codewiki:note-writer`"));
 }

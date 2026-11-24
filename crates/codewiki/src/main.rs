@@ -283,12 +283,42 @@ fn agents(action: AgentsAction, json: bool) -> ExitCode {
 enum HookEvent {
     /// Briefing for an agent starting a session in this repository: whether
     /// a wiki exists, whether it is stale, and which tools read it.
-    SessionStart,
+    SessionStart {
+        /// The agent host that runs the hook.
+        #[arg(long, value_enum, default_value = "claude-code")]
+        agent: HookAgent,
+    },
+}
+
+/// The agent host that runs a hook.
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum HookAgent {
+    ClaudeCode,
+    Codex,
+}
+
+/// The JSON an agent host pipes to a hook, or `None` when there is none:
+/// stdin is a terminal, empty, not JSON, or does not arrive within a second.
+/// The read runs on a helper thread so a host that keeps stdin open cannot
+/// hold the session start.
+fn hook_input() -> Option<serde_json::Value> {
+    use std::io::{IsTerminal, Read};
+    if std::io::stdin().is_terminal() {
+        return None;
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::stdin().take(64 * 1024).read_to_end(&mut buf);
+        let _ = tx.send(buf);
+    });
+    let buf = rx.recv_timeout(std::time::Duration::from_secs(1)).ok()?;
+    serde_json::from_slice(&buf).ok()
 }
 
 /// Print the session-start briefing for the repository at `repo`. Every
 /// failure is swallowed: a hook must never break the agent's session.
-fn session_start_hook(repo: &std::path::Path) {
+fn session_start_hook(repo: &std::path::Path, agent: HookAgent) {
     // The agent host runs hooks from wherever the session started; it names
     // the project folder in the environment.
     let start = if repo == std::path::Path::new(".") {
@@ -305,7 +335,8 @@ fn session_start_hook(repo: &std::path::Path) {
     // A folder closed to coding agents gets no briefing, nor one that holds
     // a closed folder, and neither does any run where the list cannot be
     // read: when in doubt, say nothing.
-    match cw_core::agents_off::load(&cw_core::paths::data_dir()) {
+    let data = cw_core::paths::data_dir();
+    match cw_core::agents_off::load(&data) {
         Err(_) => return,
         Ok(entries) => {
             if cw_core::agents_off::blocking(&entries, &start).is_some()
@@ -315,7 +346,21 @@ fn session_start_hook(repo: &std::path::Path) {
             }
         }
     }
-    if let Ok(text) = cw_wiki::briefing::session_start(&root) {
+    use cw_wiki::briefing::{Explain, Host, explain_for};
+    let host = match agent {
+        HookAgent::ClaudeCode => Host::ClaudeCode,
+        HookAgent::Codex => Host::Codex,
+    };
+    let input = hook_input().unwrap_or(serde_json::Value::Null);
+    let source = input["source"].as_str();
+    let plan = input["permission_mode"] == "plan";
+    let auto_on = cw_core::auto_explain::load(&data);
+    // Only a session that would be ordered needs the git call.
+    let mut explain = explain_for(host, auto_on, source, plan, false);
+    if explain != Explain::Facts && cw_wiki::git::is_linked_worktree(&root) {
+        explain = Explain::Facts;
+    }
+    if let Ok(text) = cw_wiki::briefing::session_start(&root, explain) {
         print!("{text}");
     }
 }
@@ -948,12 +993,12 @@ fn main() -> ExitCode {
         Err(e) => e.exit(),
     };
     if let Command::Hook {
-        event: HookEvent::SessionStart,
+        event: HookEvent::SessionStart { agent },
     } = cli.command
     {
         // A panic must not reach the agent either, as text or as a status.
         std::panic::set_hook(Box::new(|_| {}));
-        let _ = std::panic::catch_unwind(|| session_start_hook(&cli.repo));
+        let _ = std::panic::catch_unwind(|| session_start_hook(&cli.repo, agent));
         return ExitCode::SUCCESS;
     }
     if let Command::SentryTest { panic } = cli.command {

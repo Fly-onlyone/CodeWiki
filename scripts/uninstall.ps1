@@ -7,7 +7,8 @@
 # logs in %LOCALAPPDATA%\CodeWiki (or CODEWIKI_DATA_DIR), the embedding models
 # an older version downloaded there (its folder models) and the settings in
 # %APPDATA%\CodeWiki are kept unless -PurgeData is given. The folder cuda an
-# older version put beside the programs is removed with them.
+# older version put beside the programs is removed with them. The folders
+# CodeWiki-Dev, which debug builds from the sources use, are never touched.
 param(
     [string]$Target = $PSScriptRoot,
     # Also delete the index cache, the models an older version downloaded, the

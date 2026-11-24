@@ -1,4 +1,5 @@
-//! Small per-user settings, one value per file under `%APPDATA%\CodeWiki`.
+//! Small per-user settings, one value per file under `%APPDATA%\CodeWiki`
+//! (`CodeWiki-Dev` for a development build, [`cw_core::paths::APP_FOLDER`]).
 //!
 //! Each setting is a name and a text, mostly one line; the recent list puts
 //! one folder on each line. A missing or unreadable file is
@@ -10,7 +11,7 @@ use std::path::{Path, PathBuf};
 /// The settings directory, or `None` when the system does not say where
 /// application data goes.
 pub fn dir() -> Option<PathBuf> {
-    std::env::var_os("APPDATA").map(|root| PathBuf::from(root).join("CodeWiki"))
+    std::env::var_os("APPDATA").map(|root| PathBuf::from(root).join(cw_core::paths::APP_FOLDER))
 }
 
 /// The value of the setting `name`, trimmed. `None` when it is not set or is

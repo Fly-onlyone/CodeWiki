@@ -267,6 +267,11 @@ impl Backend {
         let mut serve = Command::new(&binary);
         serve
             .arg("serve")
+            // The backend writes `backend.json` where this program waits for
+            // it. Without the variable, a release `codewiki` found on `PATH`
+            // would use the installed CodeWiki's folder, not a development
+            // build's (`cw_core::paths::APP_FOLDER`).
+            .env(cw_core::paths::DATA_DIR_ENV, &data_dir)
             // The backend writes `backend.log` itself, in the folder this
             // program logs to, a relative `CODEWIKI_LOG_DIR` included.
             .env(cw_core::logs::LOG_DIR_ENV, cw_core::logs::dir())

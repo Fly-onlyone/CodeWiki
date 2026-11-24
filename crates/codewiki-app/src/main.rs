@@ -122,8 +122,14 @@ const RECHECK_PAUSE: std::time::Duration = std::time::Duration::from_secs(60 * 6
 /// The setting that remembers that the user was told, once, that closing the
 /// window leaves the app running in the tray.
 const TRAY_HINT: &str = "tray_hint";
-/// What Windows knows the app as when it shows a notification.
-const APP_IDENTITY: &str = "CodeWiki.App";
+/// What Windows knows the app as when it shows a notification. A development
+/// build has its own, so that its notifications and taskbar button are not
+/// taken for an installed CodeWiki's.
+const APP_IDENTITY: &str = if cw_core::DEV_BUILD {
+    "CodeWiki.App.Dev"
+} else {
+    "CodeWiki.App"
+};
 /// The smallest window: the sidebar, the details pane, and a reading pane
 /// about as wide as the two together.
 const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
@@ -778,10 +784,10 @@ impl AppView {
         // name is given here, not at start: it also decides which taskbar
         // button the window belongs to, and this way that is touched once in
         // the life of an installation instead of on every start.
-        cx.set_app_identity(APP_IDENTITY, "CodeWiki");
+        cx.set_app_identity(APP_IDENTITY, cw_core::APP_NAME);
         cx.show_system_notification(SystemNotification {
             tag: TRAY_HINT.into(),
-            title: "CodeWiki is still running".into(),
+            title: format!("{} is still running", cw_core::APP_NAME).into(),
             body: "Click its icon in the notification area to open it again, right-click the icon to quit."
                 .into(),
             actions: Vec::new(),
@@ -2706,7 +2712,7 @@ impl AppView {
                 v_flex()
                     .px_4()
                     .py_3()
-                    .child(div().font_bold().child("CodeWiki"))
+                    .child(div().font_bold().child(cw_core::APP_NAME))
                     .child(
                         div().text_xs().text_color(theme.muted_foreground).child(
                             self.repo
@@ -4431,8 +4437,8 @@ fn stops_backend_on_quit(remote: bool, installing: bool) -> bool {
 /// `backdrop`).
 fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyElement {
     let title = match &app.read(cx).repo {
-        Some(repo) => format!("CodeWiki — {}", repo.name),
-        None => "CodeWiki".to_string(),
+        Some(repo) => format!("{} — {}", cw_core::APP_NAME, repo.name),
+        None => cw_core::APP_NAME.to_string(),
     };
     let levels = glass::Levels::for_window(window, cx);
     // The zoom level, for a moment after it changes. Only shown: the bar
@@ -4638,7 +4644,7 @@ fn main() {
             KeyBinding::new("ctrl-0", ZoomReset, None),
         ]);
         let (window, _) = gpui_kit::open_window(window_options(cx), cx, |window, cx| {
-            window.set_window_title("CodeWiki");
+            window.set_window_title(cw_core::APP_NAME);
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
             let slot = Rc::new(doc_view::PageSlot::default());

@@ -139,14 +139,16 @@ pub fn state_text(
 }
 
 /// The tooltip of the tray icon: `CodeWiki - <repo> - <state> - MCP: <mcp>`,
-/// at most [`TOOLTIP_UNITS`] long. The repository's name comes first and is
+/// at most [`TOOLTIP_UNITS`] long, with `CodeWiki Dev` in a development
+/// build ([`cw_core::APP_NAME`]). The repository's name comes first and is
 /// what gets shortened when the whole does not fit, so that the state and
 /// the MCP status stay readable.
 pub fn tooltip(repo: Option<&str>, state: &str, mcp: &str) -> String {
+    let app = cw_core::APP_NAME;
     let tail = format!("{state} - MCP: {mcp}");
-    let whole = |repo: &str| format!("CodeWiki - {repo} - {tail}");
+    let whole = |repo: &str| format!("{app} - {repo} - {tail}");
     let Some(repo) = repo else {
-        return cut_utf16(&format!("CodeWiki - {tail}"), TOOLTIP_UNITS);
+        return cut_utf16(&format!("{app} - {tail}"), TOOLTIP_UNITS);
     };
     let full = whole(repo);
     let over = full.encode_utf16().count().saturating_sub(TOOLTIP_UNITS);
@@ -316,13 +318,14 @@ mod tests {
 
     #[test]
     fn the_tooltip_names_repository_state_and_mcp() {
+        let app = cw_core::APP_NAME;
         assert_eq!(
             tooltip(Some("CodeWiki"), "Updating wiki", "active"),
-            "CodeWiki - CodeWiki - Updating wiki - MCP: active"
+            format!("{app} - CodeWiki - Updating wiki - MCP: active")
         );
         assert_eq!(
             tooltip(None, "Idle", "no calls yet"),
-            "CodeWiki - Idle - MCP: no calls yet"
+            format!("{app} - Idle - MCP: no calls yet")
         );
     }
 
@@ -331,11 +334,12 @@ mod tests {
         let long = "r".repeat(200);
         let tip = tooltip(Some(&long), "Updating wiki", "idle (last call 12 min ago)");
         assert_eq!(tip.encode_utf16().count(), TOOLTIP_UNITS);
-        assert!(tip.starts_with("CodeWiki - rrrr"));
+        let app = cw_core::APP_NAME;
+        assert!(tip.starts_with(&format!("{app} - rrrr")));
         assert!(tip.ends_with("… - Updating wiki - MCP: idle (last call 12 min ago)"));
         // One unit over is enough to shorten.
         let state = "Idle";
-        let fits = TOOLTIP_UNITS - "CodeWiki -  - Idle - MCP: active".len();
+        let fits = TOOLTIP_UNITS - format!("{app} -  - Idle - MCP: active").len();
         let exact = "x".repeat(fits);
         assert_eq!(
             tooltip(Some(&exact), state, "active")

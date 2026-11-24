@@ -312,6 +312,8 @@ cargo deny check advisories bans sources
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.
 
+A debug build keeps its own data, in `%LOCALAPPDATA%\CodeWiki-Dev` and `%APPDATA%\CodeWiki-Dev`, and its window says "CodeWiki Dev". It never uses or stops the backend of an installed CodeWiki, so the two can run side by side. It starts with no projects and the default embedder.
+
 CI runs these four on every push and pull request. It also runs `codewiki check` on this repository and reports the findings to code scanning, and gitleaks scans new commits for secrets. Dependabot opens update pull requests weekly.
 
 To release, set `version` in the root `Cargo.toml`, merge it, and push a matching tag:

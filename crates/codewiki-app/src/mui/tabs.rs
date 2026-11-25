@@ -5,7 +5,9 @@
 //! three pixels thick and 60% of the tab wide. TradingAgent scales that bar
 //! in from its middle. GPUI cannot scale an element, so the bar slides from
 //! the old tab to the new one on a spring instead, as the indicator of MUI
-//! itself slides (`Tabs/Tabs.js`).
+//! itself slides (`Tabs/Tabs.js`). The selected tab is also tinted and
+//! semibold, and a tab under the pointer is tinted and its label brightens,
+//! at the strengths in `interaction`.
 
 use std::rc::Rc;
 
@@ -170,13 +172,11 @@ impl RenderOnce for Tabs {
             let fill = pressed(fill, look.pressed, base.press);
             let color = if selected {
                 primary
-            } else if look.tab_hover_text > 0.0 {
+            } else {
                 // A muted label moves toward the text color under the pointer.
                 muted.blend(foreground.opacity(look.tab_hover_text * hover))
-            } else {
-                muted
             };
-            let weight = if selected && look.tab_semibold {
+            let weight = if selected {
                 FontWeight::SEMIBOLD
             } else {
                 FontWeight::MEDIUM

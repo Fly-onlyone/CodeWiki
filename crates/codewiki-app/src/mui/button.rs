@@ -4,8 +4,11 @@
 //! The look of the contained button, the two pixel outline and the focus ring
 //! are TradingAgent's (`components.ts`, `MuiButton`): a filled button rises
 //! one pixel and glows on hover, and settles when pressed. TradingAgent also
-//! shrinks it to 97% on press, which GPUI cannot do; the ripple marks the
-//! press instead.
+//! shrinks it to 97% on press, which GPUI cannot do; a pressed button fills
+//! up or darkens and sinks a pixel instead, with its ripple. How strongly
+//! each state shows is in `interaction`. An icon button's icon grows and
+//! brightens under the pointer, and a button that is switched on, such as
+//! the button of a pane that is open, is filled.
 
 use std::time::Duration;
 
@@ -20,7 +23,7 @@ use gpui_kit::{
 
 use super::base::{Base, Ink, OnClick, focus_ring};
 use super::feedback;
-use super::interaction::{self, Accent, pressed};
+use super::interaction::{self, pressed};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{self, Variant, curve, duration, easing};
 use crate::icons::Glyph;
@@ -500,13 +503,12 @@ impl RenderOnce for IconButton {
             theme.foreground.opacity(0.54)
         });
         let primary = theme.primary;
-        // A button switched on is filled in the primary color, at no
-        // strength while the toggled fill is off.
-        let toggled = self.toggled && !self.disabled && look.toggled > 0.0;
+        // A button switched on is filled in the primary color.
+        let toggled = self.toggled && !self.disabled;
         let color = if self.disabled {
             theme.foreground.opacity(states.disabled)
-        } else if toggled && look.toggled_icon != Accent::Foreground {
-            look.toggled_icon.color(theme)
+        } else if toggled {
+            interaction::lift(look.toggled_icon.color(theme), look.toggled_icon_lift)
         } else {
             active
         };
@@ -525,21 +527,17 @@ impl RenderOnce for IconButton {
         let fill = kit::transition((self.id.clone(), "fill"), fill_to, policy, window, cx);
         let fill = pressed(fill, look.pressed, base.press);
         // Under the pointer the icon grows and brightens, as a row's does.
-        let grow = if look.icon_button_growth > 0.0 || look.icon_button_lift != 0.0 {
-            kit::spring(
-                (self.id.clone(), "grow"),
-                if base.hovered && !self.disabled {
-                    1.0
-                } else {
-                    0.0
-                },
-                SNAPPY.policy(0.01),
-                window,
-                cx,
-            )
-        } else {
-            0.0
-        };
+        let grow = kit::spring(
+            (self.id.clone(), "grow"),
+            if base.hovered && !self.disabled {
+                1.0
+            } else {
+                0.0
+            },
+            SNAPPY.policy(0.01),
+            window,
+            cx,
+        );
         let color = interaction::lift(color, look.icon_button_lift * grow.clamp(0.0, 1.0));
         let grown = 1.0 + look.icon_button_growth * grow;
         let sunk = look.sink * base.press;

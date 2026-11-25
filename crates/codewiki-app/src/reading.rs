@@ -136,28 +136,25 @@ fn style(cx: &App) -> TextViewStyle {
 }
 
 /// How a link under the pointer is drawn, over its look at rest: lighter
-/// (darker on a light theme) and underlined. `None` while both are off.
-pub fn link_hover(cx: &App) -> Option<HighlightStyle> {
+/// (darker on a light theme), with a solid underline.
+pub fn link_hover(cx: &App) -> HighlightStyle {
     let look = interaction::current(cx);
-    if look.link_lift == 0.0 && look.link_underline == 0.0 {
-        return None;
-    }
     let color = interaction::lift(cx.theme().link, look.link_lift);
-    Some(HighlightStyle {
+    HighlightStyle {
         color: Some(color),
-        underline: (look.link_underline > 0.0).then(|| UnderlineStyle {
+        underline: Some(UnderlineStyle {
             thickness: px(look.link_underline_px),
             color: Some(color.opacity(look.link_underline)),
             wavy: false,
         }),
         ..Default::default()
-    })
+    }
 }
 
 /// Hand [`link_hover`] to gpui-base, whose text view draws the links of a
 /// note. Call while rendering; it sets the global only when it changed.
 pub fn sync_link_hover(cx: &mut App) {
-    let style = LinkHoverStyle(link_hover(cx));
+    let style = LinkHoverStyle(Some(link_hover(cx)));
     if cx.try_global::<LinkHoverStyle>() != Some(&style) {
         cx.set_global(style);
     }

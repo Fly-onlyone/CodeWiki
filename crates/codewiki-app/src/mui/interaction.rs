@@ -1,59 +1,41 @@
 //! How strongly a control answers the pointer: one set of numbers for hover,
 //! press and selection, read by every control in `mui`.
 //!
+//! MUI's own strengths (`styles/createPalette.js`, the `action` object) and
+//! TradingAgent's sidebar (`components/layout/Sidebar.tsx`) were too faint
+//! on the app's glass, so the values in [`DARK`] are stronger. They were
+//! chosen by eye on 2026-11-25, in a temporary editor beside the running app.
+//!
 //! [`DARK`] holds the values for a dark theme. A light theme takes them
 //! through [`Interaction::for_mode`]: the state fills at half strength, as
-//! MUI's light `action` table is half of its dark one
-//! (`styles/createPalette.js`), and every lift turned into a darkening.
-//! Rows keep their fills in both modes, as TradingAgent's sidebar does
-//! (`components/layout/Sidebar.tsx`).
+//! MUI's light `action` table is half of its dark one, and every lift turned
+//! into a darkening. Rows keep their fills in both modes, as TradingAgent's
+//! sidebar does.
 
 use gpui_kit::component::{ActiveTheme as _, Theme};
 use gpui_kit::{App, Hsla};
 
-use super::motion::{SNAPPY, Spring};
+use super::motion::{BOUNCY, Spring};
 use super::tokens::{DARK_STATES, LIGHT_STATES};
 
 /// What a light theme's state fills are of a dark theme's.
 pub const LIGHT_RATIO: f32 = LIGHT_STATES.hover / DARK_STATES.hover;
 
-/// A color a selected or toggled control can take, from the active theme.
-// The choices are tried in the app before one is settled on; the ones not
-// chosen go then.
-#[allow(dead_code)]
+/// A color a selected or switched-on control takes, from the active theme.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Accent {
-    Foreground,
     Primary,
     /// The theme's link color.
     Secondary,
-    /// The color of the selected row's bar.
-    Tertiary,
 }
 
 impl Accent {
     pub fn color(self, theme: &Theme) -> Hsla {
         match self {
-            Self::Foreground => theme.foreground,
             Self::Primary => theme.primary,
             Self::Secondary => theme.link,
-            Self::Tertiary => theme.sidebar_primary,
         }
     }
-}
-
-/// How the bar of a selected row appears.
-#[allow(dead_code)] // As `Accent`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BarEntry {
-    /// At once.
-    Instant,
-    /// Grows from its middle.
-    Grow,
-    /// Slides in from the left.
-    Slide,
-    /// Both.
-    GrowSlide,
 }
 
 /// The strengths. Fills are opacities of the control's color, lifts are
@@ -87,14 +69,16 @@ pub struct Interaction {
     pub icon_lift: f32,
     /// Opacity of the glow around a selected row's tinted icon.
     pub icon_glow: f32,
-    /// The label of a selected row, and its icon when it has no hue.
+    /// The label of a selected row, and its icon when it has no hue, and
+    /// how much lighter than the accent it is drawn, so that it reads on
+    /// the row's fill.
     pub selected_label: Accent,
+    pub label_lift: f32,
 
     /// The bar of a selected row: its width, the strength of its glow
-    /// against TradingAgent's, how it appears and on which spring.
+    /// against TradingAgent's, and the spring it grows and slides in on.
     pub bar_width: f32,
     pub bar_glow: f32,
-    pub bar_entry: BarEntry,
     pub bar_spring: Spring,
 
     /// How far a pressed button sinks.
@@ -104,8 +88,10 @@ pub struct Interaction {
     /// How much an icon button's icon grows and brightens under the pointer.
     pub icon_button_growth: f32,
     pub icon_button_lift: f32,
-    /// The icon of a switched-on icon button; Foreground keeps its own.
+    /// The icon of a switched-on icon button, and how much lighter than the
+    /// accent it is drawn, so that it stands out from its fill.
     pub toggled_icon: Accent,
+    pub toggled_icon_lift: f32,
     /// Opacity of a text field's or a select's border under the pointer.
     pub outline_hover: f32,
 
@@ -113,63 +99,56 @@ pub struct Interaction {
     pub ripple: (f32, f32),
 
     /// How far a tab's muted label moves toward the text color under the
-    /// pointer, from 0 to 1, and whether the selected tab is semibold.
+    /// pointer, from 0 to 1.
     pub tab_hover_text: f32,
-    pub tab_semibold: bool,
 
     /// A link under the pointer: how much brighter it gets, the opacity of
-    /// its underline (0 leaves the underline as it is) and its thickness.
+    /// its underline and its thickness.
     pub link_lift: f32,
     pub link_underline: f32,
     pub link_underline_px: f32,
 }
 
-/// The values for a dark theme.
+/// The values for a dark theme, chosen by eye on 2026-11-25.
 pub const DARK: Interaction = Interaction {
-    hover: DARK_STATES.hover,
-    pressed: 0.0,
-    selected: DARK_STATES.selected,
-    toggled: 0.0,
-    tab_hover: 0.0,
-    tab_selected: 0.0,
+    hover: 0.16,
+    pressed: 0.28,
+    selected: 0.24,
+    toggled: 0.20,
+    tab_hover: 0.10,
+    tab_selected: 0.14,
 
-    // `Sidebar.tsx`: how strongly the primary color fills a row.
-    row_hover: 0.08,
-    row_selected: 0.1,
-    row_selected_hover: 0.15,
-    row_pressed: 0.0,
-    // `Sidebar.tsx`: `translateX(4px)` and an icon at 115% under the pointer.
-    row_shift: 4.0,
-    row_recoil: 0.0,
-    icon_growth: 0.15,
-    icon_lift: 0.0,
-    icon_glow: 0.0,
-    selected_label: Accent::Foreground,
+    row_hover: 0.14,
+    row_selected: 0.18,
+    row_selected_hover: 0.20,
+    row_pressed: 0.30,
+    row_shift: 6.0,
+    row_recoil: 2.0,
+    icon_growth: 0.22,
+    icon_lift: 0.08,
+    icon_glow: 0.45,
+    selected_label: Accent::Secondary,
+    label_lift: 0.16,
 
-    // `Sidebar.tsx`: the bar of the selected row is 3 px wide.
-    bar_width: 3.0,
-    bar_glow: 1.0,
-    bar_entry: BarEntry::Instant,
-    bar_spring: SNAPPY,
+    bar_width: 4.0,
+    bar_glow: 1.3,
+    bar_spring: BOUNCY,
 
-    sink: 0.0,
-    press_darken: 0.0,
-    icon_button_growth: 0.0,
-    icon_button_lift: 0.0,
-    toggled_icon: Accent::Foreground,
-    // TradingAgent, `MuiTextField`: the border under the pointer is the
-    // primary color at half strength.
-    outline_hover: 0.5,
+    sink: 1.0,
+    press_darken: 0.06,
+    icon_button_growth: 0.15,
+    icon_button_lift: 0.10,
+    toggled_icon: Accent::Primary,
+    toggled_icon_lift: 0.20,
+    outline_hover: 0.8,
 
-    // `TouchRipple.js`, `enterKeyframe`.
-    ripple: (0.1, 0.3),
+    ripple: (0.18, 0.45),
 
-    tab_hover_text: 0.0,
-    tab_semibold: false,
+    tab_hover_text: 0.7,
 
-    link_lift: 0.0,
-    link_underline: 0.0,
-    link_underline_px: 1.0,
+    link_lift: 0.10,
+    link_underline: 1.0,
+    link_underline_px: 1.5,
 };
 
 impl Interaction {
@@ -186,7 +165,9 @@ impl Interaction {
             tab_hover: self.tab_hover * LIGHT_RATIO,
             tab_selected: self.tab_selected * LIGHT_RATIO,
             icon_lift: -self.icon_lift,
+            label_lift: -self.label_lift,
             icon_button_lift: -self.icon_button_lift,
+            toggled_icon_lift: -self.toggled_icon_lift,
             link_lift: -self.link_lift,
             ..self
         }
@@ -222,42 +203,52 @@ mod tests {
     use gpui_kit::hsla;
 
     use super::*;
-    use crate::mui::tokens;
 
     #[test]
-    fn the_state_fills_are_mui_s_in_both_modes() {
-        let dark = DARK.for_mode(true);
-        assert_eq!(dark.hover, tokens::DARK_STATES.hover);
-        assert_eq!(dark.selected, tokens::DARK_STATES.selected);
-        let light = DARK.for_mode(false);
-        assert_eq!(light.hover, tokens::LIGHT_STATES.hover);
-        assert_eq!(light.selected, tokens::LIGHT_STATES.selected);
-    }
-
-    #[test]
-    fn a_row_fills_as_trading_agent_fills_it_in_both_modes() {
-        for dark in [true, false] {
-            let look = DARK.for_mode(dark);
-            assert_eq!(
-                (look.row_hover, look.row_selected, look.row_selected_hover),
-                (0.08, 0.1, 0.15)
-            );
+    fn a_light_theme_takes_the_state_fills_at_mui_s_ratio() {
+        assert_eq!(LIGHT_RATIO, 0.5);
+        let (dark, light) = (DARK.for_mode(true), DARK.for_mode(false));
+        assert_eq!(dark, DARK);
+        for (dark, light) in [
+            (dark.hover, light.hover),
+            (dark.pressed, light.pressed),
+            (dark.selected, light.selected),
+            (dark.toggled, light.toggled),
+            (dark.tab_hover, light.tab_hover),
+            (dark.tab_selected, light.tab_selected),
+        ] {
+            assert_eq!(light, dark * LIGHT_RATIO);
         }
+        // Rows keep their fills in both modes.
+        assert_eq!(
+            (light.row_hover, light.row_selected, light.row_pressed),
+            (dark.row_hover, dark.row_selected, dark.row_pressed)
+        );
     }
 
     #[test]
     fn a_light_theme_darkens_where_a_dark_one_brightens() {
-        let look = Interaction {
-            icon_lift: 0.1,
-            icon_button_lift: 0.2,
-            link_lift: 0.3,
-            ..DARK
-        };
-        let light = look.for_mode(false);
-        assert_eq!(
-            (light.icon_lift, light.icon_button_lift, light.link_lift),
-            (-0.1, -0.2, -0.3)
-        );
+        let light = DARK.for_mode(false);
+        assert_eq!(light.icon_lift, -DARK.icon_lift);
+        assert_eq!(light.label_lift, -DARK.label_lift);
+        assert_eq!(light.icon_button_lift, -DARK.icon_button_lift);
+        assert_eq!(light.toggled_icon_lift, -DARK.toggled_icon_lift);
+        assert_eq!(light.link_lift, -DARK.link_lift);
+    }
+
+    #[test]
+    fn each_state_of_a_row_is_stronger_than_the_one_before() {
+        let look = DARK;
+        assert!(look.row_hover > 0.0);
+        assert!(look.row_selected > look.row_hover);
+        assert!(look.row_selected_hover > look.row_selected);
+        assert!(look.row_pressed > look.row_selected_hover);
+        // A press only ever adds to a control's fill.
+        assert!(look.pressed > look.hover);
+        assert!(look.selected > look.hover);
+        assert!(look.ripple.1 > look.ripple.0);
+        // A row gives back part of its shift when pressed, not all of it.
+        assert!(look.row_recoil > 0.0 && look.row_recoil < look.row_shift);
     }
 
     #[test]

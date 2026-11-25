@@ -937,8 +937,8 @@ impl RenderOnce for LinkedLine {
             |_, _| None::<usize>,
         );
         let mut highlights = self.highlights;
-        if let Some(look) = reading::link_hover(cx)
-            && let Some((_, _, own)) = hovered.read(cx).and_then(|link| self.links.get(link))
+        let look = reading::link_hover(cx);
+        if let Some((_, _, own)) = hovered.read(cx).and_then(|link| self.links.get(link))
             && let Some((_, style)) = highlights.get_mut(*own)
         {
             *style = style.highlight(look);

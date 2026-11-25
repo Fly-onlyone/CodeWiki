@@ -3,13 +3,15 @@
 //!
 //! Row anatomy is MUI's `ListItemButton` in a dense list
 //! (`ListItemButton/ListItemButton.js`, `ListSubheader/ListSubheader.js`).
-//! How a row answers the pointer is TradingAgent's navigation
-//! (`components/layout/Sidebar.tsx`): it shifts four pixels to the right, its
-//! icon grows and takes the primary color, and the selected row carries a
-//! glowing bar on its left edge. The bar is in the theme's tertiary color, so
-//! that it stands out from the row's primary fill. A row may instead give its
-//! icon a hue of its own, which it keeps in every state, so that kinds of row
-//! stay apart.
+//! How a row answers the pointer follows TradingAgent's navigation
+//! (`components/layout/Sidebar.tsx`), at the strengths in `interaction`: it
+//! shifts to the right, its icon grows and takes the primary color, and the
+//! selected row carries a glowing bar on its left edge, which grows and
+//! slides in. The bar is in the theme's tertiary color, so that it stands
+//! out from the row's primary fill; the selected label takes an accent. A
+//! row may instead give its icon a hue of its own, which it keeps in every
+//! state, so that kinds of row stay apart: it only brightens, and glows
+//! while selected. A pressed row fills up and gives back part of its shift.
 
 use gpui_kit::base::motion::{self as kit, MotionReveal};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
@@ -21,7 +23,7 @@ use gpui_kit::{
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
-use super::interaction::{self, Accent, BarEntry, Interaction, lift, pressed};
+use super::interaction::{self, Interaction, lift, pressed};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{curve, duration, easing};
 use crate::icons::Glyph;
@@ -90,37 +92,27 @@ fn icon_glow(tint: Hsla, opacity: f32) -> BoxShadow {
 
 /// The color of a row's icon. One with a hue of its own keeps it, made
 /// `lifted` lighter. Else it is muted at rest, primary under the pointer,
-/// and the selected label's accent, when there is one, while selected.
+/// and the selected label's accent while selected.
 fn icon_color(
     tint: Option<Hsla>,
-    (primary, muted, accent): (Hsla, Hsla, Option<Hsla>),
+    (primary, muted, accent): (Hsla, Hsla, Hsla),
     (selected, active): (bool, bool),
     lifted: f32,
 ) -> Hsla {
     match tint {
         Some(tint) => lift(tint, lifted),
-        None if selected => accent.unwrap_or(primary),
+        None if selected => accent,
         None if active => primary,
         None => muted,
     }
 }
 
 /// Where the bar of a selected row is, `shown` of the way in: its left edge
-/// and its height, centred on the row.
-fn bar_place(entry: BarEntry, width: f32, shown: f32) -> (f32, f32) {
-    let grow = matches!(entry, BarEntry::Grow | BarEntry::GrowSlide);
-    let slide = matches!(entry, BarEntry::Slide | BarEntry::GrowSlide);
-    let left = if slide {
-        -(width + BAR_TRAVEL) * (1.0 - shown)
-    } else {
-        0.0
-    };
-    let height = if grow {
-        BAR_HEIGHT * shown.clamp(0.0, 1.0)
-    } else {
-        BAR_HEIGHT
-    };
-    (left, height)
+/// and its height, centred on the row. It grows from its middle as it
+/// slides in from the left.
+fn bar_place(width: f32, shown: f32) -> (f32, f32) {
+    let left = -(width + BAR_TRAVEL) * (1.0 - shown);
+    (left, BAR_HEIGHT * shown.clamp(0.0, 1.0))
 }
 
 /// The heading over a group of rows, in the theme's secondary color, which
@@ -238,8 +230,7 @@ impl RenderOnce for ListItemButton {
             (theme.primary, theme.foreground, theme.muted_foreground);
         let radius = theme.radius / px(1.);
         let bar = themes::Brand::of(theme).tertiary;
-        let accent =
-            (look.selected_label != Accent::Foreground).then(|| look.selected_label.color(theme));
+        let accent = lift(look.selected_label.color(theme), look.label_lift);
         let (selected, hovered) = (self.selected, base.hovered || self.highlighted);
         let mono = theme.mono_font_family.clone();
         let height = if self.secondary.is_some() {
@@ -259,11 +250,7 @@ impl RenderOnce for ListItemButton {
         );
         let fill = pressed(fill, look.row_pressed, base.press);
         // Pressed, a shifted row gives back part of its shift.
-        let recoil = if look.row_shift > 0.0 {
-            look.row_recoil / look.row_shift * base.press
-        } else {
-            0.0
-        };
+        let recoil = look.row_recoil / look.row_shift * base.press;
         let hover_to = if hovered { 1.0 - recoil } else { 0.0 };
         let hover = kit::spring(
             (self.id.clone(), "hover"),
@@ -273,18 +260,15 @@ impl RenderOnce for ListItemButton {
             cx,
         );
         let selected_to = if selected { 1.0 } else { 0.0 };
-        // How far the bar is in: on its spring, or at once.
-        let shown = if look.bar_entry == BarEntry::Instant {
-            selected_to
-        } else {
-            kit::spring(
-                (self.id.clone(), "bar"),
-                selected_to,
-                look.bar_spring.policy(0.001),
-                window,
-                cx,
-            )
-        };
+        // How far the bar is in. The spring starts at its target, so a row
+        // that appears selected shows its bar at once.
+        let shown = kit::spring(
+            (self.id.clone(), "bar"),
+            selected_to,
+            look.bar_spring.policy(0.001),
+            window,
+            cx,
+        );
         let lifted = look.icon_lift * hover.max(selected_to).clamp(0.0, 1.0);
         let icon_color = icon_color(
             self.tint,
@@ -294,11 +278,11 @@ impl RenderOnce for ListItemButton {
         );
         let glow = self
             .tint
-            .filter(|_| selected && look.icon_glow > 0.0)
+            .filter(|_| selected)
             .map(|tint| icon_glow(tint, look.icon_glow));
         let grown = 1.0 + look.icon_growth * hover;
-        let (bar_left, bar_height) = bar_place(look.bar_entry, look.bar_width, shown);
-        let label_color = accent.filter(|_| selected);
+        let (bar_left, bar_height) = bar_place(look.bar_width, shown);
+        let label_color = selected.then_some(accent);
 
         let element = h_flex()
             .id(self.id.clone())
@@ -502,7 +486,7 @@ mod tests {
         let muted = hsla(0.7, 0.1, 0.6, 1.0);
         let accent = hsla(0.9, 0.7, 0.7, 1.0);
         let tint = hsla(0.15, 0.9, 0.6, 1.0);
-        let colors = (primary, muted, Some(accent));
+        let colors = (primary, muted, accent);
         for state in [(false, false), (false, true), (true, true)] {
             for lifted in [0.0, 0.1] {
                 let color = icon_color(Some(tint), colors, state, lifted);
@@ -512,9 +496,6 @@ mod tests {
         assert_eq!(icon_color(None, colors, (false, false), 0.0), muted);
         assert_eq!(icon_color(None, colors, (false, true), 0.0), primary);
         assert_eq!(icon_color(None, colors, (true, true), 0.0), accent);
-        // Without an accent of its own a selected row's icon is primary.
-        let plain = (primary, muted, None);
-        assert_eq!(icon_color(None, plain, (true, true), 0.0), primary);
     }
 
     #[test]
@@ -526,19 +507,17 @@ mod tests {
     }
 
     #[test]
-    fn the_bar_ends_in_its_place_however_it_enters() {
-        for entry in [
-            BarEntry::Instant,
-            BarEntry::Grow,
-            BarEntry::Slide,
-            BarEntry::GrowSlide,
-        ] {
-            assert_eq!(bar_place(entry, 3.0, 1.0), (0.0, BAR_HEIGHT), "{entry:?}");
-        }
-        // On its way in it is shorter, or further left, or both.
-        assert_eq!(bar_place(BarEntry::Grow, 3.0, 0.5), (0.0, BAR_HEIGHT / 2.0));
-        assert_eq!(bar_place(BarEntry::Slide, 3.0, 0.0), (-7.0, BAR_HEIGHT));
+    fn the_bar_grows_and_slides_into_its_place() {
+        let width = interaction::DARK.bar_width;
+        assert_eq!(bar_place(width, 1.0), (0.0, BAR_HEIGHT));
+        // Half way in it is half as high and still left of its place.
+        let (left, height) = bar_place(width, 0.5);
+        assert!(left < 0.0 && height == BAR_HEIGHT / 2.0);
+        // At the start it is out of sight, left of the row.
+        assert_eq!(bar_place(width, 0.0), (-(width + BAR_TRAVEL), 0.0));
         // A spring that dips below zero never asks for a negative height.
-        assert_eq!(bar_place(BarEntry::Grow, 3.0, -0.1).1, 0.0);
+        assert_eq!(bar_place(width, -0.1).1, 0.0);
+        // A spring that overshoots never makes the bar taller than its row.
+        assert!(bar_place(width, 1.2).1 <= ROW_HEIGHT);
     }
 }

@@ -763,9 +763,14 @@ impl AppView {
                     win32::show(hwnd);
                 }
                 placed = true;
-                // Restores a minimized window and brings it to the front.
+                // Restores a minimized window and brings it to the front. The
+                // retry of the embedding server, stopped while the window was
+                // hidden, goes on, whatever showed the window.
                 if this
-                    .update_in(cx, |_, window, _| window.activate_window())
+                    .update_in(cx, |this, window, cx| {
+                        window.activate_window();
+                        this.resume_embed_retry(cx);
+                    })
                     .is_err()
                 {
                     return;
@@ -794,10 +799,7 @@ impl AppView {
                 self.after_hide(cx);
                 false
             }
-            Event::Show => {
-                self.resume_embed_retry(cx);
-                true
-            }
+            Event::Show => true,
             Event::Menu(command) => self.run_tray_command(command, cx),
             Event::Quit => {
                 log::info!("asked to stop from the console");
@@ -808,7 +810,6 @@ impl AppView {
                 if let Some(action) = self.toasts.route(&tag, action_id.as_deref()) {
                     self.run_action(&action, cx);
                 }
-                self.resume_embed_retry(cx);
                 true
             }
         }
@@ -931,9 +932,10 @@ impl AppView {
     /// Show a notice as a Windows notification.
     fn show_system_notification(&mut self, notice: &toasts::Notice, cx: &mut Context<Self>) {
         // Windows shows a notification only of an app it knows by name. The
-        // name is given here, not at start: it also decides which taskbar
-        // button the window belongs to, and this way that is touched once in
-        // the life of an installation instead of on every start.
+        // name is set once per process, just before its first Windows
+        // notification, not at start: it also decides which taskbar button
+        // the window belongs to, so a run that never notifies keeps the
+        // button Windows gave it at start.
         if !self.identity_set {
             cx.set_app_identity(APP_IDENTITY, "CodeWiki");
             self.identity_set = true;
@@ -1218,8 +1220,17 @@ impl AppView {
                 let (backend, repos, missing, _) = reached;
                 self.backend = Some(backend);
                 self.backend_silent = false;
+                // An action that failed while the backend was away left its
+                // error; the reason is gone.
+                self.error = None;
+                self.review.load_error = None;
                 self.take_repos(repos, missing);
                 self.reload_repo(cx);
+                // What the settings show was read before the loss, and a
+                // request that failed meanwhile ended the embedding retry.
+                if self.on_settings_page() {
+                    self.reload_settings(cx);
+                }
                 "Reconnected"
             }
         };

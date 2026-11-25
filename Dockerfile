@@ -15,6 +15,9 @@ FROM rust:1-bookworm AS build
 WORKDIR /src
 COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
+# Cargo reads every [patch] of the workspace, even for a crate that does not
+# use it.
+COPY vendor ./vendor
 RUN cargo build --release --locked -p codewiki
 
 FROM debian:bookworm-slim

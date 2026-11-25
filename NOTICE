@@ -43,3 +43,8 @@ reference parser; no source from it is included.
 Dependencies under the Mozilla Public License 2.0 (for example cssparser, used
 by the Mermaid renderer) are used unmodified as libraries. Their source is
 available from crates.io.
+
+vendor/gpui-base is gpui-base 0.9.1 by Longbridge
+(https://github.com/longbridge/gpui-kit), licensed under the Apache License,
+Version 2.0, license text in vendor/gpui-base/LICENSE-APACHE. It is the
+published crate with its tests and benches left out.

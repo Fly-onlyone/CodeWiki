@@ -34,8 +34,9 @@ lto = "thin"
 codegen-units = 1
 strip = true
 
-# gpui-base 0.9.1, the published crate with its tests and benches left out,
-# so that it can be changed here. Drop it, or copy the new release, when
-# gpui-kit is bumped.
+# gpui-base 0.9.1 with a hover look for links in a TextView (`LinkHoverStyle`),
+# which the release lacks. The copy is the published crate with its tests and
+# benches left out; NOTICE lists the files changed. Drop it, or copy the new
+# release and patch it again, when gpui-kit is bumped.
 [patch.crates-io]
 gpui-base = { path = "vendor/gpui-base" }

@@ -4503,6 +4503,8 @@ impl Render for AppView {
             // The page is drawn cached and reads the levels; draw it again.
             doc_view::notify_after_draw(self.doc_page.entity_id(), cx);
         }
+        // Links in notes take their hover look from the kit's text view.
+        reading::sync_link_hover(cx);
         // A pane the user hides or shows slides out or in; the page takes
         // the width that is left, frame by frame.
         self.sidebar_shown = mui::motion::drawer("sidebar-shown", self.sidebar_open, window, cx);

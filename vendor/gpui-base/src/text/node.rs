@@ -1094,6 +1094,9 @@ fn set_leaf_key(state: &mut Arc<Mutex<InlineState>>, key: u64) {
         editor_key: Some(key),
         selection_rows: None,
         cleanup_senders: Vec::new(),
+        // Modified for CodeWiki: `InlineState` has a field that is not
+        // `Copy`, which this update may not move out of a `Drop` type.
+        hovered_link: None,
         ..Default::default()
     }));
 }

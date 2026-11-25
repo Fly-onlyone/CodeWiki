@@ -1,3 +1,6 @@
+// Modified for CodeWiki: a link under the pointer takes `LinkHoverStyle`
+// (see NOTICE at the root of the CodeWiki repository).
+
 mod selection_paint;
 
 #[cfg(target_family = "wasm")]
@@ -29,6 +32,7 @@ use crate::{
     GlobalState, TextSelection,
     async_util::Sender,
     input::Selection,
+    text::LinkHoverStyle,
     text::TextViewMultiClickKind,
     text::node::LinkMark,
     text::range_highlight::RevealAt,
@@ -270,6 +274,26 @@ pub(super) fn fade_highlights(
     combined
 }
 
+/// `highlights` with `hover` laid over every part of `range`.
+pub(super) fn with_hover(
+    highlights: &[(Range<usize>, InlineHighlight)],
+    range: Range<usize>,
+    hover: HighlightStyle,
+) -> Vec<(Range<usize>, InlineHighlight)> {
+    // A highlight that changes nothing, so that the parts are cut at the
+    // ends of `range`.
+    let mut combined = combine_highlights(
+        highlights.iter().cloned(),
+        [(range.clone(), InlineHighlight::default())],
+    );
+    for (part, highlight) in &mut combined {
+        if part.start >= range.start && part.end <= range.end {
+            highlight.style = highlight.style.highlight(hover);
+        }
+    }
+    combined
+}
+
 /// Builds the [`TextRun`]s for `text_len` bytes of inline text: each
 /// highlight refines `default_style` over its range, and a highlight that
 /// names a font family shapes its run in that family.
@@ -404,6 +428,10 @@ pub(crate) struct InlineState {
     pub(crate) editor_key: Option<u64>,
     /// UI owners of retained layouts; cleanup metadata is not document state.
     pub(super) cleanup_senders: Vec<Sender<()>>,
+    /// The link under the pointer, kept only while a [`LinkHoverStyle`] is
+    /// set. Layout reads it, so the text depends on the pointer only when
+    /// the pointer moves onto or off a link.
+    pub(super) hovered_link: Option<Range<usize>>,
 }
 
 impl PartialEq for InlineState {
@@ -1176,7 +1204,18 @@ impl Element for Inline {
             .text_style
             .clone()
             .unwrap_or_else(|| window.text_style());
-        let runs = text_runs(self.text.len(), &text_style, &self.highlights);
+        let hovered = LinkHoverStyle::current(cx).and_then(|hover| {
+            let range = self.state.lock().ok()?.hovered_link.clone()?;
+            Some((range, hover))
+        });
+        let runs = match hovered {
+            Some((range, hover)) => text_runs(
+                self.text.len(),
+                &text_style,
+                &with_hover(&self.highlights, range, hover),
+            ),
+            None => text_runs(self.text.len(), &text_style, &self.highlights),
+        };
 
         // Reuse the previous frame's shaped text when it was shaped from the
         // same text, runs and style; `StyledText` consumes its runs on every
@@ -1300,6 +1339,15 @@ impl Element for Inline {
             .flatten();
         if hovered_link.is_some() {
             window.set_cursor_style(CursorStyle::PointingHand, &hitbox);
+        }
+
+        // A link that came under the pointer, or left it, without a move of
+        // the pointer (the text scrolled) takes or drops its hover look.
+        let hover_style = LinkHoverStyle::current(cx).is_some();
+        if hover_style && state.hovered_link != hovered_link {
+            state.hovered_link = hovered_link.clone();
+            cx.notify(current_view);
+            window.request_animation_frame();
         }
 
         if self.link_tooltip
@@ -1482,13 +1530,21 @@ impl Element for Inline {
                 let text_layout = text_layout.clone();
                 let links = self.links.clone();
                 let link_tooltip = self.link_tooltip;
+                let inline_state = self.state.clone();
                 let mut hovered_link = hovered_link;
+                // Keep the hovered link where layout reads it.
+                let keep = move |link: &Option<Range<usize>>| {
+                    if hover_style && let Ok(mut state) = inline_state.lock() {
+                        state.hovered_link = link.clone();
+                    }
+                };
                 move |event: &MouseMoveEvent, phase, window, cx| {
                     if !phase.bubble() {
                         return;
                     }
                     if !hitbox.is_hovered(window) {
-                        if link_tooltip && hovered_link.take().is_some() {
+                        if (link_tooltip || hover_style) && hovered_link.take().is_some() {
+                            keep(&None);
                             cx.notify(current_view);
                         }
                         return;
@@ -1498,6 +1554,7 @@ impl Element for Inline {
                         Self::link_range_for_position(&text_layout, &links, event.position);
                     if hovered_link != updated || (link_tooltip && updated.is_some()) {
                         hovered_link = updated;
+                        keep(&hovered_link);
                         cx.notify(current_view);
                     }
                 }

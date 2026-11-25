@@ -47,4 +47,7 @@ available from crates.io.
 vendor/gpui-base is gpui-base 0.9.1 by Longbridge
 (https://github.com/longbridge/gpui-kit), licensed under the Apache License,
 Version 2.0, license text in vendor/gpui-base/LICENSE-APACHE. It is the
-published crate with its tests and benches left out.
+published crate with its tests and benches left out, and it is modified: a
+link under the pointer in a TextView takes a hover style the app sets
+(LinkHoverStyle). The changed files are src/text/style.rs, src/text/inline.rs
+and src/text/node.rs; each says so at the top or at the change.

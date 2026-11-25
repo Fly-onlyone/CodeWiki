@@ -1,8 +1,26 @@
+// Modified for CodeWiki: `LinkHoverStyle` is added (see NOTICE at the root of
+// the CodeWiki repository).
+
 use std::sync::Arc;
 
 use gpui::{HighlightStyle, Hsla, Rems, StyleRefinement, rems};
 
 use crate::ColorTokens;
+
+/// How a link under the pointer is drawn in every `TextView`, laid over its
+/// look at rest. Set it as a global; `None`, or no global, leaves a hovered
+/// link as it is at rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LinkHoverStyle(pub Option<HighlightStyle>);
+
+impl gpui::Global for LinkHoverStyle {}
+
+impl LinkHoverStyle {
+    /// The style in effect, when one is set.
+    pub fn current(cx: &gpui::App) -> Option<HighlightStyle> {
+        cx.try_global::<Self>().and_then(|style| style.0)
+    }
+}
 
 /// TextViewStyle used to customize the style for [`super::TextView`].
 ///

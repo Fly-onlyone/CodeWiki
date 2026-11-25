@@ -616,7 +616,12 @@ fn model_rows(model: &Model, settings: &Value) -> Vec<Block> {
                 .and_then(|models| models["problem"].as_str());
             rows.extend(problem.map(|problem| Block::Alert {
                 tone: Tone::Warning,
-                text: problem.to_string(),
+                // The page asks again by itself; the Refresh button below
+                // asks at once.
+                text: format!(
+                    "{}. CodeWiki tries again on its own.",
+                    problem.trim_end_matches('.')
+                ),
                 button: None,
             }));
         }
@@ -639,7 +644,7 @@ fn lists(models: &[Value], provider: &str, chosen: &str) -> bool {
 }
 
 /// How the page names the server of `provider`, as its address row does.
-fn server_label(provider: &str) -> &str {
+pub(crate) fn server_label(provider: &str) -> &str {
     match provider {
         "lmstudio" => "LM Studio",
         "ollama" => "Ollama",
@@ -1617,6 +1622,10 @@ mod tests {
         let words = doc.words();
         assert!(
             words.contains("Llama is not running at http://127.0.0.1:9931"),
+            "{words}"
+        );
+        assert!(
+            words.contains("CodeWiki tries again on its own."),
             "{words}"
         );
         assert!(doc.fields().contains(&FieldId::EmbedModel));

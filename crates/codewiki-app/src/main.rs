@@ -775,7 +775,10 @@ impl AppView {
                 self.after_hide(cx);
                 false
             }
-            Event::Show => true,
+            Event::Show => {
+                self.resume_embed_retry(cx);
+                true
+            }
             Event::Menu(command) => self.run_tray_command(command, cx),
             Event::Quit => {
                 log::info!("asked to stop from the console");
@@ -786,19 +789,24 @@ impl AppView {
                 if let Some(action) = self.toasts.route(&tag, action_id.as_deref()) {
                     self.run_action(&action, cx);
                 }
+                self.resume_embed_retry(cx);
                 true
             }
         }
+    }
+
+    /// Whether the window is on screen: not hidden in the tray and not
+    /// minimized.
+    fn window_on_screen(&self) -> bool {
+        self.hwnd
+            .is_none_or(|hwnd| win32::is_visible(hwnd) && !win32::is_minimized(hwnd))
     }
 
     /// Tell the user something: a toast in the window's corner while the
     /// window is on screen, a Windows notification while it is hidden or
     /// minimized.
     fn notify_user(&mut self, notice: toasts::Notice, cx: &mut Context<Self>) {
-        let on_screen = self
-            .hwnd
-            .is_none_or(|hwnd| win32::is_visible(hwnd) && !win32::is_minimized(hwnd));
-        if on_screen {
+        if self.window_on_screen() {
             let key = notice.key.clone();
             let seq = self.toasts.push(notice);
             log::info!("toast {key}");
@@ -894,6 +902,7 @@ impl AppView {
     /// is not what closing means elsewhere.
     fn after_hide(&mut self, cx: &mut Context<Self>) {
         log::info!("the window is hidden; the app stays in the tray");
+        self.stop_embed_retry();
         if prefs::read(TRAY_HINT).is_some() {
             return;
         }

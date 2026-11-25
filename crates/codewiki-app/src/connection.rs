@@ -16,6 +16,48 @@ pub const BACKEND_CAP: Duration = Duration::from_secs(30);
 /// as lost. One alone can fail on a busy machine.
 pub const SILENT_POLLS: u32 = 2;
 
+/// The first wait before the embedding server is asked again, and the longest.
+pub const EMBED_FIRST: Duration = Duration::from_secs(3);
+pub const EMBED_CAP: Duration = Duration::from_secs(30);
+
+/// How long to wait before looking again while the window is minimized.
+pub const EMBED_IDLE: Duration = Duration::from_secs(1);
+
+/// What the retry of the embedding server does next.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EmbedStep {
+    /// Nothing to retry: leave the page, or the server answered.
+    Stop,
+    /// The window is not on screen: ask nothing now, look again soon.
+    Wait,
+    /// Ask the server.
+    Probe,
+}
+
+/// Whether to ask the embedding server again. It is retried only on its
+/// settings page, with a backend on this machine, while the window is on
+/// screen and the last answer said the server is not reachable.
+pub fn embed_step(
+    on_page: bool,
+    remote: bool,
+    on_screen: bool,
+    reachable: Option<bool>,
+) -> EmbedStep {
+    if !on_page || remote || reachable != Some(false) {
+        EmbedStep::Stop
+    } else if !on_screen {
+        EmbedStep::Wait
+    } else {
+        EmbedStep::Probe
+    }
+}
+
+/// Whether an answer says the server came up: it was not reachable and now
+/// is, for the same provider.
+pub fn embed_came_up(before: Option<(&str, bool)>, after: (&str, bool)) -> bool {
+    matches!(before, Some((provider, false)) if provider == after.0) && after.1
+}
+
 /// Waits that double from a first one up to a cap.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Backoff {
@@ -300,6 +342,40 @@ mod tests {
 
     const fn secs(n: u64) -> Duration {
         Duration::from_secs(n)
+    }
+
+    #[test]
+    fn the_embedding_server_is_retried_only_while_every_condition_holds() {
+        use EmbedStep::*;
+        assert_eq!(embed_step(true, false, true, Some(false)), Probe);
+        // Another page, a backend elsewhere, an answer that says it is there
+        // or none yet: nothing to retry.
+        assert_eq!(embed_step(false, false, true, Some(false)), Stop);
+        assert_eq!(embed_step(true, true, true, Some(false)), Stop);
+        assert_eq!(embed_step(true, false, true, Some(true)), Stop);
+        assert_eq!(embed_step(true, false, true, None), Stop);
+        // A window that is not on screen asks nothing, and keeps looking.
+        assert_eq!(embed_step(true, false, false, Some(false)), Wait);
+        assert_eq!(embed_step(false, false, false, Some(false)), Stop);
+    }
+
+    #[test]
+    fn the_embedding_server_waits_three_seconds_and_doubles_to_thirty() {
+        let mut backoff = Backoff::new(EMBED_FIRST, EMBED_CAP);
+        let waits: Vec<u64> = (0..6).map(|_| backoff.next_delay().as_secs()).collect();
+        assert_eq!(waits, [3, 6, 12, 24, 30, 30]);
+    }
+
+    #[test]
+    fn a_server_came_up_only_from_unreachable_to_reachable_for_one_provider() {
+        assert!(embed_came_up(Some(("llamacpp", false)), ("llamacpp", true)));
+        assert!(!embed_came_up(Some(("llamacpp", false)), ("ollama", true)));
+        assert!(!embed_came_up(
+            Some(("llamacpp", false)),
+            ("llamacpp", false)
+        ));
+        assert!(!embed_came_up(Some(("llamacpp", true)), ("llamacpp", true)));
+        assert!(!embed_came_up(None, ("llamacpp", true)));
     }
 
     #[test]

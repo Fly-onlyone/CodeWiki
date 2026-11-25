@@ -26,6 +26,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::*;
 use serde_json::{Value, json};
 
+use crate::connection::{
+    Backoff, EMBED_CAP, EMBED_FIRST, EMBED_IDLE, EmbedStep, Sequence, embed_came_up, embed_step,
+};
 use crate::doc::{Action, Choice};
 use crate::doc_view::{self, Controls, SelectRequest};
 use crate::mui::button::{Button, IconButton};
@@ -83,6 +86,13 @@ pub struct State {
     /// The models of the chosen embedding server
     /// (`GET /v1/settings/embed/models`). `None` until they are read.
     embed_models: Option<Value>,
+    /// Numbers the questions to the embedding server. Leaving the page, a
+    /// new embedder, another backend and a hidden window each take a number
+    /// and so drop the answer and the retry of the one before.
+    embed_seq: Sequence,
+    /// The waits between the retries of an embedding server that is not
+    /// reachable.
+    embed_backoff: Backoff,
     /// The news about the last try to connect to a backend elsewhere.
     connect: Option<Note>,
     /// The folders kept from coding agents, read from the data folder when
@@ -137,6 +147,8 @@ impl State {
             embed_job: None,
             embed_job_watched: false,
             embed_models: None,
+            embed_seq: Sequence::default(),
+            embed_backoff: Backoff::new(EMBED_FIRST, EMBED_CAP),
             connect: None,
             agents_off: read_agents_off(),
             agents_note: None,
@@ -373,6 +385,9 @@ impl AppView {
     /// (`GET /v1/settings/embed/models`). A backend on another machine is not
     /// asked, as for the job.
     pub(crate) fn load_embed_models(&mut self, cx: &mut Context<Self>) {
+        // The retry of the server before is over, and so is its answer.
+        let seq = self.settings.embed_seq.bump();
+        self.settings.embed_backoff.reset();
         if self.backend.as_ref().is_none_or(Backend::is_remote) {
             self.settings.embed_models = None;
             return;
@@ -382,14 +397,139 @@ impl AppView {
         self.settings_request(
             cx,
             |backend| backend.get("/v1/settings/embed/models"),
-            |this, result, _| match result {
-                Ok(body) => this.settings.embed_models = Some(body),
-                Err(error) => {
-                    this.settings.embed_models = None;
-                    log::warn!("could not read the embedding models: {error}");
+            move |this, result, cx| {
+                if !this.settings.embed_seq.is_current(seq) {
+                    return;
+                }
+                match result {
+                    Ok(body) => {
+                        this.settings.embed_models = Some(body);
+                        this.retry_embed_models(seq, cx);
+                    }
+                    Err(error) => {
+                        this.settings.embed_models = None;
+                        log::warn!("could not read the embedding models: {error}");
+                    }
                 }
             },
         );
+    }
+
+    /// Ask the server for its models again and keep the list shown until the
+    /// answer comes, so the page does not flicker. The answer may say that a
+    /// server which was not reachable is: that is said in a toast. Used by
+    /// the retry and by "Refresh".
+    fn probe_embed_models(&mut self, seq: u64, cx: &mut Context<Self>) {
+        if self.backend.as_ref().is_none_or(Backend::is_remote) {
+            return;
+        }
+        self.settings_request(
+            cx,
+            |backend| backend.get("/v1/settings/embed/models"),
+            move |this, result, cx| {
+                if !this.settings.embed_seq.is_current(seq) {
+                    return;
+                }
+                match result {
+                    Ok(body) => {
+                        let provider = body["provider"].as_str().unwrap_or("").to_string();
+                        let reachable = body["reachable"] == true;
+                        let before = this.settings.embed_models.as_ref().map(|models| {
+                            (
+                                models["provider"].as_str().unwrap_or(""),
+                                models["reachable"] != false,
+                            )
+                        });
+                        let came_up = embed_came_up(before, (&provider, reachable));
+                        this.settings.embed_models = Some(body);
+                        if came_up {
+                            this.notify_user(
+                                crate::toasts::Notice {
+                                    key: "embed-server".into(),
+                                    tone: Tone::Success,
+                                    title: format!(
+                                        "Connected to {}",
+                                        settings_pages::server_label(&provider)
+                                    ),
+                                    body: None,
+                                    action: None,
+                                },
+                                cx,
+                            );
+                        }
+                        this.retry_embed_models(seq, cx);
+                    }
+                    Err(error) => log::warn!("could not read the embedding models: {error}"),
+                }
+            },
+        );
+    }
+
+    /// "Refresh", or the window shown again: ask at once and start the waits
+    /// from the first.
+    pub(crate) fn refresh_embed_models(&mut self, cx: &mut Context<Self>) {
+        self.settings.embed_backoff.reset();
+        let seq = self.settings.embed_seq.bump();
+        self.probe_embed_models(seq, cx);
+    }
+
+    /// The window has come back to the screen: a server that was not
+    /// reachable is asked once, and the retry goes on from the first wait.
+    pub(crate) fn resume_embed_retry(&mut self, cx: &mut Context<Self>) {
+        if self.embed_step() == EmbedStep::Stop {
+            return;
+        }
+        self.refresh_embed_models(cx);
+    }
+
+    /// Drop the retry of the embedding server, and any answer on its way.
+    pub(crate) fn stop_embed_retry(&mut self) {
+        self.settings.embed_seq.bump();
+    }
+
+    fn embed_step(&self) -> EmbedStep {
+        embed_step(
+            matches!(self.page, Page::Settings(Category::Search)),
+            self.backend.as_ref().is_none_or(Backend::is_remote),
+            self.window_on_screen(),
+            self.settings
+                .embed_models
+                .as_ref()
+                .and_then(|models| models["reachable"].as_bool()),
+        )
+    }
+
+    /// Ask again after the next wait while the server is not reachable.
+    /// `seq` numbers the questions this belongs to.
+    fn retry_embed_models(&mut self, seq: u64, cx: &mut Context<Self>) {
+        if self.embed_step() == EmbedStep::Stop {
+            return;
+        }
+        let delay = self.settings.embed_backoff.next_delay();
+        self.wait_to_probe_embed(seq, delay, cx);
+    }
+
+    fn wait_to_probe_embed(
+        &mut self,
+        seq: u64,
+        delay: std::time::Duration,
+        cx: &mut Context<Self>,
+    ) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(delay).await;
+            _ = this.update(cx, |this, cx| {
+                if !this.settings.embed_seq.is_current(seq) {
+                    return;
+                }
+                match this.embed_step() {
+                    EmbedStep::Stop => {}
+                    // Minimized: ask nothing, and look again soon.
+                    EmbedStep::Wait => this.wait_to_probe_embed(seq, EMBED_IDLE, cx),
+                    EmbedStep::Probe => this.probe_embed_models(seq, cx),
+                }
+            });
+        })
+        .detach();
     }
 
     /// Keep what the backend says about the job.
@@ -619,6 +759,7 @@ impl AppView {
     fn switch_backend(&mut self, cx: &mut Context<Self>) {
         // An attempt still under way must not bring back the backend left.
         self.connection.restart();
+        self.stop_embed_retry();
         self.backend = None;
         self.repos.clear();
         self.missing.clear();
@@ -726,7 +867,7 @@ impl AppView {
                 }
             }
             Action::TestEmbedder => self.test_embedder(cx),
-            Action::RefreshEmbedModels => self.load_embed_models(cx),
+            Action::RefreshEmbedModels => self.refresh_embed_models(cx),
             Action::ConnectRemote => self.connect_remote(cx),
             Action::UseLocalBackend => match cw_client::use_local() {
                 Ok(()) => {

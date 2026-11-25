@@ -173,26 +173,56 @@ fn is_older(theirs: &str, ours: &str) -> bool {
 /// finishes the requests it is running.
 const STOP_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The backends this process starts.
+/// A backend this process started.
 #[derive(Debug)]
+struct Started {
+    child: Child,
+    /// Whether `backend.json` has named its process: it listened once.
+    published: bool,
+}
+
+impl Started {
+    fn new(child: Child) -> Self {
+        Self {
+            child,
+            published: false,
+        }
+    }
+}
+
+/// The backends this process starts.
+#[derive(Debug, Default)]
 struct Starts {
-    /// The backend this process started last, and when. While it runs and
-    /// is younger than [`STARTUP_TIMEOUT`] it may still be starting, and a
-    /// second start would only race it: `codewiki serve` takes no lock of its
-    /// own, and the two would write `backend.json` in turn. The app may try
-    /// twice at once, by itself and by the user's "Try again". An older one
-    /// that does not answer is ending or hung, and a new one may start beside
-    /// it: a backend that ends deletes `backend.json` only while the file is
-    /// its own.
-    last: Option<(Child, Instant)>,
+    /// The backend this process started last. Until `backend.json` names its
+    /// process it may still be starting, however long that takes (a cold
+    /// disk, a virus scan of a new program), and a second start would only
+    /// race it: `codewiki serve` takes no lock of its own, and the two would
+    /// write `backend.json` in turn. The app may try twice at once, by itself
+    /// and by the user's "Try again". One that listened once and does not
+    /// answer now is ending or hung, and a new one may start beside it: a
+    /// backend that ends deletes `backend.json` only while the file is its
+    /// own.
+    last: Option<Started>,
+    /// A call is starting a backend outside the lock; the others wait for it.
+    spawning: bool,
     /// No backend is started while this is set ([`hold_starts`]).
     held: bool,
 }
 
 static STARTS: Mutex<Starts> = Mutex::new(Starts {
     last: None,
+    spawning: false,
     held: false,
 });
+
+/// The process that `backend.json` in `data_dir` names, if it names one.
+fn published_pid(data_dir: &Path) -> Option<u32> {
+    let text = std::fs::read_to_string(data_dir.join(BACKEND_FILE)).ok()?;
+    let value: Value = serde_json::from_str(&text).ok()?;
+    value["pid"]
+        .as_u64()
+        .and_then(|pid| u32::try_from(pid).ok())
+}
 
 fn starts() -> MutexGuard<'static, Starts> {
     lock(&STARTS)
@@ -210,36 +240,69 @@ pub fn hold_starts(held: bool) {
 }
 
 impl Starts {
-    /// Whether the backend started last may still be starting: it runs, and
-    /// was started less than `timeout` ago.
-    fn starting(&mut self, timeout: Duration) -> bool {
-        self.last.as_mut().is_some_and(|(child, at)| {
-            at.elapsed() < timeout && matches!(child.try_wait(), Ok(None))
-        })
+    /// Note when `backend.json` in `data_dir` names the backend started last.
+    fn notice_published(&mut self, data_dir: &Path) {
+        if let Some(last) = &mut self.last
+            && !last.published
+            && published_pid(data_dir) == Some(last.child.id())
+        {
+            last.published = true;
+        }
     }
 
-    /// How the backend started last ended, once it has.
-    fn ended(&mut self) -> Option<std::process::ExitStatus> {
-        let (child, _) = self.last.as_mut()?;
-        child.try_wait().ok().flatten()
+    /// Whether a backend this process started may still be starting: one is
+    /// being started, or the one started last runs and has never been named
+    /// in `backend.json`.
+    fn starting(&mut self, data_dir: &Path) -> bool {
+        if self.spawning {
+            return true;
+        }
+        self.notice_published(data_dir);
+        self.last
+            .as_mut()
+            .is_some_and(|last| !last.published && matches!(last.child.try_wait(), Ok(None)))
     }
 
-    /// Delete a stale `backend.json` in `data_dir` and start a backend with
-    /// `spawn`. Refused while starts are held.
-    fn launch(
-        &mut self,
-        data_dir: &Path,
-        spawn: &mut impl FnMut() -> Result<Child, String>,
-    ) -> Result<(), String> {
+    /// The process of the backend started last and how it ended, once it
+    /// has. `None` while a start is under way.
+    fn ended(&mut self) -> Option<(u32, std::process::ExitStatus)> {
+        if self.spawning {
+            return None;
+        }
+        let last = self.last.as_mut()?;
+        let status = last.child.try_wait().ok().flatten()?;
+        Some((last.child.id(), status))
+    }
+
+    /// Take a start on: delete `backend.json` in `data_dir` and mark the
+    /// start under way, for [`spawn_claimed`] to make. Refused while starts
+    /// are held.
+    fn claim(&mut self, data_dir: &Path) -> Result<(), String> {
         if self.held {
             return Err("no backend is started while CodeWiki is being updated".into());
         }
-        // No live backend: a stale file would only mislead the wait for the
-        // new one. Not while one starts: the file may be its own.
+        // The file names no backend that answers, or one that is ending: it
+        // would only mislead the wait for the new one. A backend that ends
+        // later leaves the new one's file alone.
         let _ = std::fs::remove_file(data_dir.join(BACKEND_FILE));
-        self.last = Some((spawn()?, Instant::now()));
+        self.spawning = true;
         Ok(())
     }
+}
+
+/// Make the start that [`Starts::claim`] took on, and keep its child.
+fn spawn_claimed(
+    starts: &Mutex<Starts>,
+    spawn: &mut impl FnMut() -> Result<Child, String>,
+) -> Result<(), String> {
+    // Outside the lock: starting a program can take a while (a virus scan of
+    // it), and the app calls `hold_starts` on its UI thread. `spawning` keeps
+    // the other calls waiting meanwhile.
+    let child = spawn();
+    let mut starts = lock(starts);
+    starts.spawning = false;
+    starts.last = Some(Started::new(child?));
+    Ok(())
 }
 
 /// Start `codewiki serve` in the background.
@@ -401,20 +464,28 @@ impl Backend {
         timeout: Duration,
     ) -> Result<Self, String> {
         let live = || Self::running_in(data_dir).map(|(backend, _)| backend);
-        let mut spawned = {
+        let claimed = {
             let mut starts = lock(starts);
-            if starts.starting(timeout) {
-                log::info!("waiting for the backend this program started");
+            if starts.starting(data_dir) {
                 false
             } else {
-                starts.launch(data_dir, &mut spawn)?;
+                starts.claim(data_dir)?;
                 true
             }
         };
+        if claimed {
+            spawn_claimed(starts, &mut spawn)?;
+        } else {
+            log::info!("waiting for the backend this program started");
+        }
+        let mut spawned = claimed;
         let log = cw_core::logs::path("backend");
         let mut waited = Instant::now();
         while waited.elapsed() < timeout {
+            // The health checks below run without the lock: each may take
+            // seconds, and the app calls `hold_starts` on its UI thread.
             if let Some(backend) = live() {
+                lock(starts).notice_published(data_dir);
                 log::info!(
                     "the backend at {} answered after {} ms",
                     backend.url,
@@ -423,31 +494,40 @@ impl Backend {
                 return Ok(backend);
             }
             // A backend that has ended will never answer; say so now rather
-            // than at the end of the wait. Checked and replaced under one
-            // lock, so that two waiting calls start one backend between them.
-            let mut starts = lock(starts);
-            if let Some(status) = starts.ended() {
-                // Another client may have started one at the same moment.
-                if let Some(backend) = live() {
-                    return Ok(backend);
+            // than at the end of the wait.
+            let ended = lock(starts).ended();
+            let Some((pid, status)) = ended else {
+                std::thread::sleep(Duration::from_millis(150));
+                continue;
+            };
+            // Another client may have started one at the same moment.
+            if let Some(backend) = live() {
+                return Ok(backend);
+            }
+            if spawned {
+                return Err(format!(
+                    "the backend stopped before it answered ({status}); see {}",
+                    log.display()
+                ));
+            }
+            // The one waited for was ending, not starting: a backend asked to
+            // stop finishes its requests first. Start one now, once, unless
+            // another call has since: it is still the same one, ended.
+            let claimed = {
+                let mut starts = lock(starts);
+                if starts.ended().is_some_and(|(now, _)| now == pid) {
+                    starts.claim(data_dir)?;
+                    true
+                } else {
+                    false
                 }
-                if spawned {
-                    return Err(format!(
-                        "the backend stopped before it answered ({status}); see {}",
-                        log.display()
-                    ));
-                }
-                // The one waited for was ending, not starting: a backend
-                // asked to stop finishes its requests first. Start one now,
-                // once, and give it the whole wait.
+            };
+            if claimed {
                 log::info!("the backend this program started ended ({status}); starting another");
-                starts.launch(data_dir, &mut spawn)?;
+                spawn_claimed(starts, &mut spawn)?;
                 spawned = true;
                 waited = Instant::now();
-                continue;
             }
-            drop(starts);
-            std::thread::sleep(Duration::from_millis(150));
         }
         Err(format!(
             "the backend did not start within {} seconds; see {}",
@@ -962,19 +1042,30 @@ mod tests {
             .unwrap()
     }
 
-    /// `backend.json` in `dir`, naming `url`.
+    /// The starts of a process whose last backend is `child`, not yet named
+    /// in `backend.json`.
     #[cfg(windows)]
-    fn publish(dir: &Path, url: &str) {
-        let file = serde_json::json!({ "url": url, "token": "t" });
+    fn started_last(child: Child) -> Mutex<Starts> {
+        Mutex::new(Starts {
+            last: Some(Started::new(child)),
+            ..Starts::default()
+        })
+    }
+
+    /// `backend.json` in `dir`, naming `url` and, when given, the process
+    /// that listens there.
+    #[cfg(windows)]
+    fn publish(dir: &Path, url: &str, pid: Option<u32>) {
+        let file = serde_json::json!({ "url": url, "token": "t", "pid": pid });
         std::fs::write(dir.join(BACKEND_FILE), file.to_string()).unwrap();
     }
 
     #[cfg(windows)]
     fn end(starts: Mutex<Starts>) {
         let starts = starts.into_inner().unwrap_or_else(PoisonError::into_inner);
-        if let Some((mut child, _)) = starts.last {
-            let _ = child.kill();
-            let _ = child.wait();
+        if let Some(mut last) = starts.last {
+            let _ = last.child.kill();
+            let _ = last.child.wait();
         }
     }
 
@@ -982,17 +1073,16 @@ mod tests {
     #[test]
     fn a_start_waits_for_the_backend_this_program_is_starting() {
         let dir = temp_dir("starting");
-        let starts = Mutex::new(Starts {
-            last: Some((stand_in(30), Instant::now())),
-            held: false,
-        });
+        let child = stand_in(30);
+        let pid = child.id();
+        let starts = started_last(child);
         // It writes its file a moment later, once it listens.
         let url = guarded_backend("t");
         let writer = {
             let (dir, url) = (dir.clone(), url.clone());
             std::thread::spawn(move || {
                 std::thread::sleep(Duration::from_millis(300));
-                publish(&dir, &url);
+                publish(&dir, &url, Some(pid));
             })
         };
         let mut spawns = 0;
@@ -1004,6 +1094,31 @@ mod tests {
         writer.join().unwrap();
         assert_eq!(backend.url(), url);
         assert_eq!(spawns, 0);
+        // It listened: from now on, a silence of it means it is ending.
+        assert!(lock(&starts).last.as_ref().unwrap().published);
+        end(starts);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_backend_still_starting_holds_up_a_start_however_long_it_takes() {
+        let dir = temp_dir("slow");
+        // A cold disk or a virus scan keeps it from listening past the first
+        // wait, and the user presses "Try again": no second one. The guard
+        // keeps no age, so how long it has run does not matter.
+        let starts = started_last(stand_in(30));
+        let mut spawns = 0;
+        for _ in 0..2 {
+            let spawn = || {
+                spawns += 1;
+                Err("a second backend was started".to_string())
+            };
+            let error =
+                Backend::start_in(&dir, &starts, spawn, Duration::from_secs(1)).unwrap_err();
+            assert!(error.contains("did not start within"), "{error}");
+        }
+        assert_eq!(spawns, 0);
         end(starts);
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1012,23 +1127,33 @@ mod tests {
     #[test]
     fn a_backend_that_ends_unanswered_while_waited_for_is_replaced_once() {
         let dir = temp_dir("ending");
-        // Asked to stop, it finishes its requests and ends without answering
-        // again; its stale file is still there.
-        let starts = Mutex::new(Starts {
-            last: Some((stand_in(1), Instant::now())),
-            held: false,
-        });
-        publish(&dir, &dead_address());
+        let starts = started_last(stand_in(30));
+        // A stale file of another backend, which does not answer.
+        publish(&dir, &dead_address(), None);
         let url = guarded_backend("t");
+        let ended = std::sync::atomic::AtomicBool::new(false);
         let mut spawns = 0;
-        let spawn = || {
-            spawns += 1;
-            assert!(!dir.join(BACKEND_FILE).exists(), "the stale file stayed");
-            publish(&dir, &url);
-            Ok(stand_in(30))
-        };
-        let backend = Backend::start_in(&dir, &starts, spawn, Duration::from_secs(10)).unwrap();
-        assert_eq!(backend.url(), url);
+        std::thread::scope(|scope| {
+            // It ends without answering while the start waits for it.
+            scope.spawn(|| {
+                std::thread::sleep(Duration::from_millis(500));
+                let mut starts = lock(&starts);
+                let last = starts.last.as_mut().unwrap();
+                last.child.kill().unwrap();
+                last.child.wait().unwrap();
+                ended.store(true, std::sync::atomic::Ordering::SeqCst);
+            });
+            let spawn = || {
+                spawns += 1;
+                // Only once the one waited for ended: the start did wait.
+                assert!(ended.load(std::sync::atomic::Ordering::SeqCst));
+                assert!(!dir.join(BACKEND_FILE).exists(), "the stale file stayed");
+                publish(&dir, &url, None);
+                Ok(stand_in(30))
+            };
+            let backend = Backend::start_in(&dir, &starts, spawn, Duration::from_secs(10)).unwrap();
+            assert_eq!(backend.url(), url);
+        });
         assert_eq!(spawns, 1);
         end(starts);
         let _ = std::fs::remove_dir_all(&dir);
@@ -1036,19 +1161,53 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn an_old_backend_that_does_not_answer_holds_up_no_start() {
-        let dir = temp_dir("old");
-        // Started long ago and silent now: ending or hung, not starting.
-        let long_ago = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();
-        let starts = Mutex::new(Starts {
-            last: Some((stand_in(5), long_ago)),
-            held: false,
+    fn two_starts_waiting_for_a_backend_that_ends_replace_it_once() {
+        let dir = temp_dir("two");
+        let starts = started_last(stand_in(30));
+        let url = guarded_backend("t");
+        let spawns = std::sync::atomic::AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            let start = || {
+                let spawn = || {
+                    spawns.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    // A slow start, as of a program being scanned.
+                    std::thread::sleep(Duration::from_millis(300));
+                    publish(&dir, &url, None);
+                    Ok(stand_in(30))
+                };
+                Backend::start_in(&dir, &starts, spawn, Duration::from_secs(10))
+            };
+            let first = scope.spawn(start);
+            let second = scope.spawn(start);
+            std::thread::sleep(Duration::from_millis(500));
+            {
+                let mut starts = lock(&starts);
+                let last = starts.last.as_mut().unwrap();
+                last.child.kill().unwrap();
+                last.child.wait().unwrap();
+            }
+            assert_eq!(first.join().unwrap().unwrap().url(), url);
+            assert_eq!(second.join().unwrap().unwrap().url(), url);
         });
+        assert_eq!(spawns.load(std::sync::atomic::Ordering::SeqCst), 1);
+        end(starts);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_backend_that_listened_and_is_silent_now_holds_up_no_start() {
+        let dir = temp_dir("published");
+        // It listened and published, and now drains after a shutdown: its
+        // file is still there, its port no longer answers.
+        let child = stand_in(30);
+        publish(&dir, &dead_address(), Some(child.id()));
+        let starts = started_last(child);
         let url = guarded_backend("t");
         let mut spawns = 0;
         let spawn = || {
             spawns += 1;
-            publish(&dir, &url);
+            publish(&dir, &url, None);
             Ok(stand_in(30))
         };
         let asked = Instant::now();
@@ -1064,8 +1223,8 @@ mod tests {
     fn no_backend_is_started_while_starts_are_held() {
         let dir = temp_dir("held");
         let starts = Mutex::new(Starts {
-            last: None,
             held: true,
+            ..Starts::default()
         });
         let mut spawns = 0;
         let spawn = || {

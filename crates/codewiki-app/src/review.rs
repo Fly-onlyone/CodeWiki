@@ -6,7 +6,7 @@
 //! agent proposes its explanation of such a note. Each waits for a decision,
 //! one at a time or several at once.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap};
 
 use cw_client::DecideResult;
 use serde_json::Value;
@@ -481,42 +481,23 @@ pub fn forget_written<T>(
     history.retain(|page| note(page).is_none_or(|path| !written.iter().any(|w| w == path)));
 }
 
-/// The notes an approval wrote while other tabs showed them. Such a tab
-/// holds the note as it was, and an edit there would save that over the
-/// approved text, so it loads the note again when it is next shown.
-#[derive(Debug, Default)]
-pub struct Stale {
-    /// Each note's path, with how many tabs show it as it was.
-    tabs: BTreeMap<String, usize>,
-}
-
-impl Stale {
-    /// Remember each page in `shown` (a note's path, or `None` for any
-    /// other page) that shows a note in `written`.
-    pub fn mark<'a>(
-        &mut self,
-        shown: impl IntoIterator<Item = Option<&'a str>>,
-        written: &[String],
-    ) {
-        for path in shown.into_iter().flatten() {
-            if written.iter().any(|written| written == path) {
-                *self.tabs.entry(path.to_string()).or_default() += 1;
-            }
-        }
-    }
-
-    /// Whether a tab just shown, whose page is the note at `path`, must
-    /// load it again. Each tab marked asks once.
-    pub fn take(&mut self, path: &str) -> bool {
-        let Some(count) = self.tabs.get_mut(path) else {
-            return false;
-        };
-        *count -= 1;
-        if *count == 0 {
-            self.tabs.remove(path);
-        }
-        true
-    }
+/// Which tabs must load their note again when next shown: each tab, given
+/// its page (a note's path, or `None` for any other page), that is not the
+/// `active` one and shows a note in `written`. Such a tab holds the note as
+/// it was, and an edit there would save that over the approved text. The
+/// active tab's slot is an old copy; the page on screen is dealt with apart.
+pub fn to_reload<'a>(
+    pages: impl IntoIterator<Item = Option<&'a str>>,
+    active: usize,
+    written: &[String],
+) -> Vec<bool> {
+    pages
+        .into_iter()
+        .enumerate()
+        .map(|(index, page)| {
+            index != active && page.is_some_and(|path| written.iter().any(|w| w == path))
+        })
+        .collect()
 }
 
 /// Whether the app itself is busy with work that may add proposals to the
@@ -561,8 +542,6 @@ pub struct State {
     /// The error a proposal that did not load left on the page; the next
     /// proposal that loads takes it away.
     pub load_error: Option<String>,
-    /// The notes other tabs show as they were before an approval.
-    pub stale: Stale,
 }
 
 #[cfg(test)]
@@ -1008,26 +987,26 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_that_showed_a_written_note_loads_it_once_when_shown() {
-        let mut stale = Stale::default();
+    fn each_other_tab_on_a_written_note_loads_it_again() {
         let written = ids(&["01-Core/Parser.md", "01-Core/Eval.md"]);
-        // Two tabs show Parser, one another page, one a note not written.
-        stale.mark(
-            [
-                Some("01-Core/Parser.md"),
-                None,
-                Some("01-Core/Lexer.md"),
-                Some("01-Core/Parser.md"),
-            ],
-            &written,
+        let pages = [
+            // The active tab: its slot is an old copy.
+            Some("01-Core/Parser.md"),
+            None,
+            Some("01-Core/Parser.md"),
+            Some("01-Core/Lexer.md"),
+            Some("01-Core/Eval.md"),
+        ];
+        assert_eq!(
+            to_reload(pages, 0, &written),
+            [false, false, true, false, true]
         );
-        assert!(stale.take("01-Core/Parser.md"));
-        assert!(stale.take("01-Core/Parser.md"));
-        // Each tab asks once.
-        assert!(!stale.take("01-Core/Parser.md"));
-        assert!(!stale.take("01-Core/Lexer.md"));
-        // A written note no tab showed is not waited for.
-        assert!(!stale.take("01-Core/Eval.md"));
+        // Every tab is its own: each on Parser is marked.
+        assert_eq!(
+            to_reload([Some("01-Core/Parser.md"); 3], 1, &written),
+            [true, false, true]
+        );
+        assert_eq!(to_reload(pages, 0, &[]), [false; 5]);
     }
 
     #[test]

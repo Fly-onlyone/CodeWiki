@@ -196,6 +196,9 @@ struct Repo {
 struct Tab {
     page: Page,
     history: Vec<Page>,
+    /// The page is a note an approval wrote since the tab was left: load it
+    /// again when the tab is shown, or an edit would save the old text.
+    reload: bool,
 }
 
 /// A note being edited.
@@ -478,6 +481,7 @@ impl AppView {
             tabs: vec![Tab {
                 page: Page::Message(String::new()),
                 history: Vec::new(),
+                reload: false,
             }],
             active_tab: 0,
             palette_open: false,
@@ -1262,6 +1266,7 @@ impl AppView {
         self.tabs = vec![Tab {
             page: Page::Message(String::new()),
             history: Vec::new(),
+            reload: false,
         }];
         self.active_tab = 0;
     }
@@ -1952,14 +1957,19 @@ impl AppView {
         self.tabs[self.active_tab] = Tab {
             page: self.page.clone(),
             history: std::mem::take(&mut self.history),
+            reload: false,
         };
     }
 
-    fn load_tab(&mut self) {
+    /// Show the active tab's page. Returns whether its note must load again
+    /// (`Tab::reload`).
+    fn load_tab(&mut self) -> bool {
         let tab = &mut self.tabs[self.active_tab];
         self.page = tab.page.clone();
         self.history = std::mem::take(&mut tab.history);
+        let reload = std::mem::take(&mut tab.reload);
         self.show_page();
+        reload
     }
 
     fn activate_tab(&mut self, index: usize, cx: &mut Context<Self>) {
@@ -1972,8 +1982,9 @@ impl AppView {
         }
         self.stash_tab();
         self.active_tab = index;
-        self.load_tab();
-        self.reload_stale_note(cx);
+        if self.load_tab() {
+            self.reload_note(cx);
+        }
         cx.notify();
     }
 
@@ -1988,6 +1999,7 @@ impl AppView {
         self.tabs.push(Tab {
             page: self.page.clone(),
             history: Vec::new(),
+            reload: false,
         });
         self.active_tab = self.tabs.len() - 1;
         self.load_tab();
@@ -2005,8 +2017,9 @@ impl AppView {
         self.tabs.remove(index);
         if index == self.active_tab {
             self.active_tab = index.min(self.tabs.len() - 1);
-            self.load_tab();
-            self.reload_stale_note(cx);
+            if self.load_tab() {
+                self.reload_note(cx);
+            }
         } else if index < self.active_tab {
             self.active_tab -= 1;
         }

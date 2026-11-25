@@ -206,8 +206,10 @@ impl AppView {
 
     /// Forget the pages of the notes an approval wrote, in every tab's
     /// history: going back to one would show the note as it was, and an
-    /// edit there would save that over the approved text.
-    fn forget_written_notes(&mut self, written: &[String]) {
+    /// edit there would save that over the approved text. A tab that shows
+    /// one loads it again: the other tabs when they are shown, the page on
+    /// screen at once.
+    fn forget_written_notes(&mut self, written: &[String], cx: &mut Context<Self>) {
         fn note(page: &Page) -> Option<&str> {
             match page {
                 Page::Note { path, .. } => Some(path.as_str()),
@@ -221,26 +223,23 @@ impl AppView {
         for tab in &mut self.tabs {
             review::forget_written(&mut tab.history, written, note);
         }
-        // Another tab may show such a note as it was: it loads it again
-        // when it is shown (`reload_stale_note`).
-        let active = self.active_tab;
-        let shown = self
-            .tabs
-            .iter()
-            .enumerate()
-            .filter(|(index, _)| *index != active)
-            .map(|(_, tab)| note(&tab.page));
-        self.review.stale.mark(shown, written);
+        let pages = self.tabs.iter().map(|tab| note(&tab.page));
+        let marks = review::to_reload(pages, self.active_tab, written);
+        for (tab, reload) in self.tabs.iter_mut().zip(marks) {
+            tab.reload |= reload;
+        }
+        // The user may have gone to such a note while the decision ran.
+        if note(&self.page).is_some_and(|path| written.iter().any(|w| w == path)) {
+            self.reload_note(cx);
+        }
     }
 
-    /// The tab just shown holds a note an approval wrote since it was
-    /// left: load the note again, in place, as the tab showed it.
-    pub(crate) fn reload_stale_note(&mut self, cx: &mut Context<Self>) {
-        if let Page::Note { path, agent, .. } = &self.page
-            && self.review.stale.take(path)
-        {
+    /// Load the note on the page again, in place, as it is shown (whole or
+    /// as an agent reads it): an approval wrote it since it was loaded.
+    pub(crate) fn reload_note(&mut self, cx: &mut Context<Self>) {
+        if let Page::Note { path, agent, .. } = &self.page {
             let (path, agent) = (path.clone(), *agent);
-            log::info!("loading {path} again: it was written since its tab was left");
+            log::info!("loading {path} again: an approval wrote it");
             self.open_note_as(path, false, agent, cx);
         }
     }
@@ -270,7 +269,7 @@ impl AppView {
                 for notice in review::decided_notices(approve, &results, &items) {
                     this.notify_user(notice, cx);
                 }
-                this.forget_written_notes(&review::written(approve, &results, &items));
+                this.forget_written_notes(&review::written(approve, &results, &items), cx);
                 let decided: Vec<String> = results.into_iter().map(|result| result.id).collect();
                 this.reload_notes(cx, move |this, cx| {
                     if !matches!(this.page, Page::Review { .. }) {

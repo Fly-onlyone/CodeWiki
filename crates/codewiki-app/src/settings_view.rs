@@ -422,6 +422,16 @@ impl AppView {
         .detach();
     }
 
+    /// Ask the backend again for what the open Settings page shows: a backend
+    /// was reached while the page was open.
+    pub(crate) fn reload_settings(&mut self, cx: &mut Context<Self>) {
+        self.load_settings(cx);
+        if matches!(self.page, Page::Settings(Category::Search)) {
+            self.load_embed_job(cx);
+            self.load_embed_models(cx);
+        }
+    }
+
     /// Ask the backend for its settings.
     fn load_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_request(

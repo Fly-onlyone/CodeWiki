@@ -105,6 +105,9 @@ pub enum Poll {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Loss {
     lost: Lost,
+    /// Whether the backend lost was named rather than found or started on
+    /// this machine.
+    remote: bool,
     /// Whether the one attempt that may start a backend is still to come.
     full_left: bool,
     /// When the next attempt is due; `None` while one runs.
@@ -164,6 +167,7 @@ impl Supervisor {
         self.silent = 0;
         self.loss = Some(Loss {
             lost: Lost::Startup,
+            remote: false,
             full_left: false,
             due: Some(now + self.backoff.next_delay()),
         });
@@ -195,10 +199,45 @@ impl Supervisor {
         // Two polls have gone unanswered already: the first attempt is now.
         self.loss = Some(Loss {
             lost: Lost::MidSession,
+            remote,
             full_left: !remote,
             due: Some(now),
         });
         true
+    }
+
+    /// The user asked to reconnect while the backend in use is lost: drop the
+    /// attempt under way, and make the next one now, as the first of a loss.
+    /// Returns false when nothing is lost mid-session; the offline page's
+    /// "Try again" is a connect of its own ([`restart`](Self::restart)).
+    pub fn retry_now(&mut self, now: Instant) -> bool {
+        let Some(loss) = &mut self.loss else {
+            return false;
+        };
+        if loss.lost != Lost::MidSession {
+            return false;
+        }
+        loss.full_left = !loss.remote;
+        loss.due = Some(now);
+        self.backoff.reset();
+        self.seq.bump();
+        true
+    }
+
+    /// The backend in use is gone and could not be started again, as after
+    /// a failed update: lost mid-session, though no poll said so. It was just
+    /// tried, so the first attempt waits. Nothing changes while already lost.
+    pub fn lose(&mut self, remote: bool, now: Instant) {
+        if self.loss.is_some() {
+            return;
+        }
+        self.silent = 0;
+        self.loss = Some(Loss {
+            lost: Lost::MidSession,
+            remote,
+            full_left: !remote,
+            due: Some(now + self.backoff.next_delay()),
+        });
     }
 
     /// The attempt to make now, with its number, when one is due. It runs
@@ -429,6 +468,61 @@ mod tests {
         // The user's connect failed too.
         watch.offline(now);
         assert_eq!(watch.until_due(now), Some(secs(5)));
+    }
+
+    #[test]
+    fn asking_during_a_loss_tries_at_once_and_may_start_a_backend_again() {
+        let t0 = Instant::now();
+        let mut watch = Supervisor::default();
+        // Nothing is lost: "Reconnect" is the connect after the offline page.
+        assert!(!watch.retry_now(t0));
+        watch.offline(t0);
+        assert!(!watch.retry_now(t0));
+
+        let mut watch = Supervisor::default();
+        watch.polled(Poll::Silent, false, t0);
+        watch.polled(Poll::Silent, false, t0);
+        let (attempt, seq) = watch.due(t0).unwrap();
+        assert_eq!(attempt, Attempt::Full);
+        assert!(watch.failed(seq, t0));
+        let (_, probing) = watch.due(t0 + secs(5)).unwrap();
+        // The user asks while a look is under way: that look no longer
+        // counts, and the next attempt may start a backend, now.
+        let t1 = t0 + secs(6);
+        assert!(watch.retry_now(t1));
+        assert!(!watch.failed(probing, t1));
+        assert_eq!(watch.lost(), Some(Lost::MidSession));
+        let (attempt, seq) = watch.due(t1).unwrap();
+        assert_eq!(attempt, Attempt::Full);
+        // The waits start over.
+        assert!(watch.failed(seq, t1));
+        assert_eq!(watch.until_due(t1), Some(secs(5)));
+
+        // A backend on another machine is still only looked for.
+        let mut watch = Supervisor::default();
+        watch.polled(Poll::Silent, true, t0);
+        watch.polled(Poll::Silent, true, t0);
+        assert!(watch.retry_now(t0));
+        let (attempt, _) = watch.due(t0).unwrap();
+        assert_eq!(attempt, Attempt::ProbeOnly);
+    }
+
+    #[test]
+    fn a_backend_that_could_not_be_started_again_is_lost() {
+        let t0 = Instant::now();
+        let mut watch = Supervisor::default();
+        watch.lose(false, t0);
+        assert_eq!(watch.lost(), Some(Lost::MidSession));
+        // It was just tried: the first attempt waits, and may start one.
+        assert_eq!(watch.due(t0), None);
+        let (attempt, seq) = watch.due(t0 + secs(5)).unwrap();
+        assert_eq!(attempt, Attempt::Full);
+        assert_eq!(watch.succeeded(seq), Some(Lost::MidSession));
+        // Lost already: a second call changes nothing.
+        watch.lose(false, t0);
+        watch.lose(true, t0 + secs(1));
+        let (attempt, _) = watch.due(t0 + secs(5)).unwrap();
+        assert_eq!(attempt, Attempt::Full);
     }
 
     #[test]

@@ -1115,9 +1115,15 @@ impl AppView {
 
     /// Take what attempt `seq` to reach the backend again found. A result
     /// the user overtook, by choosing another backend or pressing "Try
-    /// again", is dropped.
+    /// again", is dropped. So is one that arrives while an update is
+    /// installed, which stops the backend: it counts as failed, and the
+    /// attempts go on if the update fails.
     fn take_attempt(&mut self, seq: u64, result: Result<Reached, String>, cx: &mut Context<Self>) {
         let reached = match result {
+            Ok(_) if self.update.installing() => {
+                self.connection.failed(seq, std::time::Instant::now());
+                return;
+            }
             Ok(reached) => reached,
             Err(message) => {
                 if self.connection.failed(seq, std::time::Instant::now()) {
@@ -1133,7 +1139,22 @@ impl AppView {
         let title = match lost {
             connection::Lost::Startup => {
                 self.error = None;
-                self.take_connection(reached, cx);
+                if self.on_settings_page() {
+                    // The user went from the offline page to the settings,
+                    // maybe to type another backend's address: they stay,
+                    // and what the page shows loads behind them.
+                    let (backend, repos, missing, _) = reached;
+                    self.backend = Some(backend);
+                    self.take_repos(repos, missing);
+                    self.reload_settings(cx);
+                    // What a second launch asked for meanwhile is carried
+                    // out, as it would be from the settings when connected.
+                    if let Some(request) = self.pending_request.take() {
+                        self.open_request(request, cx);
+                    }
+                } else {
+                    self.take_connection(reached, cx);
+                }
                 "Connected"
             }
             connection::Lost::MidSession => {
@@ -1216,6 +1237,14 @@ impl AppView {
     /// while connected or while another connect runs; what an automatic
     /// attempt under way finds is dropped.
     fn reconnect(&mut self, cx: &mut Context<Self>) {
+        // Lost mid-session: an attempt now, which may start a backend on
+        // this machine again; the page stays.
+        if self.connection.retry_now(std::time::Instant::now()) {
+            log::info!("reconnecting, as asked");
+            self.supervise(cx);
+            cx.notify();
+            return;
+        }
         if self.backend.is_some() || self.busy.is_some() {
             return;
         }
@@ -1359,6 +1388,9 @@ impl AppView {
         let version = release.version.clone();
         log::info!("update: installing {version} into {}", install.display());
         self.update = update::State::Installing(version.clone());
+        // An attempt to reach the backend that is under way must not start
+        // one from the programs about to be replaced.
+        cw_client::hold_starts(true);
         self.busy = Some(format!("Updating to {version}"));
         self.error = None;
         self.refresh_settings(cx);
@@ -1428,6 +1460,7 @@ impl AppView {
                     Err((release, e)) => {
                         this.update = update::State::Available(release);
                         this.error = Some(format!("The update to {version} failed: {e}."));
+                        cw_client::hold_starts(false);
                         // The swap failed after the backend was stopped. The
                         // old programs are back in place: start it again.
                         if this.backend.is_none() {
@@ -1442,7 +1475,8 @@ impl AppView {
     }
 
     /// Find or start a backend again without leaving the page or clearing
-    /// the message shown. On failure the palette offers "Reconnect".
+    /// the message shown. On failure the backend counts as lost: the banner
+    /// shows, and the app keeps trying.
     fn restart_backend(&mut self, cx: &mut Context<Self>) {
         cx.spawn(async move |this, cx| {
             let result = cx
@@ -1452,7 +1486,11 @@ impl AppView {
             _ = this.update(cx, |this, cx| {
                 match result {
                     Ok(backend) => this.backend = Some(backend),
-                    Err(message) => log::warn!("the backend did not start again: {message}"),
+                    Err(message) => {
+                        log::warn!("the backend did not start again: {message}");
+                        this.connection
+                            .lose(cw_client::uses_remote(), std::time::Instant::now());
+                    }
                 }
                 cx.notify();
             });
@@ -1966,7 +2004,8 @@ impl AppView {
     /// Entries the palette lists for what is typed now.
     fn palette_matches(&self, cx: &App) -> Vec<palette::Entry> {
         let mut entries = palette::actions();
-        if self.backend.is_none() && self.busy.is_none() {
+        let lost = self.connection.lost() == Some(connection::Lost::MidSession);
+        if (self.backend.is_none() && self.busy.is_none()) || lost {
             entries.insert(
                 0,
                 palette::Entry::new("Reconnect to the backend", "Command", Command::Reconnect),

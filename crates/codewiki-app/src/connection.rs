@@ -226,9 +226,14 @@ impl Supervisor {
 
     /// The backend in use is gone and could not be started again, as after
     /// a failed update: lost mid-session, though no poll said so. It was just
-    /// tried, so the first attempt waits. Nothing changes while already lost.
+    /// tried, so the first attempt waits. A loss under way goes on, its next
+    /// attempt allowed to start a backend on this machine again: the update
+    /// may have refused the one it had.
     pub fn lose(&mut self, remote: bool, now: Instant) {
-        if self.loss.is_some() {
+        if let Some(loss) = &mut self.loss {
+            if loss.lost == Lost::MidSession && !remote {
+                loss.full_left = true;
+            }
             return;
         }
         self.silent = 0;
@@ -518,11 +523,44 @@ mod tests {
         let (attempt, seq) = watch.due(t0 + secs(5)).unwrap();
         assert_eq!(attempt, Attempt::Full);
         assert_eq!(watch.succeeded(seq), Some(Lost::MidSession));
-        // Lost already: a second call changes nothing.
-        watch.lose(false, t0);
-        watch.lose(true, t0 + secs(1));
+    }
+
+    #[test]
+    fn a_failed_restart_during_a_loss_may_start_a_backend_again() {
+        let t0 = Instant::now();
+        let mut watch = Supervisor::default();
+        watch.polled(Poll::Silent, false, t0);
+        watch.polled(Poll::Silent, false, t0);
+        // The one attempt that may start a backend is refused, as while an
+        // update installs.
+        let (attempt, seq) = watch.due(t0).unwrap();
+        assert_eq!(attempt, Attempt::Full);
+        assert!(watch.failed(seq, t0));
+        // The update failed and so did the restart after it: the loss goes
+        // on, and its next attempt may start one again, on the same waits.
+        watch.lose(false, t0 + secs(1));
+        assert_eq!(watch.lost(), Some(Lost::MidSession));
+        assert_eq!(watch.until_due(t0), Some(secs(5)));
         let (attempt, _) = watch.due(t0 + secs(5)).unwrap();
         assert_eq!(attempt, Attempt::Full);
+
+        // A backend on another machine is still only looked for.
+        let mut watch = Supervisor::default();
+        watch.polled(Poll::Silent, true, t0);
+        watch.polled(Poll::Silent, true, t0);
+        let (_, seq) = watch.due(t0).unwrap();
+        watch.failed(seq, t0);
+        watch.lose(true, t0);
+        let (attempt, _) = watch.due(t0 + secs(5)).unwrap();
+        assert_eq!(attempt, Attempt::ProbeOnly);
+
+        // The offline page's looks stay looks.
+        let mut watch = Supervisor::default();
+        watch.offline(t0);
+        watch.lose(false, t0);
+        assert_eq!(watch.lost(), Some(Lost::Startup));
+        let (attempt, _) = watch.due(t0 + secs(5)).unwrap();
+        assert_eq!(attempt, Attempt::ProbeOnly);
     }
 
     #[test]

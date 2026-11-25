@@ -16,6 +16,19 @@ pub use model::*;
 /// Crate version, exposed so binaries report one consistent version string.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+/// Whether this is a development build (debug assertions on). A development
+/// build keeps its own folders ([`paths::APP_FOLDER`]) and its own name, so
+/// that one run from the sources never shares a backend, an index or settings
+/// with an installed CodeWiki on the same machine.
+pub const DEV_BUILD: bool = cfg!(debug_assertions);
+
+/// The name the app shows in its title, its tray icon and its notifications.
+pub const APP_NAME: &str = if DEV_BUILD {
+    "CodeWiki Dev"
+} else {
+    "CodeWiki"
+};
+
 /// Folder, relative to a repository root, that holds the generated vault.
 pub const VAULT_DIR: &str = "obsidian";
 

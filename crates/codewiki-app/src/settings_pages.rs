@@ -167,7 +167,7 @@ fn appearance(model: &Model) -> Vec<Block> {
                     text("Your own themes load from the "),
                     code("themes"),
                     text(" folder in "),
-                    code("%APPDATA%\\CodeWiki"),
+                    code(format!("%APPDATA%\\{}", cw_core::paths::APP_FOLDER)),
                     text(", in the same JSON format."),
                 ]),
                 Block::Switch {

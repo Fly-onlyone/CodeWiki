@@ -108,11 +108,17 @@ fn choose(
     }
 }
 
-/// Where the user's choice is kept: `%APPDATA%\CodeWiki\error_reports.txt`.
+/// Where the user's choice is kept: `%APPDATA%\CodeWiki\error_reports.txt`,
+/// or under `CodeWiki-Dev` in a development build
+/// ([`cw_core::paths::APP_FOLDER`]).
 pub fn consent_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .filter(|root| !root.is_empty())
-        .map(|root| PathBuf::from(root).join("CodeWiki").join(CONSENT_FILE))
+        .map(|root| {
+            PathBuf::from(root)
+                .join(cw_core::paths::APP_FOLDER)
+                .join(CONSENT_FILE)
+        })
 }
 
 /// Whether the user turned on "Send error reports".

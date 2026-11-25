@@ -248,8 +248,9 @@ async fn backend_status(State(state): State<AppState>) -> Json<Value> {
     report["model_job"] = state.0.jobs.status();
     // Proposals that wait, per repository. The answer never fails and never
     // waits long: the app takes a failing or slow status for a lost backend.
-    // A repository whose vault cannot be read is left out, and a count that
-    // takes longer than `pending::WAIT` goes on in the background.
+    // A repository whose vault cannot be read is left out, and so is one the
+    // count has not reached within `pending::WAIT`: the count goes on in the
+    // background, and the answer gives only what it counted meanwhile.
     let data_dir = state.0.config.data_dir.clone();
     let pending = state
         .0

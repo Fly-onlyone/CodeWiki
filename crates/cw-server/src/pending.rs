@@ -4,14 +4,17 @@
 //! a network share or on a disk that sleeps can take seconds. The app asks
 //! for the status every 5 s and takes an answer slower than 3 s for a lost
 //! backend, so the status waits for a count at most [`WAIT`]. A count that
-//! takes longer goes on in the background and is kept for the answers after
-//! it; until it is over, an answer gives what it has counted so far and, for
-//! the rest, what the last count that finished found. One count runs at a
-//! time: an answer asked for meanwhile waits for the count that runs.
+//! takes longer goes on in the background. One count runs at a time: a
+//! question asked meanwhile joins the count that runs.
+//!
+//! An answer gives only the repositories counted while it waited. A count
+//! made before the question may be older than what the app has loaded since,
+//! and the app would take the difference for news; a repository left out of
+//! an answer is only compared at the next one.
 
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use tokio::sync::watch;
 
@@ -25,24 +28,16 @@ pub(crate) type Found = Option<usize>;
 /// How long the status waits for a count.
 pub(crate) const WAIT: Duration = Duration::from_secs(1);
 
-/// The counts the status gives, and the count that runs.
+/// The count that runs, if one does.
 #[derive(Clone, Default)]
-pub(crate) struct ProposalCounts(Arc<Mutex<State>>);
-
-#[derive(Default)]
-struct State {
-    /// What the last count that finished found.
-    last: Option<Counts>,
-    /// The count that runs, if one does.
-    running: Option<Arc<Count>>,
-}
+pub(crate) struct ProposalCounts(Arc<Mutex<Option<Arc<Count>>>>);
 
 /// A count under way.
 struct Count {
-    /// What it has found so far, by repository id.
-    found: Mutex<BTreeMap<String, Found>>,
-    /// `None` while it runs; then whether it went through every repository.
-    over: watch::Sender<Option<bool>>,
+    /// What it has found so far, by repository id, with when.
+    found: Mutex<BTreeMap<String, (Found, Instant)>>,
+    /// Set once it is over, finished or not.
+    over: watch::Sender<bool>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -52,106 +47,70 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 }
 
 impl ProposalCounts {
-    /// The counts, within `wait`. `count` counts every repository and tells
-    /// each one it found; it runs on a thread of its own, and only when no
-    /// count runs yet.
+    /// The repositories counted within `wait` from now. `count` counts every
+    /// repository and tells each one it found; it runs on a thread of its
+    /// own, and only when no count runs yet.
     pub async fn get<F>(&self, wait: Duration, count: F) -> Counts
     where
         F: FnOnce(&mut dyn FnMut(String, Found)) + Send + 'static,
     {
+        let asked = Instant::now();
         let (running, mut over) = self.start(count);
-        let finished = tokio::time::timeout(wait, async {
-            over.wait_for(Option::is_some)
-                .await
-                .is_ok_and(|over| *over == Some(true))
-        })
-        .await
-        .unwrap_or(false);
-        let found = lock(&running.found).clone();
-        if finished {
-            return counted(&found);
-        }
-        merge(lock(&self.0).last.as_ref(), &found)
+        // Either way, the answer is what was counted by now.
+        let _ = tokio::time::timeout(wait, over.wait_for(|over| *over)).await;
+        fresh(&lock(&running.found), asked)
     }
 
     /// The count that runs, or a new one when none does.
-    fn start<F>(&self, count: F) -> (Arc<Count>, watch::Receiver<Option<bool>>)
+    fn start<F>(&self, count: F) -> (Arc<Count>, watch::Receiver<bool>)
     where
         F: FnOnce(&mut dyn FnMut(String, Found)) + Send + 'static,
     {
-        let mut state = lock(&self.0);
-        if let Some(running) = &state.running {
+        let mut slot = lock(&self.0);
+        if let Some(running) = &*slot {
             return (running.clone(), running.over.subscribe());
         }
-        let (over, watch) = watch::channel(None);
+        let (over, watch) = watch::channel(false);
         let running = Arc::new(Count {
             found: Mutex::default(),
             over,
         });
-        state.running = Some(running.clone());
-        drop(state);
-        let mut end = End {
+        *slot = Some(running.clone());
+        drop(slot);
+        let end = End {
             counts: self.clone(),
             running: running.clone(),
-            finished: false,
         };
         tokio::task::spawn_blocking(move || {
             count(&mut |id, found| {
-                lock(&end.running.found).insert(id, found);
+                lock(&end.running.found).insert(id, (found, Instant::now()));
             });
-            end.went_through();
         });
         (running, watch)
     }
 }
 
-/// Ends a count when it is dropped, a panic included: keeps what it found
-/// when it went through every repository, and lets the next count run.
+/// Ends a count when it is dropped, a panic included, and lets the next one
+/// run.
 struct End {
     counts: ProposalCounts,
     running: Arc<Count>,
-    finished: bool,
-}
-
-impl End {
-    /// The count went through every repository.
-    fn went_through(&mut self) {
-        self.finished = true;
-    }
 }
 
 impl Drop for End {
     fn drop(&mut self) {
-        let found = self.finished.then(|| counted(&lock(&self.running.found)));
-        let mut state = lock(&self.counts.0);
-        if let Some(found) = found {
-            state.last = Some(found);
-        }
-        state.running = None;
-        drop(state);
-        self.running.over.send_replace(Some(self.finished));
+        *lock(&self.counts.0) = None;
+        self.running.over.send_replace(true);
     }
 }
 
-/// The repositories a count found, less those it left out.
-fn counted(found: &BTreeMap<String, Found>) -> Counts {
+/// What a count found at or after `asked`, less the repositories it left out.
+fn fresh(found: &BTreeMap<String, (Found, Instant)>, asked: Instant) -> Counts {
     found
         .iter()
-        .filter_map(|(id, count)| Some((id.clone(), (*count)?)))
+        .filter(|(_, (_, at))| *at >= asked)
+        .filter_map(|(id, (count, _))| Some((id.clone(), (*count)?)))
         .collect()
-}
-
-/// The counts while a count runs: what it found so far, over what the last
-/// count that finished found.
-fn merge(last: Option<&Counts>, found: &BTreeMap<String, Found>) -> Counts {
-    let mut counts = last.cloned().unwrap_or_default();
-    for (id, count) in found {
-        match count {
-            Some(count) => counts.insert(id.clone(), *count),
-            None => counts.remove(id),
-        };
-    }
-    counts
 }
 
 #[cfg(test)]
@@ -176,51 +135,81 @@ mod tests {
         }
     }
 
-    /// A count that finds `pairs`, then stalls until the sender it returns
-    /// is used or dropped.
+    /// A count that finds each repository it is fed, until the feed ends.
     #[allow(clippy::type_complexity)]
-    fn stalled(
-        pairs: &'static [(&'static str, Found)],
-    ) -> (
-        mpsc::Sender<()>,
+    fn fed() -> (
+        mpsc::Sender<(&'static str, Found)>,
         impl FnOnce(&mut dyn FnMut(String, Found)) + Send + 'static,
     ) {
-        let (go, wait) = mpsc::channel::<()>();
-        (go, move |found: &mut dyn FnMut(String, Found)| {
-            for (id, n) in pairs {
-                found(id.to_string(), *n);
+        let (feed, items) = mpsc::channel::<(&'static str, Found)>();
+        (feed, move |found: &mut dyn FnMut(String, Found)| {
+            for (id, n) in items {
+                found(id.to_string(), n);
             }
-            let _ = wait.recv();
         })
+    }
+
+    #[test]
+    fn only_what_was_counted_after_the_question_is_answered() {
+        let asked = Instant::now();
+        let before = asked - Duration::from_millis(5);
+        let found = BTreeMap::from([
+            ("old".to_string(), (Some(1), before)),
+            ("new".to_string(), (Some(2), asked)),
+            // Its folder went away.
+            ("gone".to_string(), (None, asked)),
+        ]);
+        assert_eq!(fresh(&found, asked), counts(&[("new", 2)]));
+        assert_eq!(fresh(&found, before), counts(&[("new", 2), ("old", 1)]));
+    }
+
+    #[tokio::test]
+    async fn a_slow_count_answers_only_what_it_counted_while_the_question_waited() {
+        let pending = ProposalCounts::default();
+        pending
+            .get(WAIT, quick(&[("a", Some(1)), ("b", Some(2))]))
+            .await;
+
+        let (feed, count) = fed();
+        feed.send(("a", Some(5))).unwrap();
+        let short = Duration::from_millis(100);
+        // Not the old count of `b`, which it has not reached: that may be
+        // older than what the app loaded since.
+        assert_eq!(pending.get(short, count).await, counts(&[("a", 5)]));
+
+        // A question asked meanwhile joins that count, starts none, and gets
+        // only what it counts from then on.
+        let started = Arc::new(AtomicBool::new(false));
+        let flag = started.clone();
+        let second = move |_: &mut dyn FnMut(String, Found)| flag.store(true, Ordering::SeqCst);
+        let later = feed.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            later.send(("b", Some(7))).unwrap();
+        });
+        assert_eq!(pending.get(short, second).await, counts(&[("b", 7)]));
+        assert!(!started.load(Ordering::SeqCst));
+
+        // Once it ends, the next question counts anew.
+        drop(feed);
+        settled(&pending).await;
+        assert_eq!(
+            pending
+                .get(WAIT, quick(&[("a", Some(5)), ("b", Some(7))]))
+                .await,
+            counts(&[("a", 5), ("b", 7)])
+        );
     }
 
     /// Wait until no count runs.
     async fn settled(counts: &ProposalCounts) {
         for _ in 0..500 {
-            if lock(&counts.0).running.is_none() {
+            if lock(&counts.0).is_none() {
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("the count never ended");
-    }
-
-    #[test]
-    fn what_a_count_found_so_far_goes_over_the_last_counts() {
-        let last = counts(&[("a", 1), ("b", 2), ("c", 3)]);
-        let found = BTreeMap::from([
-            ("a".to_string(), Some(5)),
-            // Its folder went away.
-            ("b".to_string(), None),
-            ("d".to_string(), Some(4)),
-        ]);
-        assert_eq!(
-            merge(Some(&last), &found),
-            counts(&[("a", 5), ("c", 3), ("d", 4)])
-        );
-        // Before any count finished, what was found is all there is.
-        assert_eq!(merge(None, &found), counts(&[("a", 5), ("d", 4)]));
-        assert_eq!(merge(Some(&last), &BTreeMap::new()), last);
     }
 
     #[tokio::test]
@@ -235,40 +224,6 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_slow_count_gives_the_last_counts_and_finishes_in_the_background() {
-        let pending = ProposalCounts::default();
-        pending
-            .get(WAIT, quick(&[("a", Some(1)), ("b", Some(2))]))
-            .await;
-
-        // The count stalls after the first repository.
-        let (go, count) = stalled(&[("a", Some(5))]);
-        let short = Duration::from_millis(50);
-        assert_eq!(
-            pending.get(short, count).await,
-            counts(&[("a", 5), ("b", 2)])
-        );
-
-        // An answer asked for meanwhile starts no second count.
-        let started = Arc::new(AtomicBool::new(false));
-        let flag = started.clone();
-        let second = move |_: &mut dyn FnMut(String, Found)| flag.store(true, Ordering::SeqCst);
-        assert_eq!(
-            pending.get(short, second).await,
-            counts(&[("a", 5), ("b", 2)])
-        );
-        assert!(!started.load(Ordering::SeqCst));
-
-        // The stalled count finishes on its own and is kept.
-        go.send(()).unwrap();
-        settled(&pending).await;
-        let (go, count) = stalled(&[]);
-        assert_eq!(pending.get(short, count).await, counts(&[("a", 5)]));
-        drop(go);
-        settled(&pending).await;
-    }
-
-    #[tokio::test]
     async fn a_count_that_panics_lets_the_next_one_run() {
         let pending = ProposalCounts::default();
         pending.get(WAIT, quick(&[("a", Some(1))])).await;
@@ -276,7 +231,7 @@ mod tests {
             found("a".to_string(), Some(9));
             panic!("a vault that could not be read");
         };
-        // What it found before it failed is shown; it is not kept.
+        // What it found before it failed is shown.
         assert_eq!(pending.get(WAIT, broken).await, counts(&[("a", 9)]));
         settled(&pending).await;
         assert_eq!(

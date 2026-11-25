@@ -10,11 +10,13 @@
 //! backend does not keep serving.
 //!
 //! `GET /v1/status` says what the backend is doing: the wiki updates that are
-//! running and when an agent's MCP bridge last called (`activity`).
+//! running and when an agent's MCP bridge last called (`activity`), and how
+//! many proposals wait in each repository (`pending`).
 
 mod activity;
 mod api;
 mod embed_job;
+mod pending;
 mod repos;
 mod settings;
 pub mod workspace;
@@ -92,6 +94,8 @@ pub(crate) struct Inner {
     pub activity: activity::Activity,
     /// The background embedding job that runs, or the last that ran.
     pub jobs: embed_job::Jobs,
+    /// The pending proposals of each repository, for `GET /v1/status`.
+    pub proposals: pending::ProposalCounts,
     /// Updates of a wiki finished since the start. A background embedding
     /// that sees it change starts its repository over.
     pub updates: AtomicU64,
@@ -108,6 +112,7 @@ fn state(config: ServerConfig) -> AppState {
         stop: Notify::new(),
         activity: activity::Activity::default(),
         jobs: embed_job::Jobs::default(),
+        proposals: pending::ProposalCounts::default(),
         updates: AtomicU64::new(0),
     }))
 }

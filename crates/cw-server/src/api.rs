@@ -19,7 +19,7 @@ use cw_wiki::{explanations, query, service};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::{AppState, embed_job, repos, settings, workspace};
+use crate::{AppState, embed_job, pending, repos, settings, workspace};
 
 struct ApiError(Error);
 
@@ -246,31 +246,34 @@ async fn backend_status(State(state): State<AppState>) -> Json<Value> {
     // The background embedding job that runs, or null. The field keeps its
     // old name, so that older and newer clients read it alike.
     report["model_job"] = state.0.jobs.status();
-    // Proposals that wait, per repository. The answer never fails: the app
-    // takes a failing status for a lost backend, so a repository whose vault
-    // cannot be read is left out.
+    // Proposals that wait, per repository. The answer never fails and never
+    // waits long: the app takes a failing or slow status for a lost backend.
+    // A repository whose vault cannot be read is left out, and a count that
+    // takes longer than `pending::WAIT` goes on in the background.
     let data_dir = state.0.config.data_dir.clone();
-    let pending = tokio::task::spawn_blocking(move || pending_proposals(&data_dir))
-        .await
-        .unwrap_or_default();
+    let pending = state
+        .0
+        .proposals
+        .get(pending::WAIT, move |found| {
+            pending_proposals(&data_dir, found)
+        })
+        .await;
     report["proposals"] = json!(pending);
     Json(report)
 }
 
-/// The number of pending proposals of each registered repository whose
-/// folder is present, by repository id.
-fn pending_proposals(data_dir: &std::path::Path) -> std::collections::BTreeMap<String, usize> {
-    let mut counts = std::collections::BTreeMap::new();
+/// Count the pending proposals of each registered repository, by repository
+/// id, and tell each to `found`: `None` for one whose folder is gone or whose
+/// vault cannot be read.
+fn pending_proposals(data_dir: &std::path::Path, found: &mut dyn FnMut(String, pending::Found)) {
     for entry in repos::load(data_dir).unwrap_or_default() {
         let root = PathBuf::from(&entry.path);
-        if !root.is_dir() {
-            continue;
-        }
-        if let Ok(count) = proposal::pending_count(&root.join(VAULT_DIR)) {
-            counts.insert(entry.id, count);
-        }
+        let count = root
+            .is_dir()
+            .then(|| proposal::pending_count(&root.join(VAULT_DIR)).ok())
+            .flatten();
+        found(entry.id, count);
     }
-    counts
 }
 
 /// Stop the backend once the requests already running are done. The app calls

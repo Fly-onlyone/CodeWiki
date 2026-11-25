@@ -1973,6 +1973,7 @@ impl AppView {
         self.stash_tab();
         self.active_tab = index;
         self.load_tab();
+        self.reload_stale_note(cx);
         cx.notify();
     }
 
@@ -2005,6 +2006,7 @@ impl AppView {
         if index == self.active_tab {
             self.active_tab = index.min(self.tabs.len() - 1);
             self.load_tab();
+            self.reload_stale_note(cx);
         } else if index < self.active_tab {
             self.active_tab -= 1;
         }

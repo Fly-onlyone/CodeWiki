@@ -200,6 +200,7 @@ impl AppView {
             &self.review_order(),
             &self.review.selection,
             self.review_open(),
+            self.review.wanted.as_deref(),
         )
     }
 
@@ -219,6 +220,28 @@ impl AppView {
         review::forget_written(&mut self.history, written, note);
         for tab in &mut self.tabs {
             review::forget_written(&mut tab.history, written, note);
+        }
+        // Another tab may show such a note as it was: it loads it again
+        // when it is shown (`reload_stale_note`).
+        let active = self.active_tab;
+        let shown = self
+            .tabs
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| *index != active)
+            .map(|(_, tab)| note(&tab.page));
+        self.review.stale.mark(shown, written);
+    }
+
+    /// The tab just shown holds a note an approval wrote since it was
+    /// left: load the note again, in place, as the tab showed it.
+    pub(crate) fn reload_stale_note(&mut self, cx: &mut Context<Self>) {
+        if let Page::Note { path, agent, .. } = &self.page
+            && self.review.stale.take(path)
+        {
+            let (path, agent) = (path.clone(), *agent);
+            log::info!("loading {path} again: it was written since its tab was left");
+            self.open_note_as(path, false, agent, cx);
         }
     }
 

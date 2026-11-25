@@ -6,7 +6,7 @@
 //! agent proposes its explanation of such a note. Each waits for a decision,
 //! one at a time or several at once.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cw_client::DecideResult;
 use serde_json::Value;
@@ -431,13 +431,23 @@ impl Targets {
 
 /// What a decision acts on: the selection whenever it holds anything, the
 /// open proposal only while nothing is selected. A selection of the open
-/// proposal alone is that proposal. Only what waits in `order` counts.
-pub fn targets(order: &[String], selection: &Selection, open: Option<&str>) -> Targets {
-    let open = open.filter(|open| order.iter().any(|id| id == open));
+/// proposal alone is that proposal, and so is a selection of the one whose
+/// detail is `loading`, which a plain click on its row is about to open.
+/// Only what waits in `order` counts.
+pub fn targets(
+    order: &[String],
+    selection: &Selection,
+    open: Option<&str>,
+    loading: Option<&str>,
+) -> Targets {
+    let waits = |id: &&str| order.iter().any(|known| known == id);
+    let open = open.filter(waits);
     match (selection.in_order(order).as_slice(), open) {
         ([], Some(open)) => Targets::Open(open.to_string()),
         ([], None) => Targets::Nothing,
-        ([one], Some(open)) if one == open => Targets::Open(open.to_string()),
+        ([one], _) if Some(one.as_str()) == open || Some(one.as_str()) == loading => {
+            Targets::Open(one.clone())
+        }
         (selected, _) => Targets::Selected(selected.to_vec()),
     }
 }
@@ -469,6 +479,44 @@ pub fn forget_written<T>(
     note: impl Fn(&T) -> Option<&str>,
 ) {
     history.retain(|page| note(page).is_none_or(|path| !written.iter().any(|w| w == path)));
+}
+
+/// The notes an approval wrote while other tabs showed them. Such a tab
+/// holds the note as it was, and an edit there would save that over the
+/// approved text, so it loads the note again when it is next shown.
+#[derive(Debug, Default)]
+pub struct Stale {
+    /// Each note's path, with how many tabs show it as it was.
+    tabs: BTreeMap<String, usize>,
+}
+
+impl Stale {
+    /// Remember each page in `shown` (a note's path, or `None` for any
+    /// other page) that shows a note in `written`.
+    pub fn mark<'a>(
+        &mut self,
+        shown: impl IntoIterator<Item = Option<&'a str>>,
+        written: &[String],
+    ) {
+        for path in shown.into_iter().flatten() {
+            if written.iter().any(|written| written == path) {
+                *self.tabs.entry(path.to_string()).or_default() += 1;
+            }
+        }
+    }
+
+    /// Whether a tab just shown, whose page is the note at `path`, must
+    /// load it again. Each tab marked asks once.
+    pub fn take(&mut self, path: &str) -> bool {
+        let Some(count) = self.tabs.get_mut(path) else {
+            return false;
+        };
+        *count -= 1;
+        if *count == 0 {
+            self.tabs.remove(path);
+        }
+        true
+    }
 }
 
 /// Whether the app itself is busy with work that may add proposals to the
@@ -513,6 +561,8 @@ pub struct State {
     /// The error a proposal that did not load left on the page; the next
     /// proposal that loads takes it away.
     pub load_error: Option<String>,
+    /// The notes other tabs show as they were before an approval.
+    pub stale: Stale,
 }
 
 #[cfg(test)]
@@ -864,15 +914,18 @@ mod tests {
     fn with_nothing_selected_the_buttons_decide_the_open_proposal() {
         let order = ids(&["a", "b", "c"]);
         let none = Selection::default();
-        assert_eq!(targets(&order, &none, Some("b")), Targets::Open("b".into()));
+        assert_eq!(
+            targets(&order, &none, Some("b"), None),
+            Targets::Open("b".into())
+        );
         assert_eq!(
             Targets::Open("b".into()).labels(),
             Some(("Approve and write".to_string(), "Reject".to_string()))
         );
         assert_eq!(Targets::Open("b".into()).ids(), ids(&["b"]));
         // An open proposal that no longer waits, or none: nothing to decide.
-        assert_eq!(targets(&order, &none, Some("z")), Targets::Nothing);
-        assert_eq!(targets(&order, &none, None), Targets::Nothing);
+        assert_eq!(targets(&order, &none, Some("z"), None), Targets::Nothing);
+        assert_eq!(targets(&order, &none, None, None), Targets::Nothing);
         assert_eq!(Targets::Nothing.labels(), None);
         assert!(Targets::Nothing.ids().is_empty());
     }
@@ -884,13 +937,13 @@ mod tests {
         let mut open_alone = Selection::default();
         open_alone.click(&order, "b", Click::Plain);
         assert_eq!(
-            targets(&order, &open_alone, Some("b")),
+            targets(&order, &open_alone, Some("b"), None),
             Targets::Open("b".into())
         );
         // One selected that is not the open one: that one, by count.
         let mut other = Selection::default();
         other.toggle("c");
-        let one = targets(&order, &other, Some("b"));
+        let one = targets(&order, &other, Some("b"), None);
         assert_eq!(one, Targets::Selected(ids(&["c"])));
         assert_eq!(one.ids(), ids(&["c"]));
         assert_eq!(
@@ -899,7 +952,7 @@ mod tests {
         );
         // The same with nothing open, as after a detail that did not load.
         assert_eq!(
-            targets(&order, &other, None),
+            targets(&order, &other, None, None),
             Targets::Selected(ids(&["c"]))
         );
         // Several, in the queue's order, whether or not the open one is
@@ -907,7 +960,7 @@ mod tests {
         let mut several = Selection::default();
         several.toggle("c");
         several.toggle("a");
-        let both = targets(&order, &several, Some("b"));
+        let both = targets(&order, &several, Some("b"), None);
         assert_eq!(both, Targets::Selected(ids(&["a", "c"])));
         assert_eq!(
             both.labels(),
@@ -915,12 +968,66 @@ mod tests {
         );
         several.toggle("b");
         assert_eq!(
-            targets(&order, &several, Some("b")),
+            targets(&order, &several, Some("b"), None),
             Targets::Selected(ids(&["a", "b", "c"]))
         );
         // What no longer waits is not decided.
         let gone = ids(&["a"]);
-        assert_eq!(targets(&gone, &other, Some("b")), Targets::Nothing);
+        assert_eq!(targets(&gone, &other, Some("b"), None), Targets::Nothing);
+    }
+
+    #[test]
+    fn the_row_whose_detail_loads_counts_as_the_open_one() {
+        let order = ids(&["a", "b", "c"]);
+        // A plain click on c while b is open: c is selected alone, and its
+        // detail is on its way.
+        let mut clicked = Selection::default();
+        clicked.click(&order, "c", Click::Plain);
+        let loading = targets(&order, &clicked, Some("b"), Some("c"));
+        assert_eq!(loading, Targets::Open("c".into()));
+        assert_eq!(
+            loading.labels(),
+            Some(("Approve and write".to_string(), "Reject".to_string()))
+        );
+        // Once it failed to load, nothing loads: the checked row, by count.
+        assert_eq!(
+            targets(&order, &clicked, Some("b"), None),
+            Targets::Selected(ids(&["c"]))
+        );
+        // Another row loading changes nothing for a checked one.
+        assert_eq!(
+            targets(&order, &clicked, Some("b"), Some("a")),
+            Targets::Selected(ids(&["c"]))
+        );
+        // Several selected stay several.
+        clicked.toggle("a");
+        assert_eq!(
+            targets(&order, &clicked, Some("b"), Some("c")),
+            Targets::Selected(ids(&["a", "c"]))
+        );
+    }
+
+    #[test]
+    fn a_tab_that_showed_a_written_note_loads_it_once_when_shown() {
+        let mut stale = Stale::default();
+        let written = ids(&["01-Core/Parser.md", "01-Core/Eval.md"]);
+        // Two tabs show Parser, one another page, one a note not written.
+        stale.mark(
+            [
+                Some("01-Core/Parser.md"),
+                None,
+                Some("01-Core/Lexer.md"),
+                Some("01-Core/Parser.md"),
+            ],
+            &written,
+        );
+        assert!(stale.take("01-Core/Parser.md"));
+        assert!(stale.take("01-Core/Parser.md"));
+        // Each tab asks once.
+        assert!(!stale.take("01-Core/Parser.md"));
+        assert!(!stale.take("01-Core/Lexer.md"));
+        // A written note no tab showed is not waited for.
+        assert!(!stale.take("01-Core/Eval.md"));
     }
 
     #[test]

@@ -49,7 +49,8 @@ pub struct Backend {
 pub use cw_core::MCP_CLIENT;
 
 /// How long `GET /v1/status` may take. It is asked every few seconds and
-/// answers from memory, so a backend that takes longer is not answering.
+/// answers within about a second (its count of the proposals is bounded), so
+/// a backend that takes longer is not answering.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 
 fn agent(timeout: Duration) -> ureq::Agent {
@@ -636,13 +637,29 @@ impl Backend {
     fn finish(
         response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
     ) -> Result<Value, String> {
+        let (status, value) = Self::read(response)?;
+        Self::judge(status, value)
+    }
+
+    /// The status and the body of an answer; a body that is not JSON is its
+    /// text.
+    fn read(
+        response: Result<ureq::http::Response<ureq::Body>, ureq::Error>,
+    ) -> Result<(ureq::http::StatusCode, Value), String> {
         let mut response = response.map_err(|e| format!("backend request failed: {e}"))?;
         let status = response.status();
         let text = response
             .body_mut()
             .read_to_string()
             .map_err(|e| format!("reading the backend response failed: {e}"))?;
-        let value: Value = serde_json::from_str(&text).unwrap_or(Value::String(text));
+        Ok((
+            status,
+            serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        ))
+    }
+
+    /// The body of an answer that succeeded, else the backend's error.
+    fn judge(status: ureq::http::StatusCode, value: Value) -> Result<Value, String> {
         if status.is_success() {
             Ok(value)
         } else {
@@ -729,16 +746,20 @@ impl Backend {
             "decision": if approve { "approve" } else { "reject" },
             "ids": ids,
         });
-        let answer = self
-            .post(&format!("/v1/repos/{repo}/proposals/decide"), &body)
-            .map_err(|e| {
-                if e.contains("404") {
-                    "this backend cannot decide several proposals at once; update it".to_string()
-                } else {
-                    e
-                }
-            })?;
-        parse_decide_results(&answer)
+        let url = format!("{}/v1/repos/{repo}/proposals/decide", self.url);
+        let (status, answer) = Self::read(self.authorized(self.agent.post(&url)).send_json(&body))?;
+        // An older backend's router answers 404, or 405 when the route of one
+        // proposal takes the path, and gives no error of its own.
+        let unknown = matches!(
+            status,
+            ureq::http::StatusCode::NOT_FOUND | ureq::http::StatusCode::METHOD_NOT_ALLOWED
+        );
+        if unknown && answer["error"].is_null() {
+            return Err(
+                "this backend cannot decide several proposals at once; update it".to_string(),
+            );
+        }
+        parse_decide_results(&Self::judge(status, answer)?)
     }
 }
 
@@ -792,6 +813,64 @@ mod tests {
         assert!(results[0].ok && results[0].note_path.as_deref() == Some("01/A.md"));
         assert!(!results[1].ok && results[1].error.is_some());
         assert!(parse_decide_results(&serde_json::json!({})).is_err());
+    }
+
+    /// A backend that answers every request with `status` and `body`.
+    fn answering_backend(status: &'static str, body: &'static str) -> String {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let mut reader = BufReader::new(stream.unwrap());
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line.trim_end().is_empty() {
+                        break;
+                    }
+                    if let Some((name, value)) = line.trim_end().split_once(": ")
+                        && name.eq_ignore_ascii_case("content-length")
+                    {
+                        length = value.parse().unwrap();
+                    }
+                }
+                // Closing on a body nobody read resets the connection.
+                reader.read_exact(&mut vec![0; length]).unwrap();
+                let mut stream = reader.into_inner();
+                write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                )
+                .unwrap();
+                stream.flush().unwrap();
+            }
+        });
+        url
+    }
+
+    #[test]
+    fn a_backend_without_the_decide_route_says_so_by_its_status() {
+        let ids = ["a".to_string(), "b".to_string()];
+        // An older backend's router: no such route, or the route of one
+        // proposal taking the path and refusing the method.
+        for status in ["404 Not Found", "405 Method Not Allowed"] {
+            let backend = Backend::new(answering_backend(status, ""), "s".into(), Origin::Local);
+            assert_eq!(
+                backend.decide_proposals("r", true, &ids).unwrap_err(),
+                "this backend cannot decide several proposals at once; update it",
+                "{status}"
+            );
+        }
+        // A backend that has the route keeps its own reason.
+        let url = answering_backend("404 Not Found", r#"{"error":"no repository 404"}"#);
+        let backend = Backend::new(url, "s".into(), Origin::Local);
+        assert_eq!(
+            backend.decide_proposals("r", true, &ids).unwrap_err(),
+            "no repository 404"
+        );
     }
 
     #[test]

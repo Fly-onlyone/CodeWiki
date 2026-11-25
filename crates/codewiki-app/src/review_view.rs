@@ -454,6 +454,11 @@ impl AppView {
         let busy = self.busy.is_some();
         Some(
             h_flex()
+                // In a narrow window the proposal's column is narrower than
+                // both buttons: Reject then goes under Approve instead of
+                // running under the details pane, where no click reaches it
+                // (a 1024x768 screen in the clean-Windows test, 2026-11-25).
+                .flex_wrap()
                 .gap_2()
                 .p_2()
                 .border_b_1()

@@ -16,7 +16,7 @@ Imported by 3 source files. Main users:
 
 - [[Api Module]] — imports `protocol::SpanStatus`
 - [[Scrub Module]] — imports `protocol::Breadcrumb`, `protocol::DebugImage`, `protocol::Event`
-- [[cw-telemetry]] — imports `integrations::log::LogFilter`, `integrations::log::SentryLogger`
+- [[cw-telemetry]] — imports `integrations::log::LogFilter`, `integrations::log::RecordMapping`, `integrations::log::SentryLogger`, `integrations::log::breadcrumb_from_record` and 1 more
 
 ## Configuration
 

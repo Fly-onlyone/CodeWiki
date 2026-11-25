@@ -45,6 +45,16 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_core::auto_explain",
+    "path": "01-Core/cw-core/Auto Explain Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::autocomplete",
+    "path": "01-Core/codewiki-app/mui/Autocomplete Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::autostart",
     "path": "01-Core/codewiki-app/Autostart Module.md",
     "kind": "concept"
@@ -90,11 +100,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:codewiki_app::mui::button::Button",
-    "path": "01-Core/codewiki-app/mui/Button.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:codewiki_app::mui::button",
     "path": "01-Core/codewiki-app/mui/Button Module.md",
     "kind": "concept"
@@ -107,6 +112,16 @@
   {
     "id": "mod:cw_wiki::ci",
     "path": "01-Core/cw-wiki/Ci Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_server::claims::Claims",
+    "path": "01-Core/cw-server/Claims.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_server::claims",
+    "path": "01-Core/cw-server/Claims Module.md",
     "kind": "concept"
   },
   {
@@ -147,6 +162,11 @@
   {
     "id": "type:cw_core::model::Confidence",
     "path": "01-Core/cw-core/Confidence.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::constellation",
+    "path": "01-Core/codewiki-app/Constellation Module.md",
     "kind": "concept"
   },
   {
@@ -415,11 +435,6 @@
     "kind": "concept"
   },
   {
-    "id": "type:cw_server::Host",
-    "path": "01-Core/cw-server/Host.md",
-    "kind": "concept"
-  },
-  {
     "id": "mod:codewiki_app::icons",
     "path": "01-Core/codewiki-app/Icons Module.md",
     "kind": "concept"
@@ -452,6 +467,11 @@
   {
     "id": "mod:codewiki_app::instance",
     "path": "01-Core/codewiki-app/Instance Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::mui::interaction",
+    "path": "01-Core/codewiki-app/mui/Interaction Module.md",
     "kind": "concept"
   },
   {
@@ -997,6 +1017,16 @@
   {
     "id": "mod:cw_index::store",
     "path": "01-Core/cw-index/Store Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::suggest",
+    "path": "01-Core/codewiki-app/Suggest Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::suggest::Suggestions",
+    "path": "01-Core/codewiki-app/Suggestions.md",
     "kind": "concept"
   },
   {

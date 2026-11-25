@@ -24,7 +24,7 @@ Declared as `pub enum Block`.
 
 ## Used by
 
-- [[Settings Pages Module]] — from `agents_card`, `appearance`, `backend`, `card`
+- [[Settings Pages Module]] — from `agents_card`, `appearance`, `auto_explain_card`, `backend`
 - [[Doc]] — from `Doc`, `flat`, `push`, `walk`
 - [[Doc View Module]] — from `draw`
 - [[Pages Module]] — from `file_list`

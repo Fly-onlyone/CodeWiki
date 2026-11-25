@@ -22,7 +22,7 @@ Declared as `pub struct NoteEntry`.
 
 ## Used by
 
-- [[Explanations Module]] — from `all_waiting`, `changed_since_sync`, `count`, `not_explainable`
+- [[Explanations Module]] — from `all_waiting`, `changed_since_sync`, `count`, `fits_all`
 - [[Generate Module]] — from `adopt_existing`, `generate_with`, `keep_placed_pictures`, `weave_kept`
 - [[VaultMeta]] — from `VaultMeta`, `by_path`, `load`, `notes_for_source`
 - [[Query Module]] — from `find_entry`, `info`, `title_of`

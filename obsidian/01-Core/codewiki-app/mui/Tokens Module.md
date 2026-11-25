@@ -18,8 +18,8 @@ MUI paths are relative to `@mui/material`; TradingAgent paths to its `frontend/s
 
 ## How it works
 
-1. `table_row` in [[Doc View Module]] and `IconButton::render` in [[Button Module]], and 9 more, call `easing`.
-2. `IconButton::render` and `ToggleButtonGroup::render` in [[Button Module]], and 4 more, call `states`.
+1. `table_row` in [[Doc View Module]] and `Base::new` in [[Base Module]], and 11 more, call `easing`.
+2. `Button::render` and `IconButton::render` in [[Button Module]], and 2 more, call `states`.
 3. `paper` in [[Surfaces Module]] and `Switch::render` in [[Switch Module]] call `elevation`. `elevation` calls `elevation_between`. `elevation_between` calls `black`, then `px` in [[Zoom Module]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -29,8 +29,8 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub const SPACING: f32` — one step of MUI's spacing scale (`theme.spacing(1)`).
 - `pub fn easing(points: [f32; 4]) -> impl Fn(f32) -> f32` — an easing function for one of the `curve` constants.
 - `pub struct StateOpacity` — how strongly a state tints a control. `styles/createPalette.js`, the `action` object of the light and the dark palette.
-- `pub const LIGHT_STATES: StateOpacity` — public constant; used by `states`.
-- `pub const DARK_STATES: StateOpacity` — public constant; used by `states`.
+- `pub const LIGHT_STATES: StateOpacity` — public constant; used by `LIGHT_RATIO`, `states`.
+- `pub const DARK_STATES: StateOpacity` — public constant; used by `LIGHT_RATIO`, `states`.
 - `pub fn states(dark: bool) -> StateOpacity` — the state opacities for a dark or a light theme.
 - `const UMBRA: f32` — opacity of the three layers of an elevation shadow. `styles/shadows.js`.
 - `pub const MAX_ELEVATION: usize` — the highest elevation MUI defines.
@@ -51,14 +51,14 @@ Submodules: [[Curve Module]], [[Duration Module]].
 
 ## Used by
 
-- [[Doc View Module]] — from `line`, `stat_tile`, `table_row`, `table_text`
+- [[Doc View Module]] — from `line`, `render`, `stat_tile`, `table_row`
 - [[Button Module]] — from `ease`, `line`, `render`
 - [[Surfaces Module]] — from `card_content`, `paper`, `text`
+- [[Base Module]] — from `new`
 - [[Feedback Module]] — from `indeterminate`
+- [[Interaction Module]] — from `LIGHT_RATIO`
 - [[List Module]] — from `render`
 - [[Motion Module (mui)]] — from `drawer`
-- [[Ripple Module]] — from `frame`
-- [[Select Module]] — from `render`
 
 ## See also
 

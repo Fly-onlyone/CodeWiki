@@ -43,7 +43,7 @@ Members:
 ## Used by
 
 - [[cw-wiki]] — from `a_new_way_of_writing_the_facts_keeps_the_explanation`, `a_run_counts_the_notes_no_agent_has_explained`, `a_type_that_moves_between_crates_keeps_the_vault_consistent`, `assert_notes`
-- [[Explanations Module]] — from `all_waiting`, `approve`, `brief`, `queue`
+- [[Explanations Module]] — from `all_waiting`, `approve`, `brief`, `fits_all`
 - [[Query Module]] — from `find_entry`, `list_notes`, `notes_citing`, `read_note_as`
 - [[Decisions Module]] — from `list`, `why`
 - [[Generate Module]] — from `adopt_existing`, `generate_with`

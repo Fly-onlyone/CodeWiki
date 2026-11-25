@@ -4,7 +4,7 @@ tags: [integration]
 
 # gpui_kit
 
-> External crate `gpui_kit`, imported by 28 source files.
+> External crate `gpui_kit`, imported by 31 source files.
 
 ## What it does
 
@@ -12,16 +12,16 @@ GPUI Kit: one dependency for building desktop applications with GPUI, GPUI Base,
 
 ## Used for
 
-Imported by 28 source files. Main users:
+Imported by 31 source files. Main users:
 
-- [[Backdrop Module]] — imports `AnyElement`, `App`, `Bounds`, `Context` and 18 more
-- [[Base Module]] — imports `App`, `BoxShadow`, `ClickEvent`, `Div` and 13 more
-- [[Button Module]] — imports `App`, `BoxShadow`, `ClickEvent`, `ElementId` and 20 more
+- [[Autocomplete Module]] — imports `Anchor`, `App`, `Bounds`, `ElementId` and 17 more
+- [[Backdrop Module]] — imports `AnyElement`, `App`, `Bounds`, `ContentMask` and 24 more
+- [[Base Module]] — imports `App`, `BoxShadow`, `ClickEvent`, `Div` and 14 more
+- [[Button Module]] — imports `App`, `BoxShadow`, `ClickEvent`, `ElementId` and 22 more
 - [[Diagrams Module]] — imports `Image`
-- [[Doc View Module]] — imports `AnimationExt`, `AnyElement`, `App`, `Bounds` and 34 more
+- [[Doc View Module]] — imports `AnimationExt`, `AnyElement`, `App`, `Bounds` and 36 more
 - [[Feedback Module]] — imports `Animation`, `AnimationExt`, `AnyView`, `App` and 15 more
 - [[Fonts Module]] — imports `App`
-- [[Glass Module]] — imports `App`, `Div`, `Hsla`, `Rgba` and 8 more
 
 ## Configuration
 

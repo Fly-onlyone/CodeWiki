@@ -8,11 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The page is a view of its own, `DocPage`, drawn cached. A ripple or a hover in the window's chrome then redraws the chrome and leaves the page as it was; before this, an animation anywhere rebuilt the page on every frame, which on a long table took 40% of a processor core.
+Draws a generated page (a `Doc`: title, lead and blocks such as text, tables, cards, stats, settings rows and buttons) with the `mui` components. It does not decide what a link, row or button does. Each one reports an `Action` to the caller.
 
-GPUI reuses a cached view only while no cached view around it is being redrawn. The app is itself drawn cached, inside the backdrop's shell, so a page drawn inside the app would be rebuilt with it. The shell therefore draws the page, beside the app: the app leaves an empty place for it and says where that is through a `PageSlot`.
-
-A page is a column of blocks, as wide as a table needs and no wider. What a link, a row or a button does is not decided here: every one reports its `Action` to the caller.
+The page is its own view, `DocPage`, drawn cached, so a ripple or hover in the window's chrome does not rebuild a long table on every frame (that once cost 40% of a processor core). GPUI reuses a cached view only while no cached view around it is redrawn. The app is itself cached inside the backdrop's shell, so the shell draws the page beside the app, and the app tells it where through a `PageSlot`.
 
 ## Source
 
@@ -20,12 +18,13 @@ A page is a column of blocks, as wide as a table needs and no wider. What a link
 
 ## How it works
 
-1. `AppView::diagram_viewer_view` and `AppView::render` in [[codewiki-app]], and 1 more, call `notify_after_draw`.
-2. `AppView::new` in [[codewiki-app]] calls `DocPage::new`. `DocPage::new` calls `strips`, then `factor` in [[Zoom Module]].
-3. `AppView::settings_frame` in [[codewiki-app]] calls `column`. `column` calls `px` in [[Zoom Module]], then `text` in [[Surfaces Module]], then `Enter::card` in [[Motion Module (mui)]], then `draw`. `draw` calls `text` in [[Surfaces Module]], then `px` in [[Zoom Module]], then `line`, then `stat_tile`, then `draw_table`, then `card_content` in [[Surfaces Module]], and 18 more.
-4. `AppView::settings_menu_view` in [[codewiki-app]] calls `choice_tint`. `choice_tint` calls `entries`, then `glyph_tint` (both in [[Themes Module]]), then `tint` in [[Icons Module]].
+`strips` cuts a page into strips: the title, one strip for each block, and for a table of more than 12 rows a head strip plus one strip for each row. `DocPage` hands them to a GPUI `list`, which builds only the strips on screen plus 400 px beyond. `draw_strip` adds the page's gutter from `reading::gutter`, spacing, and a staggered entrance for the first strips.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`draw` turns one block into elements. Controls report through `on_action`. `show` swaps the page: a new page starts at the top, the same page with new content keeps its scroll place (`kept_top` clamps it when the page got shorter). A zoom change re-measures the list.
+
+`column` draws a short page whole with live controls, such as a settings category. Only it has `Controls` for text inputs and selects, since those belong to the view that handles their events.
+
+`line` turns spans into one wrapping run of text with highlights. A line with no link is plain styled text. A line with links becomes a `LinkedLine`. It keeps the index of the hovered link in keyed state. The interactive text reports which link range the pointer is over. The render then joins `reading::link_hover` to that link's own highlight, so only the hovered link gets the lighter color and underline. Leaving the line clears it. Clicks map the range index to its `Action`.
 
 ## Items
 
@@ -46,30 +45,35 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `row` — `setting_row`, with the choice of how wide the control's side is: `fill` gives it all the room that is left, for a value that is shown and may be long, such as a folder.
 - `pub fn choice_tint(choice: &Choice, cx: &App) -> Option<Hsla>` — the color of a choice's icon. A theme's icon is in a color of that theme, as in the theme menu; any other takes the hue its kind has everywhere.
 - `fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement` — A line of spans as one run of text that wraps, with its links live.
+- `struct LinkedLine` — A line with links in it. The link under the pointer takes the hover look of `reading::link_hover`, which needs the window to remember which one it is.
 - `pub fn stat_tile(stat: &Stat, id: ElementId, cx: &App) -> Div` — TradingAgent's metric tile: a label, a large figure that counts up when the tile appears, and a note under it. `id` names the tile.
-- `fn table_cell(table: &Table, index: usize) -> Div` — A cell of column `index`, taking that column's share of the width.
 - `draw_table` — A whole table in one card: for a short table, or one inside a card.
 
-And 22 more items.
+And 24 more items.
 
 ## Depends on
 
-- [[Motion Module (mui)]] — uses `EnterExt`, `GENTLE`, `PAGE`, `STAGGER_CAP`
+- [[Motion Module (mui)]] — uses `GENTLE`, `PAGE`, `STAGGER_CAP`, `card`
 - [[Doc Module]] — uses `Cell`, `Choice`, `Row`, `SecretState`
 - [[Feedback Module]] — uses `alert`, `alert_action`, `chip`, `linear_progress`
 - [[Surfaces Module]] — uses `CARD_PADDING`, `card`, `card_content`, `card_piece`
 - [[Switch Module]] — uses `INSET`, `new`, `on`, `on_change`
 - [[Settings Layout Module]] — uses `CONTROL_WIDTH`, `LABEL_WIDTH`, `ROW_GAP`, `ROW_SPACING`
+- [[Button Module]] — uses `contained`, `error`, `new`
 - [[Text Field Module]] — uses `HEIGHT`, `helper`, `new`
-- [[Button]] — uses `contained`, `error`, `new`
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `diagram_viewer_view`, `doc_element`, `graph_view`
-- [[Backdrop Module]] — from `Shell`, `new`, `render`
-- [[Menu Module]] — from `track`
-- [[Win32 Module]] — from `on_console_stop`
-- [[Zoom Module]] — from `set_factor`
+- [[codewiki-app]] — from `AppView`, `diagram_viewer_view`, `new`, `open_settings_menu`
+- [[Backdrop Module]] — from `Shell`, `new`, `render`, `set`
+
+## Gotchas
+
+- `notify_after_draw` defers the notify. A notify made during a frame marks the view but asks for no frame, so with reduced motion a new page stayed blank until the pointer moved.
+- `PageSlot::set` is cheap each frame. It tells the reader only when the place changed.
+- The page ids include a serial, so state kept for one page does not leak into the next.
+- `LinkedLine` is used only when a line has a link. Its highlight index points into the highlight list, so keep link and highlight pushes in step.
+- The list keeps measured heights. A strip off screen is not re-measured on a zoom change unless `remeasure` is called, which `render` does.
 
 ## See also
 

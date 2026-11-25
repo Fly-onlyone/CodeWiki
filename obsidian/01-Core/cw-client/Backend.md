@@ -45,11 +45,11 @@ And 1 more private item with no comment.
 
 ## Depends on
 
-- [[cw-client]] — uses `BACKEND_FILE`, `Origin`, `STARTUP_TIMEOUT`, `STATUS_TIMEOUT`
+- [[cw-client]] — uses `BACKEND_FILE`, `Origin`, `SHUTDOWN_CONNECT_TIMEOUT`, `STARTUP_TIMEOUT`
 - [[Logs Module]] — uses `LOG_DIR_ENV`, `dir`, `path`
 - [[cw-core]] — uses `CLIENT_HEADER`, `VERSION`
 - [[Remote Module]] — uses `saved_in`, `token_in`
-- [[Paths Module]] — uses `data_dir`
+- [[Paths Module]] — uses `DATA_DIR_ENV`, `data_dir`
 
 ## Used by
 

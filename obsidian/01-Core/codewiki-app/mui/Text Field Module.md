@@ -35,12 +35,12 @@ And 4 more private items with no comment.
 
 - [[Tokens Module]] — uses `easing`, `spec`, `states`
 - [[Base Module]] — uses `new`
+- [[Interaction Module]] — uses `current`
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_OUT`
 - [[Duration Module]] — uses `SHORTER`
 - [[Zoom Module]] — uses `px`
 - [[Glyph]] — uses `Glyph`
-- [[Tone]] — uses `Tone`
 
 ## Used by
 

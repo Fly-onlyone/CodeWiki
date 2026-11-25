@@ -42,7 +42,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 ## Depends on
 
-- [[cw-core]] — uses `VERSION`
+- [[cw-core]] — uses `APP_NAME`, `VERSION`
 - [[Status Module]] — uses `tooltip`
 - [[Win32 Module]] — uses `keep_open`
 

@@ -46,9 +46,9 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Depends on
 
 - [[Jobs (cw-server)]] — uses `begin`, `change`, `running`, `stopped`
-- [[Run]] — uses `is_done`, `plan`, `progress`
 - [[Repos Module]] — uses `RepoEntry`, `load`
 - [[Service Module]] — uses `DOCUMENT_KINDS`, `open_existing_index_in`
+- [[Run]] — uses `is_done`, `plan`
 - [[cw-index]] — uses `documents`
 - [[Error Module]] — uses `Result`
 - [[Semantic Module]] — uses `behind`

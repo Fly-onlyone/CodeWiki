@@ -49,7 +49,6 @@ And 1 more private item with no comment.
 
 - [[ListItemButton]] — uses `icon`, `new`, `trailing`
 - [[Motion Module (mui)]] — uses `MENU`, `enter`
-- [[Doc View Module]] — uses `set`
 - [[List Module]] — uses `subheader`
 - [[Surfaces Module]] — uses `paper`
 - [[Zoom Module]] — uses `px`
@@ -60,6 +59,7 @@ And 1 more private item with no comment.
 - [[codewiki-app]] — from `AppView`, `settings_menu_view`, `theme_menu_item`, `theme_menu_view`
 - [[Doc View Module]] — from `select_control`
 - [[Select Module]] — from `menu`
+- [[Suggestions]] — from `Suggestions`
 
 ## See also
 

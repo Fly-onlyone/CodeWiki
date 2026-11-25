@@ -28,7 +28,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub struct KeptFolder` — A folder on the list of those kept from coding agents. Whether it still exists is looked up when the list is read, never while a page is drawn: a folder on a share that is offline can take long to answer.
 - `pub struct Model<'a>` — everything the pages read.
 - `pub fn page(category: Category, model: &Model) -> Doc` — the page of `category`.
-- `fn card(title: &str, body: Vec<Block>) -> Block` — private function, returns `Block`; called by `agents_card`, `appearance`, `backend`, `diagnostics` and 5 more.
+- `fn card(title: &str, body: Vec<Block>) -> Block` — private function, returns `Block`; called by `agents_card`, `appearance`, `auto_explain_card`, `backend` and 6 more.
 - `fn appearance(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn zoom_card(model: &Model) -> Block` — how large the whole app is drawn.
 - `fn startup(model: &Model) -> Block` — where the app starts, whether Windows starts it at sign-in, and what closing the window does: the last two belong together, since an app started that way is seen only as its tray icon.
@@ -45,7 +45,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn repositories(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn updates(model: &Model) -> Vec<Block>` — the version, what the last check found, and whether the app checks by itself.
 
-And 16 more items.
+And 17 more items.
 
 ## Depends on
 
@@ -54,9 +54,9 @@ And 16 more items.
 - [[Update Module]] — uses `State`, `describe`
 - [[Doc]] — uses `Doc`, `new`
 - [[MotionPref]] — uses `ALL`, `MotionPref`
-- [[FieldId]] — uses `FieldId`, `place`
 - [[cw-client]] — uses `Origin`
 - [[cw-telemetry]] — uses `DSN_ENV`
+- [[Icons Module]] — uses `for_theme`
 
 ## Used by
 

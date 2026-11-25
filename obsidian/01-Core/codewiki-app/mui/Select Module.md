@@ -46,11 +46,11 @@ And 2 more private items with no comment.
 - [[Menu Module]] — uses `Menu`, `MenuSection`, `align`, `new`
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
 - [[Tokens Module]] — uses `easing`, `states`
+- [[Interaction Module]] — uses `current`
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Text Field Module]] — uses `HEIGHT`
 - [[Curve Module]] — uses `EASE_OUT`
 - [[Duration Module]] — uses `SHORTER`
-- [[Zoom Module]] — uses `px`
 
 ## Used by
 

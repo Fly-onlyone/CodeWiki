@@ -22,7 +22,7 @@ Full-text search finds the words typed. Vectors also find documents that use oth
 4. `Run::plan` in [[Run]] calls `text_of`.
 5. `after_update` and `embed_repo` in [[Embed Job Module]], and 1 more, call `behind`.
 
-3 more entry points: `set_inline_budget`, `refresh`, `search`.
+4 more entry points: `set_inline_budget`, `refresh`, `search_with`, `search`.
 
 ## Items
 
@@ -62,8 +62,8 @@ And 6 more items.
 
 ## Used by
 
+- [[cw-server]] — from `default`, `no_model_server`, `serve`, `waits`
 - [[Run]] — from `Run`, `finish`, `plan`, `progress`
-- [[cw-server]] — from `no_model_server`, `serve`, `waits`
 - [[Embed Job Module]] — from `after_update`, `embed_repo`, `resume`
 - [[Service Module]] — from `index_notes`, `reindex`
 - [[Slot]] — from `configure`, `get`

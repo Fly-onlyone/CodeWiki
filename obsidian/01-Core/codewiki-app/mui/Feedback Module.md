@@ -19,10 +19,10 @@ Sizes are MUI's (`Alert/Alert.js`, `Chip/Chip.js`, `LinearProgress/LinearProgres
 1. `AppView::page_view` and `AppView::viewer` in [[codewiki-app]], and 2 more, call `alert`. `alert` calls `alert_titled`.
 2. `AppView::graph_view` and `title_bar` in [[codewiki-app]], and 2 more, call `chip`. `chip` calls `px` in [[Zoom Module]].
 3. `AppView::body` in [[codewiki-app]] and `draw` in [[Doc View Module]] call `linear_progress`. `linear_progress` calls `px` in [[Zoom Module]], then `scaled` in [[Motion Module (mui)]], then `indeterminate`. `indeterminate` calls `easing` in [[Tokens Module]].
-4. `IconButton::render` in [[Button Module]] and `Button::render` in [[Button]] call `tooltip`. `tooltip` calls `px` in [[Zoom Module]].
-5. `render` in [[Illustration Module]] calls `alert_titled`. `alert_titled` calls `px` in [[Zoom Module]].
+4. `render` in [[Illustration Module]] calls `alert_titled`. `alert_titled` calls `px` in [[Zoom Module]].
+5. `draw` in [[Doc View Module]] calls `alert_action`. `alert_action` calls `px` in [[Zoom Module]].
 
-3 more entry points: `alert_action`, `dots`, `progress`.
+3 more entry points: `dots`, `tooltip`, `progress`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -64,7 +64,6 @@ And 7 more items.
 - [[Doc View Module]] — from `draw`, `draw_cell`
 - [[Illustration Module]] — from `render`
 - [[Button Module]] — from `render`
-- [[Button]] — from `render`
 
 ## See also
 

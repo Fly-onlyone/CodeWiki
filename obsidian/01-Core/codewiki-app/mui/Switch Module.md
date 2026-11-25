@@ -47,7 +47,8 @@ And 6 more private items with no comment.
 ## Depends on
 
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
-- [[Tokens Module]] — uses `easing`, `elevation`, `states`
+- [[Tokens Module]] — uses `easing`, `elevation`
+- [[Interaction Module]] — uses `current`
 - [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`

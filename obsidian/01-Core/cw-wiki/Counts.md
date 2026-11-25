@@ -20,8 +20,8 @@ Members:
 
 ## Used by
 
-- [[Explanations Module]] — from `Outcome`, `Queue`, `count`, `waiting_counts`
-- [[cw-wiki]] — from `a_submission_is_woven_into_the_note_and_recorded`, `the_queue_lists_what_waits_and_counts_all_of_it`
+- [[Explanations Module]] — from `Outcome`, `Queue`, `count`, `fits_all`
+- [[cw-wiki]] — from `a_submission_is_woven_into_the_note_and_recorded`, `every_lists_all_waiting_notes_and_marks_the_claimed`, `the_queue_lists_what_waits_and_counts_all_of_it`
 - [[Briefing Module]] — from `session_start`
 
 ## See also

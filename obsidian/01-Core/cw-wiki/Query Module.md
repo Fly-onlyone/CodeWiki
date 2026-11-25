@@ -17,7 +17,7 @@ The vault holds curated concept notes only; file and symbol detail is answered l
 ## How it works
 
 1. `repo_status` in [[Api Module]] and `summarize` in [[Workspace Module (cw-server)]] call `status`. `status` calls `VaultMeta::load` in [[VaultMeta]], then `head_commit` in [[Git Module]], then `list` in [[Proposal Module]], then `vault_is_behind` in [[Git Module]].
-2. `brief` and `queue` in [[Explanations Module]] call `title_of`.
+2. `brief` and `row` in [[Explanations Module]] call `title_of`.
 3. `list_notes` in [[Api Module]] calls `list_notes`. `list_notes` calls `VaultMeta::load` in [[VaultMeta]], then `info`. `info` calls `title_of`, then `state` in [[Lifecycle Module]].
 4. `brief` and `submit` in [[Explanations Module]] call `find_entry`. `find_entry` calls `title_of`, then `Error::not_found` in [[Error]], then `check_vault_path`. `check_vault_path` calls `Error::invalid` in [[Error]].
 5. `read_note` in [[Api Module]] calls `read_note_as`. `read_note_as` calls `VaultMeta::load` in [[VaultMeta]], then `find_entry`, then `Error::io` in [[Error]], then `agent_view`, then `info`, then `illustration_path` in [[Generate Module]], and 1 more.
@@ -65,7 +65,7 @@ And 9 more items.
 ## Used by
 
 - [[Api Module]] — from `ask`, `context`, `dependency_path`, `list_notes`
-- [[Explanations Module]] — from `brief`, `queue`, `submit`
+- [[Explanations Module]] — from `brief`, `row`, `submit`
 - [[cw-wiki]] — from `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_is_woven_into_the_note_and_recorded`
 - [[Workspace Module (cw-server)]] — from `summarize`
 

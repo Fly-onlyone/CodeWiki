@@ -1,0 +1,9 @@
+# section: How it works
+root = Picture([flow, quiet])
+flow = Flow([type, wait, ask, check, show], "From a key to the list")
+type = Step("You type in the search box", "Each change replaces the waiting lookup. The old one is dropped, which cancels it.")
+wait = Step("Typing pauses for 150 ms", "A lookup replaced before then never reaches the backend.")
+ask = Step("The backend searches the words", "Word starts only, no embedder, at most 10 hits.")
+check = Step("The answer is checked", "If the box holds other text by now, the answer is dropped.")
+show = Step("The list opens under the box", "Notes, symbols and files, with no row highlighted.")
+quiet = Callout("A lookup that fails shows no error. The list just closes, and Enter still opens the full Search page.", "info", "Quiet on failure")

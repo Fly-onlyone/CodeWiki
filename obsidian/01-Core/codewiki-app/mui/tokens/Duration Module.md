@@ -16,7 +16,7 @@ tags: [core, codewiki-app, module]
 
 ## Items
 
-- `pub const SHORTEST: Duration` — public constant; used by `IconButton::render`, `ListItemButton::render`, `Switch::render`.
+- `pub const SHORTEST: Duration` — public constant; used by `IconButton::render`, `ListItemButton::render`, `Switch::render`, `Tabs::render`.
 - `pub const SHORTER: Duration` — public constant; used by `Select::render`, `TextField::render`, `table_row`.
 - `pub const SHORT: Duration` — public constant.
 - `pub const STANDARD: Duration` — public constant; used by `ListFolder::render`.
@@ -32,8 +32,8 @@ tags: [core, codewiki-app, module]
 - [[Motion Module (mui)]] — from `drawer`
 - [[Select Module]] — from `render`
 - [[Switch Module]] — from `render`
+- [[Tabs Module]] — from `render`
 - [[Text Field Module]] — from `render`
-- [[ListItemButton]] — from `render`
 
 ## See also
 

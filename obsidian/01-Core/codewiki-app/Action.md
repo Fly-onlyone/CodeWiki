@@ -22,10 +22,11 @@ Declared as `pub enum Action`.
 
 ## Used by
 
+- [[Doc View Module]] — from `LinkedLine`, `OnAction`, `choices_row`, `line`
 - [[Doc Module]] — from `Choice`, `Press`, `Row`, `aside`
-- [[Doc View Module]] — from `OnAction`, `choices_row`, `line`, `secret_control`
 - [[codewiki-app]] — from `run_action`, `run_settings_action`
 - [[Doc]] — from `actions`, `of_line`
+- [[Live Module]] — from `HitTarget`
 - [[Block]] — from `Block`
 - [[Span]] — from `Span`
 

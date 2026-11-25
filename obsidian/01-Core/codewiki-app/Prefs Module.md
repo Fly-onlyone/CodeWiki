@@ -4,7 +4,7 @@ tags: [core, codewiki-app, module]
 
 # Prefs Module
 
-> Small per-user settings, one value per file under `%APPDATA%\CodeWiki`.
+> Small per-user settings, one value per file under `%APPDATA%\CodeWiki` (`CodeWiki-Dev` for a development build, `cw_core::paths::APP_FOLDER`).
 
 ## What it does
 
@@ -16,8 +16,8 @@ Each setting is a name and a text, mostly one line; the recent list puts one fol
 
 ## How it works
 
-1. `AppView::after_hide` and `main` in [[codewiki-app]], and 9 more, call `read`. `read` calls `read_in`, then `dir`. `read_in` calls `file`.
-2. `AppView::after_hide` and `AppView::run_settings_action` in [[codewiki-app]], and 10 more, call `write`. `write` calls `dir`, then `write_in`. `write_in` calls `file`.
+1. `AppView::after_hide` and `main` in [[codewiki-app]], and 10 more, call `read`. `read` calls `read_in`, then `dir`. `read_in` calls `file`.
+2. `AppView::after_hide` and `AppView::run_settings_action` in [[codewiki-app]], and 11 more, call `write`. `write` calls `dir`, then `write_in`. `write_in` calls `file`.
 3. `acquire` in [[Instance Module]] and `user_theme_dir` in [[Themes Module]] call `dir`.
 4. `State::new` in [[Settings View Module]] calls `remove`. `remove` calls `dir`, then `remove_in`. `remove_in` calls `file`.
 
@@ -34,16 +34,20 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn write_in(dir: &Path, name: &str, value: &str)` — private function; called by `write`.
 - `fn remove_in(dir: &Path, name: &str)` — private function; called by `remove`.
 
+## Depends on
+
+- [[Paths Module]] — uses `APP_FOLDER`
+
 ## Used by
 
 - [[Startup Module]] — from `keep_recent`, `open_last`, `recent`, `remember`
 - [[Update Module]] — from `auto_check`, `check`, `due`, `set_auto_check`
 - [[codewiki-app]] — from `after_hide`, `main`, `run_settings_action`
 - [[Themes Module]] — from `init`, `select`, `user_theme_dir`
+- [[Backdrop Module]] — from `init`, `set_shown`
 - [[Motion Module]] — from `init`, `set`
 - [[Panes Module]] — from `load`, `store`
 - [[Zoom Module]] — from `init`, `set`
-- [[Instance Module]] — from `acquire`
 
 ## See also
 

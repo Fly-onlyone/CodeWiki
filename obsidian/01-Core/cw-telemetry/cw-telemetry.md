@@ -17,7 +17,7 @@ A program reports only when one of these holds:
 
 Each program reads that file itself, so the MCP bridge and a backend an agent started follow the switch too. Turning it on takes effect at each program's next start. Turning it off holds at once, because every report is checked against the file again first.
 
-`init` replaces `cw_core::logs::init`: records still go to the log file, and an Error record also becomes a report, while Info and Warn records go along with the next report as its trail. A panic is reported with its backtrace. Before anything leaves the machine it is scrubbed (`scrub`): no host name, no absolute path, and no query string, headers or body of a request.
+`init` replaces `cw_core::logs::init`: records still go to the log file, and an Error record also becomes a report, while Info and Warn records go along with the next report as its trail. The Error records of a lost graphics device that the UI recovers from are only trail too. A panic is reported with its backtrace. Before anything leaves the machine it is scrubbed (`scrub`): no host name, no absolute path, and no query string, headers or body of a request.
 
 ## Source
 
@@ -54,7 +54,7 @@ Defined at the crate root:
 - [[Reporting]] — whether and how this program can report.
 - `pub fn reporting() -> Reporting` — how this program can report, for the Settings page.
 - `fn built_in_dsn() -> Option<&'static str>` — private function, returns `Option<&'static str>`; called by `reporting`, `start`.
-- `pub fn consent_path() -> Option<PathBuf>` — where the user's choice is kept: `%APPDATA%\CodeWiki\error_reports.txt`.
+- `pub fn consent_path() -> Option<PathBuf>` — where the user's choice is kept: `%APPDATA%\CodeWiki\error_reports.txt`, or under `CodeWiki-Dev` in a development build (`cw_core::paths::APP_FOLDER`).
 - `pub fn consent() -> bool` — whether the user turned on "Send error reports".
 - `fn read_consent(path: &Path) -> bool` — private function, returns `bool`; called by `consent`.
 - `pub fn set_consent(on: bool) -> io::Result<()>` — keep the user's choice. Off removes the file.
@@ -67,13 +67,14 @@ Defined at the crate root:
 - `pub fn send_test_report(name: &str)` — A report that a check can look for: an Error record, which becomes an event when reports are on.
 - `pub fn task_hub() -> Arc<sentry::Hub>` — the hub a task of its own reports through, so that what one request adds to its scope stays out of the others.
 
-And 10 more items.
+And 12 more items.
 
 ## Depends on
 
 - [[Logs Module]] — uses `flush`, `init_with`
 - [[Scrub Module]] — uses `breadcrumb`, `event`
 - [[cw-core]] — uses `VERSION`
+- [[Paths Module]] — uses `APP_FOLDER`
 - [[Reporting]] — uses `Reporting`
 
 ## Used by

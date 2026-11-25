@@ -4,7 +4,7 @@ tags: [integration]
 
 # serde_json
 
-> External crate `serde_json`, imported by 26 source files.
+> External crate `serde_json`, imported by 27 source files.
 
 ## What it does
 
@@ -12,7 +12,7 @@ A JSON serialization file format.
 
 ## Used for
 
-Imported by 26 source files. Main users:
+Imported by 27 source files. Main users:
 
 - [[cw-embed]] — imports `Value`, `json`
 - [[cw-server]] — imports `Value`, `json`

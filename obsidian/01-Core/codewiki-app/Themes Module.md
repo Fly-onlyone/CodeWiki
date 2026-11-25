@@ -18,7 +18,7 @@ User themes dropped into `%APPDATA%\CodeWiki\themes` are loaded as well, and red
 
 ## How it works
 
-1. `Shell::shapes` in [[Backdrop Module]] and `ListItemButton::render` in [[ListItemButton]] call `Brand::of`.
+1. `Shell::shapes` and `Shell::sky` in [[Backdrop Module]], and 1 more, call `Brand::of`.
 2. `subheader` in [[List Module]] and `frame` in [[Reading Module]], and 1 more, call `brand`. `brand` calls `Brand::of`.
 3. `theme_menu_item` in [[codewiki-app]] and `choice_tint` in [[Doc View Module]] call `glyph_tint`. `glyph_tint` calls `to_hsla`, then `readable_on` in [[Standard Module]], then `to_rgb`.
 4. `AppView::open_theme_menu` and `AppView::palette_matches` in [[codewiki-app]], and 4 more, call `entries`.
@@ -68,9 +68,9 @@ And 3 more items.
 ## Used by
 
 - [[codewiki-app]] — from `main`, `open_theme_menu`, `palette_matches`, `select_theme`
+- [[Backdrop Module]] — from `shapes`, `sky`
 - [[Reading Module]] — from `frame`, `style`
 - [[Standard Module]] — from `REFERENCE`, `from_json`
-- [[Backdrop Module]] — from `shapes`
 - [[Doc View Module]] — from `choice_tint`
 - [[List Module]] — from `subheader`
 - [[ListItemButton]] — from `render`

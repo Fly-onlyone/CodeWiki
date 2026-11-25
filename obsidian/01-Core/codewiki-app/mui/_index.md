@@ -4,14 +4,15 @@ tags: [moc, core, mui]
 
 # Core / codewiki-app / mui — Map of Content
 
-> Notes for `mui`: 17 concepts.
+> Notes for `mui`: 18 concepts.
 
 ## Notes
 
+- [[Autocomplete Module]] — `Autocomplete`'s list: the choices that hang under a text field while it is typed in.
 - [[Base Module]] — what every pressable control shares: MUI's `ButtonBase`.
-- [[Button]] — A button with a label, and optionally an icon before it.
 - [[Button Module]] — `Button` and `IconButton`.
 - [[Feedback Module]] — `Alert`, `Chip`, `LinearProgress` and the tooltip: how the app tells the user something.
+- [[Interaction Module]] — how strongly a control answers the pointer: one set of numbers for hover, press and selection, read by every control in `mui`.
 - [[List Module]] — `List`: rows that can be pressed, a heading over a group of them, and a folder that opens and closes.
 - [[ListItemButton]] — A row that can be pressed.
 - [[Menu Module]] — `Menu`: a short list of choices that opens beside the control that asked for it.

@@ -4,11 +4,12 @@ tags: [moc, core, cw-core]
 
 # Core / cw-core — Map of Content
 
-> Notes for `cw-core`: 18 concepts.
+> Notes for `cw-core`: 19 concepts.
 
 ## Notes
 
 - [[Agents Off Module]] — the list of folders closed to coding agents.
+- [[Auto Explain Module]] — the switch for auto explaining.
 - [[Confidence]] — how sure the resolver is that an edge is real.
 - [[cw-core]] — shared identifiers, hashing, configuration and error types for CodeWiki.
 - [[Error]] — `Error` enum defined in `cw_core::error` with 4 methods.

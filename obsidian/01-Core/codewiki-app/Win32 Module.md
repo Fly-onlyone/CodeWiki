@@ -46,7 +46,6 @@ This is the only module of the workspace with `unsafe` code: keep every such cal
 ## Depends on
 
 - [[Diagrams Module]] — uses `store`
-- [[Doc View Module]] — uses `set`
 - [[Icons Module]] — uses `load`
 
 ## Used by

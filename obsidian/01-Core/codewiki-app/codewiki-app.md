@@ -19,7 +19,7 @@ A native viewer for the vault and the live index. All data comes from the backen
 
 Builds a binary.
 
-1. The program starts at `main`. `main` calls `read` in [[Prefs Module]], then `level_named` in [[Logs Module]], then `init` in [[cw-telemetry]], then `acquire` in [[Instance Module]], then `launch` in [[Startup Module]], then `hold` in [[Instance Module]], and 12 more.
+1. The program starts at `main`. `main` calls `read` in [[Prefs Module]], then `level_named` in [[Logs Module]], then `init` in [[cw-telemetry]], then `acquire` in [[Instance Module]], then `launch` in [[Startup Module]], then `hold` in [[Instance Module]], and 13 more.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -30,6 +30,7 @@ Modules:
 - [[Autostart Module]] — starting the app when the user signs in to Windows.
 - [[Backdrop Module]] — the drifting backdrop: soft color under the glass.
 - [[Build Module]] — embeds the app's icon in the Windows program.
+- [[Constellation Module]] — the constellation behind the glass: a made-up graph of notes and the links between them, which the backdrop (`backdrop.rs`) draws over its soft color.
 - [[Contrast Module]] — WCAG contrast arithmetic for translucent surfaces.
 - [[Diagram View Module]] — where an enlarged diagram sits in the diagram viewer.
 - [[Diagrams Module]] — drawn Mermaid diagrams, kept so that a note opens without waiting.
@@ -42,14 +43,14 @@ Modules:
 - [[Icons Module]] — icons, and the asset source that serves them.
 - [[Illustration Module]] — native renderer for the pictures of a note.
 - [[Instance Module]] — one running app for each installed program.
-- [[Live Module]] — the live pages: one symbol, one file, search results, hotspots, the theme picker, a proposal, the result of a sync, and Home, the page the app starts on.
+- [[Live Module]] — the live pages: one symbol, one file, search results, hotspots, the theme picker, a proposal, the result of a sync, the notes that wait for a coding agent, and Home, the page the app starts on.
 - [[Markdown Module]] — text preparation for the note viewer.
 - [[Motion Module]] — motion: whether things move at all.
 - [[Mui Module]] — components drawn to Material UI's measurements.
 - [[Pages Module]] — the report pages: decisions, dead code, health, drift and the rest.
 - [[Palette Module]] — the command palette's entries and matching.
 - [[Panes Module]] — the two side panes: whether each is shown.
-- [[Prefs Module]] — small per-user settings, one value per file under `%APPDATA%\CodeWiki`.
+- [[Prefs Module]] — small per-user settings, one value per file under `%APPDATA%\CodeWiki` (`CodeWiki-Dev` for a development build, `cw_core::paths::APP_FOLDER`).
 - [[Reading Module]] — typography of the reading pane.
 - [[Settings Module]] — what the Settings page is made of, apart from how it is drawn: its categories, the fields a user types into, and the news shown beside one.
 - [[Settings Layout Module]] — the measures of the Settings page that are a matter of taste.
@@ -58,6 +59,7 @@ Modules:
 - [[Standard Module]] — standard levels for a theme the app did not ship.
 - [[Startup Module]] — which repository the app opens when it starts.
 - [[Status Module]] — what the app says about itself in the tray: what the backend is doing and whether an agent is using it.
+- [[Suggest Module]] — what the search field suggests while it is typed in: the hits of its text, looked up at each pause in typing, in a list under the field.
 - [[Themes Module]] — bundled color themes and theme switching.
 - [[Tray Module]] — the app's icon in the notification area, with its tooltip and its menu.
 - [[Update Module]] — updating the app: when to look for a new release, and what the settings page says about it.
@@ -67,9 +69,8 @@ Modules:
 Defined at the crate root:
 
 - `const STATUS_PAUSE: std::time::Duration` — how often the app asks the backend what it is doing, for the tray icon.
+- `const SYNCING: &str` — the busy line while this app syncs a wiki.
 - `const OLD_BACKEND_PAUSE: std::time::Duration` — the same, of a backend too old to say: it will not learn to.
-- `const TRAY_HINT: &str` — the setting that remembers that the user was told, once, that closing the window leaves the app running in the tray.
-- `const APP_IDENTITY: &str` — what Windows knows the app as when it shows a notification.
 - `const MIN_WINDOW: (f32, f32)` — the smallest window: the sidebar, the details pane, and a reading pane about as wide as the two together.
 - `const SCREEN_MARGIN: f32` — kept free around the first window on a screen it would otherwise fill. A window as large as the free area has its unseen frame, and with it a few pixels of the title bar, outside the screen.
 - `const WIKI_MAP: &str` — the vault's map note, which the app calls "Wiki map".
@@ -81,13 +82,14 @@ Defined at the crate root:
 - `const SIDEBAR_WIDTH: f32` — width of the sidebar and of the details pane, in pixels.
 - `fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>)` — the registered repositories, split into those whose folders are there and those whose folders are gone. A backend from before the list said so counts every folder as there.
 - `fn registered_repos(backend: &Backend) -> Result<(Vec<Repo>, Vec<Repo>), String>` — the registered repositories whose folders are there, and those whose folders are not found. Nothing is forgotten here: a folder can be away for a while. Blocks; run it off the UI thread.
+- `fn read_auto_explain() -> bool` — whether auto explaining is on: `auto-explain.txt` in the data directory, which the app reads itself, as it does the folders kept from agents.
 - `fn theme_menu_item(entry: &themes::Entry, in_use: bool, cx: &App) -> MenuItem` — A theme as a row of a menu: its icon in a color of its own, its name, a sample of its four colors, and a mark on the one in use. The toolbar's theme menu and the theme select of the settings list themes with it, so that a theme looks the same in both.
-- `fn zone_label(zone: &str) -> String` — `01-Core` -> `Core`.
 - `fn min_window_size() -> Size<Pixels>` — the smallest the window may be made. The window's own measures are the screen's pixels, whatever the zoom.
 - `fn stops_backend_on_quit(remote: bool, installing: bool) -> bool` — whether ending the app also stops the backend. `remote` says that the backend is the one `CODEWIKI_URL` names; `installing` that an update is being installed or waits for a restart.
+- `fn reading_measure(page: &Page) -> f32` — the widest a line of `page` runs.
 - `fn main()` — private function.
 
-And 19 more items.
+And 22 more items.
 
 ## Depends on
 
@@ -95,10 +97,10 @@ And 19 more items.
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
 - [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
+- [[Glass Module]] — uses `FADE`, `Levels`, `OPAQUE`, `chrome`
 - [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
-- [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`
 - [[Diagram View Module]] — uses `SHARP_SCALE`, `STEP`, `WHEEL`, `actual`
-- [[Backend]] — uses `Backend`, `answers`, `connect`, `delete`
+- [[Suggestions]] — uses `Suggestions`, `chosen`, `close`, `down`
 
 ## Used by
 

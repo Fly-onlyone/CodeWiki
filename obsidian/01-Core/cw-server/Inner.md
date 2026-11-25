@@ -18,6 +18,7 @@ Declared as `pub(crate) struct Inner`.
 
 - [[cw-server]] — uses `ServerConfig`
 - [[Activity]] — uses `Activity`
+- [[Claims]] — uses `Claims`
 - [[Jobs (cw-server)]] — uses `Jobs`
 
 ## Used by

@@ -6,13 +6,19 @@ tags: [core, codewiki-app]
 
 > A spring as Framer Motion describes one.
 
+## What it does
+
+A spring described the way Framer Motion does it: stiffness, damping and mass. The presets `SNAPPY`, `BOUNCY`, `GENTLE` and `PAGE` in [[Motion Module (mui)]] are values of this type. It turns that description into what GPUI and gpui-kit need, either a fixed animation or a spring that follows a moving target.
+
 ## Source
 
 - `crates/codewiki-app/src/mui/motion.rs` — definition of `Spring`
 
 ## How it works
 
-1. `BOUNCY` and `GENTLE` in [[Motion Module (mui)]], and 2 more, call `new`.
+`new` and `mass` build a spring in const context. `response` is the time of one undamped swing, and `damping_ratio` says whether it overshoots (below 1 it does). `slowed` makes the same motion slower by a factor: stiffness divides by the factor squared and damping by the factor, so the damping ratio stays and only the speed changes.
+
+`config` applies the global motion scale through `slowed` and returns a GPUI `SpringConfig`. `animation` samples that config from rest at 0 to rest at 1 into an `Animation`, for entrances. `policy` makes a gpui-kit spring from the response time (scaled) and damping ratio, with an epsilon for when it counts as arrived. Controls use `policy` for springs that chase a changing target, such as a row's hover or the selected bar.
 
 ## Items
 
@@ -38,9 +44,16 @@ Members:
 
 - [[Motion Module (mui)]] — from `BOUNCY`, `Enter`, `GENTLE`, `PAGE`
 - [[Doc View Module]] — from `stat_tile`
+- [[Button Module]] — from `render`
+- [[Interaction Module]] — from `Interaction`
 - [[Tabs Module]] — from `render`
-- [[Button]] — from `render`
 - [[ListItemButton]] — from `render`
+
+## Gotchas
+
+- `policy` takes an epsilon in the unit of the value it follows. Use a small one (0.001) for 0..1 values and a larger one for pixels.
+- All three outputs honor the motion scale. A spring made by hand from `SpringConfig` would not.
+- `BOUNCY` has damping ratio under 0.7, so it visibly overshoots. Code that uses its value as a length or height must clamp, as the row bar does.
 
 ## See also
 

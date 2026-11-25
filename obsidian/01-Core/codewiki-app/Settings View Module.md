@@ -18,7 +18,7 @@ A change takes effect when it is made. A switch, a select or a choice acts on it
 
 ## How it works
 
-1. `AppView::new` in [[codewiki-app]] calls `State::new`. `State::new` calls `remove` in [[Prefs Module]], then `read_agents_off`.
+1. `AppView::new` in [[codewiki-app]] calls `State::new`. `State::new` calls `remove` in [[Prefs Module]], then `read_agents_off`, then `load` in [[Auto Explain Module]], then `data_dir` in [[Paths Module]].
 2. `AppView::take_settings` in [[codewiki-app]] calls `shown_value`.
 3. `AppView::test_embedder` in [[codewiki-app]] calls `test_line`.
 4. `AppView::refresh_agents_off` in [[codewiki-app]] calls `read_agents_off`. `read_agents_off` calls `data_dir` in [[Paths Module]], then `load`, then `unreadable`, then `file` (all in [[Agents Off Module]]).
@@ -52,7 +52,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Doc Module]] — uses `Choice`
 - [[Prefs Module]] — uses `remove`
 - [[Settings Module]] — uses `Note`
-- [[Paths Module]] — uses `data_dir`
+- [[Auto Explain Module]] — uses `load`
 
 ## Used by
 

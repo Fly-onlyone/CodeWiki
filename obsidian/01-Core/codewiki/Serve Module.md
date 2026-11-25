@@ -12,7 +12,7 @@ tags: [core, codewiki, module]
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[Host]], then `drop_retired`, then `retire_builtin` (both in [[Settings Module (cw-core)]]), and 8 more. `random_token` calls `Error::external` in [[Error]].
+1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[cw-server]], then `drop_retired`, then `retire_builtin` (both in [[Settings Module (cw-core)]]), and 8 more. `random_token` calls `Error::external` in [[Error]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -29,13 +29,12 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Depends on
 
 - [[Settings Module (cw-core)]] — uses `RETIRED_VARIABLES`, `drop_retired`, `key`, `process_env`
-- [[cw-server]] — uses `ServerConfig`, `WEBHOOK_SECRET_ENV`, `serve`
+- [[cw-server]] — uses `ServerConfig`, `WEBHOOK_SECRET_ENV`, `default`, `serve`
 - [[Error]] — uses `external`, `invalid`, `io`
 - [[Semantic Module]] — uses `configure`, `embedder`
 - [[Error Module]] — uses `Result`
 - [[Paths Module]] — uses `data_dir`
 - [[Resolved]] — uses `load`
-- [[Host]] — uses `default`
 
 ## Used by
 

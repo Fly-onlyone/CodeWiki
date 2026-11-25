@@ -20,6 +20,7 @@ Builds a library.
 Modules:
 
 - [[Agents Off Module]] — the list of folders closed to coding agents.
+- [[Auto Explain Module]] — the switch for auto explaining.
 - [[Error Module]] — one error type shared by the engine crates.
 - [[Hash Module]] — content hashing used for change detection.
 - [[Logs Module]] — log files of the programs, under `<data dir>/logs`.
@@ -31,21 +32,24 @@ Modules:
 Defined at the crate root:
 
 - `pub const VERSION: &str` — crate version, exposed so binaries report one consistent version string.
+- `pub const DEV_BUILD: bool` — whether this is a development build (debug assertions on). A development build keeps its own folders (`paths::APP_FOLDER`) and its own name, so that one run from the sources never shares a backend, an index or settings with an installed CodeWiki on the same machine.
+- `pub const APP_NAME: &str` — the name the app shows in its title, its tray icon and its notifications.
 - `pub const VAULT_DIR: &str` — folder, relative to a repository root, that holds the generated vault.
 - `pub const MANIFEST_DIR: &str` — folder inside the vault that holds machine metadata. Never rendered as notes.
+- `pub const CLAIM_MINUTES: u64` — how many minutes a note listed for a coding agent stays reserved for it. Other agents are not offered the note until this time has passed.
 - `pub const CLIENT_HEADER: &str` — request header in which a client of the backend says what it is. Only the MCP bridge sends it; the backend reports when a bridge last called.
 - `pub const MCP_CLIENT: &str` — what the MCP bridge sends in `CLIENT_HEADER`.
 
 ## Used by
 
 - [[Query Module]] — from `answer`, `list_notes`, `notes_citing`, `overview`
-- [[Explanations Module]] — from `approve`, `brief`, `queue`, `reject`
+- [[Explanations Module]] — from `approve`, `brief`, `fits_all`, `reject`
+- [[codewiki-app]] — from `APP_IDENTITY`, `after_hide`, `main`, `sidebar`
 - [[Api Module]] — from `health`, `require_token`, `vault`
 - [[Decisions Module]] — from `create`, `list`, `why`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`
-- [[cw-server]] — from `backend_status_needs_the_token_and_counts_only_bridge_calls`, `call_as`
-- [[Update Module]] — from `check`, `describe`
-- [[Briefing Module]] — from `session_start`, `vault_root`
+- [[codewiki]] — from `batch_and_claim_texts_follow_the_backend`, `run`
+- [[codewiki-mcp]] — from `connected`, `waiting_text`
 
 ## See also
 

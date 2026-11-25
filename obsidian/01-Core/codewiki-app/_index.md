@@ -4,7 +4,7 @@ tags: [moc, core, codewiki-app]
 
 # Core / codewiki-app — Map of Content
 
-> Notes for `codewiki-app`: 45 concepts.
+> Notes for `codewiki-app`: 48 concepts.
 
 ## Notes
 
@@ -15,6 +15,7 @@ tags: [moc, core, codewiki-app]
 - [[Build Module]] — embeds the app's icon in the Windows program.
 - [[Category]] — A group of settings, with a page of its own.
 - [[codewiki-app]] — CodeWiki desktop app for Windows.
+- [[Constellation Module]] — the constellation behind the glass: a made-up graph of notes and the links between them, which the backdrop (`backdrop.rs`) draws over its soft color.
 - [[Contrast Module]] — WCAG contrast arithmetic for translucent surfaces.
 - [[Diagram View Module]] — where an enlarged diagram sits in the diagram viewer.
 - [[Diagrams Module]] — drawn Mermaid diagrams, kept so that a note opens without waiting.
@@ -30,7 +31,7 @@ tags: [moc, core, codewiki-app]
 - [[Icons Module]] — icons, and the asset source that serves them.
 - [[Illustration Module]] — native renderer for the pictures of a note.
 - [[Instance Module]] — one running app for each installed program.
-- [[Live Module]] — the live pages: one symbol, one file, search results, hotspots, the theme picker, a proposal, the result of a sync, and Home, the page the app starts on.
+- [[Live Module]] — the live pages: one symbol, one file, search results, hotspots, the theme picker, a proposal, the result of a sync, the notes that wait for a coding agent, and Home, the page the app starts on.
 - [[Markdown Module]] — text preparation for the note viewer.
 - [[Motion Module]] — motion: whether things move at all.
 - [[MotionPref]] — what the user asked for.
@@ -38,7 +39,7 @@ tags: [moc, core, codewiki-app]
 - [[Pages Module]] — the report pages: decisions, dead code, health, drift and the rest.
 - [[Palette Module]] — the command palette's entries and matching.
 - [[Panes Module]] — the two side panes: whether each is shown.
-- [[Prefs Module]] — small per-user settings, one value per file under `%APPDATA%\CodeWiki`.
+- [[Prefs Module]] — small per-user settings, one value per file under `%APPDATA%\CodeWiki` (`CodeWiki-Dev` for a development build, `cw_core::paths::APP_FOLDER`).
 - [[Reading Module]] — typography of the reading pane.
 - [[Settings Layout Module]] — the measures of the Settings page that are a matter of taste.
 - [[Settings Module]] — what the Settings page is made of, apart from how it is drawn: its categories, the fields a user types into, and the news shown beside one.
@@ -48,6 +49,8 @@ tags: [moc, core, codewiki-app]
 - [[Standard Module]] — standard levels for a theme the app did not ship.
 - [[Startup Module]] — which repository the app opens when it starts.
 - [[Status Module]] — what the app says about itself in the tray: what the backend is doing and whether an agent is using it.
+- [[Suggest Module]] — what the search field suggests while it is typed in: the hits of its text, looked up at each pause in typing, in a list under the field.
+- [[Suggestions]] — `Suggestions` struct defined in `codewiki_app::suggest` with 13 methods.
 - [[Themes Module]] — bundled color themes and theme switching.
 - [[Tray Module]] — the app's icon in the notification area, with its tooltip and its menu.
 - [[Update Module]] — updating the app: when to look for a new release, and what the settings page says about it.
@@ -56,7 +59,7 @@ tags: [moc, core, codewiki-app]
 
 ## Folders
 
-- [[01-Core/codewiki-app/mui/_index|mui]] — 19 notes
+- [[01-Core/codewiki-app/mui/_index|mui]] — 20 notes
 
 ## See also
 

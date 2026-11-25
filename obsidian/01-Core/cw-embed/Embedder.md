@@ -41,7 +41,7 @@ Implemented by [[LocalEmbedder]], [[OllamaEmbedder]], [[OpenAiEmbedder]], `Faili
 
 ## Used by
 
-- [[cw-server]] — from `Failing`, `StandIn`, `config`, `down_then_up`
+- [[cw-server]] — from `Failing`, `Host`, `StandIn`, `config`
 - [[Semantic Module]] — from `built`, `embed_documents`, `embed_documents_with`, `embed_within`
 - [[cw-embed]] — from `from_config`, `from_env`, `from_settings`
 - [[Embed Job Module]] — from `embed_all`, `embed_repo`, `run`

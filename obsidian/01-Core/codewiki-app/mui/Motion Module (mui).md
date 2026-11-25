@@ -8,11 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The springs are the ones TradingAgent gives Framer Motion (`frontend/src/utils/animations/variants.ts`). Framer describes a spring by stiffness, damping and mass, and so does GPUI, so the values carry over as they are.
+Holds how things move in the app: the spring presets, entrances, stagger delays, the press timings and a few fixed holds. The springs are TradingAgent's Framer Motion presets. Framer and GPUI both describe a spring by stiffness, damping and mass, so the numbers carry over unchanged.
 
-GPUI cannot scale an element, so the entrances here keep Framer's fade and travel and leave out its scale.
-
-Set `CODEWIKI_MOTION_SCALE` to a number above 1 to stretch every motion by that factor. A window capture can then catch an animation half way.
+GPUI cannot scale an element, so entrances keep Framer's fade and travel and drop its scale. Set `CODEWIKI_MOTION_SCALE` to a number of 1 or more to stretch every motion. A window capture can then catch an animation half way.
 
 ## Source
 
@@ -20,15 +18,13 @@ Set `CODEWIKI_MOTION_SCALE` to a number above 1 to stretch every motion by that 
 
 ## How it works
 
-1. `AppView::render` and `AppView::forget_saved_note` in [[codewiki-app]], and 15 more, call `scaled`. `scaled` calls `scale`.
-2. `Spring::config` in [[Spring]] calls `scale`. `scale` calls `parse_scale`.
-3. `AppView::render` in [[codewiki-app]] calls `drawer`. `drawer` calls `scaled`, then `easing` in [[Tokens Module]].
-4. `stat_tile` in [[Doc View Module]] calls `count_up`.
-5. `column` and `draw_strip` in [[Doc View Module]] call `Enter::card`. `Enter::card` calls `Enter::rise`, then `Enter::after`, then `stagger_delay`.
+`scale` reads the environment variable once and keeps it. `parse_scale` accepts only finite numbers of at least 1, so motion is never sped up and bad text means 1. `scaled` stretches a duration by it, and `Spring::config` and `Spring::policy` apply it to springs (see [[Spring]]). Controls call `scaled` for every transition they build.
 
-1 more entry point: `Enter::row`.
+`Enter` describes an entrance: a start offset, a spring and a delay. `Enter::PAGE`, `DIALOG` and `MENU` are fixed ones, and `Enter::card` and `Enter::row` add a stagger from `stagger_delay`, which stops growing after `STAGGER_CAP` (12) items. `EnterExt::enter` runs two animations: a hold for the delay, then the spring. `Enter::at` turns progress into offset and opacity. Opacity is clamped, but the offset follows an overshoot.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`drawer` gives a side pane's openness from 0 to 1: ease-out over the entering duration, sharp over the leaving duration. `count_up` shows a figure such as `62.5%` part way up from zero, keeping decimals and the text after the number.
+
+`PRESS_IN` (50 ms) and `PRESS_OUT` (250 ms) are not MUI motions. They set how fast a pressed look arrives and how slowly it leaves, which [[Base Module]] uses. `BOUNCY` is also the selected row bar's spring in [[Interaction Module]].
 
 ## Items
 
@@ -40,9 +36,9 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub const CARD_RISE: f32` — travel of a `staggerCascade` item.
 - `pub const ROW_SLIDE: f32` — travel of a `listStagger` item, from the left.
 - `pub const CARD_STAGGER: Duration` — `staggerCascade`: time between two cards.
-- `pub const ROW_STAGGER: Duration` — `listStagger`: time between two rows.
 - `pub const STAGGER_CAP: usize` — items after this many enter together with the last staggered one. Without a cap the last row of a long table would arrive seconds late.
-- `pub const EXIT: Duration` — `scaleIn` exit, and the exit of `tabSwitch` and `pageEntrance`.
+- `pub const PRESS_IN: Duration` — how fast a control takes its pressed look, and lets it go. Not a motion of MUI, whose press is the ripple alone: quick enough to answer the press at once, and slow enough on the way back that a short click shows.
+- `pub const PRESS_OUT: Duration` — public constant; used by `Base::new`.
 - `pub const NOTE_HOLD: Duration` — how long the word "Saved" stays beside a setting. Not a motion of MUI or of TradingAgent: long enough to be read, and gone before the next change.
 - `pub const LEVEL_HOLD: Duration` — how long the zoom level stays in the title bar after a change. Not a motion of MUI or of TradingAgent: long enough to read the figure while the wheel turns, and gone soon after it stops.
 - `pub fn scale() -> f32` — the factor every motion is stretched by; 1 unless `CODEWIKI_MOTION_SCALE` says otherwise.
@@ -53,7 +49,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub struct Enter` — an entrance: where the element comes from, on which spring, after what wait.
 - `pub trait EnterExt: Styled + IntoElement + Sized + 'static` — elements that can make an entrance.
 
-And 3 more items.
+And 5 more items.
 
 ## Depends on
 
@@ -66,13 +62,22 @@ And 3 more items.
 ## Used by
 
 - [[codewiki-app]] — from `check_for_update`, `connect`, `diagram_viewer_view`, `draw_queued_diagrams`
-- [[Doc View Module]] — from `column`, `draw_strip`, `line`, `render`
+- [[Doc View Module]] — from `column`, `draw_strip`, `render`, `stat_tile`
 - [[Ripple Module]] — from `finished`, `frame`, `moving`
 - [[Spring]] — from `animation`, `config`, `policy`
 - [[Button Module]] — from `ease`, `render`
+- [[Autocomplete Module]] — from `render`
+- [[Base Module]] — from `new`
 - [[Feedback Module]] — from `linear_progress`
-- [[List Module]] — from `render`
-- [[Menu Module]] — from `render`
+
+## Gotchas
+
+- `CODEWIKI_MOTION_SCALE` is read once at first use. Changing it later in the same run has no effect.
+- A value below 1 is ignored, not honored.
+- A spring may overshoot past 1. The entrance offset follows it but opacity does not, and `count_up` clamps so a figure never exceeds its target.
+- Under reduced motion an entrance is simply there.
+- `count_up` returns text that does not start with a digit unchanged.
+- `NOTE_HOLD` and `LEVEL_HOLD` are the app's own, not from MUI or TradingAgent.
 
 ## See also
 

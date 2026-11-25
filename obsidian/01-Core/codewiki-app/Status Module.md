@@ -34,8 +34,12 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 - `fn ago(seconds: u64) -> String` — an age in the largest unit that fits: "just now", "12 min ago", "3 h ago", "2 days ago".
 - `pub fn mcp_text(bridge: Bridge) -> String` — what follows "MCP:" in the tooltip and the menu.
 - `state_text` — what the app and its backend are doing, in a few words. `busy` is what the app itself is waiting for, as its toolbar says it. `updating` names the repositories whose wiki the backend is updating: the open one is `current`, any other is named.
-- `pub fn tooltip(repo: Option<&str>, state: &str, mcp: &str) -> String` — the tooltip of the tray icon: `CodeWiki - <repo> - <state> - MCP: <mcp>`, at most `TOOLTIP_UNITS` long. The repository's name comes first and is what gets shortened when the whole does not fit, so that the state and the MCP status stay readable.
+- `pub fn tooltip(repo: Option<&str>, state: &str, mcp: &str) -> String` — the tooltip of the tray icon: `CodeWiki - <repo> - <state> - MCP: <mcp>`, at most `TOOLTIP_UNITS` long, with `CodeWiki Dev` in a development build (`cw_core::APP_NAME`). The repository's name comes first and is what gets shortened when the whole does not fit, so that the state and the MCP status stay readable.
 - `pub fn cut_utf16(text: &str, units: usize) -> String` — the start of `text` that fits in `units` UTF-16 units, never ending in the middle of a character.
+
+## Depends on
+
+- [[cw-core]] — uses `APP_NAME`
 
 ## Used by
 

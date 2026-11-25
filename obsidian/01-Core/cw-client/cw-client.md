@@ -19,7 +19,7 @@ Clients hold no index of their own. They find a running backend, starting a loca
 
 Builds a library.
 
-1. `AppView::open_file` and `AppView::open_in_obsidian` in [[codewiki-app]], and 18 more, call `encode`.
+1. `AppView::open_file` and `AppView::open_in_obsidian` in [[codewiki-app]], and 19 more, call `encode`.
 2. `Backend::new` and `Backend::status` in [[Backend]] call `agent`.
 3. `AppView::connect` and `AppView::run_settings_action` in [[codewiki-app]], and 1 more, call `env_remote`. `env_remote` calls `process_env`.
 4. `AppView::backend_to_stop` and `AppView::install_update` in [[codewiki-app]] call `uses_remote`. `uses_remote` calls `env_remote`, then `saved_remote`.
@@ -38,10 +38,10 @@ Modules:
 Defined at the crate root:
 
 - `const URL_ENV: &str` — explicit backend address, for a backend running in Docker or on another machine. Requires `CODEWIKI_TOKEN`.
-- `const STARTUP_TIMEOUT: Duration` — how long a backend started here may take to answer. It answers in under a second on a warm machine; a cold disk or a virus scan of a new program can take much longer.
 - `pub enum Origin` — how a client came to the backend it uses.
 - [[Backend]] — struct
 - `const STATUS_TIMEOUT: Duration` — how long `GET /v1/status` may take. It is asked every few seconds and answers from memory, so a backend that takes longer is not answering.
+- `const SHUTDOWN_CONNECT_TIMEOUT: Duration` — how long asking the backend to stop may take to connect. The backend a client stops is on this machine, which accepts at once while it runs. A refused connection takes about two seconds on Windows, and the app asks as it quits, where GPUI waits only 200 ms.
 - `fn agent(timeout: Duration) -> ureq::Agent` — private function, returns `ureq::Agent`; called by `Backend::new`, `Backend::status`, `health_version`.
 - `fn process_env(name: &str) -> Option<String>` — private function, returns `Option<String>`; called by `Backend::connect`, `env_remote`.
 - `pub fn env_remote() -> Option<String>` — the address `CODEWIKI_URL` names, when it is set. It wins over a saved backend.
@@ -58,7 +58,7 @@ Defined at the crate root:
 - `const STOP_TIMEOUT: Duration` — how long an old backend may take to stop after it is asked to: it first finishes the requests it is running.
 - `fn codewiki_binary() -> PathBuf` — the `codewiki` binary: beside this executable when installed together, otherwise whatever `PATH` provides.
 
-And 3 more private items with no comment.
+And 4 more items.
 
 ## Depends on
 

@@ -39,25 +39,26 @@ Defined at the crate root:
 - `get_visible` — fetch `uri` and drop the repositories `entries` keep from it with `hide`. With an empty list the answer is returned as it is.
 - `fn failed(message: String) -> McpError` — A tool call that failed: logged, and returned to the agent as an error.
 - `fn field<'a>(value: &'a Value, key: &str) -> &'a str` — the string under `key`, or an empty string.
-- `fn repo_contracts_text(found: &Value) -> String` — text for the contracts of one repository.
-- `fn workspace_contracts_text(all: &Value) -> String` — text for contracts matched across the workspace.
+- `struct ClaimIds` — the agent ids this bridge lists notes under. Every listing that claims gets an id of its own: the main agent, its background note writer and a note writer launched after `/clear` all run through one bridge, and with one id for all of them a second batch was handed the notes the first still held. A submission sends the id its note was listed under.
+- `held_key` — the key of the note that `note` names in `repo`, read as the backend reads it: a vault path, or a note's name, which is its file name without `.md` in any case.
+- `fn agent_id() -> &'static str` — names this bridge process to the backend, so it can keep notes for it. Made once. A listing that claims adds a count to it (`ClaimIds::next`); a note not claimed through this bridge is submitted under it alone.
 - `fn waiting_line(waiting: &Value) -> String` — how many notes wait for an agent, in words; empty when none does.
 - `fn sync_text(report: &Value) -> String` — what a sync did, and what it left for an agent.
-- `fn waiting_text(queue: &Value) -> String` — the queue of notes that wait, for an agent to read.
+- `fn waiting_text(queue: &Value, claimed: bool) -> String` — the queue of notes that wait, for an agent to read. `claimed` tells that the listing asked to keep the notes for this agent.
 - `fn brief_text(brief: &Value) -> String` — the brief of one note, for an agent to read.
 - `fn outcome_text(outcome: &Value) -> String` — what became of a submission, for an agent to act on.
 - `fn note_text(content: &Value) -> String` — the text of a note as the backend answered, with a last line that names what was left out and how to get it.
 - `async fn main() -> std::process::ExitCode` — private function, returns `std::process::ExitCode`.
 
-And 22 more private items with no comment.
+And 24 more items.
 
 ## Depends on
 
 - [[Guard Module]] — uses `direct_path`, `hide_in_contracts`, `hide_in_workspace`, `hide_repos`
 - [[Agents Off Module]] — uses `blocking`, `file`, `load`, `repo_refusal`
 - [[Backend]] — uses `Backend`, `answers`, `connect`, `repo_id`
+- [[cw-core]] — uses `CLAIM_MINUTES`, `MCP_CLIENT`
 - [[cw-client]] — uses `encode`
-- [[cw-core]] — uses `MCP_CLIENT`
 - [[cw-telemetry]] — uses `init`
 - [[Paths Module]] — uses `data_dir`
 

@@ -8,7 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Sizes and paddings are MUI's (`Button/Button.js`, `IconButton/IconButton.js`). The look of the contained button, the two pixel outline and the focus ring are TradingAgent's (`components.ts`, `MuiButton`): a filled button rises one pixel and glows on hover, and settles when pressed. TradingAgent also shrinks it to 97% on press, which GPUI cannot do; the ripple marks the press instead.
+The clickable controls of the app: `Button` (label, optional start icon), `IconButton` (round, icon only) and `ToggleButtonGroup` (a row of buttons, one chosen). Sizes follow MUI. The contained look, the two pixel outline and the focus ring follow TradingAgent.
+
+A filled button rises one pixel and glows on hover. TradingAgent also shrinks it on press; GPUI cannot scale an element, so a pressed filled button darkens and sinks one pixel instead. Outlined and text buttons fill up when pressed. An `IconButton` grows and brightens its icon under the pointer, and `toggled(true)` shows it switched on, as the sidebar and details toggles do in the main view. How strong each state is comes from [[Interaction Module]].
 
 ## Source
 
@@ -16,13 +18,13 @@ Sizes and paddings are MUI's (`Button/Button.js`, `IconButton/IconButton.js`). T
 
 ## How it works
 
-1. `Button::render` in [[Button]] calls `Metrics::of`.
-2. `Button::render` in [[Button]] calls `glow`. `glow` calls `px` in [[Zoom Module]].
-3. `Button::render` in [[Button]] calls `ease`. `ease` calls `scaled` in [[Motion Module (mui)]], then `easing` in [[Tokens Module]].
-4. `AppView::diagram_viewer_view` and `AppView::tab_bar` in [[codewiki-app]], and 2 more, call `IconButton::new`.
-5. `choices_row` in [[Doc View Module]] calls `ToggleButtonGroup::new`.
+`Button::render` makes a `Base` (see [[Base Module]]) for hover, press and focus, then decides where each color is heading: gradient ends, text and border, from the kind (contained, outlined, text) and the disabled flag. Transitions move the colors there over 200 ms.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+On press, `base.press` (0 to 1) acts in two ways. A contained button's gradient stops are darkened with `lift` by `press_darken`. Other kinds get `pressed`, which raises their fill toward the pressed fill. The element also moves down by `sink` times the press. A spring raises a contained button by `LIFT` while hovered and not pressed, and `glow` builds the shadow stack from the hover and press progress.
+
+`IconButton::render` picks a fill: primary at the toggled strength (plus hover) when switched on, the icon color at hover strength when hovered. `pressed` adds the press. A hover spring grows the icon and lifts its lightness. The press sinks the icon, not the button, because GPUI can move an icon but not an element.
+
+`ToggleButtonGroup::render` builds one `Base` per label. The chosen one is tinted with primary at the selected strength. Buttons overlap by 1 px so neighbours share a border, and a press only fills, never sinks.
 
 ## Items
 
@@ -38,31 +40,37 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn icon_button_metrics(scale: Scale) -> (f32, f32)` — `IconButton.js`: padding around the icon, and the icon's size.
 - `struct Palette` — the colors one tone gives a button.
 - `fn glow(tint: Hsla, hover: f32, press: f32) -> Vec<BoxShadow>` — the shadow of a filled button, `hover` of the way to its hovered state and `press` of the way to its pressed one. TradingAgent, `MuiButton`, `contained`.
-- `fn ease(time: Duration) -> kit::Transition` — private function, returns `kit::Transition`; called by `Button::render`, `ToggleButtonGroup::render`.
-- [[Button]] — A button with a label, and optionally an icon before it.
+- `pub struct Button` — A button with a label, and optionally an icon before it.
 - `pub struct IconButton` — A round button that is only an icon.
 - `const TOGGLE_PADDING: f32` — `ToggleButton.js`, `size: 'small'`: 7 px of padding around 13 px text.
 - `type OnSelect = std::rc::Rc<dyn Fn(usize, &mut Window, &mut App)>` — what choosing the button at an index does.
 - `pub struct ToggleButtonGroup` — A few buttons side by side, one of them chosen: MUI's exclusive `ToggleButtonGroup` in the primary color.
 
-And 2 more private items with no comment.
+And 3 more private items with no comment.
 
 ## Depends on
 
 - [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
+- [[Interaction Module]] — uses `current`, `lift`, `pressed`
 - [[Tokens Module]] — uses `easing`, `spec`, `states`
+- [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
 - [[Feedback Module]] — uses `tooltip`
-- [[Motion Module (mui)]] — uses `scaled`
 - [[Curve Module]] — uses `EASE_IN_OUT`
 - [[Duration Module]] — uses `SHORTEST`
 - [[Zoom Module]] — uses `px`
-- [[Glyph]] — uses `Glyph`
 
 ## Used by
 
-- [[codewiki-app]] — from `diagram_viewer_view`, `settings_frame`, `tab_bar`, `toolbar`
-- [[Button]] — from `Button`, `render`
-- [[Doc View Module]] — from `choices_row`
+- [[codewiki-app]] — from `details`, `diagram_viewer_view`, `edit_view`, `proposal_actions`
+- [[Doc View Module]] — from `choices_row`, `draw`, `draw_row`, `secret_control`
+
+## Gotchas
+
+- `glow` is given spring values that may overshoot. It clamps blur and alpha at zero, so a bounce never gives a negative shadow.
+- The tooltip of an `IconButton` hangs on its own layer named after its text. GPUI keeps a waiting tooltip with its element, so a toggle whose text changes on press would show the old text. A new text makes a new layer.
+- A tinted `IconButton` uses the tint for icon, hover fill and ripple. A disabled one stays neutral.
+- Disabled buttons show no hover, lift or glow.
+- Outlined buttons take the 2 px border out of their padding, so all kinds are the same height.
 
 ## See also
 

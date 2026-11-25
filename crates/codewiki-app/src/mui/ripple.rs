@@ -23,6 +23,8 @@ use crate::zoom::px;
 /// `TouchRipple.js`, `DURATION`: the time a ripple takes to grow, and to fade.
 pub const DURATION: Duration = Duration::from_millis(550);
 /// `enterKeyframe`: the opacity a ripple starts and ends its growth at.
+/// The app's controls take theirs from `interaction`; this is MUI's.
+#[cfg(test)]
 const ENTER_OPACITY: (f32, f32) = (0.1, 0.3);
 /// Sides of the polygon that stands in for the disc.
 const DISC_SIDES: usize = 64;
@@ -74,10 +76,11 @@ impl Wave {
         self.released.get_or_insert_with(Instant::now);
     }
 
-    /// How far the disc has grown (0 to 1) and how opaque it is, at `now`.
-    pub fn frame(&self, now: Instant) -> (f32, f32) {
+    /// How far the disc has grown (0 to 1) and how opaque it is, at `now`,
+    /// for a ripple that goes from `opacity.0` to `opacity.1` as it grows.
+    pub fn frame(&self, now: Instant, opacity: (f32, f32)) -> (f32, f32) {
         let fading = self.released.map(|at| now.saturating_duration_since(at));
-        frame(now.saturating_duration_since(self.started), fading)
+        frame(now.saturating_duration_since(self.started), fading, opacity)
     }
 
     /// Whether the ripple still changes from frame to frame. One held down
@@ -96,13 +99,13 @@ impl Wave {
 /// Growth and opacity of a ripple that began `growing` ago and whose press
 /// ended `fading` ago. Growth and fade run side by side, as in MUI, where a
 /// quick click starts the fade while the disc is still growing.
-fn frame(growing: Duration, fading: Option<Duration>) -> (f32, f32) {
+fn frame(growing: Duration, fading: Option<Duration>, opacity: (f32, f32)) -> (f32, f32) {
     let ease = easing(curve::EASE_IN_OUT);
     let share = |elapsed: Duration| {
         (elapsed.as_secs_f32() / scaled(DURATION).as_secs_f32()).clamp(0.0, 1.0)
     };
     let grown = ease(share(growing));
-    let visible = ENTER_OPACITY.0 + (ENTER_OPACITY.1 - ENTER_OPACITY.0) * grown;
+    let visible = opacity.0 + (opacity.1 - opacity.0) * grown;
     let left = fading.map_or(1.0, |elapsed| 1.0 - ease(share(elapsed)));
     (grown, visible * left)
 }
@@ -188,13 +191,13 @@ pub fn covers(centre: Point, radius: f32, width: f32, height: f32) -> bool {
 
 /// Paint `waves` over a control at `bounds` whose corners have `radius`.
 /// Call while painting. `centered` ripples start from the middle, as on an
-/// icon button.
+/// icon button; `opacity` is the ripple's at its start and once grown.
 pub fn paint(
     bounds: Bounds<Pixels>,
     radius: f32,
     waves: &[Wave],
     centered: bool,
-    color: Hsla,
+    (color, opacity): (Hsla, (f32, f32)),
     window: &mut Window,
 ) {
     let (left, top) = (bounds.origin.x / px(1.), bounds.origin.y / px(1.));
@@ -205,14 +208,14 @@ pub fn paint(
     let now = Instant::now();
     let outline = rounded_rect(width, height, radius);
     for wave in waves {
-        let (grown, opacity) = wave.frame(now);
-        if opacity <= 0.0 || grown <= 0.0 {
+        let (grown, visible) = wave.frame(now, opacity);
+        if visible <= 0.0 || grown <= 0.0 {
             continue;
         }
         let press = wave.press.map(|(x, y)| (x - left, y - top));
         let centre = origin(width, height, press, centered);
         let reach = size(width, height, centre, centered) / 2.0 * grown;
-        let tint = color.opacity(color.a * opacity);
+        let tint = color.opacity(color.a * visible);
         if covers(centre, reach, width, height) {
             // The disc has passed every corner: the control's own shape.
             window.paint_quad(fill(bounds, tint).corner_radii(px(radius)));
@@ -235,9 +238,14 @@ pub fn paint(
 }
 
 /// The tint a pressed control shows in place of a ripple when motion is
-/// reduced: the ripple's resting opacity over the whole control.
-pub fn paint_pressed(bounds: Bounds<Pixels>, radius: f32, color: Hsla, window: &mut Window) {
-    let tint = color.opacity(color.a * ENTER_OPACITY.1);
+/// reduced: the ripple's resting opacity, `opacity`, over the whole control.
+pub fn paint_pressed(
+    bounds: Bounds<Pixels>,
+    radius: f32,
+    (color, opacity): (Hsla, f32),
+    window: &mut Window,
+) {
+    let tint = color.opacity(color.a * opacity);
     window.paint_quad(fill(bounds, tint).corner_radii(px(radius)));
 }
 
@@ -296,18 +304,21 @@ mod tests {
 
     #[test]
     fn a_ripple_grows_brightens_and_then_fades() {
-        assert_eq!(frame(MS(0), None).0, 0.0);
-        assert!((frame(MS(0), None).1 - 0.1).abs() < 1e-3);
-        let (grown, opacity) = frame(MS(550), None);
+        assert_eq!(frame(MS(0), None, ENTER_OPACITY).0, 0.0);
+        assert!((frame(MS(0), None, ENTER_OPACITY).1 - 0.1).abs() < 1e-3);
+        let (grown, opacity) = frame(MS(550), None, ENTER_OPACITY);
         assert!((grown - 1.0).abs() < 1e-3 && (opacity - 0.3).abs() < 1e-3);
         // Held down, it stays.
-        assert_eq!(frame(MS(5000), None), frame(MS(550), None));
+        assert_eq!(
+            frame(MS(5000), None, ENTER_OPACITY),
+            frame(MS(550), None, ENTER_OPACITY)
+        );
         // Released, it fades over the same time.
-        let half = frame(MS(825), Some(MS(275))).1;
+        let half = frame(MS(825), Some(MS(275)), ENTER_OPACITY).1;
         assert!(half > 0.0 && half < 0.3);
-        assert!(frame(MS(1100), Some(MS(550))).1.abs() < 1e-3);
+        assert!(frame(MS(1100), Some(MS(550)), ENTER_OPACITY).1.abs() < 1e-3);
         // A quick click fades while it is still growing.
-        let (grown, opacity) = frame(MS(200), Some(MS(150)));
+        let (grown, opacity) = frame(MS(200), Some(MS(150)), ENTER_OPACITY);
         assert!(grown > 0.0 && grown < 1.0 && opacity > 0.0);
     }
 

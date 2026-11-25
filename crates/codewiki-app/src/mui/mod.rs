@@ -12,6 +12,7 @@ pub mod autocomplete;
 pub mod base;
 pub mod button;
 pub mod feedback;
+pub mod interaction;
 pub mod list;
 pub mod menu;
 pub mod motion;

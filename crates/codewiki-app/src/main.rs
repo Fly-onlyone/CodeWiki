@@ -2884,6 +2884,7 @@ impl AppView {
                     } else {
                         "Show sidebar (Ctrl+B)"
                     })
+                    .toggled(self.sidebar_open)
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_pane(Pane::Sidebar, cx))),
             )
@@ -3076,6 +3077,7 @@ impl AppView {
                     } else {
                         "Show details (Ctrl+Alt+B)"
                     })
+                    .toggled(self.details_open)
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_pane(Pane::Details, cx))),
             )

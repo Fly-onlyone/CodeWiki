@@ -11,13 +11,17 @@
 use std::rc::Rc;
 use std::time::Instant;
 
+use gpui_kit::base::motion as kit;
 use gpui_kit::{
     App, BoxShadow, ClickEvent, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement as _,
     MouseButton, ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _,
     Window, canvas, point,
 };
 
+use super::interaction;
+use super::motion::{PRESS_IN, PRESS_OUT, scaled};
 use super::ripple::{self, Wave};
+use super::tokens::{curve, easing};
 use crate::zoom::px;
 
 /// What a click does.
@@ -61,6 +65,9 @@ pub struct Base {
     state: Entity<Touch>,
     pub hovered: bool,
     pub pressed: bool,
+    /// How far the control is into its pressed look, from 0 to 1: quick to
+    /// get there, slower to leave, so that a short click still shows.
+    pub press: f32,
     /// Keyboard focus. A press with the mouse does not give focus.
     pub focused: bool,
 }
@@ -93,11 +100,29 @@ impl Base {
         if moving && !cx.reduce_motion() {
             window.request_animation_frame();
         }
-        let touch = state.read(cx);
+        let (hovered, pressed) = {
+            let touch = state.read(cx);
+            (touch.hovered, touch.pressed)
+        };
+        let policy = if pressed {
+            kit::Transition::new(scaled(PRESS_IN)).ease(easing(curve::EASE_OUT))
+        } else {
+            kit::Transition::new(scaled(PRESS_OUT)).ease(easing(curve::EASE_IN_OUT))
+        };
+        // Not `(id, "press")`: a button keeps its own glow under that name.
+        let press = kit::transition(
+            (id.clone(), "touch-press"),
+            if pressed { 1.0 } else { 0.0 },
+            policy,
+            window,
+            cx,
+        );
+        let focused = !disabled && state.read(cx).focus.is_focused(window);
         Self {
-            hovered: touch.hovered,
-            pressed: touch.pressed,
-            focused: !disabled && touch.focus.is_focused(window),
+            hovered,
+            pressed,
+            press,
+            focused,
             state,
         }
     }
@@ -117,6 +142,7 @@ impl Base {
         }
         let focus = self.state.read(cx).focus.clone();
         let reduce = cx.reduce_motion();
+        let opacity = interaction::current(cx).ripple;
         let (hover, down, up, up_out, click, paint) = (
             self.state.clone(),
             self.state.clone(),
@@ -187,12 +213,17 @@ impl Base {
                                 ink.radius,
                                 &touch.waves,
                                 ink.centered,
-                                ink.color,
+                                (ink.color, opacity),
                                 window,
                             );
                         } else if touch.pressed {
                             // Without motion a press is a plain tint.
-                            ripple::paint_pressed(bounds, ink.radius, ink.color, window);
+                            ripple::paint_pressed(
+                                bounds,
+                                ink.radius,
+                                (ink.color, opacity.1),
+                                window,
+                            );
                         }
                     },
                 )

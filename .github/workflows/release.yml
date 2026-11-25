@@ -12,6 +12,10 @@ name: Release
 #
 # The package holds the zip (for self-update and installing by hand) and the
 # setup program (the file to download), each with a .sha256 file.
+#
+# scripts/release-notes.ps1 writes the release notes: the highlights in
+# docs/releases/<version>.md, the commits since the previous release, and how
+# to install. A dry run shows them in the run's summary.
 
 on:
   push:
@@ -24,6 +28,7 @@ on:
       - scripts/install.ps1
       - scripts/uninstall.ps1
       - scripts/setup/**
+      - scripts/release-notes.ps1
       - .github/workflows/release.yml
   pull_request:
     paths:
@@ -31,6 +36,7 @@ on:
       - scripts/install.ps1
       - scripts/uninstall.ps1
       - scripts/setup/**
+      - scripts/release-notes.ps1
       - .github/workflows/release.yml
   workflow_dispatch:
 
@@ -54,6 +60,10 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v7
+        with:
+          # The whole history and the tags: the release notes list the
+          # commits since the previous release.
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Read the version
@@ -102,6 +112,16 @@ jobs:
             Get-Content "$file.sha256"
           }
 
+      - name: Write the release notes
+        shell: pwsh
+        env:
+          IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
+        run: |
+          # Without a tag, the notes cover this commit under the Cargo.toml version.
+          $tag = if ($env:IS_TAG -eq 'true') { @('-Tag', $env:GITHUB_REF_NAME) } else { @() }
+          ./scripts/release-notes.ps1 @tag -OutFile dist/release-notes.md
+          Get-Content dist/release-notes.md -Raw >> $env:GITHUB_STEP_SUMMARY
+
       - uses: actions/upload-artifact@v7
         with:
           name: CodeWiki-${{ steps.version.outputs.version }}-windows-x64
@@ -110,6 +130,7 @@ jobs:
             ${{ steps.version.outputs.zip }}.sha256
             ${{ steps.version.outputs.setup }}
             ${{ steps.version.outputs.setup }}.sha256
+            dist/release-notes.md
           if-no-files-found: error
           retention-days: 7
 
@@ -125,9 +146,10 @@ jobs:
           $flags = @()
           # A version with a pre-release part (0.2.0-rc.1) is not the latest release.
           if ($env:VERSION.Contains('-')) { $flags += '--prerelease' }
-          $notes = "**Download ``CodeWiki-$env:VERSION-windows-x64-setup.exe``** and double-click it. The zip is for self-update and for installing by hand."
+          # Not --generate-notes: it lists merged pull requests, and this
+          # repository's work lands by local merges.
           gh release create $env:GITHUB_REF_NAME $env:SETUP "$env:SETUP.sha256" $env:ZIP "$env:ZIP.sha256" `
-            --title "CodeWiki $env:VERSION" --notes $notes --generate-notes --verify-tag @flags
+            --title "CodeWiki $env:VERSION" --notes-file dist/release-notes.md --verify-tag @flags
 
       # A secret cannot be named in a step's condition, and the token must not
       # reach the build above, whose build scripts see its environment.

@@ -121,14 +121,15 @@ begin
   Result := '''' + Text + '''';
 end;
 
-// Runs Script -Target Target hidden and waits for it. Everything the script
-// prints, and the error that stopped it, goes to LogFile (UTF-8) and comes
-// back in Output. True when the script ran to its end.
+// Runs Script -Target Target, then Switches (such as -PurgeData, or ''),
+// hidden and waits for it. Everything the script prints, and the error that
+// stopped it, goes to LogFile (UTF-8) and comes back in Output. True when the
+// script ran to its end.
 //
 // -Command, not -File: with -File the redirection would reach the script as
 // an argument. A script that throws is not caught by *>, so catch appends
 // its error to the log and the exit code says it failed.
-function RunScript(const Script, Target, LogFile: String; var Output: String): Boolean;
+function RunScript(const Script, Target, Switches, LogFile: String; var Output: String): Boolean;
 var
   Command: String;
   ResultCode, I: Integer;
@@ -137,9 +138,9 @@ begin
   DeleteFile(LogFile);
   Command :=
     '$PSDefaultParameterValues[''Out-File:Encoding''] = ''utf8''; ' +
-    'try { & ' + Quoted(Script) + ' -Target ' + Quoted(Target) + ' *> ' + Quoted(LogFile) + ' } ' +
+    'try { & ' + Quoted(Script) + ' -Target ' + Quoted(Target) + ' ' + Switches + ' *> ' + Quoted(LogFile) + ' } ' +
     'catch { $_.ToString() | Out-File -Append -LiteralPath ' + Quoted(LogFile) + '; exit 1 }';
-  Log('Running ' + Script + ' -Target ' + Target);
+  Log('Running ' + Script + ' -Target ' + Target + ' ' + Switches);
   if not Exec(PowerShellExe, '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "' + Command + '"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
   begin
@@ -182,22 +183,54 @@ begin
     Result := 'CodeWiki could not be installed:' + #13#10 + GetExceptionMessage;
     Exit;
   end;
-  if not RunScript(ExpandConstant('{tmp}\pkg\install.ps1'), ExpandConstant('{app}'),
+  if not RunScript(ExpandConstant('{tmp}\pkg\install.ps1'), ExpandConstant('{app}'), '',
     ExpandConstant('{tmp}\install.log'), Output) then
     Result := 'CodeWiki could not be installed:' + #13#10 + Output;
 end;
 
-// Data and settings stay, as with uninstall.cmd without -PurgeData. When
-// uninstall.ps1 fails, Abort here stops the uninstaller before it deletes
-// anything more: the Apps entry stays, the exit code is not 0, and the user
-// can close what holds a file and uninstall again.
+// Whether the command line holds a switch such as /PURGEDATA, in any case.
+function HasSwitch(const Name: String): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), Name) = 0 then
+    begin
+      Result := True;
+      Exit;
+    end;
+end;
+
+// Whether to delete the data and settings too (uninstall.ps1 -PurgeData):
+// /PURGEDATA on the command line says so, for a silent uninstall as well.
+// Without it an uninstall the user watches asks, with No as the default; a
+// silent one keeps them, as uninstall.cmd without -PurgeData does.
+function WantsPurge: Boolean;
+begin
+  Result := HasSwitch('/PURGEDATA');
+  if Result or UninstallSilent then
+    Exit;
+  Result := MsgBox('Delete your CodeWiki data and settings as well?' + #13#10#13#10 +
+    'Data: ' + ExpandConstant('{localappdata}\CodeWiki') + ' (the search index, the logs and the list of repositories)' + #13#10 +
+    'Settings: ' + ExpandConstant('{userappdata}\CodeWiki') + #13#10#13#10 +
+    'The wiki notes in your repositories stay either way. Choose No to keep the data and settings for a later install.',
+    mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES;
+end;
+
+// When uninstall.ps1 fails, Abort here stops the uninstaller before it
+// deletes anything more: the Apps entry stays, the exit code is not 0, and
+// the user can close what holds a file and uninstall again.
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
-  Output: String;
+  Output, Switches: String;
 begin
   if CurUninstallStep <> usUninstall then
     Exit;
-  if not RunScript(ExpandConstant('{app}\uninstall.ps1'), ExpandConstant('{app}'),
+  Switches := '';
+  if WantsPurge then
+    Switches := '-PurgeData';
+  if not RunScript(ExpandConstant('{app}\uninstall.ps1'), ExpandConstant('{app}'), Switches,
     ExpandConstant('{tmp}\uninstall.log'), Output) then
   begin
     if not UninstallSilent then

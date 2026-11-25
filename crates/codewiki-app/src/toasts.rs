@@ -12,7 +12,9 @@ use std::time::{Duration, Instant};
 use gpui_kit::{SystemNotification, SystemNotificationAction};
 
 use crate::doc::Action;
+use crate::icons::{self, Glyph};
 use crate::mui::feedback::Tone;
+use crate::settings::Category;
 
 /// The most toasts on screen at once. A new one beyond that pushes the oldest
 /// out.
@@ -30,6 +32,36 @@ const ACTION_ID: &str = "action";
 /// each status poll.
 pub const SYSTEM_GAP: Duration = Duration::from_secs(60);
 
+/// What a notice is about. It gives the icon of the notice's toast; a
+/// Windows notification has text only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Topic {
+    /// The backend: connected at the start, or reconnected after a loss.
+    Backend,
+    /// The embedding server that Settings → Semantic search waits for.
+    EmbedServer,
+    /// Proposals: new ones that wait, and what a decision did with them.
+    Review,
+    /// The app itself, such as the hint that it stays in the tray, which
+    /// only ever goes to Windows.
+    App,
+}
+
+impl Topic {
+    /// The icon at the start of the toast's message, drawn in the tone's
+    /// color.
+    pub fn icon(self) -> Glyph {
+        match self {
+            Self::Backend => icons::CONNECTED,
+            // The icon of the settings page it comes from.
+            Self::EmbedServer => Category::Search.icon(),
+            Self::Review => icons::REVIEW,
+            // Never drawn: such a notice goes to Windows only.
+            Self::App => icons::INFO,
+        }
+    }
+}
+
 /// One message for the user.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Notice {
@@ -37,6 +69,7 @@ pub struct Notice {
     /// its place, and the key is the tag of the Windows notification.
     pub key: String,
     pub tone: Tone,
+    pub topic: Topic,
     pub title: String,
     pub body: Option<String>,
     /// A label, and what pressing it does.
@@ -243,6 +276,7 @@ mod tests {
         Notice {
             key: key.into(),
             tone: Tone::Info,
+            topic: Topic::Review,
             title: format!("title of {key}"),
             body: None,
             action: None,
@@ -507,6 +541,24 @@ mod tests {
         assert!(toasts.live("a", t0 + secs(61)));
         toasts.take_due(t0 + secs(61));
         assert!(!toasts.live("a", t0 + secs(61)));
+    }
+
+    #[test]
+    fn each_topic_has_an_icon_of_its_own() {
+        assert_eq!(Topic::Backend.icon(), icons::CONNECTED);
+        // The icon of the settings page that waits for the server.
+        assert_eq!(Topic::EmbedServer.icon(), Category::Search.icon());
+        assert_eq!(Topic::Review.icon(), icons::REVIEW);
+        let all = [
+            Topic::Backend,
+            Topic::EmbedServer,
+            Topic::Review,
+            Topic::App,
+        ]
+        .map(Topic::icon);
+        for (index, icon) in all.iter().enumerate() {
+            assert!(!all[index + 1..].contains(icon), "{all:?}");
+        }
     }
 
     #[test]

@@ -14,7 +14,7 @@ use serde_json::Value;
 use crate::doc::Action;
 use crate::mui::checkbox::Check;
 use crate::mui::feedback::Tone;
-use crate::toasts::Notice;
+use crate::toasts::{Notice, Topic};
 
 /// What made a proposal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -325,6 +325,7 @@ pub fn decided_notices(approve: bool, results: &[DecideResult], items: &[Item]) 
     let notice = |key: &str, tone, title: String| Notice {
         key: key.into(),
         tone,
+        topic: Topic::Review,
         title,
         body: None,
         action: None,
@@ -394,6 +395,7 @@ pub fn rise_notice(id: &str, name: &str, increase: usize) -> Notice {
     Notice {
         key: rise_key(id),
         tone: Tone::Info,
+        topic: Topic::Review,
         title,
         body: None,
         action: Some(("Open review".into(), Action::OpenReview(id.to_string()))),
@@ -890,6 +892,9 @@ mod tests {
         assert_eq!(rejected[0].action, None);
         let rejected = decided_notices(false, &[ok("a", "Parser"), ok("b", "Lexer")], &items);
         assert_eq!(rejected[0].title, "Rejected 2");
+        for notice in [&one[0], &several[0], &rejected[0]] {
+            assert_eq!(notice.topic, Topic::Review, "{}", notice.title);
+        }
     }
 
     #[test]
@@ -915,6 +920,8 @@ mod tests {
             Some("Lexer: proposal b changed since it was proposed")
         );
         assert_ne!(mixed[0].key, mixed[1].key);
+        // The warning keeps the icon of its topic, in the warning's color.
+        assert_eq!(mixed[1].topic, Topic::Review);
         let none = decided_notices(
             false,
             &[failed("a", "not pending"), failed("z", "no such proposal")],
@@ -934,6 +941,7 @@ mod tests {
         let one = rise_notice("r1", "alpha", 1);
         assert_eq!(one.key, "review:r1");
         assert_eq!(one.title, "1 new review in alpha");
+        assert_eq!(one.topic, Topic::Review);
         assert_eq!(
             one.action,
             Some(("Open review".into(), Action::OpenReview("r1".into())))

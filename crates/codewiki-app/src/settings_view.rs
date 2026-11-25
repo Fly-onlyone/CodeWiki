@@ -447,6 +447,7 @@ impl AppView {
                                 crate::toasts::Notice {
                                     key: "embed-server".into(),
                                     tone: Tone::Success,
+                                    topic: crate::toasts::Topic::EmbedServer,
                                     title: format!(
                                         "Connected to {}",
                                         settings_pages::server_label(&provider)

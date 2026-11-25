@@ -21,6 +21,7 @@ mod fonts;
 mod glass;
 mod graph;
 mod icons;
+mod identity;
 mod illustration;
 mod instance;
 mod live;
@@ -126,6 +127,8 @@ const RECHECK_PAUSE: std::time::Duration = std::time::Duration::from_secs(60 * 6
 const TRAY_HINT: &str = "tray_hint";
 /// What Windows knows the app as when it shows a notification.
 const APP_IDENTITY: &str = "CodeWiki.App";
+/// The name Windows shows above the app's notifications.
+const APP_NAME: &str = "CodeWiki";
 /// The smallest window: the sidebar, the details pane, and a reading pane
 /// about as wide as the two together.
 const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
@@ -905,6 +908,7 @@ impl AppView {
             );
             let content = mui::snackbar::Content {
                 tone: notice.tone,
+                icon: notice.topic.icon(),
                 title: notice.title.clone().into(),
                 body: notice.body.clone().map(SharedString::from),
                 action,
@@ -937,7 +941,17 @@ impl AppView {
         // the window belongs to, so a run that never notifies keeps the
         // button Windows gave it at start.
         if !self.identity_set {
-            cx.set_app_identity(APP_IDENTITY, "CodeWiki");
+            // The name and the logo above the notification. Without them it
+            // still shows, so a failure is only logged.
+            match identity::register(APP_IDENTITY, APP_NAME, icons::LOGO_BYTES) {
+                Ok(written) if !written.is_empty() => log::info!(
+                    "registered {APP_IDENTITY} for Windows notifications: wrote {}",
+                    written.join(", ")
+                ),
+                Ok(_) => {}
+                Err(error) => log::warn!("could not register the notification icon: {error}"),
+            }
+            cx.set_app_identity(APP_IDENTITY, APP_NAME);
             self.identity_set = true;
         }
         cx.show_system_notification(toasts::system(notice));
@@ -958,6 +972,7 @@ impl AppView {
             &toasts::Notice {
                 key: TRAY_HINT.into(),
                 tone: Tone::Info,
+                topic: toasts::Topic::App,
                 title: "CodeWiki is still running".into(),
                 body: Some(
                     "Click its icon in the notification area to open it again, right-click the icon to quit."
@@ -1239,6 +1254,7 @@ impl AppView {
             toasts::Notice {
                 key: "backend".into(),
                 tone: Tone::Success,
+                topic: toasts::Topic::Backend,
                 title: title.into(),
                 body: None,
                 action: None,

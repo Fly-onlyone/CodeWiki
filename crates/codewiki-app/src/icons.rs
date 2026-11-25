@@ -92,6 +92,8 @@ app_icons! {
     // an icon from.
     BACKEND = "dns",
     DIAGNOSTICS = "bug-report",
+    // The toast that says the backend answers again.
+    CONNECTED = "cloud-done",
     // The side panes. Material has `ViewSidebar` only with the pane on the
     // right; the left one is the same path mirrored.
     SIDEBAR = "view-sidebar-left",
@@ -135,7 +137,9 @@ pub fn for_theme(name: &str) -> Glyph {
 /// The app's own logo, the same art as its Windows icon, served under this
 /// path. Draw it with `img(icons::LOGO)`.
 pub const LOGO: &str = "logo/codewiki.png";
-const LOGO_BYTES: &[u8] = include_bytes!("../resources/codewiki.png");
+/// The logo's PNG file, which the header of a Windows notification shows too
+/// (`identity.rs`).
+pub const LOGO_BYTES: &[u8] = include_bytes!("../resources/codewiki.png");
 
 /// The icon shown beside a palette entry.
 pub fn for_command(command: &Command) -> Glyph {

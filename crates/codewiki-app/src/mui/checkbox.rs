@@ -18,6 +18,7 @@ use gpui_kit::{
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
+use super::interaction;
 use super::motion::scaled;
 use super::tokens::{self, curve, duration, easing};
 use crate::icons::{self, Glyph};
@@ -89,10 +90,11 @@ impl Look {
         };
         // `Checkbox.js`, `&:hover`: `alpha(palette[color].main,
         // action.hoverOpacity)`, in the checkbox's color whether or not it
-        // is checked.
+        // is checked. The opacity is the app's own, as for every control
+        // (`interaction.rs`).
         Self {
             icon,
-            hover: primary.opacity(states.hover),
+            hover: primary.opacity(interaction::DARK.for_mode(dark).hover),
         }
     }
 }
@@ -218,9 +220,10 @@ mod tests {
     }
 
     #[test]
-    fn the_hover_tint_is_primary_at_muis_hover_opacity() {
+    fn the_hover_tint_is_primary_at_the_apps_hover_opacity() {
         let (_, _, primary) = theme();
-        for (dark, opacity) in [(false, 0.04), (true, 0.08)] {
+        for dark in [false, true] {
+            let opacity = interaction::DARK.for_mode(dark).hover;
             for check in [Check::Unchecked, Check::Checked, Check::Indeterminate] {
                 let hover = Look::of(check, false, dark, theme()).hover;
                 assert_eq!(hover.h, primary.h);

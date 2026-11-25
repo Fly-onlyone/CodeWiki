@@ -5,7 +5,9 @@
 //! three pixels thick and 60% of the tab wide. TradingAgent scales that bar
 //! in from its middle. GPUI cannot scale an element, so the bar slides from
 //! the old tab to the new one on a spring instead, as the indicator of MUI
-//! itself slides (`Tabs/Tabs.js`).
+//! itself slides (`Tabs/Tabs.js`). The selected tab is also tinted and
+//! semibold, and a tab under the pointer is tinted and its label brightens,
+//! at the strengths in `interaction`.
 
 use std::rc::Rc;
 
@@ -18,7 +20,9 @@ use gpui_kit::{
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
-use super::motion::SNAPPY;
+use super::interaction::{self, pressed};
+use super::motion::{SNAPPY, scaled};
+use super::tokens::{curve, duration, easing};
 use crate::zoom::px;
 
 /// `MuiTab`: `minHeight: 44`.
@@ -107,9 +111,14 @@ impl Tabs {
 
 impl RenderOnce for Tabs {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = interaction::current(cx);
         let theme = cx.theme();
-        let (primary, muted, radius) =
-            (theme.primary, theme.muted_foreground, theme.radius / px(1.));
+        let (primary, muted, foreground, radius) = (
+            theme.primary,
+            theme.muted_foreground,
+            theme.foreground,
+            theme.radius / px(1.),
+        );
         let row_id = ElementId::Name(self.id.clone());
         // Where each tab was drawn last frame, from the left of the row.
         let places = window.use_keyed_state(row_id.clone(), cx, |_, _| Vec::<(f32, f32)>::new());
@@ -144,10 +153,33 @@ impl RenderOnce for Tabs {
         for (index, tab) in self.tabs.into_iter().enumerate() {
             let id = ElementId::NamedInteger(self.id.clone(), index as u64);
             let base = Base::new(&id, false, window, cx);
-            let color = if index == self.selected {
+            let selected = index == self.selected;
+            let policy =
+                kit::Transition::new(scaled(duration::SHORTEST)).ease(easing(curve::EASE_IN_OUT));
+            let hover = kit::transition(
+                (id.clone(), "hover"),
+                if base.hovered { 1.0 } else { 0.0 },
+                policy.clone(),
+                window,
+                cx,
+            );
+            // The selected tab is tinted, and any tab more under the pointer.
+            let fill_to = primary.opacity(
+                if selected { look.tab_selected } else { 0.0 }
+                    + if base.hovered { look.tab_hover } else { 0.0 },
+            );
+            let fill = kit::transition((id.clone(), "fill"), fill_to, policy, window, cx);
+            let fill = pressed(fill, look.pressed, base.press);
+            let color = if selected {
                 primary
             } else {
-                muted
+                // A muted label moves toward the text color under the pointer.
+                muted.blend(foreground.opacity(look.tab_hover_text * hover))
+            };
+            let weight = if selected {
+                FontWeight::SEMIBOLD
+            } else {
+                FontWeight::MEDIUM
             };
             let on_click = self.on_select.clone().map(|on_select| {
                 Rc::new(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {
@@ -163,10 +195,11 @@ impl RenderOnce for Tabs {
                 .gap(px(GAP))
                 .items_center()
                 .rounded_t(px(radius))
+                .bg(fill)
                 .text_color(color)
                 .text_size(px(FONT))
                 .line_height(px(LINE))
-                .font_weight(FontWeight::MEDIUM)
+                .font_weight(weight)
                 .when(base.focused, |tab| tab.shadow(vec![focus_ring(primary)]))
                 .child(div().max_w(px(LABEL_MAX)).truncate().child(tab.label))
                 .children(tab.suffix);

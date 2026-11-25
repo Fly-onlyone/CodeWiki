@@ -83,7 +83,7 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. A note that an agent explained shows its pictures inside the sections they explain: boxes joined by arrows, and marked key points. "Agent view" in the toolbar shows the note as a coding agent reads it. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. The search box lists matching notes, symbols and files as you type: the arrow keys and Enter open one, and Enter with none chosen shows every hit. A note that an agent explained shows its pictures inside the sections they explain: boxes joined by arrows, and marked key points. "Agent view" in the toolbar shows the note as a coding agent reads it. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Behind the glass, beside the page, a sky of notes and links drifts in the theme's colors; light runs along the links, more often while a wiki is being written, and the nodes near the pointer brighten. It stands still when the window is not in front or animations are off, and Settings → Appearance → "Background graph" turns it off. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
 
 Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. For more in `app.log`, choose a level in Settings → Diagnostics; `CODEWIKI_LOG=debug` does the same for any of the programs and wins over that choice. Set `CODEWIKI_LOG_DIR` to write the logs elsewhere.
 
@@ -121,6 +121,8 @@ A note about a package from outside the repository (an integration) says what th
 **Pictures.** The agent may give a section a picture: a row of numbered boxes joined by arrows that shows what happens from a cause to its result, and marked key points or warnings. The app draws it inside the section it explains. A picture is a short text kept beside the note, in `<Note>.openui`; the note's Markdown stays as it is, and Obsidian shows the note without the picture. A note has at most four pictures, and a note no agent has explained has none: rules cannot tell what a thing is for, so they draw nothing.
 
 **When the code changes.** `codewiki update` writes the facts of an explained note anew and keeps the agent's sections and pictures as they are. The explanation was written from the files as they were, so the note is marked: its explanation may be behind. The app says so in the note's details, and such notes come first when an agent asks what waits. `/codewiki:write-notes changed` writes the notes about the files that changed. After a code change of its own, Claude writes the notes about the files it changed, at most three, without being asked.
+
+**Auto explaining.** It is on by default. When a session starts fresh (startup, resume or `/clear`), the briefing tells the agent to explain the waiting notes by itself: Claude Code starts the `codewiki:note-writer` agent in the background on Sonnet when you send your first message, and Codex uses its `write-notes` skill after your first request. It writes at most 20 notes per session, stale ones first, so it uses your allowance; a session in a linked git worktree is not asked, and neither is a folder you keep from coding agents. The hook leaves the order out when the host reports plan mode; the order itself tells the agent to skip it in plan mode. Several sessions at once get different notes: a listed note is lent to one agent for 30 minutes. Turn it off in Settings → Repositories → "Auto explaining". The toolbar shows "To explain (N)" while notes wait; it opens the Waiting notes page, which lists them. The count follows updates the app's backend runs; one run on the command line or an edit in Obsidian shows after the next change or after you reopen the repository.
 
 **What CodeWiki checks.** A submission is refused, with every fault named, when a section is not one of the agent's, holds a `#` or `##` heading or more than 300 words, links to a note that does not exist, or breaks the house style; when a picture uses a component that does not exist or is too large; or when the note or its code changed since the agent read it.
 
@@ -167,7 +169,7 @@ Settings → Backend saves the address and token of a backend in Docker or on an
 
 ### Error reports
 
-CodeWiki sends nothing about you or your code unless you ask it to. Settings → Diagnostics → "Send error reports" is off until you turn it on. Then a crash or an error of the app, the backend or the agents' bridge goes to the developer through [Sentry](https://sentry.io): what failed, where in the code, the versions of CodeWiki and Windows, and the log lines just before it. Every file path is replaced by `<path>` before it leaves, and no report holds note text, a search query, a key or your computer's name. The log lines can name a repository, a note, or the address of a backend on another machine. Sentry does not keep the network address a report came from, but it does keep the city and country it places that address in. Turning it off stops the reports at once; turning it on takes effect when each program next starts.
+CodeWiki sends nothing about you or your code unless you ask it to. Settings → Diagnostics → "Send error reports" is off until you turn it on. Then a crash or an error of the app, the backend or the agents' bridge goes to the developer through [Sentry](https://sentry.io): what failed, where in the code, the versions of CodeWiki and Windows, and the log lines just before it. Every file path is replaced by `<path>` before it leaves, and no report holds note text, a search query, a key or your computer's name. The log lines can name a repository, a note, or the address of a backend on another machine. Sentry keeps neither the network address a report came from nor the city and country of that address. Turning it off stops the reports at once; turning it on takes effect when each program next starts.
 
 A developer can point a build at their own Sentry project with `SENTRY_DSN`; the switch then shows as set by that variable.
 
@@ -205,7 +207,7 @@ For each note Claude reads its source files, writes the sections that are its ow
 1. how many notes the wiki has, and its home note, `obsidian/_HOME.md`;
 2. whether the wiki is up to date with `HEAD`. It is stale only when files outside `obsidian/` changed since the commit the wiki was written from, so committing the wiki itself does not make it stale. Without git, the line says the wiki cannot be compared;
 3. how many proposals wait for review;
-4. how many notes wait for an explanation, when any does. The line states a count; it tells Claude to write notes when you ask, or for files it changed;
+4. how many notes wait for an explanation, when any does. The line states a count. It tells Claude to write notes when you ask, or for files it changed, and, when auto explaining is on and the session is fresh, to start the note-writer;
 5. that `get_overview` and `get_context` answer from the wiki, and that Claude should call them before it explores the code by hand.
 
 In a repository with no wiki yet, the briefing is two lines: there is no wiki, and `sync_wiki` writes one.
@@ -227,7 +229,13 @@ To install the plugin:
 
    In PowerShell the folder is `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`. It holds the agent plugins and nothing else, and Claude Code reads it where it is: nothing is downloaded, and git is not needed.
 
-   Without the Windows package (programs built from source, or a backend on another machine), add this repository instead: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, and that needs git.
+   Without the Windows package (programs built from source, or a backend on another machine), add this repository instead, or the folder of a clone:
+
+   ```
+   claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code
+   ```
+
+   With `--sparse`, Claude Code checks out only the marketplace file and the plugin's folder, not the whole repository. It needs git. A marketplace added from GitHub without `--sparse` holds the whole repository: run `claude plugin marketplace remove codewiki`, then add it again with this command.
 3. Install the plugin:
 
    ```
@@ -250,8 +258,9 @@ claude plugin marketplace remove codewiki
 
 ### Codex plugin
 
-The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and two skills. It has no skill for writing notes yet: Codex reads the wiki, and the tools that write notes are there without a procedure for them.
+The plugin in `plugins/codex/` gives Codex the same MCP server and session-start briefing as the Claude Code plugin, and three skills.
 
+- `write-notes` writes the explanations of waiting notes, as the Claude Code skill does. With auto explaining on, the briefing tells Codex to use it after your first request;
 - `using-codewiki` says which tool to call at each step of a change, and when to write or refresh the wiki with `sync_wiki`;
 - `wiki-note-style` holds the house style of CodeWiki's notes, for when Codex edits a note in `obsidian/` by hand.
 
@@ -262,9 +271,15 @@ codex plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
 codex plugin add codewiki@codewiki
 ```
 
-Without the Windows package, add the repository instead: `codex plugin marketplace add Fly-onlyone/CodeWiki`.
+Without the Windows package, add the repository instead:
 
-Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in Codex once and trust the `SessionStart` hook that runs `codewiki hook session-start`.
+```
+codex plugin marketplace add Fly-onlyone/CodeWiki --sparse .agents/plugins --sparse plugins/codex
+```
+
+With `--sparse`, Codex downloads only the marketplace file and the plugin's folder, not the whole repository. A marketplace added from GitHub without `--sparse` holds the whole repository with its history: run `codex plugin marketplace remove codewiki`, then add it again with this command.
+
+Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in Codex once and trust the `SessionStart` hook that runs `codewiki hook session-start --agent codex`. After an update that changed the hook, trust it again.
 
 `plugins/codex/README.md` covers updating, removing, and the same setup without the plugin. The plugin's files are checked against Codex's source and by a test; it has not yet been run in a Codex session.
 
@@ -313,6 +328,8 @@ cargo deny check advisories bans sources
 ```
 
 `pwsh scripts\clean.ps1` frees the disk space builds leave behind. `AGENTS.md` holds the project rules.
+
+A debug build keeps its own data, in `%LOCALAPPDATA%\CodeWiki-Dev` and `%APPDATA%\CodeWiki-Dev`, and its window says "CodeWiki Dev". It never uses or stops the backend of an installed CodeWiki, so the two can run side by side. It starts with no projects and the default embedder.
 
 CI runs these four on every push and pull request. It also runs `codewiki check` on this repository and reports the findings to code scanning, and gitleaks scans new commits for secrets. Dependabot opens update pull requests weekly.
 

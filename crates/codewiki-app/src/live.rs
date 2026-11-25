@@ -1,6 +1,6 @@
 //! The live pages: one symbol, one file, search results, hotspots, the theme
-//! picker, a proposal, the result of a sync, and Home, the page the app
-//! starts on. Like the reports in `pages`,
+//! picker, a proposal, the result of a sync, the notes that wait for a coding
+//! agent, and Home, the page the app starts on. Like the reports in `pages`,
 //! each turns what the backend sent into a [`Doc`]. These show code that the
 //! vault deliberately does not hold as notes.
 
@@ -47,17 +47,146 @@ fn file_row(path: &str) -> Row {
     Row::new(icons::FILE, path, Action::File(path.to_string())).code()
 }
 
-/// Rows that open notes, named by the note's file name.
+/// The file name of a note's vault path, without `.md`.
+fn note_stem(path: &str) -> &str {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.strip_suffix(".md").unwrap_or(name)
+}
+
+/// Rows that open notes, named by the note's file name. The row opens the
+/// note by its whole vault path: the backend finds a note by that or by its
+/// bare name, and a folder path without `.md` is neither.
 fn note_rows(paths: &Value) -> Vec<Row> {
     list(paths)
         .into_iter()
         .filter_map(Value::as_str)
-        .map(|path| {
-            let target = path.trim_end_matches(".md");
-            let stem = target.rsplit('/').next().unwrap_or(target);
-            Row::new(icons::NOTE, stem, Action::Note(target.to_string()))
+        .map(|path| Row::new(icons::NOTE, note_stem(path), Action::Note(path.to_string())))
+        .collect()
+}
+
+/// The kinds of search hit, in the order they are listed, with the heading
+/// over each.
+const HIT_GROUPS: [(&str, &str); 3] = [("note", "Notes"), ("symbol", "Symbols"), ("file", "Files")];
+
+/// The hits of `GET /search` that the app opens, under the heading of their
+/// kind, in the order of [`HIT_GROUPS`] and then of the backend's ranking. A
+/// kind with no hit has no group.
+pub fn hit_groups(hits: &Value) -> Vec<(&'static str, Vec<HitTarget>)> {
+    let hits = list(hits);
+    HIT_GROUPS
+        .into_iter()
+        .filter_map(|(kind, heading)| {
+            let targets: Vec<HitTarget> = hits
+                .iter()
+                .filter(|hit| hit["kind"] == kind)
+                .filter_map(|hit| hit_target(hit))
+                .collect();
+            (!targets.is_empty()).then_some((heading, targets))
         })
         .collect()
+}
+
+/// What a search hit opens, and how a list names it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HitTarget {
+    pub icon: icons::Glyph,
+    pub label: String,
+    /// A line under the label: the note's text around the match, or the
+    /// symbol's qualified name. Empty when there is none.
+    pub detail: String,
+    /// The label is code: a symbol or a path.
+    pub code: bool,
+    pub action: Action,
+}
+
+/// What `hit`, one result of `GET /search`, opens; `None` for a kind of hit
+/// the app does not open.
+pub fn hit_target(hit: &Value) -> Option<HitTarget> {
+    let key = string(hit, "key");
+    let (icon, label, detail, code, action) = match string(hit, "kind") {
+        "note" => (
+            icons::NOTE,
+            hit["title"]
+                .as_str()
+                .filter(|title| !title.is_empty())
+                .unwrap_or(note_stem(key))
+                .to_string(),
+            plain_snippet(string(hit, "snippet")),
+            false,
+            Action::Note(key.to_string()),
+        ),
+        "symbol" => (
+            icons::SYMBOL,
+            key.rsplit("::").next().unwrap_or(key).to_string(),
+            key.to_string(),
+            true,
+            Action::Symbol(key.to_string()),
+        ),
+        "file" => (
+            icons::FILE,
+            key.to_string(),
+            String::new(),
+            true,
+            Action::File(key.to_string()),
+        ),
+        _ => return None,
+    };
+    Some(HitTarget {
+        icon,
+        label,
+        detail,
+        code,
+        action,
+    })
+}
+
+/// The Markdown of a note's search snippet as plain text on one line: no
+/// frontmatter, heading or quote marks, list bullets, rules, table pipes,
+/// link brackets, code ticks or `**` emphasis. A snippet is a window of the note, with its lines
+/// kept (a text match) or flattened (the opening of a note only the embedder
+/// found), so a block or link it cuts off keeps its text.
+pub fn plain_snippet(snippet: &str) -> String {
+    let mut text = snippet.trim_start();
+    if let Some(rest) = text.strip_prefix("---") {
+        // Frontmatter with its closing fence: none of it is prose.
+        text = match rest.find("---") {
+            Some(end) => &rest[end + 3..],
+            None => rest,
+        };
+    }
+    let unlinked = unlink(text);
+    let marks = |c: char| matches!(c, '#' | '>' | '-' | '*' | '+' | '|' | ':');
+    unlinked
+        .split_whitespace()
+        .filter(|word| !word.chars().all(marks))
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('`', "")
+        .replace("**", "")
+}
+
+/// `text` with each `[[target]]` written as its target, and each
+/// `[[target|alias]]` as its alias.
+fn unlink(text: &str) -> String {
+    let mut out = String::new();
+    let mut rest = text;
+    while let Some(start) = rest.find("[[") {
+        out.push_str(&rest[..start]);
+        let link = &rest[start + 2..];
+        match link.find("]]") {
+            Some(end) => {
+                let inner = &link[..end];
+                out.push_str(inner.rsplit('|').next().unwrap_or(inner));
+                rest = &link[end + 2..];
+            }
+            None => {
+                out.push_str(link);
+                rest = "";
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A heading over rows, or nothing when there are no rows.
@@ -128,31 +257,20 @@ pub fn symbol_page(detail: &Value) -> Doc {
 /// Search results, grouped by what was found.
 pub fn search_page(query: &str, hits: &Value) -> Doc {
     let mut doc = Doc::new(format!("Search: {query}"));
-    let hits = list(hits);
-    if hits.is_empty() {
+    if list(hits).is_empty() {
         doc.push(Block::Empty("No results.".into()));
         return doc;
     }
-    for (kind, heading) in [("note", "Notes"), ("symbol", "Symbols"), ("file", "Files")] {
-        let rows = hits
-            .iter()
-            .filter(|hit| hit["kind"] == kind)
-            .map(|hit| {
-                let key = string(hit, "key");
-                match kind {
-                    "note" => {
-                        let title = hit["title"].as_str().unwrap_or(key);
-                        let target = key.trim_end_matches(".md").to_string();
-                        let row = Row::new(icons::NOTE, title, Action::Note(target));
-                        let snippet = string(hit, "snippet").replace('\n', " ");
-                        if snippet.is_empty() {
-                            row
-                        } else {
-                            row.detail(snippet)
-                        }
-                    }
-                    "symbol" => symbol_row(key, key),
-                    _ => file_row(key),
+    for (heading, targets) in hit_groups(hits) {
+        let rows = targets
+            .into_iter()
+            .map(|target| {
+                let row = Row::new(target.icon, target.label, target.action);
+                let row = if target.code { row.code() } else { row };
+                if target.detail.is_empty() {
+                    row
+                } else {
+                    row.detail(target.detail)
                 }
             })
             .collect();
@@ -402,6 +520,88 @@ pub fn sync_page(report: &Value) -> Doc {
             ),
             button: None,
         });
+    }
+    doc
+}
+
+/// How many notes wait for a coding agent, from the queue of
+/// `GET /explanations?all=true`: those behind the code and those never
+/// explained. 0 until the queue has been read.
+pub fn waiting_count(queue: Option<&Value>) -> u64 {
+    queue.map_or(0, |queue| {
+        let counts = &queue["waiting"];
+        counts["behind"].as_u64().unwrap_or(0) + counts["unexplained"].as_u64().unwrap_or(0)
+    })
+}
+
+/// The notes that wait for a coding agent to explain them, from the queue of
+/// `GET /explanations?all=true`, in the backend's order: those behind the
+/// code first. `None` while the queue is being read. `auto_on` says whether
+/// agents explain some of them by themselves at the start of a session.
+pub fn waiting_page(queue: Option<&Value>, auto_on: bool) -> Doc {
+    let mut doc = Doc::new("Waiting notes").lead(
+        "These notes wait for a coding agent to explain what they are for and how they work.",
+    );
+    // 20 is `MAX_LIMIT` of `cw-wiki/src/explanations.rs`: the most notes an
+    // agent is lent at once.
+    doc.push(Block::Alert {
+        tone: Tone::Info,
+        text: if auto_on {
+            "Auto explaining is on: a coding agent with the CodeWiki plugin explains up to 20 of \
+             these at the start of a session. Run /codewiki:write-notes to explain more."
+        } else {
+            "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain these \
+             notes."
+        }
+        .into(),
+        button: Some((
+            "Settings".into(),
+            Action::Settings(Some(Category::Repositories)),
+        )),
+    });
+    let Some(queue) = queue else {
+        doc.push(Block::Empty("Reading the waiting notes…".into()));
+        return doc;
+    };
+    let counts = &queue["waiting"];
+    let behind = counts["behind"].as_u64().unwrap_or(0);
+    doc.push(Block::Stats(vec![
+        Stat::new("Behind the code", behind).tone(if behind > 0 {
+            Tone::Warning
+        } else {
+            Tone::Neutral
+        }),
+        Stat::new(
+            "Never explained",
+            counts["unexplained"].as_u64().unwrap_or(0),
+        ),
+        // The backend leaves `claimed` out when no agent holds a note.
+        Stat::new("Being written", queue["claimed"].as_u64().unwrap_or(0)),
+    ]));
+    let rows: Vec<Row> = list(&queue["notes"])
+        .into_iter()
+        .filter_map(|note| {
+            let path = note["path"].as_str()?;
+            let title = note["title"]
+                .as_str()
+                .filter(|title| !title.is_empty())
+                .unwrap_or(note_stem(path));
+            let mut detail = if note["why"] == "behind" {
+                "behind the code"
+            } else {
+                "never explained"
+            }
+            .to_string();
+            if note["claimed"].as_bool().unwrap_or(false) {
+                detail.push_str(" · an agent is writing it");
+            }
+            Some(Row::new(icons::NOTE, title, Action::Note(path.to_string())).detail(detail))
+        })
+        .collect();
+    if rows.is_empty() {
+        doc.push(Block::Empty("Every note is explained.".into()));
+    } else {
+        doc.push(Block::Rows(rows));
     }
     doc
 }
@@ -1100,7 +1300,7 @@ mod tests {
         );
         let actions = page.actions();
         assert!(actions.contains(&Action::Symbol("demo::core::compute".into())));
-        assert!(actions.contains(&Action::Note("01-Core/demo/Core Module".into())));
+        assert!(actions.contains(&Action::Note("01-Core/demo/Core Module.md".into())));
         assert!(actions.contains(&Action::File("src/cli.rs".into())));
     }
 
@@ -1132,8 +1332,12 @@ mod tests {
             [
                 Action::File("src/math.rs".into()),
                 Action::Symbol("demo::run".into()),
-                Action::Note("01-Core/demo/Math Module".into())
+                Action::Note("01-Core/demo/Math Module.md".into())
             ]
+        );
+        assert!(
+            words.contains("Math Module"),
+            "a note row is named by its file name"
         );
 
         let hits = json!([
@@ -1149,12 +1353,87 @@ mod tests {
         assert_eq!(
             search.actions(),
             [
-                Action::Note("a/B".into()),
+                Action::Note("a/B.md".into()),
                 Action::Symbol("demo::run".into()),
                 Action::File("src/lib.rs".into())
             ]
         );
         assert!(search_page("q", &json!([])).words().contains("No results."));
+    }
+
+    #[test]
+    fn a_note_hit_opens_the_note_by_its_vault_path() {
+        // The backend finds a note by its whole vault path or by its bare
+        // name; a folder path without `.md` is neither.
+        let hits = json!([{"kind": "note", "key": "01-Backend/exchange/OKX REST Client.md",
+            "title": "OKX REST Client", "snippet": ""}]);
+        assert_eq!(
+            search_page("okx", &hits).actions(),
+            [Action::Note(
+                "01-Backend/exchange/OKX REST Client.md".into()
+            )]
+        );
+        let target = hit_target(&hits[0]).unwrap();
+        assert_eq!(target.label, "OKX REST Client");
+        assert_eq!(
+            target.action,
+            Action::Note("01-Backend/exchange/OKX REST Client.md".into())
+        );
+    }
+
+    #[test]
+    fn hit_targets_name_what_each_hit_opens() {
+        let symbol = hit_target(&json!({"kind": "symbol", "key": "app::okx::OKXClient"})).unwrap();
+        assert_eq!(
+            (symbol.label.as_str(), symbol.detail.as_str(), symbol.code),
+            ("OKXClient", "app::okx::OKXClient", true)
+        );
+        assert_eq!(symbol.action, Action::Symbol("app::okx::OKXClient".into()));
+        let file = hit_target(&json!({"kind": "file", "key": "src/okx.py"})).unwrap();
+        assert_eq!((file.label.as_str(), file.code), ("src/okx.py", true));
+        assert_eq!(file.action, Action::File("src/okx.py".into()));
+        let untitled = hit_target(&json!({"kind": "note", "key": "a/Plain Note.md"})).unwrap();
+        assert_eq!(untitled.label, "Plain Note");
+        assert!(hit_target(&json!({"kind": "commit", "key": "abc"})).is_none());
+    }
+
+    #[test]
+    fn a_snippet_reads_as_plain_text() {
+        assert_eq!(
+            plain_snippet(
+                "---\ntags: [integrations]\n---\n# python-okx SDK\n> Official SDK for [[OKX Exchange]] — `REST` **clients**.\n## Used for\n- Placing orders"
+            ),
+            "python-okx SDK Official SDK for OKX Exchange — REST clients. Used for Placing orders"
+        );
+        // A hit that only the embedder found carries the note's opening with
+        // its whitespace flattened.
+        assert_eq!(
+            plain_snippet(
+                "--- tags: [core, demo] --- # Math Module > Arithmetic helpers. ## Source - `src/math.rs` — module `demo::math` ---"
+            ),
+            "Math Module Arithmetic helpers. Source src/math.rs — module demo::math"
+        );
+        assert_eq!(
+            plain_snippet("see [[01-Core/Parser|the parser]] and [[Lexer"),
+            "see the parser and Lexer",
+            "an alias names a link; a link cut off by the snippet keeps its text"
+        );
+        assert_eq!(
+            plain_snippet("---\ntags: [a]"),
+            "tags: [a]",
+            "frontmatter cut off by the snippet keeps its text"
+        );
+        assert_eq!(plain_snippet(" … a **b**\n\n  c … "), "… a b c …");
+        assert_eq!(
+            plain_snippet("root. | Task | Command | |---|---| | Re"),
+            "root. Task Command Re",
+            "a table keeps its cells"
+        );
+        assert_eq!(
+            plain_snippet("calls `__init__` once"),
+            "calls __init__ once",
+            "underscores are code more often than emphasis"
+        );
     }
 
     #[test]
@@ -1277,6 +1556,154 @@ mod tests {
         assert!(words.contains("Not explained yet: 3"));
         assert!(words.contains("5 notes wait for a coding agent to explain them."));
         assert!(words.contains("/codewiki:write-notes"));
+    }
+
+    /// A queue as `GET /explanations?all=true` answers it: behind first, a
+    /// note an agent holds marked, `claimed` left out when it is 0.
+    fn queue() -> Value {
+        json!({
+            "notes": [
+                { "path": "01-Core/engine/Engine.md", "title": "Engine", "kind": "module",
+                  "why": "behind", "behind": ["src/engine.rs changed"],
+                  "sources": ["src/engine.rs"] },
+                { "path": "01-Core/Parser.md", "title": "Parser", "kind": "module",
+                  "why": "unexplained", "sources": ["src/parse.rs"], "claimed": true },
+                { "path": "02-Api/Routes.md", "title": "", "kind": "module",
+                  "why": "unexplained", "sources": ["src/api.rs"] }
+            ],
+            "matching": 3,
+            "claimed": 1,
+            "waiting": { "behind": 1, "unexplained": 2 }
+        })
+    }
+
+    fn rows(page: &Doc) -> Vec<&Row> {
+        page.blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Rows(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn the_waiting_page_says_whether_agents_explain_by_themselves() {
+        let alert = |auto_on: bool| {
+            waiting_page(Some(&queue()), auto_on)
+                .blocks
+                .into_iter()
+                .find_map(|block| match block {
+                    Block::Alert { text, button, .. } => Some((text, button)),
+                    _ => None,
+                })
+                .expect("the page has an alert")
+        };
+        let settings = Some((
+            "Settings".to_string(),
+            Action::Settings(Some(Category::Repositories)),
+        ));
+        assert_eq!(
+            alert(true),
+            (
+                "Auto explaining is on: a coding agent with the CodeWiki plugin explains up to \
+                 20 of these at the start of a session. Run /codewiki:write-notes to explain \
+                 more."
+                    .to_string(),
+                settings.clone()
+            )
+        );
+        assert_eq!(
+            alert(false),
+            (
+                "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain \
+                 these notes."
+                    .to_string(),
+                settings
+            )
+        );
+    }
+
+    #[test]
+    fn the_waiting_page_lists_the_notes_in_the_backends_order() {
+        let page = waiting_page(Some(&queue()), true);
+        assert_eq!(page.title, "Waiting notes");
+        assert_eq!(
+            page.lead.as_deref(),
+            Some(
+                "These notes wait for a coding agent to explain what they are for and how they work."
+            )
+        );
+        let words = page.words();
+        assert!(words.contains("Behind the code: 1"), "{words}");
+        assert!(words.contains("Never explained: 2"), "{words}");
+        assert!(words.contains("Being written: 1"), "{words}");
+        let rows = rows(&page);
+        let listed: Vec<(&str, Option<&str>, &Action)> = rows
+            .iter()
+            .map(|row| (row.label.as_str(), row.detail.as_deref(), &row.action))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (
+                    "Engine",
+                    Some("behind the code"),
+                    &Action::Note("01-Core/engine/Engine.md".into())
+                ),
+                (
+                    "Parser",
+                    Some("never explained · an agent is writing it"),
+                    &Action::Note("01-Core/Parser.md".into())
+                ),
+                // A note with no title is named by its file.
+                (
+                    "Routes",
+                    Some("never explained"),
+                    &Action::Note("02-Api/Routes.md".into())
+                ),
+            ]
+        );
+        assert!(!words.contains("Every note is explained."));
+    }
+
+    #[test]
+    fn the_waiting_page_says_when_nothing_waits() {
+        let page = waiting_page(
+            Some(&json!({
+                "notes": [], "matching": 0,
+                "waiting": { "behind": 0, "unexplained": 0 }
+            })),
+            false,
+        );
+        assert!(
+            page.blocks
+                .contains(&Block::Empty("Every note is explained.".into()))
+        );
+        assert!(rows(&page).is_empty());
+        // No agent holds a note: the backend leaves `claimed` out.
+        assert!(page.words().contains("Being written: 0"));
+        assert_eq!(waiting_count(Some(&json!({ "notes": [] }))), 0);
+    }
+
+    #[test]
+    fn the_waiting_page_shows_that_it_is_reading() {
+        let page = waiting_page(None, true);
+        assert_eq!(page.title, "Waiting notes");
+        assert!(
+            page.blocks
+                .contains(&Block::Empty("Reading the waiting notes…".into()))
+        );
+        assert!(rows(&page).is_empty());
+        assert!(!page.words().contains("Every note is explained."));
+        assert!(!page.words().contains("Behind the code"));
+    }
+
+    #[test]
+    fn the_notes_to_explain_are_those_behind_and_those_never_explained() {
+        assert_eq!(waiting_count(Some(&queue())), 3);
+        assert_eq!(waiting_count(None), 0);
     }
 
     #[test]

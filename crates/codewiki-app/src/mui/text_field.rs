@@ -24,6 +24,7 @@ use gpui_kit::{
 
 use super::base::Hover;
 use super::feedback::Tone;
+use super::interaction;
 use super::motion::scaled;
 use super::tokens::{self, Variant, curve, duration, easing};
 use crate::icons::Glyph;
@@ -118,7 +119,7 @@ impl RenderOnce for TextField {
         } else if focused || error {
             accent
         } else if hover.hovered {
-            primary.opacity(0.5)
+            primary.opacity(interaction::current(cx).outline_hover)
         } else {
             foreground.opacity(OUTLINE_OPACITY)
         };

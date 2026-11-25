@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "codewiki hook session-start",
+            "command": "codewiki hook session-start --agent codex",
             "timeout": 10
           }
         ]

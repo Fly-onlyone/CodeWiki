@@ -127,12 +127,12 @@ pub fn rows(snapshot: &Snapshot) -> Vec<Row> {
             // The same row, so that the menu keeps its shape.
             None => action(
                 Command::ShowUpdate,
-                &format!("CodeWiki {}", cw_core::VERSION),
+                &format!("{} {}", cw_core::APP_NAME, cw_core::VERSION),
                 false,
             ),
         },
         Row::Separator,
-        action(Command::Open, "Open CodeWiki", true),
+        action(Command::Open, &format!("Open {}", cw_core::APP_NAME), true),
         action(Command::Sync, "Update wiki now", snapshot.can_sync),
         Row::Recent(
             snapshot
@@ -365,12 +365,12 @@ mod tests {
         // With no newer release the fourth row names the version, greyed.
         assert_eq!(
             action(&rows, &Command::ShowUpdate),
-            (format!("CodeWiki {}", cw_core::VERSION), false)
+            (format!("{} {}", cw_core::APP_NAME, cw_core::VERSION), false)
         );
         assert_eq!(rows[4], Row::Separator);
         assert_eq!(
             action(&rows, &Command::Open),
-            ("Open CodeWiki".into(), true)
+            (format!("Open {}", cw_core::APP_NAME), true)
         );
         // Quit is last, so that a script reaches it with Up and Enter.
         assert!(matches!(

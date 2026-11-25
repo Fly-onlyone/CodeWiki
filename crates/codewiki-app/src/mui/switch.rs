@@ -21,6 +21,7 @@ use gpui_kit::{
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
+use super::interaction;
 use super::motion::scaled;
 use super::tokens::{self, curve, duration, easing};
 use crate::zoom::px;
@@ -188,7 +189,6 @@ impl RenderOnce for Switch {
         let base = Base::new(&id, self.disabled, window, cx);
         let theme = cx.theme();
         let dark = theme.is_dark();
-        let states = tokens::states(dark);
         let primary = theme.primary;
         let look = Look::of(self.on, self.disabled, dark, theme.foreground, primary);
 
@@ -205,7 +205,8 @@ impl RenderOnce for Switch {
         let thumb = kit::transition((id.clone(), "thumb"), look.thumb, policy(), window, cx);
         let track = kit::transition((id.clone(), "track"), look.track, policy(), window, cx);
         let halo_to = if base.hovered {
-            look.ink.opacity(look.ink.a * states.hover)
+            look.ink
+                .opacity(look.ink.a * interaction::current(cx).hover)
         } else {
             look.ink.opacity(0.0)
         };

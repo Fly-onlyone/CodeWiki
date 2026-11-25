@@ -4,8 +4,11 @@
 //! The look of the contained button, the two pixel outline and the focus ring
 //! are TradingAgent's (`components.ts`, `MuiButton`): a filled button rises
 //! one pixel and glows on hover, and settles when pressed. TradingAgent also
-//! shrinks it to 97% on press, which GPUI cannot do; the ripple marks the
-//! press instead.
+//! shrinks it to 97% on press, which GPUI cannot do; a pressed button fills
+//! up or darkens and sinks a pixel instead, with its ripple. How strongly
+//! each state shows is in `interaction`. An icon button's icon grows and
+//! brightens under the pointer, and a button that is switched on, such as
+//! the button of a pane that is open, is filled.
 
 use std::time::Duration;
 
@@ -15,11 +18,12 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, BoxShadow, ClickEvent, ElementId, Hsla, InteractiveElement as _, IntoElement,
     ParentElement as _, RenderOnce, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Window, div, hsla, linear_color_stop, linear_gradient, point,
+    Transformation, Window, div, hsla, linear_color_stop, linear_gradient, point, size,
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
 use super::feedback;
+use super::interaction::{self, pressed};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{self, Variant, curve, duration, easing};
 use crate::icons::Glyph;
@@ -280,6 +284,7 @@ impl Button {
 impl RenderOnce for Button {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base = Base::new(&self.id, self.disabled, window, cx);
+        let look = interaction::current(cx);
         let theme = cx.theme();
         let states = tokens::states(theme.is_dark());
         let radius = theme.radius / px(1.);
@@ -310,7 +315,7 @@ impl RenderOnce for Button {
             }
             (kind, false) => {
                 let tint = if hovered {
-                    palette.main.opacity(states.hover)
+                    palette.main.opacity(look.hover)
                 } else {
                     clear
                 };
@@ -329,6 +334,12 @@ impl RenderOnce for Button {
         let border = kit::transition((id.clone(), "border"), border, ease(HOVER_TIME), window, cx);
 
         let raised = self.kind == Kind::Contained && !self.disabled;
+        // Pressed, a filled button darkens and the others fill up.
+        let [from, to] = if raised {
+            [from, to].map(|stop| interaction::lift(stop, -look.press_darken * base.press))
+        } else {
+            [from, to].map(|stop| interaction::pressed(stop, look.pressed, base.press))
+        };
         let lift_to = if raised && hovered && !pressed {
             1.0
         } else {
@@ -374,7 +385,7 @@ impl RenderOnce for Button {
         let element = h_flex()
             .id(self.id.clone())
             .relative()
-            .top(px(-LIFT * lift))
+            .top(px(-LIFT * lift + look.sink * base.press))
             .flex_shrink_0()
             .items_center()
             .justify_center()
@@ -421,6 +432,7 @@ pub struct IconButton {
     icon: Glyph,
     tint: Option<Hsla>,
     scale: Scale,
+    toggled: bool,
     disabled: bool,
     tooltip: Option<SharedString>,
     on_click: Option<OnClick>,
@@ -433,10 +445,18 @@ impl IconButton {
             icon,
             tint: None,
             scale: Scale::default(),
+            toggled: false,
             disabled: false,
             tooltip: None,
             on_click: None,
         }
+    }
+
+    /// Show the button as switched on, such as the button of a pane that
+    /// is open.
+    pub fn toggled(mut self, toggled: bool) -> Self {
+        self.toggled = toggled;
+        self
     }
 
     pub fn small(mut self) -> Self {
@@ -473,6 +493,7 @@ impl IconButton {
 impl RenderOnce for IconButton {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let base = Base::new(&self.id, self.disabled, window, cx);
+        let look = interaction::current(cx);
         let theme = cx.theme();
         let states = tokens::states(theme.is_dark());
         // `palette.action.active`: white on dark, black at 54% on light.
@@ -482,22 +503,44 @@ impl RenderOnce for IconButton {
             theme.foreground.opacity(0.54)
         });
         let primary = theme.primary;
+        // A button switched on is filled in the primary color.
+        let toggled = self.toggled && !self.disabled;
         let color = if self.disabled {
             theme.foreground.opacity(states.disabled)
+        } else if toggled {
+            interaction::lift(look.toggled_icon.color(theme), look.toggled_icon_lift)
         } else {
             active
         };
         let (padding, icon) = icon_button_metrics(self.scale);
         let side = icon + 2.0 * padding;
 
-        let fill_to = if base.hovered {
-            active.opacity(active.a * states.hover)
-        } else {
-            active.opacity(0.0)
+        let fill_to = match (toggled, base.hovered) {
+            (true, hovered) => {
+                primary.opacity(look.toggled + if hovered { look.hover } else { 0.0 })
+            }
+            (false, true) => active.opacity(active.a * look.hover),
+            (false, false) => active.opacity(0.0),
         };
         let policy =
             kit::Transition::new(scaled(duration::SHORTEST)).ease(easing(curve::EASE_IN_OUT));
         let fill = kit::transition((self.id.clone(), "fill"), fill_to, policy, window, cx);
+        let fill = pressed(fill, look.pressed, base.press);
+        // Under the pointer the icon grows and brightens, as a row's does.
+        let grow = kit::spring(
+            (self.id.clone(), "grow"),
+            if base.hovered && !self.disabled {
+                1.0
+            } else {
+                0.0
+            },
+            SNAPPY.policy(0.01),
+            window,
+            cx,
+        );
+        let color = interaction::lift(color, look.icon_button_lift * grow.clamp(0.0, 1.0));
+        let grown = 1.0 + look.icon_button_growth * grow;
+        let sunk = look.sink * base.press;
 
         let element = div()
             .id(self.id.clone())
@@ -512,7 +555,19 @@ impl RenderOnce for IconButton {
             .when(base.focused, |button| {
                 button.shadow(vec![focus_ring(primary)])
             })
-            .child(Icon::new(self.icon).with_size(px(icon)).text_color(color))
+            .child(
+                Icon::new(self.icon)
+                    .with_size(px(icon))
+                    .text_color(color)
+                    // GPUI can scale and move an icon, not an element: the
+                    // button stays and its icon sinks.
+                    .when(grown != 1.0 || sunk != 0.0, |icon| {
+                        icon.transform(
+                            Transformation::scale(size(grown, grown))
+                                .with_translation(point(px(0.), px(sunk))),
+                        )
+                    }),
+            )
             // The tooltip hangs on a layer of its own, named after its text.
             // GPUI keeps a tooltip that waits to show, text included, with
             // its element, and lets go of it only when the pointer moves. A
@@ -579,8 +634,8 @@ impl ToggleButtonGroup {
 
 impl RenderOnce for ToggleButtonGroup {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let look = interaction::current(cx);
         let theme = cx.theme();
-        let states = tokens::states(theme.is_dark());
         let (primary, muted, foreground, line) = (
             theme.primary,
             theme.muted_foreground,
@@ -597,12 +652,15 @@ impl RenderOnce for ToggleButtonGroup {
             // `ToggleButton.js`: the chosen button is tinted with its color
             // at the selected opacity, and more under the pointer.
             let fill_to = match (chosen, base.hovered) {
-                (true, true) => primary.opacity(states.selected + states.hover),
-                (true, false) => primary.opacity(states.selected),
-                (false, true) => foreground.opacity(states.hover),
+                (true, true) => primary.opacity(look.selected + look.hover),
+                (true, false) => primary.opacity(look.selected),
+                (false, true) => foreground.opacity(look.hover),
                 (false, false) => foreground.opacity(0.0),
             };
             let fill = kit::transition((id.clone(), "fill"), fill_to, ease(HOVER_TIME), window, cx);
+            // Neighbours share a border, so a pressed one fills up and does
+            // not sink.
+            let fill = pressed(fill, look.pressed, base.press);
             let color = if chosen { primary } else { muted };
             let on_click = self.on_select.clone().map(|on_select| {
                 std::rc::Rc::new(move |_: &ClickEvent, window: &mut Window, cx: &mut App| {

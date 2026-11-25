@@ -13,6 +13,10 @@
 //! is as clear as it can be while its text keeps the contrast `contrast`
 //! asks for. A theme with weak contrast therefore gets denser glass.
 //!
+//! A third kind is the *margin*: the empty sides of a page beside its reading
+//! column. It carries no text, so it can be clearer than the chrome, and the
+//! backdrop's sky shows through it. Soft fades join it to the column.
+//!
 //! The chrome, the page and the borders are all tinted a little toward the
 //! theme's primary color, so that every theme has a mood of its own. The tint
 //! is faint: the theme's three brand colors carry its hues, and surfaces that
@@ -20,8 +24,8 @@
 
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
-    App, Div, Hsla, Rgba, Styled as _, Window, WindowAppearance, div, linear_color_stop,
-    linear_gradient, px,
+    App, Div, Hsla, ParentElement as _, Rgba, Styled as _, Window, WindowAppearance, div,
+    linear_color_stop, linear_gradient, px,
 };
 
 use crate::backdrop;
@@ -33,6 +37,21 @@ pub(crate) const CHROME_MATCHED_FLOOR: f32 = 0.62;
 /// Chrome opacity when it is not: a dark theme over a light backdrop needs
 /// far denser glass to keep muted text readable.
 const CHROME_FLOOR: f32 = 0.86;
+
+/// Margin opacity when the backdrop is on the theme's side. A margin holds no
+/// text, so this is a matter of taste, not of contrast; chosen by eye on
+/// 2026-11-24. On the other side the
+/// margin takes the chrome's opacity: a dark page on clear light glass looks
+/// like a hole.
+pub(crate) const MARGIN_MATCHED: f32 = 0.35;
+/// Width of the fade from a margin to the reading column, in design units.
+pub(crate) const FADE: f32 = 96.0;
+/// Space at the column's full opacity on each side of its text, so that the
+/// fade never runs under a letter, in design units.
+const COLUMN_INSET: f32 = 12.0;
+/// The narrowest a margin may be, fade not counted, in design units. A
+/// narrower one is left at the column's opacity.
+const MIN_MARGIN: f32 = 24.0;
 
 /// Share of the primary color mixed into every chrome surface.
 pub(crate) const CHROME_TINT: f32 = 0.06;
@@ -68,6 +87,8 @@ pub(crate) fn matched_backdrop(system_dark: bool) -> [Rgb; 2] {
 pub struct Levels {
     pub pane: f32,
     pub chrome: f32,
+    /// The empty sides of a page, beside its reading column.
+    pub margin: f32,
 }
 
 /// The levels of the frame being drawn, for components that are not handed
@@ -79,6 +100,7 @@ impl Levels {
     pub const OPAQUE: Self = Self {
         pane: 1.0,
         chrome: 1.0,
+        margin: 1.0,
     };
 
     /// The levels for the active theme in this window.
@@ -112,17 +134,29 @@ impl Levels {
         system_dark: bool,
     ) -> Self {
         let pane = contrast::fit_alpha(pane_surface, texts, PANE_FLOOR, UNKNOWN);
-        let chrome = if theme_dark == system_dark {
+        let matched = theme_dark == system_dark;
+        let chrome = if matched {
             let behind = matched_backdrop(system_dark);
             contrast::fit_alpha(chrome_surface, texts, CHROME_MATCHED_FLOOR, behind)
         } else {
             contrast::fit_alpha(chrome_surface, texts, CHROME_FLOOR, UNKNOWN)
         };
         // Chrome is never denser than the pane it frames.
+        let chrome = chrome.min(pane);
         Self {
             pane,
-            chrome: chrome.min(pane),
+            chrome,
+            margin: if matched {
+                MARGIN_MATCHED.min(chrome)
+            } else {
+                chrome
+            },
         }
+    }
+
+    /// A margin surface in `color`.
+    pub fn margin(self, color: Hsla) -> Hsla {
+        color.opacity(self.margin)
     }
 
     /// A pane surface in `color`.
@@ -156,6 +190,40 @@ pub fn tinted(surface: Hsla, cx: &App) -> Hsla {
 /// primary color. Pass the result to [`Levels::pane`].
 pub fn tinted_pane(surface: Hsla, cx: &App) -> Hsla {
     tint(surface, cx.theme().primary, PANE_TINT)
+}
+
+/// How wide each clear margin is beside a reading column whose text starts
+/// `gutter` in from the pane's sides, fade not counted; `None` when there is
+/// no room for one. In design units.
+pub fn margin_width(gutter: f32) -> Option<f32> {
+    let width = gutter - COLUMN_INSET - FADE;
+    (width >= MIN_MARGIN).then_some(width)
+}
+
+/// The surface of a reading pane: clear margins `margin` wide (from
+/// [`margin_width`]) on each side, soft fades, and the column at the pane's
+/// opacity between them. Lay it under the page, filling the pane.
+pub fn reading_surface(levels: Levels, margin: f32, cx: &App) -> Div {
+    use crate::zoom::px;
+    let color = tinted_pane(cx.theme().background, cx);
+    let (side, column) = (levels.margin(color), levels.pane(color));
+    // 90 degrees runs left to right, 270 right to left.
+    let fade = |angle: f32| {
+        linear_gradient(
+            angle,
+            linear_color_stop(side, 0.),
+            linear_color_stop(column, 1.),
+        )
+    };
+    let strip = || div().h_full().flex_none();
+    div()
+        .flex()
+        .size_full()
+        .child(strip().w(px(margin)).bg(side))
+        .child(strip().w(px(FADE)).bg(fade(90.)))
+        .child(div().h_full().flex_1().bg(column))
+        .child(strip().w(px(FADE)).bg(fade(270.)))
+        .child(strip().w(px(margin)).bg(side))
 }
 
 /// The theme's border, pulled toward its primary color.
@@ -264,6 +332,7 @@ mod tests {
                 let expected = Levels {
                     pane: PANE_FLOOR,
                     chrome: CHROME_MATCHED_FLOOR,
+                    margin: MARGIN_MATCHED,
                 };
                 assert_eq!(levels, expected, "{}", theme["name"]);
             }
@@ -303,6 +372,30 @@ mod tests {
                 assert!(levels.chrome <= levels.pane, "{levels:?}");
             }
         }
+    }
+
+    #[test]
+    fn a_margin_is_the_clearest_glass_and_follows_the_chrome_on_the_other_side() {
+        for (theme, dark) in [(VIOLET, true), (VIOLET_LIGHT, false)] {
+            let matched = levels(theme, dark, dark);
+            assert_eq!(matched.margin, MARGIN_MATCHED);
+            assert!(matched.margin < matched.chrome, "{matched:?}");
+            let other = levels(theme, dark, !dark);
+            assert_eq!(other.margin, other.chrome, "{other:?}");
+        }
+    }
+
+    #[test]
+    fn a_margin_needs_room_beside_its_fade() {
+        // A wide window: the margin is what the fade and the inset leave.
+        assert_eq!(margin_width(300.0), Some(300.0 - COLUMN_INSET - FADE));
+        assert_eq!(
+            margin_width(COLUMN_INSET + FADE + MIN_MARGIN),
+            Some(MIN_MARGIN)
+        );
+        // Too narrow, or the least gutter a page keeps: no margin at all.
+        assert_eq!(margin_width(COLUMN_INSET + FADE + MIN_MARGIN - 1.0), None);
+        assert_eq!(margin_width(24.0), None);
     }
 
     #[test]

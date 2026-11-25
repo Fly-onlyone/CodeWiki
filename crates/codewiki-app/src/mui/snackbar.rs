@@ -49,8 +49,9 @@ const BODY_FONT: f32 = 13.0;
 /// its distance from the app's name.
 const LOGO: f32 = 16.0;
 const LOGO_GAP: f32 = 8.0;
-/// The name in the header.
-const APP_NAME: &str = "CodeWiki";
+/// The name in the header: the one Windows shows above the app's
+/// notifications, "CodeWiki Dev" for a development build.
+const APP_NAME: &str = cw_core::APP_NAME;
 
 /// What a toast shows and does.
 pub struct Content {

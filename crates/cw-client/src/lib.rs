@@ -53,6 +53,12 @@ pub use cw_core::MCP_CLIENT;
 /// a backend that takes longer is not answering.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// How long asking the backend to stop may take to connect. The backend a
+/// client stops is on this machine, which accepts at once while it runs. A
+/// refused connection takes about two seconds on Windows, and the app asks
+/// as it quits, where GPUI waits only 200 ms.
+const SHUTDOWN_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
+
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
@@ -307,12 +313,17 @@ fn spawn_claimed(
 }
 
 /// Start `codewiki serve` in the background.
-fn spawn_backend() -> Result<Child, String> {
+fn spawn_backend(data_dir: &Path) -> Result<Child, String> {
     let binary = codewiki_binary();
     log::info!("starting a backend: {}", binary.display());
     let mut serve = Command::new(&binary);
     serve
         .arg("serve")
+        // The backend writes `backend.json` where this program waits for
+        // it. Without the variable, a release `codewiki` found on `PATH`
+        // would use the installed CodeWiki's folder, not a development
+        // build's (`cw_core::paths::APP_FOLDER`).
+        .env(cw_core::paths::DATA_DIR_ENV, data_dir)
         // The backend writes `backend.log` itself, in the folder this
         // program logs to, a relative `CODEWIKI_LOG_DIR` included.
         .env(cw_core::logs::LOG_DIR_ENV, cw_core::logs::dir())
@@ -452,7 +463,12 @@ impl Backend {
 
     /// Start the backend on this machine and wait until it answers.
     fn start(data_dir: &Path) -> Result<Self, String> {
-        Self::start_in(data_dir, &STARTS, spawn_backend, STARTUP_TIMEOUT)
+        Self::start_in(
+            data_dir,
+            &STARTS,
+            || spawn_backend(data_dir),
+            STARTUP_TIMEOUT,
+        )
     }
 
     /// Start a backend with `spawn` and wait up to `timeout` for the
@@ -558,6 +574,9 @@ impl Backend {
     pub fn shutdown(&self) -> Result<(), String> {
         Self::finish(
             self.authorized(self.agent.post(&format!("{}/v1/shutdown", self.url)))
+                .config()
+                .timeout_connect(Some(SHUTDOWN_CONNECT_TIMEOUT))
+                .build()
                 .send_empty(),
         )
         .map(|_| ())
@@ -1029,6 +1048,21 @@ mod tests {
         let backend = Backend::new(url, "secret".into(), Origin::Local);
         assert!(backend.stop());
         assert!(!backend.answers());
+    }
+
+    /// The app asks its backend to stop as it quits, and GPUI waits only
+    /// 200 ms for that. On Windows a refused connection takes about two
+    /// seconds unless the connect is bounded.
+    #[test]
+    fn asking_a_dead_backend_to_stop_fails_at_once() {
+        let backend = Backend::new(dead_address(), "secret".into(), Origin::Local);
+        let asked = Instant::now();
+        assert!(backend.shutdown().is_err());
+        assert!(
+            asked.elapsed() < Duration::from_millis(500),
+            "took {:?}",
+            asked.elapsed()
+        );
     }
 
     fn temp_dir(name: &str) -> PathBuf {

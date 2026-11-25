@@ -74,6 +74,9 @@ pub struct Waiting {
     pub behind: Vec<String>,
     /// The files the note is about.
     pub sources: Vec<String>,
+    /// Another agent holds the note.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub claimed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,8 +85,16 @@ pub struct Queue {
     pub notes: Vec<Waiting>,
     /// How many notes fit what was asked for, listed or not.
     pub matching: usize,
+    /// How many notes that fit were left out because another agent holds
+    /// them.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub claimed: usize,
     /// How many notes wait in the whole vault.
     pub waiting: Counts,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Which waiting notes a queue lists.
@@ -95,6 +106,8 @@ pub struct Scope {
     pub files: Vec<String>,
     /// How many to list; [`DEFAULT_LIMIT`] when left out.
     pub limit: Option<usize>,
+    /// Vault paths of notes another agent holds; the queue leaves them out.
+    pub claimed: Vec<String>,
 }
 
 /// A repository or vault path as the manifest writes it.
@@ -157,8 +170,21 @@ pub fn waiting_counts(root: &Path) -> Result<Counts> {
     Ok(count(&all_waiting(&vault, &meta)))
 }
 
-/// The notes that wait for an agent, as far as `scope` asks.
-pub fn queue(root: &Path, scope: &Scope) -> Result<Queue> {
+fn row(why: Why, entry: &NoteEntry) -> Waiting {
+    Waiting {
+        path: entry.path.clone(),
+        title: title_of(entry),
+        kind: entry.kind,
+        why,
+        behind: entry.behind.clone(),
+        sources: entry.sources.iter().map(|s| s.path.clone()).collect(),
+        claimed: false,
+    }
+}
+
+/// Every waiting note that fits the folder and file filters of `scope`, in
+/// queue order, and how many wait in the whole vault.
+fn fits_all(root: &Path, scope: &Scope) -> Result<(Vec<Waiting>, Counts)> {
     let vault = root.join(VAULT_DIR);
     let meta = VaultMeta::load(&vault)?;
     let waiting = all_waiting(&vault, &meta);
@@ -180,24 +206,43 @@ pub fn queue(root: &Path, scope: &Scope) -> Result<Queue> {
                 .any(|source| files.contains(&source.path));
         in_folder && about
     };
-    let matching: Vec<&(Why, &NoteEntry)> =
-        waiting.iter().filter(|(_, entry)| fits(entry)).collect();
+    let matching = waiting
+        .iter()
+        .filter(|(_, entry)| fits(entry))
+        .map(|(why, entry)| row(*why, entry))
+        .collect();
+    Ok((matching, counts))
+}
+
+/// The notes that wait for an agent, as far as `scope` asks. Notes another
+/// agent holds are left out before the limit applies.
+pub fn queue(root: &Path, scope: &Scope) -> Result<Queue> {
+    let (matching, waiting) = fits_all(root, scope)?;
+    let total = matching.len();
     let limit = scope.limit.unwrap_or(DEFAULT_LIMIT).clamp(1, MAX_LIMIT);
+    let (held, free): (Vec<Waiting>, Vec<Waiting>) = matching
+        .into_iter()
+        .partition(|note| scope.claimed.contains(&note.path));
     Ok(Queue {
-        notes: matching
-            .iter()
-            .take(limit)
-            .map(|(why, entry)| Waiting {
-                path: entry.path.clone(),
-                title: title_of(entry),
-                kind: entry.kind,
-                why: *why,
-                behind: entry.behind.clone(),
-                sources: entry.sources.iter().map(|s| s.path.clone()).collect(),
-            })
-            .collect(),
-        matching: matching.len(),
-        waiting: counts,
+        notes: free.into_iter().take(limit).collect(),
+        matching: total,
+        claimed: held.len(),
+        waiting,
+    })
+}
+
+/// Every waiting note, with no limit and no filter, in queue order. Notes
+/// in `claimed` are marked.
+pub fn every(root: &Path, claimed: &[String]) -> Result<Queue> {
+    let (mut notes, waiting) = fits_all(root, &Scope::default())?;
+    for note in &mut notes {
+        note.claimed = claimed.contains(&note.path);
+    }
+    Ok(Queue {
+        matching: notes.len(),
+        claimed: notes.iter().filter(|n| n.claimed).count(),
+        notes,
+        waiting,
     })
 }
 

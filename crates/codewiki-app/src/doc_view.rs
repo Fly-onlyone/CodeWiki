@@ -27,8 +27,9 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, Entity, EntityId,
     FontWeight, HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement,
-    ListAlignment, ListState, ParentElement as _, Pixels, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, img, list, relative,
+    ListAlignment, ListOffset, ListState, ParentElement as _, Pixels, Render, RenderOnce,
+    SharedString, StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, img, list,
+    relative,
 };
 
 use crate::doc::{Action, Block, Cell, Choice, Doc, Row, SecretState, Span, Stat, Table};
@@ -238,13 +239,32 @@ impl DocPage {
         }
         if !same_doc || self.serial != serial {
             self.strips = Rc::new(strips(doc));
-            // A new page starts at its top.
+            // A new page starts at its top. The same page with new content,
+            // a live update, stays where the reader was.
+            let top = self.list.logical_scroll_top();
             self.list.reset(self.strips.len());
+            if self.serial == serial {
+                self.list.scroll_to(kept_top(top, self.strips.len()));
+            }
         }
         self.doc = doc.clone();
         self.serial = serial;
         self.width = width;
         notify_after_draw(cx.entity_id(), cx);
+    }
+}
+
+/// Where a page whose content changed in place goes back to, now that it
+/// has `len` strips: where it was, or the top of its last strip when it was
+/// further down than the page now reaches.
+fn kept_top(old: ListOffset, len: usize) -> ListOffset {
+    if old.item_ix < len {
+        old
+    } else {
+        ListOffset {
+            item_ix: len.saturating_sub(1),
+            offset_in_item: Pixels::ZERO,
+        }
     }
 }
 
@@ -826,7 +846,7 @@ fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement {
     let mut text = String::new();
     let mut highlights: Vec<(Range<usize>, HighlightStyle)> = Vec::new();
     let mut code: Vec<(Range<usize>, SharedString)> = Vec::new();
-    let mut links: Vec<(Range<usize>, Action)> = Vec::new();
+    let mut links: Vec<(Range<usize>, Action, usize)> = Vec::new();
     for span in spans {
         let start = text.len();
         match span {
@@ -861,6 +881,8 @@ fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement {
                 if *mono {
                     code.push((start..text.len(), theme.mono_font_family.clone()));
                 }
+                // The link's own highlight is the one its hover look joins.
+                links.push((start..text.len(), action.clone(), highlights.len()));
                 highlights.push((
                     start..text.len(),
                     HighlightStyle {
@@ -868,34 +890,108 @@ fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement {
                         ..Default::default()
                     },
                 ));
-                links.push((start..text.len(), action.clone()));
             }
         }
     }
-    let spec = Variant::Body2.spec();
-    let styled = StyledText::new(text)
-        .with_highlights(highlights)
-        .with_font_family_overrides(code);
-    let frame = div()
-        .text_size(px(spec.size))
-        .line_height(px(spec.size * spec.line_height));
     if links.is_empty() {
-        return frame.child(styled).into_any_element();
+        let spec = Variant::Body2.spec();
+        let styled = StyledText::new(text)
+            .with_highlights(highlights)
+            .with_font_family_overrides(code);
+        return div()
+            .text_size(px(spec.size))
+            .line_height(px(spec.size * spec.line_height))
+            .child(styled)
+            .into_any_element();
     }
-    let (ranges, actions): (Vec<_>, Vec<_>) = links.into_iter().unzip();
-    let on_action = page.on_action.clone();
-    frame
-        .child(
-            InteractiveText::new(page.id(&format!("{path}:text")), styled).on_click(
-                ranges,
-                move |index, window, cx| {
-                    if let Some(action) = actions.get(index) {
-                        on_action(action, window, cx);
-                    }
-                },
-            ),
-        )
-        .into_any_element()
+    LinkedLine {
+        id: page.id(&format!("{path}:text")),
+        text: text.into(),
+        highlights,
+        code,
+        links,
+        on_action: page.on_action.clone(),
+    }
+    .into_any_element()
+}
+
+/// A line with links in it. The link under the pointer takes the hover look
+/// of `reading::link_hover`, which needs the window to remember which one
+/// it is.
+#[derive(IntoElement)]
+struct LinkedLine {
+    id: ElementId,
+    text: SharedString,
+    highlights: Vec<(Range<usize>, HighlightStyle)>,
+    code: Vec<(Range<usize>, SharedString)>,
+    /// Each link's range, what it does, and which of `highlights` is its own.
+    links: Vec<(Range<usize>, Action, usize)>,
+    on_action: OnAction,
+}
+
+impl RenderOnce for LinkedLine {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
+        let hovered = window.use_keyed_state(
+            ElementId::NamedChild(self.id.clone().into(), "hovered-link".into()),
+            cx,
+            |_, _| None::<usize>,
+        );
+        let mut highlights = self.highlights;
+        let look = reading::link_hover(cx);
+        if let Some((_, _, own)) = hovered.read(cx).and_then(|link| self.links.get(link))
+            && let Some((_, style)) = highlights.get_mut(*own)
+        {
+            *style = style.highlight(look);
+        }
+        let ranges: Vec<Range<usize>> = self
+            .links
+            .iter()
+            .map(|(range, _, _)| range.clone())
+            .collect();
+        let actions: Vec<Action> = self
+            .links
+            .into_iter()
+            .map(|(_, action, _)| action)
+            .collect();
+        let styled = StyledText::new(self.text)
+            .with_highlights(highlights)
+            .with_font_family_overrides(self.code);
+        let on_action = self.on_action;
+        let spec = Variant::Body2.spec();
+        let (over, out) = (hovered.clone(), hovered);
+        div()
+            .id(self.id.clone())
+            .text_size(px(spec.size))
+            .line_height(px(spec.size * spec.line_height))
+            // The text reports only a pointer over it; leaving the line
+            // ends the hover look.
+            .on_hover(move |inside, _, cx| {
+                if !*inside {
+                    out.update(cx, |link, cx| {
+                        if link.take().is_some() {
+                            cx.notify();
+                        }
+                    });
+                }
+            })
+            .child(
+                InteractiveText::new(self.id, styled)
+                    .on_hover({
+                        let ranges = ranges.clone();
+                        move |index, _, _, cx| {
+                            let link = index.and_then(|index| {
+                                ranges.iter().position(|range| range.contains(&index))
+                            });
+                            over.update(cx, |hovered, _| *hovered = link);
+                        }
+                    })
+                    .on_click(ranges, move |index, window, cx| {
+                        if let Some(action) = actions.get(index) {
+                            on_action(action, window, cx);
+                        }
+                    }),
+            )
+    }
 }
 
 /// TradingAgent's metric tile: a label, a large figure that counts up when
@@ -1213,5 +1309,21 @@ mod tests {
             body: vec![table(SPLIT_ROWS * 3)],
         });
         assert_eq!(strips(&doc), [Strip::Title, Strip::Block(0)]);
+    }
+
+    #[test]
+    fn a_live_update_keeps_the_place_the_page_still_has() {
+        let at = |item_ix: usize, offset: f32| ListOffset {
+            item_ix,
+            offset_in_item: Pixels::from(offset),
+        };
+        // A row added or removed below: the reader stays where they were.
+        assert_eq!(kept_top(at(5, 12.0), 30), at(5, 12.0));
+        assert_eq!(kept_top(at(0, 0.0), 1), at(0, 0.0));
+        // The page got shorter than where the reader was: its last strip.
+        assert_eq!(kept_top(at(20, 12.0), 8), at(7, 0.0));
+        assert_eq!(kept_top(at(8, 3.0), 8), at(7, 0.0));
+        // A page is never empty, yet nothing goes below the first strip.
+        assert_eq!(kept_top(at(3, 1.0), 0), at(0, 0.0));
     }
 }

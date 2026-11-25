@@ -15,7 +15,9 @@
 //!
 //! [`init`] replaces `cw_core::logs::init`: records still go to the log file,
 //! and an Error record also becomes a report, while Info and Warn records go
-//! along with the next report as its trail. A panic is reported with its
+//! along with the next report as its trail. The Error records of a lost
+//! graphics device that the UI recovers from are only trail too. A panic is
+//! reported with its
 //! backtrace. Before anything leaves the machine it is scrubbed ([`scrub`]):
 //! no host name, no absolute path, and no query string, headers or body of a
 //! request.
@@ -27,7 +29,9 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant};
 
 use log::LevelFilter;
-use sentry::integrations::log::{LogFilter, SentryLogger};
+use sentry::integrations::log::{
+    LogFilter, RecordMapping, SentryLogger, breadcrumb_from_record, event_from_record,
+};
 
 pub mod scrub;
 
@@ -108,11 +112,17 @@ fn choose(
     }
 }
 
-/// Where the user's choice is kept: `%APPDATA%\CodeWiki\error_reports.txt`.
+/// Where the user's choice is kept: `%APPDATA%\CodeWiki\error_reports.txt`,
+/// or under `CodeWiki-Dev` in a development build
+/// ([`cw_core::paths::APP_FOLDER`]).
 pub fn consent_path() -> Option<PathBuf> {
     std::env::var_os("APPDATA")
         .filter(|root| !root.is_empty())
-        .map(|root| PathBuf::from(root).join("CodeWiki").join(CONSENT_FILE))
+        .map(|root| {
+            PathBuf::from(root)
+                .join(cw_core::paths::APP_FOLDER)
+                .join(CONSENT_FILE)
+        })
 }
 
 /// Whether the user turned on "Send error reports".
@@ -197,7 +207,11 @@ pub fn init(name: &'static str, default: LevelFilter) -> Guard {
     let reporting = guard.is_some();
     cw_core::logs::init_with(name, default, |file| {
         if reporting {
-            Box::new(SentryLogger::with_dest(file).filter(log_filter))
+            Box::new(
+                SentryLogger::with_dest(file)
+                    .filter(log_filter)
+                    .mapper(map_record),
+            )
         } else {
             file
         }
@@ -272,6 +286,44 @@ fn log_filter(metadata: &log::Metadata<'_>) -> LogFilter {
         log::Level::Warn | log::Level::Info => LogFilter::Breadcrumb,
         log::Level::Debug | log::Level::Trace => LogFilter::Ignore,
     }
+}
+
+/// What a log record sends: what [`log_filter`] says, except that the
+/// records of a recovered graphics device loss go only as trail.
+fn map_record(record: &log::Record<'_>) -> Vec<RecordMapping> {
+    if is_recovered_gpu_reset(record) {
+        return vec![RecordMapping::Breadcrumb(breadcrumb_from_record(record))];
+    }
+    let filter = log_filter(record.metadata());
+    let mut items = Vec::new();
+    if filter.contains(LogFilter::Breadcrumb) {
+        items.push(RecordMapping::Breadcrumb(breadcrumb_from_record(record)));
+    }
+    if filter.contains(LogFilter::Event) {
+        items.push(RecordMapping::Event(Box::new(event_from_record(record))));
+    }
+    items
+}
+
+/// Whether a record is a step of a graphics device loss that gpui recovers
+/// from by itself: the device removed, as a driver update does
+/// (DXGI_ERROR_DEVICE_REMOVED, `0x887A0005`), and the resize and draw that
+/// fail until the devices are made again. gpui panics when it cannot make
+/// them again, and Sentry's hook reports that panic with these records as
+/// its trail. A device that hung or was reset (`0x887A0006`, `0x887A0007`)
+/// can mean the app's own drawing stalled the GPU, so that stays a report.
+/// gpui's `log_err` leaves the target of the draw's record empty.
+fn is_recovered_gpu_reset(record: &log::Record<'_>) -> bool {
+    if record.level() != log::Level::Error {
+        return false;
+    }
+    let from_gpui = record.target().starts_with("gpui_windows");
+    let message = record.args().to_string();
+    (from_gpui
+        && message.starts_with("DirectX device lost detected")
+        && message.contains("0x887A0005"))
+        || (from_gpui && message.starts_with("Failed to resize renderer, invalidating devices"))
+        || message == "missing render target view"
 }
 
 /// Send what is queued, waiting up to two seconds. For a program that is
@@ -399,6 +451,73 @@ mod tests {
             LogFilter::Ignore
         );
         assert_eq!(filtered(log::Level::Error, "sentry"), LogFilter::Ignore);
+    }
+
+    /// What `map_record` sends of a record: `B` a breadcrumb, `E` an event.
+    fn mapped(level: log::Level, target: &str, message: &str) -> String {
+        map_record(
+            &log::Record::builder()
+                .level(level)
+                .target(target)
+                .args(format_args!("{message}"))
+                .build(),
+        )
+        .iter()
+        .map(|item| match item {
+            RecordMapping::Breadcrumb(_) => 'B',
+            RecordMapping::Event(_) => 'E',
+            _ => '?',
+        })
+        .collect()
+    }
+
+    #[test]
+    fn a_recovered_gpu_device_loss_is_only_trail() {
+        let error = log::Level::Error;
+        // The records of the NVIDIA driver update of 2026-11-25, as Sentry
+        // received them.
+        assert_eq!(
+            mapped(
+                error,
+                "gpui_windows::platform",
+                "DirectX device lost detected: Error { code: HRESULT(0x887A0005), message: \
+                 \"The GPU device instance has been suspended. Use GetDeviceRemovedReason to \
+                 determine the appropriate action.\" }"
+            ),
+            "B"
+        );
+        assert_eq!(
+            mapped(
+                error,
+                "gpui_windows::events",
+                "Failed to resize renderer, invalidating devices: Failed to resize swap chain"
+            ),
+            "B"
+        );
+        assert_eq!(mapped(error, "", "missing render target view"), "B");
+    }
+
+    #[test]
+    fn a_hung_gpu_device_is_still_a_report() {
+        assert_eq!(
+            mapped(
+                log::Level::Error,
+                "gpui_windows::platform",
+                "DirectX device lost detected: Error { code: HRESULT(0x887A0006) }"
+            ),
+            "E"
+        );
+    }
+
+    #[test]
+    fn other_records_map_as_the_filter_says() {
+        assert_eq!(mapped(log::Level::Error, "cw_server", "failed"), "E");
+        assert_eq!(mapped(log::Level::Warn, "cw_server", "slow"), "B");
+        assert_eq!(mapped(log::Level::Info, "codewiki_app", "started"), "B");
+        assert_eq!(mapped(log::Level::Debug, "cw_wiki", "detail"), "");
+        assert_eq!(mapped(log::Level::Error, "panic", "boom"), "");
+        assert_eq!(mapped(log::Level::Error, "ureq::unversioned", "x"), "");
+        assert_eq!(mapped(log::Level::Error, "sentry", "x"), "");
     }
 
     #[test]

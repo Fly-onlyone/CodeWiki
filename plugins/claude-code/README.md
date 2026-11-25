@@ -1,6 +1,6 @@
 # CodeWiki plugin for Claude Code
 
-Registers the `codewiki` MCP server so Claude Code can read the repository's wiki and structural index, a `SessionStart` hook that tells Claude the wiki is there, and the skill `write-notes`, with which Claude writes the explanations of the notes.
+Registers the `codewiki` MCP server so Claude Code can read the repository's wiki and structural index, a `SessionStart` hook that tells Claude the wiki is there, the skill `write-notes`, with which Claude writes the explanations of the notes, and the agent `note-writer`, which writes them in the background when auto explaining is on.
 
 ## Requirements
 
@@ -22,7 +22,13 @@ claude plugin install codewiki@codewiki
 
 The first line adds the `plugins` folder of an installation made from the release zip (in PowerShell: `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`). The folder holds the plugin and nothing else. Claude Code reads it where it is, so nothing is downloaded and git is not needed.
 
-Without that installation, add the repository in its place: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, which needs git.
+Without that installation, add the repository in its place, or the folder of a clone:
+
+```
+claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code
+```
+
+With `--sparse`, Claude Code checks out only the marketplace file and this plugin's folder, not the whole repository. It needs git. A marketplace added from GitHub without `--sparse` holds the whole repository: run `claude plugin marketplace remove codewiki`, then add it again with this command.
 
 The plugin is installed for your user; `--scope project` on the install records it in the repository's `.claude/settings.json` instead.
 
@@ -85,7 +91,9 @@ CodeWiki writes each note's facts from the code: where the thing is, its items, 
 For each note Claude reads the note's source files, writes the sections that are its own, and sends them with `submit_note`. CodeWiki checks what it gets and puts it into the note. Claude cannot change a fact: it sends sections, never a whole note.
 
 - **Pictures.** Claude may add a picture to a section: boxes joined by arrows that show what happens from a cause to its result, and marked key points. The app draws them. `skills/write-notes/pictures.md` lists the components and their limits.
-- **By itself.** After a code change, Claude writes the notes about the files it changed, at most three. The count of waiting notes in the session briefing does not start it.
+- **By itself.** After a code change, Claude writes the notes about the files it changed, at most three. The count of waiting notes in the session briefing does not start it on its own; auto explaining does (below).
+- **Auto explaining** is on by default and is switched in the app (Settings → Repositories → "Auto explaining"; the file `auto-explain.txt` in the data directory, where `off` is off and a missing file is on). When it is on, a session that starts fresh (`startup`, `resume` or `clear`) and is not in a linked git worktree gets an order in the briefing. The hook leaves the order out when the host reports plan mode; the order itself tells the agent to skip it in plan mode. The order says: when the user sends the first message, launch the `codewiki:note-writer` agent in the background (`agents/note-writer.md`: Sonnet, tools `Read`, `Grep`, `Glob`, `Skill` and the CodeWiki MCP tools, the `write-notes` skill preloaded) to explain up to 20 waiting notes, stale first, and tell the user in one line. The agent lists the notes with `claim: true`, so that another session's agent gets other notes; a claim lasts 30 minutes. It edits no file and ends with one line: how many notes it saved, proposed or failed. A folder kept from coding agents gets no briefing and no agent. Writing 20 notes uses your Claude usage allowance.
+- **Permissions.** The agent runs in the background, yet each CodeWiki tool call it makes asks you in the main session unless `mcp__plugin_codewiki_codewiki__*` is allowed in your permission rules. Allow it to let the agent work without prompts.
 - **A note you edited** is never written. Claude's text waits in the review queue as a proposal.
 - **After a code change** with no agent running, `sync_wiki` and `codewiki update` refresh the facts of an explained note and keep its explanation. The note is marked as possibly behind and comes first in the list of waiting notes.
 
@@ -98,7 +106,7 @@ Writing many notes uses your Claude usage allowance: each note is a few file rea
 - whether the repository has a wiki, and where its home note is (`obsidian/_HOME.md`);
 - whether the wiki is up to date with `HEAD` or stale. It is stale only when files outside `obsidian/` changed since the commit the wiki was generated at; committing the wiki itself does not make it stale. If git no longer knows that commit (after a rebase, or in a shallow clone), the wiki counts as stale;
 - how many proposals wait for review;
-- how many notes wait for an explanation, when any does. The line states the count and tells Claude to write notes when you ask or for files it changed;
+- how many notes wait for an explanation, when any does. The line states the count. It tells Claude to write notes when you ask or for files it changed; with auto explaining on and a fresh session, it orders the note-writer instead;
 - that the `get_overview` and `get_context` tools answer from the wiki.
 
 For example:
@@ -112,5 +120,13 @@ The CodeWiki MCP tools `get_overview` (architecture and index status) and `get_c
 ```
 
 The command reads the vault's manifest and asks git for `HEAD`. It does not start the backend, does not open the index, and writes nothing. It looks for the vault in the project folder (`CLAUDE_PROJECT_DIR`, otherwise the working directory) and its parent folders. It cannot fail a session: on any error it prints nothing and exits with status 0. The hook has a 10 second timeout; a run takes well under a second.
+
+With auto explaining on and a fresh session, the end of the notes line is the order instead:
+
+```
+The user turned on auto explaining: when the user sends their first message, unless you are in plan mode, launch the `codewiki:note-writer` agent in the background to explain up to 20 waiting notes, stale first, tell the user in one line that it is writing wiki notes, then go on with their request. Do not write these notes yourself.
+```
+
+The hook reads the data directory's `auto-explain.txt` and the hook's input (`source`, `permission_mode`). In the app, "To explain (N)" in the toolbar shows the notes that wait and opens the Waiting notes page.
 
 To try it outside Claude Code, run `codewiki hook session-start` in a repository.

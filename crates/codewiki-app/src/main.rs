@@ -11,6 +11,7 @@
 mod autostart;
 mod backdrop;
 mod connection;
+mod constellation;
 mod contrast;
 mod diagram_view;
 mod diagrams;
@@ -42,6 +43,7 @@ mod settings_view;
 mod standard;
 mod startup;
 mod status;
+mod suggest;
 mod themes;
 mod toasts;
 mod tray;
@@ -67,6 +69,7 @@ use serde_json::{Value, json};
 
 use doc::{Action, Doc};
 use markdown::NOTE_SCHEME;
+use mui::autocomplete::{Choice, Group, Listbox};
 use mui::button::{Button, IconButton};
 use mui::feedback::{self, Tone};
 use mui::list::{self, ListFolder, ListItemButton};
@@ -116,6 +119,8 @@ const CLEANUP_RETRIES: usize = 3;
 const CLEANUP_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
 /// How often the app asks the backend what it is doing, for the tray icon.
 const STATUS_PAUSE: std::time::Duration = std::time::Duration::from_secs(5);
+/// The busy line while this app syncs a wiki.
+const SYNCING: &str = "Syncing wiki";
 /// The same, of a backend too old to say: it will not learn to.
 const OLD_BACKEND_PAUSE: std::time::Duration = std::time::Duration::from_secs(60);
 /// How often a running app looks whether the daily check for a newer release
@@ -125,10 +130,14 @@ const RECHECK_PAUSE: std::time::Duration = std::time::Duration::from_secs(60 * 6
 /// The setting that remembers that the user was told, once, that closing the
 /// window leaves the app running in the tray.
 const TRAY_HINT: &str = "tray_hint";
-/// What Windows knows the app as when it shows a notification.
-const APP_IDENTITY: &str = "CodeWiki.App";
-/// The name Windows shows above the app's notifications.
-const APP_NAME: &str = "CodeWiki";
+/// What Windows knows the app as when it shows a notification. A development
+/// build has its own, so that its notifications and taskbar button are not
+/// taken for an installed CodeWiki's.
+const APP_IDENTITY: &str = if cw_core::DEV_BUILD {
+    "CodeWiki.App.Dev"
+} else {
+    "CodeWiki.App"
+};
 /// The smallest window: the sidebar, the details pane, and a reading pane
 /// about as wide as the two together.
 const MIN_WINDOW: (f32, f32) = (960.0, 600.0);
@@ -268,6 +277,9 @@ enum Page {
     /// repositories. Its page is built from the app's state on every frame,
     /// so going back to it never shows an old list.
     Home,
+    /// The notes that wait for a coding agent to explain them. Built on
+    /// every frame too, from `waiting`, so it follows the backend.
+    Waiting,
     /// The settings, at one of their categories. Built on every frame too,
     /// and drawn by this view itself (`settings_view.rs`).
     Settings(settings::Category),
@@ -332,6 +344,16 @@ struct AppView {
     hwnd: Option<win32::Hwnd>,
     /// Whether the app has told Windows its name, which a notification needs.
     identity_set: bool,
+    /// The open repository's notes that wait for a coding agent: the last
+    /// answer to `GET /explanations?all=true`, `None` until one came.
+    waiting: Option<Value>,
+    /// The backend's `notes_rev` that `waiting` was last asked for.
+    waiting_seen: Option<u64>,
+    /// The lookup of `waiting` under way; a newer one replaces it.
+    waiting_task: Option<Task<()>>,
+    /// Whether auto explaining is on, read when the Waiting notes page
+    /// opens.
+    auto_explain_on: bool,
     focus: FocusHandle,
     theme_menu_open: bool,
     /// The row of the theme menu that the keys act on.
@@ -347,6 +369,8 @@ struct AppView {
     /// Where the app stands with updates.
     update: update::State,
     search: Entity<InputState>,
+    /// What the search field suggests while it is typed in.
+    suggestions: suggest::Suggestions,
     /// Bumped on every page change so the viewer rebuilds its state.
     page_serial: usize,
     /// The generated page. The shell draws it, in the place this view
@@ -355,6 +379,10 @@ struct AppView {
     page_slot: Rc<doc_view::PageSlot>,
     /// Whether this frame left a place for the page.
     page_placed: std::cell::Cell<bool>,
+    /// The page's clear margins, which the shell draws its sky in.
+    margins: Rc<backdrop::Margins>,
+    /// Whether this frame gave the page clear margins.
+    margins_placed: std::cell::Cell<bool>,
     /// Markdown of the current page, ready for the viewer.
     rendered: String,
     /// Diagrams of the current page, addressed by index from `rendered`.
@@ -437,9 +465,30 @@ impl AppView {
             cx.new(|cx| InputState::new(window, cx).placeholder("Search notes, symbols, files…"));
         let subscription =
             cx.subscribe_in(&search, window, |this, input, event: &InputEvent, _, cx| {
-                if let InputEvent::PressEnter { .. } = event {
-                    let query = input.read(cx).value().to_string();
-                    this.run_search(query, cx);
+                let text = input.read(cx).value().to_string();
+                match event {
+                    InputEvent::Change => this.suggest(text, cx),
+                    // The highlighted suggestion, or every hit of the text.
+                    InputEvent::PressEnter { .. } => {
+                        let chosen = this.suggestions.chosen().map(|hit| hit.action.clone());
+                        this.suggestions.close();
+                        match chosen {
+                            Some(action) => this.run_action(&action, cx),
+                            None => this.run_search(text, cx),
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if this.suggestions.reopen(&text) {
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Blur => {
+                        if this.suggestions.is_open() {
+                            this.suggestions.close();
+                            cx.notify();
+                        }
+                    }
                 }
             });
         let palette_input =
@@ -502,6 +551,10 @@ impl AppView {
             toasts: toasts::Toasts::default(),
             hwnd: win32::hwnd(window),
             identity_set: false,
+            waiting: None,
+            waiting_seen: None,
+            waiting_task: None,
+            auto_explain_on: read_auto_explain(),
             focus: cx.focus_handle(),
             theme_menu_open: false,
             theme_menu_highlight: 0,
@@ -512,10 +565,13 @@ impl AppView {
             error: None,
             update: update::State::NotInstalled,
             search,
+            suggestions: suggest::Suggestions::default(),
             page_serial: 0,
             doc_page,
             page_slot,
             page_placed: std::cell::Cell::new(false),
+            margins: Rc::default(),
+            margins_placed: std::cell::Cell::new(false),
             rendered: String::new(),
             diagrams: Vec::new(),
             diagram_store: diagrams::Diagrams::default(),
@@ -676,8 +732,11 @@ impl AppView {
 
     /// Keep what the backend answered to `GET /v1/status`; `None` when it
     /// was not asked. The window shows none of it, so nothing is redrawn,
-    /// unless the backend has just been lost: a banner then says so. New
-    /// proposals are told by a notice (`take_proposal_counts`).
+    /// unless the backend has just been lost (a banner then says so), and
+    /// except the waiting notes: they are read again when the backend says
+    /// a vault or an agent's hold on a note changed. New proposals are told
+    /// by a notice (`take_proposal_counts`). The backdrop also hears whether
+    /// a wiki is being written.
     fn take_status(
         &mut self,
         answer: Option<Result<Option<Value>, String>>,
@@ -710,6 +769,7 @@ impl AppView {
                     bridge: status::Bridge::OldBackend,
                     model_job: None,
                     proposals: None,
+                    notes_rev: None,
                 };
                 self.backend_silent = false;
             }
@@ -726,7 +786,83 @@ impl AppView {
                 self.backend_silent = false;
             }
         }
+        // A backend that does not count, or did not answer, changes nothing:
+        // what `refresh` read stays.
+        if let Some(rev) = self.backend_status.notes_rev
+            && self.waiting_seen != Some(rev)
+        {
+            self.waiting_seen = Some(rev);
+            self.load_waiting(cx);
+        }
         self.refresh_tray();
+        self.tell_backdrop(cx);
+    }
+
+    /// Tell the backdrop whether a wiki is being written: by this app's
+    /// sync, or by an update the backend runs for anybody, an agent's
+    /// included, as the last answer to `GET /v1/status` said.
+    fn tell_backdrop(&self, cx: &mut App) {
+        let writing =
+            self.busy.as_deref() == Some(SYNCING) || !self.backend_status.updating.is_empty();
+        backdrop::set_writing(writing, cx);
+    }
+
+    /// Read the open repository's notes that wait for a coding agent, for
+    /// the toolbar's count and the Waiting notes page. The lookup is quiet,
+    /// as the search suggestions are: it sets no busy line and no error, and
+    /// a failed one keeps what was read before.
+    fn load_waiting(&mut self, cx: &mut Context<Self>) {
+        let (Some(repo), Some(backend)) = (self.repo.clone(), self.backend.clone()) else {
+            return;
+        };
+        if self.update.installing() {
+            return;
+        }
+        let id = repo.id;
+        self.waiting_task = Some(cx.spawn(async move |this, cx| {
+            let path = format!("/v1/repos/{id}/explanations?all=true");
+            let answer = cx
+                .background_executor()
+                .spawn(async move { backend.get(&path) })
+                .await;
+            _ = this.update(cx, |this, cx| {
+                // Another repository was opened meanwhile.
+                if this.repo.as_ref().map(|repo| repo.id.as_str()) != Some(id.as_str()) {
+                    return;
+                }
+                match answer {
+                    Ok(queue) => {
+                        this.waiting = Some(queue);
+                        cx.notify();
+                    }
+                    Err(message) => log::debug!("the waiting notes were not read: {message}"),
+                }
+            });
+        }));
+    }
+
+    /// Forget the waiting notes of the repository that is left, so that
+    /// none of them show for the next one until its own are read.
+    fn forget_waiting(&mut self) {
+        self.waiting = None;
+        self.waiting_seen = None;
+        self.waiting_task = None;
+    }
+
+    /// Show the notes that wait for a coding agent, and read them again.
+    fn open_waiting(&mut self, cx: &mut Context<Self>) {
+        if self.repo.is_none() {
+            return;
+        }
+        if matches!(self.page, Page::Waiting) {
+            // `show_page` reads the switch when the page opens; it may have
+            // changed since.
+            self.auto_explain_on = read_auto_explain();
+        } else {
+            self.set_page(Page::Waiting, true);
+        }
+        self.load_waiting(cx);
+        cx.notify();
     }
 
     /// Carry out what reaches the app from outside GPUI, one event at a
@@ -943,7 +1079,7 @@ impl AppView {
         if !self.identity_set {
             // The name and the logo above the notification. Without them it
             // still shows, so a failure is only logged.
-            match identity::register(APP_IDENTITY, APP_NAME, icons::LOGO_BYTES) {
+            match identity::register(APP_IDENTITY, cw_core::APP_NAME, icons::LOGO_BYTES) {
                 Ok(written) if !written.is_empty() => log::info!(
                     "registered {APP_IDENTITY} for Windows notifications: wrote {}",
                     written.join(", ")
@@ -951,7 +1087,7 @@ impl AppView {
                 Ok(_) => {}
                 Err(error) => log::warn!("could not register the notification icon: {error}"),
             }
-            cx.set_app_identity(APP_IDENTITY, APP_NAME);
+            cx.set_app_identity(APP_IDENTITY, cw_core::APP_NAME);
             self.identity_set = true;
         }
         cx.show_system_notification(toasts::system(notice));
@@ -973,7 +1109,7 @@ impl AppView {
                 key: TRAY_HINT.into(),
                 tone: Tone::Info,
                 topic: toasts::Topic::App,
-                title: "CodeWiki is still running".into(),
+                title: format!("{} is still running", cw_core::APP_NAME),
                 body: Some(
                     "Click its icon in the notification area to open it again, right-click the icon to quit."
                         .into(),
@@ -1079,6 +1215,7 @@ impl AppView {
         // nothing else is.
         self.review.own_work = false;
         self.error = None;
+        self.tell_backdrop(cx);
         cx.notify();
         let label = label.to_string();
         cx.spawn(async move |this, cx| {
@@ -1088,6 +1225,7 @@ impl AppView {
                 .await;
             _ = this.update(cx, |this, cx| {
                 this.busy = None;
+                this.tell_backdrop(cx);
                 match result {
                     Ok(value) => done(this, value, cx),
                     Err(message) => {
@@ -1118,7 +1256,6 @@ impl AppView {
                     Ok(reached) => this.take_connection(reached, cx),
                     Err(message) => {
                         log::error!("the backend is not reachable: {message}");
-                        this.error = Some(message);
                         let log = cw_core::logs::path("backend").display().to_string();
                         let logs = cw_core::logs::dir().display().to_string();
                         // The backend saved in the settings, when it is the
@@ -1136,6 +1273,8 @@ impl AppView {
                         );
                         // The page says the app keeps trying.
                         this.connection.offline(std::time::Instant::now());
+                        // After the page change, which clears the error.
+                        this.error = Some(message);
                     }
                 }
                 cx.notify();
@@ -1265,9 +1404,10 @@ impl AppView {
         cx.notify();
     }
 
-    /// Load the open repository's notes and proposals again once the backend
-    /// is back: quietly, with no progress bar, and the page and any message
-    /// kept. A repository the backend no longer has leaves for Home.
+    /// Load the open repository's notes, proposals and waiting notes again
+    /// once the backend is back: quietly, with no progress bar, and the page
+    /// and any message kept. A repository the backend no longer has leaves
+    /// for Home.
     fn reload_repo(&mut self, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -1281,6 +1421,9 @@ impl AppView {
             return;
         }
         self.reload_notes(cx, |_, _| {});
+        // A backend that started anew counts `notes_rev` from zero, which
+        // may be the number last seen.
+        self.load_waiting(cx);
     }
 
     /// Load the open repository's notes and proposals again, quietly, then
@@ -1310,7 +1453,8 @@ impl AppView {
         );
     }
 
-    /// Forget the open repository, its notes and its tabs.
+    /// Forget the open repository, its notes, its tabs and the notes that
+    /// wait for an agent.
     fn close_repo(&mut self) {
         self.repo = None;
         self.notes.clear();
@@ -1323,6 +1467,7 @@ impl AppView {
             reload: false,
         }];
         self.active_tab = 0;
+        self.forget_waiting();
     }
 
     /// The line above the page while the backend in use does not answer and
@@ -1757,11 +1902,13 @@ impl AppView {
         }
         self.tabs.truncate(1);
         self.active_tab = 0;
+        self.forget_waiting();
         self.refresh(landing, cx);
     }
 
     /// Reload the note list and proposals, then go where `landing` says. A
-    /// repository with no wiki lands on Home, which offers to sync it.
+    /// repository with no wiki lands on Home, which offers to sync it. The
+    /// waiting notes are read beside them.
     fn refresh(&mut self, landing: Landing, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -1789,6 +1936,7 @@ impl AppView {
         // The open repository's proposals load with its notes: a count that
         // rises meanwhile is known to the app, not news.
         self.review.own_work = true;
+        self.load_waiting(cx);
     }
 
     /// Keep the open repository's notes and pending proposals, as the backend
@@ -1864,6 +2012,7 @@ impl AppView {
             "themes:" => Some(Command::Themes),
             "decisions:" => Some(Command::Decisions),
             "health:" => Some(Command::Health),
+            "waiting:" => Some(Command::Waiting),
             "dead-code:" => Some(Command::DeadCode),
             "drift:" => Some(Command::Drift),
             "tests:" => Some(Command::Tests),
@@ -2006,6 +2155,9 @@ impl AppView {
 
     /// Rebuild the viewer for `self.page` after it changed.
     fn show_page(&mut self) {
+        // An error is about the page it was met on: the next page, Back or
+        // another tab does not carry it along.
+        self.error = None;
         self.page_serial += 1;
         self.figures = match &self.page {
             Page::Note { figures, .. } => figures.clone(),
@@ -2014,6 +2166,11 @@ impl AppView {
         // The diagram in the viewer belongs to the page that was left.
         self.diagram_open = false;
         self.diagram_viewer = None;
+        // The switch is a file another program may change; read it whenever
+        // the page opens, by a click, Back or a tab.
+        if matches!(self.page, Page::Waiting) {
+            self.auto_explain_on = read_auto_explain();
+        }
         self.prepare_page();
     }
 
@@ -2251,6 +2408,7 @@ impl AppView {
                 pages::contracts_page,
                 cx,
             ),
+            Command::Waiting => self.open_waiting(cx),
             Command::Ownership => {
                 self.open_report("Ownership", "history", pages::ownership_page, cx)
             }
@@ -2416,6 +2574,7 @@ impl AppView {
             | Page::Review { .. }
             | Page::Graph
             | Page::Home
+            | Page::Waiting
             | Page::Settings(_) => String::new(),
         };
     }
@@ -2689,6 +2848,58 @@ impl AppView {
         );
     }
 
+    /// Look up the search field's `text` once typing pauses, and list its
+    /// hits under the field. Each change replaces the lookup before it, so
+    /// only the latest text's hits are shown. The lookup is quiet: it sets no
+    /// busy line and no error, and a failed one only closes the list.
+    fn suggest(&mut self, text: String, cx: &mut Context<Self>) {
+        let query = text.trim().to_string();
+        let (Some(repo), Some(backend)) = (self.repo.clone(), self.backend.clone()) else {
+            return;
+        };
+        if query.is_empty() || self.update.installing() {
+            self.suggestions.clear();
+            cx.notify();
+            return;
+        }
+        self.suggestions.typed();
+        cx.notify();
+        self.suggestions.task = Some(cx.spawn(async move |this, cx| {
+            let executor = cx.background_executor().clone();
+            executor.timer(suggest::PAUSE).await;
+            let path = format!(
+                "/v1/repos/{}/search?q={}&limit={}&mode=text",
+                repo.id,
+                encode(&query),
+                suggest::LIMIT
+            );
+            let answer = executor.spawn(async move { backend.get(&path) }).await;
+            _ = this.update(cx, |this, cx| {
+                if this.search.read(cx).value().trim() != query {
+                    return;
+                }
+                match answer {
+                    Ok(hits) => this.suggestions.show(&query, &hits),
+                    Err(message) => {
+                        log::debug!("no suggestions for '{query}': {message}");
+                        this.suggestions.close();
+                    }
+                }
+                cx.notify();
+            });
+        }));
+    }
+
+    /// Open the suggestion at `index`, as the list counts its rows.
+    fn choose_suggestion(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(action) = self.suggestions.target(index).map(|hit| hit.action.clone()) else {
+            return;
+        };
+        self.suggestions.close();
+        self.run_action(&action, cx);
+        cx.notify();
+    }
+
     fn run_search(&mut self, query: String, cx: &mut Context<Self>) {
         let Some(repo) = self.repo.clone() else {
             return;
@@ -2724,7 +2935,7 @@ impl AppView {
             return;
         };
         self.run(
-            "Syncing wiki",
+            SYNCING,
             cx,
             move |b| b.post(&format!("/v1/repos/{}/update", repo.id), &json!({})),
             |this, report, cx| {
@@ -2900,6 +3111,11 @@ impl AppView {
                 );
                 cx.notify();
             }
+            Action::Backdrop(on) => {
+                backdrop::set_shown(*on, cx);
+                log::info!("background graph: {}", if *on { "on" } else { "off" });
+                cx.notify();
+            }
             Action::ErrorReports(on) => {
                 match cw_telemetry::set_consent(*on) {
                     Ok(()) => log::info!("send error reports: {}", if *on { "on" } else { "off" }),
@@ -3025,7 +3241,7 @@ impl AppView {
                 v_flex()
                     .px_4()
                     .py_3()
-                    .child(div().font_bold().child("CodeWiki"))
+                    .child(div().font_bold().child(cw_core::APP_NAME))
                     .child(
                         div().text_xs().text_color(theme.muted_foreground).child(
                             self.repo
@@ -3066,6 +3282,7 @@ impl AppView {
                     } else {
                         "Show sidebar (Ctrl+B)"
                     })
+                    .toggled(self.sidebar_open)
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_pane(Pane::Sidebar, cx))),
             )
@@ -3084,12 +3301,29 @@ impl AppView {
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
-            .child(
-                div()
-                    .flex_1()
-                    .px_1()
-                    .child(TextField::new("search", &self.search).icon(icons::SEARCH)),
-            )
+            .child(div().flex_1().px_1().child({
+                let view = cx.entity_id();
+                self.suggestions
+                    .anchor
+                    .track(
+                        TextField::new("search", &self.search).icon(icons::SEARCH),
+                        // The open list follows the field when the
+                        // window is resized.
+                        move |_, cx| doc_view::notify_after_draw(view, cx),
+                    )
+                    .w_full()
+                    // A press on the field that already has the focus shows
+                    // its list again, as in MUI.
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|this, _, _, cx| {
+                            let text = this.search.read(cx).value().to_string();
+                            if !this.suggestions.is_open() && this.suggestions.reopen(&text) {
+                                cx.notify();
+                            }
+                        }),
+                    )
+            }))
             .when_some(self.busy.clone(), |this, busy| {
                 this.child(
                     div()
@@ -3220,6 +3454,15 @@ impl AppView {
                     .when(pending > 0, |b| b.contained())
                     .on_click(cx.listener(|this, _, _, cx| this.open_review(cx))),
             )
+            .child({
+                let n = live::waiting_count(self.waiting.as_ref());
+                Button::new("to-explain")
+                    .icon(icons::WAITING)
+                    .label(format!("To explain ({n})"))
+                    .small()
+                    .disabled(n == 0)
+                    .on_click(cx.listener(|this, _, _, cx| this.open_waiting(cx)))
+            })
             .child(
                 IconButton::new("toggle-details", icons::DETAILS)
                     .tooltip(if self.details_open {
@@ -3227,6 +3470,7 @@ impl AppView {
                     } else {
                         "Show details (Ctrl+Alt+B)"
                     })
+                    .toggled(self.details_open)
                     .small()
                     .on_click(cx.listener(|this, _, _, cx| this.toggle_pane(Pane::Details, cx))),
             )
@@ -3345,6 +3589,35 @@ impl AppView {
                 ),
         )
         .with_priority(1)
+    }
+
+    /// The search field's suggestions, under the field, while their list is
+    /// open and the palette is not.
+    fn suggestions_view(&self, cx: &mut Context<Self>) -> Option<Listbox> {
+        if !self.suggestions.is_open() || self.palette_open {
+            return None;
+        }
+        let mut listbox = Listbox::new("suggestions", self.suggestions.anchor.get()?)
+            .highlighted(self.suggestions.highlighted())
+            .empty("No results");
+        for (heading, hits) in self.suggestions.groups() {
+            let choices = hits
+                .iter()
+                .map(|hit| {
+                    let choice = Choice::new(hit.icon, hit.label.clone()).code(hit.code);
+                    if hit.detail.is_empty() {
+                        choice
+                    } else {
+                        choice.secondary(hit.detail.clone())
+                    }
+                })
+                .collect();
+            listbox = listbox.group(Group::new(*heading, choices));
+        }
+        let view = cx.entity().downgrade();
+        Some(listbox.on_select(move |index, _, cx| {
+            _ = view.update(cx, |this, cx| this.choose_suggestion(index, cx));
+        }))
     }
 
     /// The diagram viewer, drawn over everything else: a diagram of the note
@@ -3771,17 +4044,88 @@ impl AppView {
 
     fn viewer(&self, cx: &mut Context<Self>) -> Div {
         let page = self.page_content(cx);
+        let margin = self.margin_width(cx);
+        // With clear margins the pane has no surface of its own: the bars
+        // above the page bring theirs, since their text runs into the
+        // margins, and the page lies on clear margins and a dense column.
+        let pane = self
+            .glass
+            .pane(glass::tinted_pane(cx.theme().background, cx));
+        let bar = move |bar: Div| bar.when(margin.is_some(), |bar| bar.bg(pane));
         v_flex()
             .flex_1()
             .min_w_0()
             .h_full()
             .when_some(self.error.clone(), |this, error| {
-                this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
+                this.child(bar(div().p_2().child(feedback::alert(
+                    Tone::Error,
+                    error,
+                    cx,
+                ))))
             })
             .when_some(self.agent_view_notice(cx), |this, notice| {
-                this.child(notice)
+                this.child(bar(notice))
             })
+            .child(self.on_reading_glass(page, margin, cx))
+    }
+
+    /// How wide the clear margins beside the page's reading column are, in
+    /// design units; `None` when the page gets none: the backdrop is off,
+    /// the page has no centred column (the graph, the settings, the editor),
+    /// or the pane is too narrow for them.
+    fn margin_width(&self, cx: &App) -> Option<f32> {
+        if !backdrop::shown(cx) || self.editing.is_some() {
+            return None;
+        }
+        let measure = match self.page {
+            Page::Graph | Page::Settings(_) => return None,
+            _ => reading_measure(&self.page),
+        };
+        glass::margin_width(reading::gutter(self.pane_width, measure))
+    }
+
+    /// `page` over the glass of a reading pane with clear margins `margin`
+    /// wide, which it tells the shell about, so that the sky shows in them.
+    /// Without margins, `page` alone: the pane under it has its surface.
+    fn on_reading_glass(
+        &self,
+        page: AnyElement,
+        margin: Option<f32>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Some(margin) = margin else {
+            return page;
+        };
+        self.margins_placed.set(true);
+        let margins = self.margins.clone();
+        // The sky shows in a margin and in its fade.
+        let clear = margin + glass::FADE;
+        let report = canvas(
+            move |bounds, _, cx| {
+                let width = px(clear).min(bounds.size.width / 2.);
+                let side = size(width, bounds.size.height);
+                let right = point(bounds.origin.x + bounds.size.width - width, bounds.origin.y);
+                margins.set(
+                    Some([Bounds::new(bounds.origin, side), Bounds::new(right, side)]),
+                    cx,
+                );
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .inset_0();
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .relative()
+            .child(
+                glass::reading_surface(self.glass, margin, cx)
+                    .absolute()
+                    .inset_0()
+                    .child(report),
+            )
             .child(page)
+            .into_any_element()
     }
 
     /// The page itself: a note as Markdown with its illustration in it, or
@@ -3790,11 +4134,7 @@ impl AppView {
         let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
-        // Notes are prose; everything else is mostly tables and needs room.
-        let measure = match self.page {
-            Page::Note { .. } => reading::NOTE_MEASURE,
-            _ => reading::WIDE_MEASURE,
-        };
+        let measure = reading_measure(&self.page);
         let content = {
             match &self.page {
                 Page::Note { .. } => {
@@ -3850,6 +4190,10 @@ impl AppView {
                     return self.doc_element(&Rc::new(live::message_page(message)), cx);
                 }
                 Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
+                Page::Waiting => {
+                    let doc = live::waiting_page(self.waiting.as_ref(), self.auto_explain_on);
+                    return self.doc_element(&Rc::new(doc), cx);
+                }
                 // Each has a view of its own (`graph_view`, `settings_frame`).
                 Page::Graph | Page::Settings(_) => div().into_any_element(),
             }
@@ -4318,6 +4662,14 @@ impl AppView {
                         .child("Drag to pan, scroll to zoom, click a node to open it. Size shows how much depends on a symbol; color shows its cluster."),
                 );
             }
+            Page::Waiting => {
+                pane = pane
+                    .child(heading("LIVE VIEW"))
+                    .child(div().text_sm().child("Waiting notes"))
+                    .child(div().text_xs().text_color(muted).child(
+                        "The list changes by itself when an agent takes or explains a note, and after a sync.",
+                    ));
+            }
             Page::Message(_) | Page::Notice(_) | Page::Home | Page::Settings(_) => {}
         }
         // Home lists the repositories itself.
@@ -4396,6 +4748,12 @@ fn load_notes(backend: &Backend, id: &str) -> Result<(Value, Value), String> {
     Ok((notes, proposals))
 }
 
+/// Whether auto explaining is on: `auto-explain.txt` in the data directory,
+/// which the app reads itself, as it does the folders kept from agents.
+fn read_auto_explain() -> bool {
+    cw_core::auto_explain::load(&cw_core::paths::data_dir())
+}
+
 fn parse_notes(value: &Value) -> Vec<NoteInfo> {
     value
         .as_array()
@@ -4442,6 +4800,7 @@ fn page_title(page: &Page) -> String {
     match page {
         Page::Message(_) | Page::Notice(_) => "CodeWiki".into(),
         Page::Home => "Home".into(),
+        Page::Waiting => "Waiting notes".into(),
         Page::Note { path, .. } => {
             let name = path.rsplit('/').next().unwrap_or(path);
             match name.trim_end_matches(".md") {
@@ -4511,6 +4870,7 @@ impl Render for AppView {
         // Read once so unused-field lints stay honest about what the UI shows.
         let _ = self.notes.iter().filter(|n| n.state == "stale").count();
         self.page_placed.set(false);
+        self.margins_placed.set(false);
         self.glass = glass::Levels::for_window(window, cx);
         // Components that draw their own surfaces read the levels from here.
         if cx.try_global::<glass::Levels>() != Some(&self.glass) {
@@ -4518,6 +4878,8 @@ impl Render for AppView {
             // The page is drawn cached and reads the levels; draw it again.
             doc_view::notify_after_draw(self.doc_page.entity_id(), cx);
         }
+        // Links in notes take their hover look from the kit's text view.
+        reading::sync_link_hover(cx);
         // A pane the user hides or shows slides out or in; the page takes
         // the width that is left, frame by frame.
         self.sidebar_shown = mui::motion::drawer("sidebar-shown", self.sidebar_open, window, cx);
@@ -4562,11 +4924,16 @@ impl Render for AppView {
                 cx.listener(|this, _: &ToggleDetails, _, cx| this.toggle_pane(Pane::Details, cx)),
             )
             .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(None, cx)))
-            // The palette's input would otherwise use these keys itself.
+            // The inputs of the palette and of the search field would
+            // otherwise use these keys themselves.
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {
                 if this.palette_open {
                     this.toggle_palette(window, cx);
                     cx.stop_propagation();
+                } else if this.suggestions.is_open() {
+                    this.suggestions.close();
+                    cx.stop_propagation();
+                    cx.notify();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveDown, _, cx| {
@@ -4576,11 +4943,19 @@ impl Render for AppView {
                         (this.palette_selected + 1).min(count.saturating_sub(1));
                     cx.stop_propagation();
                     cx.notify();
+                } else if this.suggestions.is_open() {
+                    this.suggestions.down();
+                    cx.stop_propagation();
+                    cx.notify();
                 }
             }))
             .capture_action(cx.listener(|this, _: &MoveUp, _, cx| {
                 if this.palette_open {
                     this.palette_selected = this.palette_selected.saturating_sub(1);
+                    cx.stop_propagation();
+                    cx.notify();
+                } else if this.suggestions.is_open() {
+                    this.suggestions.up();
                     cx.stop_propagation();
                     cx.notify();
                 }
@@ -4595,6 +4970,7 @@ impl Render for AppView {
             })
             // The list of a select of the Settings page, while one is open.
             .children(self.settings_menu_view(cx))
+            .children(self.suggestions_view(cx))
             .children(diagram_viewer)
             .children(toasts)
             // The place of the title bar, which the shell draws.
@@ -4604,6 +4980,10 @@ impl Render for AppView {
         // With no generated page in this frame, the shell has none to draw.
         if !self.page_placed.get() {
             self.page_slot.set(None, cx);
+        }
+        // Nor, without clear margins, any sky.
+        if !self.margins_placed.get() {
+            self.margins.set(None, cx);
         }
         root
     }
@@ -4669,8 +5049,8 @@ fn stops_backend_on_quit(remote: bool, installing: bool) -> bool {
 /// `backdrop`).
 fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyElement {
     let title = match &app.read(cx).repo {
-        Some(repo) => format!("CodeWiki — {}", repo.name),
-        None => "CodeWiki".to_string(),
+        Some(repo) => format!("{} — {}", cw_core::APP_NAME, repo.name),
+        None => cw_core::APP_NAME.to_string(),
     };
     let levels = glass::Levels::for_window(window, cx);
     // The zoom level, for a moment after it changes. Only shown: the bar
@@ -4701,6 +5081,15 @@ fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyEle
         .into_any_element()
 }
 
+/// The widest a line of `page` runs.
+fn reading_measure(page: &Page) -> f32 {
+    // Notes are prose; everything else is mostly tables and needs room.
+    match page {
+        Page::Note { .. } => reading::NOTE_MEASURE,
+        _ => reading::WIDE_MEASURE,
+    }
+}
+
 impl AppView {
     /// Whether the page takes the whole window, with no sidebar, toolbar,
     /// tabs or details: Home, the settings, and what shows before a
@@ -4716,18 +5105,30 @@ impl AppView {
 
     /// Everything below the title bar: sidebar, toolbar, tabs, page, details.
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        // The pane's surface, unless the page lies on clear margins: then
+        // the page brings its own (`on_reading_glass`) and what is above or
+        // below it here takes this one.
+        let pane = self
+            .glass
+            .pane(glass::tinted_pane(cx.theme().background, cx));
+        let margins = self.margin_width(cx).is_some();
         if self.fills_window() {
             let column = v_flex()
                 .flex_1()
                 .min_h_0()
                 .w_full()
-                .bg(self
-                    .glass
-                    .pane(glass::tinted_pane(cx.theme().background, cx)))
+                .when(!margins, |column| column.bg(pane))
                 .when(self.busy.is_some(), |column| {
-                    column.child(feedback::linear_progress("busy", cx))
+                    column.child(
+                        div()
+                            .when(margins, |strip| strip.bg(pane))
+                            .child(feedback::linear_progress("busy", cx)),
+                    )
                 })
-                .children(self.reconnect_banner(cx));
+                .children(
+                    self.reconnect_banner(cx)
+                        .map(|banner| banner.when(margins, |banner| banner.bg(pane))),
+                );
             if let Page::Settings(category) = self.page {
                 return column.child(self.settings_frame(category, window, cx));
             }
@@ -4744,9 +5145,12 @@ impl AppView {
                         .child(self.page_view(cx)),
                 )
                 .when(home, |column| {
-                    column
-                        .child(glass::hairline(cx))
-                        .child(h_flex().child(self.settings_entry(cx)))
+                    column.child(
+                        v_flex()
+                            .when(margins, |foot| foot.bg(pane))
+                            .child(glass::hairline(cx))
+                            .child(h_flex().child(self.settings_entry(cx))),
+                    )
                 });
         }
         h_flex()
@@ -4791,9 +5195,7 @@ impl AppView {
                                     .flex_1()
                                     .min_w_0()
                                     .h_full()
-                                    .bg(self
-                                        .glass
-                                        .pane(glass::tinted_pane(cx.theme().background, cx)))
+                                    .when(!margins, |pane_view| pane_view.bg(pane))
                                     .child(if matches!(self.page, Page::Graph) {
                                         self.graph_view(window, cx)
                                     } else {
@@ -4850,6 +5252,7 @@ fn main() {
     app.run(move |cx| {
         gpui_kit::init(cx);
         motion::init(cx);
+        backdrop::init(cx);
         fonts::register(cx);
         themes::init(cx);
         // After the themes: zoom takes the theme's sizes as they are now as
@@ -4878,7 +5281,7 @@ fn main() {
             KeyBinding::new("ctrl-0", ZoomReset, None),
         ]);
         let (window, _) = gpui_kit::open_window(window_options(cx), cx, |window, cx| {
-            window.set_window_title("CodeWiki");
+            window.set_window_title(cw_core::APP_NAME);
             // Windows 11 backdrop; older systems ignore it.
             window.set_background_appearance(WindowBackgroundAppearance::MicaBackdrop);
             let slot = Rc::new(doc_view::PageSlot::default());
@@ -4889,6 +5292,7 @@ fn main() {
                 view
             });
             let page = app.read(cx).doc_page.clone();
+            let margins = app.read(cx).margins.clone();
             // Closing the window hides it; the app stays in the tray, where
             // Quit ends it. The window is never really closed, so nothing in
             // it is lost: not the page, not unsaved edits. Without a tray
@@ -4924,7 +5328,8 @@ fn main() {
             });
             // The backend ends with the app. It finishes what it is doing
             // first (an update of the wiki, say) and then exits by itself;
-            // the app does not wait for that.
+            // the app does not wait for that. GPUI waits 200 ms for the
+            // request itself, so asking a dead backend must fail fast.
             cx.on_app_quit({
                 let app = app.clone();
                 move |cx| {
@@ -4946,13 +5351,13 @@ fn main() {
                 }
             })
             .detach();
-            // The shell draws the drifting backdrop, the app over it, and
-            // the generated page in the place the app leaves for it.
+            // The shell draws the drifting backdrop and its sky, the app over
+            // them, and the generated page in the place the app leaves for it.
             let bar = {
                 let app = app.clone();
                 Box::new(move |window: &mut Window, cx: &mut App| title_bar(&app, window, cx))
             };
-            cx.new(|cx| backdrop::Shell::new(app, bar, page, slot, window, cx))
+            cx.new(|cx| backdrop::Shell::new(app, bar, page, slot, margins, window, cx))
         })
         .expect("failed to open the main window");
         // gpui-kit paints the theme background over the whole window, which

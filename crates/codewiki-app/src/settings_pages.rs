@@ -95,6 +95,10 @@ pub struct Model<'a> {
     pub autostart: Option<bool>,
     /// Whether the app starts on the wiki map of the repository it opens.
     pub open_last: bool,
+    /// Whether the backdrop and its sky of notes are drawn.
+    pub backdrop: bool,
+    /// Whether coding agents explain waiting notes at the start of a session.
+    pub auto_explain: bool,
     /// The level of the app's log, by its name, and whether `CODEWIKI_LOG`
     /// fixes it.
     pub log_level: &'a str,
@@ -165,9 +169,16 @@ fn appearance(model: &Model) -> Vec<Block> {
                     text("Your own themes load from the "),
                     code("themes"),
                     text(" folder in "),
-                    code("%APPDATA%\\CodeWiki"),
+                    code(format!("%APPDATA%\\{}", cw_core::paths::APP_FOLDER)),
                     text(", in the same JSON format."),
                 ]),
+                Block::Switch {
+                    label: "Background graph".into(),
+                    help: Some("Notes and links behind the glass, beside the page".into()),
+                    on: model.backdrop,
+                    action: Action::Backdrop(!model.backdrop),
+                    locked: None,
+                },
             ],
         ),
         card(
@@ -873,8 +884,23 @@ fn repositories(model: &Model) -> Vec<Block> {
         }
         blocks.push(Block::Table(table));
     }
+    blocks.push(auto_explain_card(model));
     blocks.push(agents_card(model));
     blocks
+}
+
+/// The switch that lets coding agents explain waiting notes on their own.
+fn auto_explain_card(model: &Model) -> Block {
+    card(
+        "Auto explaining",
+        vec![Block::Switch {
+            label: "Explain waiting notes at the start of a session".into(),
+            help: Some("A coding agent with the CodeWiki plugin explains up to 20 waiting notes in the background when a session starts. Folders kept from coding agents are left out.".into()),
+            on: model.auto_explain,
+            action: Action::AutoExplain(!model.auto_explain),
+            locked: None,
+        }],
+    )
 }
 
 /// The folders kept from coding agents, with what takes one off the list or
@@ -1066,7 +1092,7 @@ fn error_reports(model: &Model) -> Block {
                 locked,
             },
             Block::Text(vec![text(
-                "A crash or an error of the app, the backend or the agents' bridge goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key. Sentry keeps the city and country of the network a report comes from, not its address.",
+                "A crash or an error of the app, the backend or the agents' bridge goes to the developer through Sentry: what failed, where in the code, the version of CodeWiki and of Windows, and the log lines just before it, which can name a repository or a note. Never a file path, note text, a search query or a key. Sentry keeps neither the network address a report comes from nor the city and country of that address.",
             )]),
         ],
     )
@@ -1134,6 +1160,8 @@ mod tests {
         auto_update: bool,
         autostart: Option<bool>,
         open_last: bool,
+        backdrop: bool,
+        auto_explain: bool,
         log_level_locked: bool,
         error_reports: Reporting,
         error_reports_on: bool,
@@ -1162,6 +1190,8 @@ mod tests {
                 auto_update: true,
                 autostart: Some(false),
                 open_last: false,
+                backdrop: true,
+                auto_explain: true,
                 log_level_locked: false,
                 error_reports: Reporting::Switch,
                 error_reports_on: false,
@@ -1196,6 +1226,8 @@ mod tests {
                     auto_update: self.auto_update,
                     autostart: self.autostart,
                     open_last: self.open_last,
+                    backdrop: self.backdrop,
+                    auto_explain: self.auto_explain,
                     log_level: "info",
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
@@ -1281,6 +1313,49 @@ mod tests {
         let on = fixture.page(Category::Appearance);
         assert!(on.words().contains("Open the last repository: on"));
         assert!(on.actions().contains(&Action::OpenLast(false)));
+    }
+
+    #[test]
+    fn the_background_graph_can_be_turned_off_and_on() {
+        let mut fixture = Fixture::new();
+        let on = fixture.page(Category::Appearance);
+        assert!(
+            on.words().contains("Background graph: on"),
+            "{}",
+            on.words()
+        );
+        assert!(
+            on.words()
+                .contains("Notes and links behind the glass, beside the page")
+        );
+        assert!(on.actions().contains(&Action::Backdrop(false)));
+
+        fixture.backdrop = false;
+        let off = fixture.page(Category::Appearance);
+        assert!(off.words().contains("Background graph: off"));
+        assert!(off.actions().contains(&Action::Backdrop(true)));
+    }
+
+    #[test]
+    fn repositories_offers_the_auto_explaining_switch() {
+        let mut fixture = Fixture::new();
+        let on = fixture.page(Category::Repositories);
+        let words = on.words();
+        assert!(words.contains("Auto explaining"), "{words}");
+        assert!(
+            words.contains("Explain waiting notes at the start of a session: on"),
+            "{words}"
+        );
+        assert!(words.contains("explains up to 20 waiting notes in the background"));
+        assert!(on.actions().contains(&Action::AutoExplain(false)));
+
+        fixture.auto_explain = false;
+        let off = fixture.page(Category::Repositories);
+        assert!(
+            off.words()
+                .contains("Explain waiting notes at the start of a session: off")
+        );
+        assert!(off.actions().contains(&Action::AutoExplain(true)));
     }
 
     #[test]
@@ -1936,7 +2011,10 @@ mod tests {
         assert!(words.contains("Kept from coding agents"), "{words}");
         assert!(words.contains(AGENTS_LINE), "{words}");
         assert!(words.contains("Add folder…"), "{words}");
-        assert_eq!(doc.actions(), [Action::PickAgentsFolder]);
+        assert_eq!(
+            doc.actions(),
+            [Action::AutoExplain(false), Action::PickAgentsFolder]
+        );
     }
 
     #[test]

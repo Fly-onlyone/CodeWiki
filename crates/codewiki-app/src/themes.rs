@@ -575,6 +575,61 @@ mod tests {
         assert!(failures.is_empty(), "{failures:#?}");
     }
 
+    /// The looks of `mui::interaction` read on every bundled theme: the
+    /// selected row's label on its fill, a hovered link on the page (AA for
+    /// both), and a switched-on icon button's icon on its fill (3:1, an
+    /// icon being a graphic).
+    #[test]
+    fn every_bundled_theme_reads_in_its_selected_and_hovered_states() {
+        use crate::glass::CHROME_TINT;
+        use crate::mui::interaction::{Accent, DARK, lift};
+        const NON_TEXT: f32 = 3.0;
+        let key = |accent: Accent| match accent {
+            Accent::Primary => "primary.background",
+            Accent::Secondary => "link",
+        };
+        let rgb = |color: gpui_kit::Hsla| {
+            let color = color.to_rgb();
+            [color.r, color.g, color.b]
+        };
+        let mut failures = Vec::new();
+        for theme in bundled_themes() {
+            let name = theme["name"].as_str().unwrap();
+            let look = DARK.for_mode(theme["mode"] == "dark");
+            let color = |key: &str| parse_hex(theme["colors"][key].as_str().unwrap()).unwrap();
+            let primary = color("primary.background");
+            let chrome = over(primary, CHROME_TINT, color("sidebar.background"));
+            let pane = over(primary, PANE_TINT, color("background"));
+
+            let row = over(primary, look.row_selected_hover, chrome);
+            let label = rgb(lift(
+                to_hsla(color(key(look.selected_label))),
+                look.label_lift,
+            ));
+            let worst = worst_ratio(label, row, PANE_FLOOR, [BLACK, WHITE]);
+            if worst < AA {
+                failures.push(format!("{name}: selected label is {worst:.2}:1"));
+            }
+
+            let link = rgb(lift(to_hsla(color("link")), look.link_lift));
+            let worst = worst_ratio(link, pane, PANE_FLOOR, [BLACK, WHITE]);
+            if worst < AA {
+                failures.push(format!("{name}: hovered link is {worst:.2}:1"));
+            }
+
+            let on = over(primary, look.toggled + look.hover, chrome);
+            let icon = rgb(lift(
+                to_hsla(color(key(look.toggled_icon))),
+                look.toggled_icon_lift,
+            ));
+            let worst = worst_ratio(icon, on, PANE_FLOOR, [BLACK, WHITE]);
+            if worst < NON_TEXT {
+                failures.push(format!("{name}: switched-on icon is {worst:.2}:1"));
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+
     /// A theme is told by three hues, not one: the secondary color is a
     /// neighbour of the primary one, the tertiary color sits far from both,
     /// and neither can be taken for a status color.

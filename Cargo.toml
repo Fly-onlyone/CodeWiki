@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["crates/*"]
-exclude = ["spikes"]
+exclude = ["spikes", "vendor"]
 
 [workspace.package]
 version = "0.3.1"
@@ -33,3 +33,11 @@ debug = false
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# gpui-base 0.9.1 with a hover look for links in a TextView (`LinkHoverStyle`),
+# which the release lacks. The copy is the published crate with its tests and
+# benches left out; NOTICE lists the files changed. Drop it, or copy the new
+# release and patch it again, when gpui-kit is bumped. Asked of gpui-kit in
+# https://github.com/longbridge/gpui-kit/issues/4116.
+[patch.crates-io]
+gpui-base = { path = "vendor/gpui-base" }

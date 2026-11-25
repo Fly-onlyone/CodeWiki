@@ -158,7 +158,8 @@ impl AppView {
                 match result {
                     Ok(detail) => {
                         // The error of a proposal that did not load goes
-                        // once one does; any other error stays.
+                        // once one does. The page change below clears any
+                        // other error as well (`show_page`).
                         if let Some(failed) = this.review.load_error.take()
                             && this.error.as_ref() == Some(&failed)
                         {

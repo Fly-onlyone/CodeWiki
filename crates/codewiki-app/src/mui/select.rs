@@ -23,6 +23,7 @@ use gpui_kit::{
 };
 
 use super::base::{Base, Ink, OnClick, focus_ring};
+use super::interaction;
 use super::menu::{Align, Menu, MenuSection};
 use super::motion::scaled;
 use super::text_field::HEIGHT;
@@ -143,7 +144,7 @@ impl RenderOnce for Select {
         } else if active {
             primary
         } else if base.hovered {
-            primary.opacity(0.5)
+            primary.opacity(interaction::current(cx).outline_hover)
         } else {
             foreground.opacity(OUTLINE_OPACITY)
         };

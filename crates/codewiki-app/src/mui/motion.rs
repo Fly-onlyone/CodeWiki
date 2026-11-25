@@ -58,6 +58,12 @@ pub const STAGGER_CAP: usize = 12;
 /// `scaleIn` exit, and the exit of `tabSwitch` and `pageEntrance`.
 pub const EXIT: Duration = Duration::from_millis(120);
 
+/// How fast a control takes its pressed look, and lets it go. Not a motion
+/// of MUI, whose press is the ripple alone: quick enough to answer the
+/// press at once, and slow enough on the way back that a short click shows.
+pub const PRESS_IN: Duration = Duration::from_millis(50);
+pub const PRESS_OUT: Duration = Duration::from_millis(250);
+
 /// How long the word "Saved" stays beside a setting. Not a motion of MUI or
 /// of TradingAgent: long enough to be read, and gone before the next change.
 pub const NOTE_HOLD: Duration = Duration::from_millis(2500);

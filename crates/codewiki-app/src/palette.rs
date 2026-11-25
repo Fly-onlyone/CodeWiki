@@ -33,6 +33,8 @@ pub enum Command {
     Refactor,
     Workspace,
     Contracts,
+    /// Show the notes that wait for a coding agent to explain them.
+    Waiting,
     Themes,
     /// Open the settings: at this category, or where they were left.
     Settings(Option<Category>),
@@ -132,6 +134,7 @@ pub fn actions() -> Vec<Entry> {
         ("Show refactoring plan", Command::Refactor),
         ("Show workspace", Command::Workspace),
         ("Show API contracts", Command::Contracts),
+        ("Show waiting notes", Command::Waiting),
         ("Choose theme", Command::Themes),
         ("Open settings", Command::Settings(None)),
         ("New tab", Command::NewTab),
@@ -278,6 +281,13 @@ mod tests {
         let found = filter(&actions(), "logs", 5);
         assert_eq!(found[0].label, "Open logs folder");
         assert_eq!(found[0].command, Command::OpenLogs);
+    }
+
+    #[test]
+    fn the_waiting_notes_open_from_the_palette() {
+        let found = filter(&actions(), "waiting", 5);
+        assert_eq!(found[0].label, "Show waiting notes");
+        assert_eq!(found[0].command, Command::Waiting);
     }
 
     #[test]

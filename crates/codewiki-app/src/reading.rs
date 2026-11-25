@@ -11,13 +11,16 @@
 //! title and its list markers the secondary color, as links do, and
 //! second-level headings, table heads and quotes the tertiary one.
 
+use gpui_kit::base::text::LinkHoverStyle;
 use gpui_kit::base::{TextView, TextViewStyle};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::{
-    App, FontWeight, HighlightStyle, Overflow, StyleRefinement, Styled as _, relative, rems,
+    App, FontWeight, HighlightStyle, Overflow, StyleRefinement, Styled as _, UnderlineStyle,
+    relative, rems,
 };
 
 use crate::icons::Hue;
+use crate::mui::interaction;
 use crate::zoom::px;
 use crate::{glass, themes};
 
@@ -130,6 +133,31 @@ fn style(cx: &App) -> TextViewStyle {
         .with_inline_code(inline_code)
         .with_list_style(StyleRefinement::default().text_color(theme.link))
         .with_dark(theme.is_dark())
+}
+
+/// How a link under the pointer is drawn, over its look at rest: lighter
+/// (darker on a light theme), with a solid underline.
+pub fn link_hover(cx: &App) -> HighlightStyle {
+    let look = interaction::current(cx);
+    let color = interaction::lift(cx.theme().link, look.link_lift);
+    HighlightStyle {
+        color: Some(color),
+        underline: Some(UnderlineStyle {
+            thickness: px(look.link_underline_px),
+            color: Some(color.opacity(look.link_underline)),
+            wavy: false,
+        }),
+        ..Default::default()
+    }
+}
+
+/// Hand [`link_hover`] to gpui-base, whose text view draws the links of a
+/// note. Call while rendering; it sets the global only when it changed.
+pub fn sync_link_hover(cx: &mut App) {
+    let style = LinkHoverStyle(Some(link_hover(cx)));
+    if cx.try_global::<LinkHoverStyle>() != Some(&style) {
+        cx.set_global(style);
+    }
 }
 
 /// Set `view` for reading in a pane `pane_width` wide, with lines no longer

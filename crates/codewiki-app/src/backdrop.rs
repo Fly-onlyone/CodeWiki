@@ -9,6 +9,19 @@
 //! of faint discs, each smaller than the last, which adds up to a color that
 //! is strongest in the middle and fades to nothing at the rim.
 //!
+//! Over the color lies a sky of notes and the links between them
+//! (`constellation.rs`), which says what the app is about. It is drawn only
+//! in the clear margins beside the reading column ([`Margins`]): there the
+//! page's glass is at its thinnest and carries no text, so the sky can be
+//! strong without making anything harder to read. None of it is behind the
+//! chrome, whose glass `glass` fits to [`STRENGTH`] of the shapes alone, nor
+//! behind the column, where moving light would pull the eye off the text.
+//! Light runs along the links: now and then by itself, and often while a wiki
+//! is being written ([`set_writing`]). What is near the pointer brightens.
+//!
+//! Settings → Appearance turns the whole backdrop off ([`set_shown`]): plain
+//! Mica behind the glass, and a page as dense as its column.
+//!
 //! [`Shell`] is the window's outermost view. It draws the shapes and, on top,
 //! the app and the generated page, each as a cached view. Only the shell is
 //! redrawn when the shapes move; the app and the page keep their last frames
@@ -28,13 +41,14 @@
 //! shares of the window and keep GPUI's own pixels.
 //!
 //! The shapes stand still when the window is inactive and under reduced
-//! motion, so an idle or backgrounded window costs nothing. They also stand
+//! motion, so an idle or backgrounded window costs nothing; so do the sky, its
+//! pulses and the pointer's light. They also stand
 //! still when Direct3D runs on the processor (a virtual machine, a remote
 //! session, a broken graphics driver): there every frame of the drift is
 //! drawn by the processor, and in a clean-Windows test an idle window kept
 //! both cores of the machine busy and starved everything else.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::f32::consts::TAU;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -42,13 +56,14 @@ use std::time::{Duration, Instant};
 use gpui_kit::component::ActiveTheme as _;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, Bounds, Context, DispatchPhase, Div, Entity, Hsla, IntoElement,
-    ParentElement as _, Pixels, Render, ScrollEvent, StyleRefinement, Styled as _, Subscription,
-    Window, canvas, div, px,
+    AnyElement, App, Bounds, ContentMask, Context, DispatchPhase, Div, Entity, EntityId, Global,
+    Hsla, IntoElement, ParentElement as _, PathBuilder, Pixels, Point, Render, ScrollEvent,
+    StyleRefinement, Styled as _, Subscription, Window, canvas, div, point, px,
 };
 
-use crate::doc_view::{DocPage, PageSlot};
-use crate::{glass, win32, zoom};
+use crate::constellation::{self, CLUSTERS, Constellation, Pulse, Traffic};
+use crate::doc_view::{self, DocPage, PageSlot};
+use crate::{glass, prefs, win32, zoom};
 
 /// Seconds for the shapes to come back to where they started.
 const PERIOD: f32 = 90.0;
@@ -80,6 +95,112 @@ fn ring_radius(index: usize) -> f32 {
 /// The opacity of each disc such that all of them stacked reach `total`.
 fn ring_alpha(total: f32) -> f32 {
     1.0 - (1.0 - total).powf(1.0 / RINGS as f32)
+}
+
+/// How strongly each part of the sky colors what is behind the margins'
+/// glass. The margins carry no text, so no contrast limit applies to these.
+/// These and the pointer's light, the sizes and widths below, were chosen by
+/// eye on 2026-11-24.
+const LINK_ALPHA: f32 = 0.32;
+const NODE_ALPHA: f32 = 0.6;
+const PULSE_ALPHA: f32 = 0.95;
+/// Added to a node or link right under the pointer, less further off.
+const POINTER_ALPHA: f32 = 0.35;
+/// How far the pointer's light reaches, in the screen's pixels.
+const POINTER_RADIUS: f32 = 160.0;
+/// Width of a link, and of a pulse's trail, in the screen's pixels.
+const LINK_WIDTH: f32 = 1.0;
+const TRAIL_WIDTH: f32 = 1.5;
+/// Share of its link a pulse's trail covers behind it.
+const TRAIL: f32 = 0.22;
+/// Radius of a node with one link, and what each further link adds, in the
+/// screen's pixels: a hub is drawn largest.
+const NODE_RADIUS: f32 = 2.5;
+const NODE_GROWTH: f32 = 0.9;
+/// Radius of a pulse's head, and of the flash where it arrives, as a multiple
+/// of the node's own radius.
+const PULSE_RADIUS: f32 = 2.5;
+const FLASH_SCALE: f32 = 2.0;
+/// Corners of the polygon that draws a disc.
+const DISC_CORNERS: usize = 14;
+/// Seed of the pulses' choices.
+const TRAFFIC_SEED: u64 = 0x5EED;
+
+/// The setting that turns the backdrop on and off.
+const SETTING: &str = "backdrop";
+
+/// Whether the backdrop is drawn, as the setting says. A global, so that the
+/// shell and the app read it in every frame without a file.
+struct Shown(bool);
+
+impl Global for Shown {}
+
+/// Read the setting. Call once at start.
+pub fn init(cx: &mut App) {
+    cx.set_global(Shown(prefs::read(SETTING).as_deref() != Some("off")));
+}
+
+/// Whether the backdrop is drawn: on until the user turns it off.
+pub fn shown(cx: &App) -> bool {
+    cx.try_global::<Shown>().is_none_or(|shown| shown.0)
+}
+
+/// Turn the backdrop on or off, and remember it.
+pub fn set_shown(on: bool, cx: &mut App) {
+    prefs::write(SETTING, if on { "on" } else { "off" });
+    cx.set_global(Shown(on));
+}
+
+/// Whether a wiki is being written: the app's own sync, or an update the
+/// backend runs for anybody, a coding agent included.
+struct Writing(bool);
+
+impl Global for Writing {}
+
+fn writing(cx: &App) -> bool {
+    cx.try_global::<Writing>().is_some_and(|writing| writing.0)
+}
+
+/// Say whether a wiki is being written. Cheap to call often: the shell hears
+/// of it only when it changes.
+pub fn set_writing(on: bool, cx: &mut App) {
+    if writing(cx) != on {
+        cx.set_global(Writing(on));
+    }
+}
+
+/// The clear margins on the left and right of the reading column, in window
+/// coordinates: where the sky is drawn. The app, which lays the page out,
+/// writes them; the shell reads them.
+#[derive(Default)]
+pub struct Margins {
+    sides: Cell<Option<[Bounds<Pixels>; 2]>>,
+    /// The view to draw again when they change.
+    reader: Cell<Option<EntityId>>,
+}
+
+impl Margins {
+    /// The two margins; `None` while the page has none.
+    pub fn get(&self) -> Option<[Bounds<Pixels>; 2]> {
+        self.sides.get()
+    }
+
+    fn read_by(&self, reader: EntityId) {
+        self.reader.set(Some(reader));
+    }
+
+    /// Say where the margins are. Cheap to call on every frame: the reader is
+    /// only told when they have changed. It runs while a frame is drawn, so
+    /// the reader is told once the frame is done.
+    pub fn set(&self, sides: Option<[Bounds<Pixels>; 2]>, cx: &mut App) {
+        if self.sides.get() == sides {
+            return;
+        }
+        self.sides.set(sides);
+        if let Some(reader) = self.reader.get() {
+            doc_view::notify_after_draw(reader, cx);
+        }
+    }
 }
 
 /// How GPUI names an adapter from Microsoft's vendor ID, 0x1414.
@@ -164,7 +285,13 @@ impl Blob {
 
 /// `phase` moved on by `seconds`, wrapped into 0 to 1.
 fn advance(phase: f32, seconds: f32) -> f32 {
-    (phase + seconds.clamp(0.0, MAX_STEP) / PERIOD).rem_euclid(1.0)
+    (phase + step(seconds) / PERIOD).rem_euclid(1.0)
+}
+
+/// The time one frame moves things on by: `seconds`, never backwards and
+/// never more than `MAX_STEP`.
+fn step(seconds: f32) -> f32 {
+    seconds.clamp(0.0, MAX_STEP)
 }
 
 /// Draws the window's title bar.
@@ -179,6 +306,13 @@ pub struct Shell<V: Render> {
     /// The generated page, and where the app wants it.
     page: Entity<DocPage>,
     slot: Rc<PageSlot>,
+    /// Where the clear margins are, which the sky shows through.
+    margins: Rc<Margins>,
+    sky: Constellation,
+    traffic: Traffic,
+    /// Seconds the sky has moved for: the pulses' clock. It stands still
+    /// whenever the shapes do.
+    clock: f32,
     /// Opaque color painted under everything in place of the real backdrop.
     debug_backdrop: Option<Hsla>,
     /// Drift even while the window is inactive, so that a capture taken
@@ -195,6 +329,8 @@ pub struct Shell<V: Render> {
     wheel: Rc<RefCell<zoom::Wheel>>,
     _activation: Subscription,
     _zoom_chip: Subscription,
+    _shown: Subscription,
+    _writing: Subscription,
 }
 
 impl<V: Render> Shell<V> {
@@ -203,14 +339,19 @@ impl<V: Render> Shell<V> {
         title_bar: TitleBarFn,
         page: Entity<DocPage>,
         slot: Rc<PageSlot>,
+        margins: Rc<Margins>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         slot.read_by(cx.entity_id());
+        margins.read_by(cx.entity_id());
         // Start and stop drifting as the window gains and loses focus.
         let activation = cx.observe_window_activation(window, |_, _, cx| cx.notify());
         // The zoom level in the title bar comes and goes.
         let zoom_chip = cx.observe_global::<zoom::Indicator>(|_, cx| cx.notify());
+        // The setting, and a wiki that starts or stops being written.
+        let shown = cx.observe_global::<Shown>(|_, cx| cx.notify());
+        let writing = cx.observe_global::<Writing>(|_, cx| cx.notify());
         let specs = window.gpu_specs();
         let software = specs.as_ref().is_some_and(|gpu| {
             draws_on_processor(gpu.is_software_emulated, &gpu.device_name, &gpu.driver_name)
@@ -229,6 +370,10 @@ impl<V: Render> Shell<V> {
             title_bar,
             page,
             slot,
+            margins,
+            sky: Constellation::new(),
+            traffic: Traffic::new(TRAFFIC_SEED),
+            clock: 0.0,
             debug_backdrop: glass::debug_backdrop(),
             always_drift: std::env::var_os("CODEWIKI_BACKDROP_DRIFT").is_some(),
             software,
@@ -238,22 +383,29 @@ impl<V: Render> Shell<V> {
             wheel: Rc::default(),
             _activation: activation,
             _zoom_chip: zoom_chip,
+            _shown: shown,
+            _writing: writing,
         }
     }
 
-    /// Move the shapes on by the time since the last frame, and ask for the
-    /// next frame. Does nothing while the shapes should stand still.
-    fn drift(&mut self, window: &Window, cx: &mut Context<Self>) {
-        let moving = !cx.reduce_motion()
+    /// Move the shapes and the sky on by the time since the last frame, and
+    /// ask for the next frame. Does nothing while they should stand still.
+    /// Returns whether they move.
+    fn drift(&mut self, window: &Window, cx: &mut Context<Self>) -> bool {
+        let moving = shown(cx)
+            && !cx.reduce_motion()
             && (self.always_drift || (!self.software && window.is_window_active()));
         if !moving {
             self.moved_at = None;
-            return;
+            return false;
         }
         let now = Instant::now();
         if let Some(before) = self.moved_at {
-            self.phase = advance(self.phase, (now - before).as_secs_f32());
+            let seconds = (now - before).as_secs_f32();
+            self.phase = advance(self.phase, seconds);
+            self.clock += step(seconds);
         }
+        self.traffic.advance(&self.sky, self.clock, writing(cx));
         self.moved_at = Some(now);
         if !self.tick_pending {
             self.tick_pending = true;
@@ -267,6 +419,28 @@ impl<V: Render> Shell<V> {
             })
             .detach();
         }
+        true
+    }
+
+    /// The sky as this frame shows it, or `None` while the page has no clear
+    /// margins. The pointer lights it only while it moves.
+    // In the screen's pixels, as the shapes: zoom leaves the sky alone.
+    #[allow(clippy::disallowed_methods)]
+    fn sky(&self, moving: bool, window: &Window, cx: &App) -> Option<Sky> {
+        let sides = self.margins.get()?;
+        let brand = crate::themes::Brand::of(cx.theme());
+        let viewport = window.viewport_size();
+        let pointer = (moving && window.is_window_hovered()).then(|| window.mouse_position());
+        Some(Sky::new(
+            &self.sky,
+            &self.traffic.pulses,
+            self.phase,
+            self.clock,
+            (viewport.width / px(1.), viewport.height / px(1.)),
+            pointer.map(|p| (p.x / px(1.), p.y / px(1.))),
+            [brand.primary, brand.secondary, brand.tertiary],
+            sides,
+        ))
     }
 
     // Shares of the window, in the screen's pixels: zoom leaves them alone.
@@ -318,7 +492,9 @@ impl<V: Render> Render for Shell<V> {
         if zoom::sync_theme(cx) {
             window.set_rem_size(cx.theme().font_size);
         }
-        self.drift(window, cx);
+        let moving = self.drift(window, cx);
+        let shown = shown(cx);
+        let sky = shown.then(|| self.sky(moving, window, cx)).flatten();
         // The title bar keeps its size at every zoom, as a browser's does.
         let title_bar = zoom::unscaled(|| (self.title_bar)(window, cx));
         let wheel = self.wheel.clone();
@@ -355,7 +531,14 @@ impl<V: Render> Render for Shell<V> {
             .when_some(self.debug_backdrop, |shell, color| {
                 shell.child(div().absolute().inset_0().bg(color))
             })
-            .child(self.shapes(window, cx))
+            .when(shown, |shell| shell.child(self.shapes(window, cx)))
+            .when_some(sky, |shell, sky| {
+                shell.child(
+                    canvas(|_, _, _| (), move |_, _, window, _| sky.paint(window))
+                        .absolute()
+                        .inset_0(),
+                )
+            })
             .child(
                 self.content
                     .clone()
@@ -387,6 +570,213 @@ impl<V: Render> Render for Shell<V> {
                 )
             })
     }
+}
+
+/// A point in the screen's pixels, from the window's top left corner.
+type At = (f32, f32);
+
+fn lerp(from: At, to: At, t: f32) -> At {
+    (from.0 + (to.0 - from.0) * t, from.1 + (to.1 - from.1) * t)
+}
+
+/// A node as one frame draws it.
+struct Spot {
+    at: At,
+    radius: f32,
+    cluster: usize,
+    /// How much the pointer lights it, from 0 to 1.
+    lit: f32,
+}
+
+/// A link as one frame draws it.
+struct Line {
+    from: At,
+    to: At,
+    cluster: usize,
+    lit: f32,
+}
+
+/// A pulse as one frame draws it: its head, the trail behind it, and the
+/// flash of the node it is about to reach.
+struct Glint {
+    tail: At,
+    head: At,
+    brightness: f32,
+    cluster: usize,
+    flash_at: At,
+    flash_radius: f32,
+    flash: f32,
+}
+
+/// The sky of one frame, in the screen's pixels, ready to paint.
+struct Sky {
+    colors: [Hsla; CLUSTERS],
+    nodes: Vec<Spot>,
+    links: Vec<Line>,
+    glints: Vec<Glint>,
+    /// The margins it shows in; nothing of it is painted elsewhere.
+    sides: [Bounds<Pixels>; 2],
+}
+
+impl Sky {
+    /// Lay `sky` out at `phase` in a window `size` big, with `pulses` at
+    /// `clock` and the pointer, when it lights anything, at `pointer`.
+    #[allow(clippy::too_many_arguments)]
+    fn new(
+        sky: &Constellation,
+        pulses: &[Pulse],
+        phase: f32,
+        clock: f32,
+        size: (f32, f32),
+        pointer: Option<At>,
+        colors: [Hsla; CLUSTERS],
+        sides: [Bounds<Pixels>; 2],
+    ) -> Self {
+        let places: Vec<At> = sky
+            .nodes
+            .iter()
+            .map(|node| node.place(phase, size.0, size.1))
+            .collect();
+        let near = |distance: f32| constellation::lit(distance, POINTER_RADIUS);
+        let nodes: Vec<Spot> = sky
+            .nodes
+            .iter()
+            .zip(&places)
+            .map(|(node, &at)| Spot {
+                at,
+                radius: NODE_RADIUS + NODE_GROWTH * node.degree.saturating_sub(1) as f32,
+                cluster: node.cluster,
+                lit: pointer.map_or(0.0, |p| near((p.0 - at.0).hypot(p.1 - at.1))),
+            })
+            .collect();
+        let links = sky
+            .links
+            .iter()
+            .map(|&[a, b]| {
+                let (from, to) = (places[a], places[b]);
+                Line {
+                    from,
+                    to,
+                    cluster: sky.nodes[a].cluster,
+                    lit: pointer
+                        .map_or(0.0, |p| near(constellation::segment_distance(p, from, to))),
+                }
+            })
+            .collect();
+        let glints = pulses
+            .iter()
+            .map(|pulse| {
+                let t = pulse.progress(clock);
+                let to = pulse.to(sky);
+                let (start, end) = (places[pulse.from], places[to]);
+                Glint {
+                    tail: lerp(start, end, (t - TRAIL).max(0.0)),
+                    head: lerp(start, end, t),
+                    brightness: Pulse::brightness(t),
+                    cluster: sky.nodes[pulse.from].cluster,
+                    flash_at: end,
+                    flash_radius: nodes[to].radius * FLASH_SCALE,
+                    flash: Pulse::flash(t),
+                }
+            })
+            .collect();
+        Self {
+            colors,
+            nodes,
+            links,
+            glints,
+            sides,
+        }
+    }
+
+    fn paint(&self, window: &mut Window) {
+        for side in self.sides {
+            window.with_content_mask(Some(ContentMask { bounds: side }), |window| {
+                self.paint_once(window)
+            });
+        }
+    }
+
+    // The sky keeps the screen's pixels at every zoom, as the shapes do.
+    #[allow(clippy::disallowed_methods)]
+    fn paint_once(&self, window: &mut Window) {
+        let at = |(x, y): At| point(px(x), px(y));
+        let stroke = |width: f32, from: At, to: At| {
+            let mut line = PathBuilder::stroke(px(width));
+            line.move_to(at(from));
+            line.line_to(at(to));
+            line.build().ok()
+        };
+        let dot = |centre: At, radius: f32| {
+            let mut shape = PathBuilder::fill();
+            shape.add_polygon(&disc(centre, radius), true);
+            shape.build().ok()
+        };
+        // Links, then nodes over their ends: one path for each cluster, so
+        // that the whole sky costs six draws.
+        for (cluster, &color) in self.colors.iter().enumerate() {
+            let mut lines = PathBuilder::stroke(px(LINK_WIDTH));
+            let mut any = false;
+            for line in self.links.iter().filter(|line| line.cluster == cluster) {
+                lines.move_to(at(line.from));
+                lines.line_to(at(line.to));
+                any = true;
+            }
+            if any && let Ok(path) = lines.build() {
+                window.paint_path(path, color.opacity(LINK_ALPHA));
+            }
+        }
+        for (cluster, &color) in self.colors.iter().enumerate() {
+            let mut discs = PathBuilder::fill();
+            let mut any = false;
+            for node in self.nodes.iter().filter(|node| node.cluster == cluster) {
+                discs.add_polygon(&disc(node.at, node.radius), true);
+                any = true;
+            }
+            if any && let Ok(path) = discs.build() {
+                window.paint_path(path, color.opacity(NODE_ALPHA));
+            }
+        }
+        // What the pointer lights, each as brightly as it is near.
+        for line in self.links.iter().filter(|line| line.lit > 0.0) {
+            if let Some(path) = stroke(LINK_WIDTH, line.from, line.to) {
+                let color = self.colors[line.cluster];
+                window.paint_path(path, color.opacity(POINTER_ALPHA * line.lit));
+            }
+        }
+        for node in self.nodes.iter().filter(|node| node.lit > 0.0) {
+            if let Some(path) = dot(node.at, node.radius) {
+                let color = self.colors[node.cluster];
+                window.paint_path(path, color.opacity(POINTER_ALPHA * node.lit));
+            }
+        }
+        for glint in &self.glints {
+            let color = self.colors[glint.cluster];
+            if glint.flash > 0.0
+                && let Some(path) = dot(glint.flash_at, glint.flash_radius)
+            {
+                window.paint_path(path, color.opacity(PULSE_ALPHA * 0.5 * glint.flash));
+            }
+            if glint.brightness <= 0.0 {
+                continue;
+            }
+            if let Some(path) = stroke(TRAIL_WIDTH, glint.tail, glint.head) {
+                window.paint_path(path, color.opacity(PULSE_ALPHA * 0.5 * glint.brightness));
+            }
+            if let Some(path) = dot(glint.head, PULSE_RADIUS) {
+                window.paint_path(path, color.opacity(PULSE_ALPHA * glint.brightness));
+            }
+        }
+    }
+}
+
+/// The corners of a polygon that draws a disc.
+#[allow(clippy::disallowed_methods)]
+fn disc((x, y): At, radius: f32) -> [Point<Pixels>; DISC_CORNERS] {
+    std::array::from_fn(|corner| {
+        let angle = TAU * corner as f32 / DISC_CORNERS as f32;
+        point(px(x + radius * angle.cos()), px(y + radius * angle.sin()))
+    })
 }
 
 #[cfg(test)]

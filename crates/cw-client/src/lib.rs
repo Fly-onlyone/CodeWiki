@@ -51,6 +51,12 @@ pub use cw_core::MCP_CLIENT;
 /// answers from memory, so a backend that takes longer is not answering.
 const STATUS_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// How long asking the backend to stop may take to connect. The backend a
+/// client stops is on this machine, which accepts at once while it runs. A
+/// refused connection takes about two seconds on Windows, and the app asks
+/// as it quits, where GPUI waits only 200 ms.
+const SHUTDOWN_CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
+
 fn agent(timeout: Duration) -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(timeout))
@@ -343,6 +349,9 @@ impl Backend {
     pub fn shutdown(&self) -> Result<(), String> {
         Self::finish(
             self.authorized(self.agent.post(&format!("{}/v1/shutdown", self.url)))
+                .config()
+                .timeout_connect(Some(SHUTDOWN_CONNECT_TIMEOUT))
+                .build()
                 .send_empty(),
         )
         .map(|_| ())
@@ -670,6 +679,21 @@ mod tests {
         let backend = Backend::new(url, "secret".into(), Origin::Local);
         assert!(backend.stop());
         assert!(!backend.answers());
+    }
+
+    /// The app asks its backend to stop as it quits, and GPUI waits only
+    /// 200 ms for that. On Windows a refused connection takes about two
+    /// seconds unless the connect is bounded.
+    #[test]
+    fn asking_a_dead_backend_to_stop_fails_at_once() {
+        let backend = Backend::new(dead_address(), "secret".into(), Origin::Local);
+        let asked = Instant::now();
+        assert!(backend.shutdown().is_err());
+        assert!(
+            asked.elapsed() < Duration::from_millis(500),
+            "took {:?}",
+            asked.elapsed()
+        );
     }
 
     fn temp_dir(name: &str) -> PathBuf {

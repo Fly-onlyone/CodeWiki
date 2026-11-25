@@ -4806,7 +4806,8 @@ fn main() {
             });
             // The backend ends with the app. It finishes what it is doing
             // first (an update of the wiki, say) and then exits by itself;
-            // the app does not wait for that.
+            // the app does not wait for that. GPUI waits 200 ms for the
+            // request itself, so asking a dead backend must fail fast.
             cx.on_app_quit({
                 let app = app.clone();
                 move |cx| {

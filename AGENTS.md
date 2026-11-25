@@ -225,6 +225,28 @@ What the first runs taught, and the scripts now assume:
 - Windows PowerShell 5.1 has two JSON traps that the first run of the 0.3.0 cases hit. `ConvertTo-Json` writes an array that came out of a function's pipeline as `{"value": [...], "Count": n}`: cast it (`[double[]](Get-Vector ...)`) before it goes into the object. `@(... | ConvertFrom-Json)` on a JSON array gives one item, the whole array, so a filter over it matches every element: put the parsed value in a variable first, then filter it.
 - With `-Setup <CodeWiki-version-windows-x64-setup.exe>` (default: the one beside the zip, named for the same version, else the newest there; without one the cases do not run, and a release run always gives it) cases IS1 to IS8 test the setup program, each from no installation and back to none: IS1 silent install (`/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG`, files, PATH, shortcut, Apps entry, `codewiki --version`, start from the shortcut), IS2 uninstall through the entry's `QuietUninstallString` with the app running (data and settings stay), IS3 uninstall refused while `codewiki-app.exe` is held open (a `FileShare.None` handle in a background PowerShell), IS4 the wizard by mouse (Install and Finish found by their text among the wizard's child windows, read with `WM_GETTEXT`: on the first run UI Automation found no button in the wizard), IS5 over an `install.cmd` installation with the app running, IS6 a failing install (exit 7, `CodeWiki could not be installed` in the log, no Apps entry), IS7 another folder refused (`/DIR=C:\Users\Public\cwvm-elsewhere`: exit 7, `CodeWiki installs only to` in the log, no programs there or in the default folder, no Apps entry), IS8 the setup program over its own installation (second exit 0, the `PATH` entry once, one Apps entry with the version, `codewiki --version` answers; then the uninstall from the entry exits 0 and leaves nothing). U2 also checks that the update moves the Apps entry's `DisplayVersion`; its old package must hold that code. The uninstaller starts a copy of itself and may return early, so a case waits for the uninstaller processes to end before it reads the files; the exit code it returns is still the copy's (IS3's aborted uninstall gives 1). Setup logs go to `C:\Users\Public` in the guest, a path without spaces. Run `-Only IS1,IS2,IS3,IS4,IS5,IS6,IS7,IS8`.
 - Cases added for 0.3.0: AV1 (the agent view), Z1 (Ctrl+wheel zoom: it holds Ctrl on the VM's keyboard device and turns the VM's wheel, and reads `zoom.txt`), LR1 ("Open the last repository", turned on through `open_last.txt`), DV1 (the diagram viewer, on a three-crate workspace it builds in the guest, since cw-core has no Mermaid diagram), D4 (the three note-writing MCP tools over stdio, `guest\mcp-write.ps1`), U3 (after U2: what 0.3.0 cleans up from 0.2.0; U2 seeds the old writer sections of `settings.json` and a `cuda` folder holding `codewiki-embed-cuda.exe`, without which the app rightly leaves the folder alone), SE1 and SE2 (`guest\embed-server.ps1`, a stand-in OpenAI-style server on port 9931 chosen as `llamacpp`), and the real embedding servers OL1 to OL5, LC1 to LC3, LS1 to LS3, LM1 to LM3 and MR1 to MR3 (below).
+- Cases added for 0.4.0:
+  - NI1: the notification name and icon, as `DisplayName`, `IconUri` and `notification-icon.png`. K1 and IS2 check that uninstall removes them.
+  - BG1: the background graph on and off through `backdrop.txt`, with idle load both ways. The graph is faint by design: about 1 to 3 percent of the window changes.
+  - HV1: hover, press and selection, photographed. The window is placed at 992x688 so that the layout is the same at 1024x768 and 1600x900, and the case first clicks empty space in the details pane.
+  - RC1: the backend killed while the window is open; the banner, then the "Reconnected" toast.
+  - NW1: the same with the window in the tray. The Windows notification is clicked in the notification centre (Win+N) at a fixed place from the screen's top right corner, because the centre closes when the rig starts a program to ask UI Automation. The app's log line "a Windows notification was clicked" proves the click.
+  - RC2: a start with `codewiki.exe` held away, which gives the offline page, then `codewiki serve` started outside the app, which gives the "Connected" toast. The bridge cannot stand in here: it waits for a request before it connects, and `Invoke-GuestScript` ends its task by force, killing any backend it started.
+  - RV1: three hand-edited notes whose code changed, then a sync through `POST /v1/repos/{id}/update`; expects the "3 new reviews" toast.
+  - RV2: select all, Ctrl+click, "Approve 2", then "Reject".
+  - SG1: search suggestions. The click must land after the field's icon; a click on the icon does not focus it.
+  - SR1: the stand-in embedding server stopped, then back; expects "Connected to Llama".
+  - AE1: auto explaining in a live Claude Code session, on the account's Sonnet. The order says background, but `claude -p` ends with its answer, so the prompt asks for the agent in the foreground.
+  - IS9: the uninstall question, answered Yes. The `[Code]` MsgBox is titled only "Uninstall".
+  - IS10: `/PURGEDATA` in a silent uninstall.
+  - F1-review and F1-waiting.
+- Changed for 0.4.0:
+  - D4 checks claims.
+  - A1 checks `note-writer.md`.
+  - SI1 requires the window in front.
+  - DV1 turns the background graph off, because with a graphics card it drifts and the before/after comparison never matched.
+  - N1 clicks Ctrl+K about 500 px from the client area's right edge.
+  - Click positions on repository pages are in `$layout`, in the app's pixels from the client area; a negative X counts from the right edge.
 
 ## Releasing
 
@@ -261,6 +283,8 @@ pwsh scripts\vm\test-release.ps1 -VmName "Tiny 11" -User "Software Tester" -Pass
 - The checkpoints carry no git. Keep it so: the cases B1 and D2 need a Windows without it.
 - Check the host's Claude token before the run: the plugin cases refuse one that ends within 20 minutes.
 - A build of minutes ago is refused under `-Hardened` (S3 records it and goes on); the same build two days later was let through. Neither fails the run.
+- That refusal is the attack surface reduction rule "Block executable files from running unless they meet a prevalence, age, or trusted list criterion" (`01443614-CD74-433A-B99E-2ECDC07BFC25`; S2 lists its events). On 2026-11-25 it went further than S3: a build a few hours old ran from the app, but the rule refused `codewiki-mcp.exe` (D4, CC4, CC5, CC9, AE1), the setup program (IS1 to IS8) and the update's staged `codewiki.exe` (U2), now and then with "Access is denied" and once with Claude Code's `EPERM ... uv_spawn`. The same cases passed without `-Hardened`. On a fresh, unsigned build, run the cases that start those programs without `-Hardened`, and run `-Hardened` again once the build has aged.
+- `-Skip` leaves cases out by ID pattern (`-Skip "OL*,LC*,LS*,LM*,MR*"` for the main pass, whose real embedding servers run alone).
 - To read 100 screenshots, make contact sheets of six with ffmpeg (`xstack`) and read those; open a single picture only where a sheet is not enough.
 - Pass `-Zip`: the default is the newest zip in `dist\`, which is not always the one meant.
 - A rerun gets a new `-Report` folder; the script empties the screenshots of a folder it is given again. `-Only A1,C1` runs single cases after the usual setup; most cases build on earlier ones.

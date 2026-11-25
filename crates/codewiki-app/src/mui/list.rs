@@ -37,6 +37,9 @@ const SECONDARY_FONT: f32 = 12.0;
 /// inset here, so the row's fill stops short of the edges.
 const INSET: f32 = 8.0;
 const PADDING: f32 = 8.0;
+/// Where a top row's content starts, from the list's edge: what lines up
+/// with the rows, such as a heading's checkbox.
+pub const ROW_START: f32 = INSET + PADDING;
 /// Each level of nesting; MUI's examples indent by `pl: 4`.
 const INDENT: f32 = 16.0;
 /// `Sidebar.tsx`: `fontSize: "0.875rem"`, a small icon.
@@ -111,6 +114,7 @@ pub struct ListItemButton {
     level: usize,
     code: bool,
     secondary: Option<SharedString>,
+    leading: Option<AnyElement>,
     trailing: Option<AnyElement>,
     on_click: Option<OnClick>,
 }
@@ -127,6 +131,7 @@ impl ListItemButton {
             level: 0,
             code: false,
             secondary: None,
+            leading: None,
             trailing: None,
             on_click: None,
         }
@@ -173,6 +178,14 @@ impl ListItemButton {
     /// row grows to hold it.
     pub fn secondary(mut self, text: impl Into<SharedString>) -> Self {
         self.secondary = Some(text.into());
+        self
+    }
+
+    /// Something at the start of the row, before the icon, such as the
+    /// checkbox of a list whose rows can be selected: MUI's `ListItemIcon`
+    /// holding a `Checkbox`. A control there takes its own clicks.
+    pub fn leading(mut self, leading: impl IntoElement) -> Self {
+        self.leading = Some(leading.into_any_element());
         self
     }
 
@@ -260,6 +273,7 @@ impl RenderOnce for ListItemButton {
                         .shadow(bar_glow(bar)),
                 )
             })
+            .children(self.leading)
             .when_some(self.icon, |row, icon| {
                 row.child(
                     Icon::new(icon)

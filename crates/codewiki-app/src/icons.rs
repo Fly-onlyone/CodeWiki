@@ -96,6 +96,10 @@ app_icons! {
     // right; the left one is the same path mirrored.
     SIDEBAR = "view-sidebar-left",
     DETAILS = "view-sidebar",
+    // The three states of a checkbox, as MUI's `Checkbox` draws them.
+    CHECK_BOX = "check-box",
+    CHECK_BOX_BLANK = "check-box-outline-blank",
+    CHECK_BOX_INDETERMINATE = "indeterminate-check-box",
     // Pages.
     CHECK = "check",
     SYMBOL = "data-object",

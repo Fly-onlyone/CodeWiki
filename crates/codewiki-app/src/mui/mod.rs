@@ -10,6 +10,7 @@
 
 pub mod base;
 pub mod button;
+pub mod checkbox;
 pub mod feedback;
 pub mod list;
 pub mod menu;

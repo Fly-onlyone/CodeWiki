@@ -175,7 +175,12 @@ if ($hasSetup) {
     $notes.Add("2. The setup program is not signed, so Windows SmartScreen shows ""Windows protected your PC"": click **More info**, then **Run anyway**.")
     $notes.Add("3. Follow the wizard. ""Start CodeWiki"" is checked on the last page. Open a new terminal before you start a coding agent: the install changed your ``PATH``.")
     $notes.Add("")
-    $notes.Add("CodeWiki goes to ``%LOCALAPPDATA%\Programs\CodeWiki``, with a Start Menu shortcut and an entry in Settings $arrow Apps. Uninstall it there: that keeps your data (``%LOCALAPPDATA%\CodeWiki``) and settings (``%APPDATA%\CodeWiki``); delete those two folders by hand to remove them as well.")
+    # The uninstaller asks about data and settings since 0.4.0; 0.3.1's kept them.
+    if ([version]($version -replace '-.*$', '') -ge [version]"0.4.0") {
+        $notes.Add("CodeWiki goes to ``%LOCALAPPDATA%\Programs\CodeWiki``, with a Start Menu shortcut and an entry in Settings $arrow Apps. Uninstall it there: it asks whether to delete your data (``%LOCALAPPDATA%\CodeWiki``) and settings (``%APPDATA%\CodeWiki``) as well, and keeps them unless you say Yes. A silent uninstall deletes them with ``/PURGEDATA``.")
+    } else {
+        $notes.Add("CodeWiki goes to ``%LOCALAPPDATA%\Programs\CodeWiki``, with a Start Menu shortcut and an entry in Settings $arrow Apps. Uninstall it there: that keeps your data (``%LOCALAPPDATA%\CodeWiki``) and settings (``%APPDATA%\CodeWiki``); delete those two folders by hand to remove them as well.")
+    }
     $notes.Add("")
     $notes.Add("**The zip** installs the same without the Settings $arrow Apps entry: unpack ``$zip`` and double-click ``install.cmd``. ``uninstall.cmd`` in the install folder removes a zip installation; ``uninstall.cmd -PurgeData`` also deletes the index, the logs and the settings.")
     $check = $setup

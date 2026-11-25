@@ -146,6 +146,7 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::Repo(_) => REPOSITORY,
         Command::Search(_) => SEARCH,
         Command::Sync => SYNC,
+        Command::Review => REVIEW,
         Command::Graph => GRAPH,
         Command::Hotspots => HOTSPOTS,
         Command::Ownership => OWNERSHIP,

@@ -33,6 +33,7 @@ mod panes;
 mod prefs;
 mod reading;
 mod review;
+mod review_view;
 mod settings;
 mod settings_layout;
 mod settings_pages;
@@ -146,6 +147,9 @@ enum Landing {
     Startup,
     /// The user picked the repository: its wiki map.
     WikiMap,
+    /// A notice of new proposals in the repository was clicked: its review
+    /// page.
+    Review,
 }
 
 /// What reaches the app from outside GPUI: from another thread, or from
@@ -247,14 +251,11 @@ enum Page {
         left_out: Vec<String>,
     },
     /// Symbol detail, search results and other generated pages.
-    Generated {
-        title: String,
-        doc: Rc<Doc>,
-    },
-    Proposal {
-        id: String,
-        doc: Rc<Doc>,
-    },
+    Generated { title: String, doc: Rc<Doc> },
+    /// The proposals that wait for review, beside the one that is open
+    /// (`review_view.rs`). Which of them are selected is kept in the view,
+    /// not here.
+    Review { open: Option<String>, doc: Rc<Doc> },
     /// The dependency graph canvas.
     Graph,
     /// The page the app starts on: Open folder and the registered
@@ -274,7 +275,10 @@ struct AppView {
     notes: Vec<NoteInfo>,
     /// Whether `notes` holds the open repository's notes yet.
     notes_loaded: bool,
-    pending_proposals: Vec<(String, String)>,
+    pending_proposals: Vec<review::Item>,
+    /// The review page's selection, and the counts of waiting proposals the
+    /// status poll compares.
+    review: review::State,
     /// Folders of the repositories opened in the app, newest first.
     recent: Vec<String>,
     /// The registered repositories whose folders are not found. Home lists
@@ -465,6 +469,7 @@ impl AppView {
             notes: Vec::new(),
             notes_loaded: false,
             pending_proposals: Vec::new(),
+            review: review::State::default(),
             recent: startup::recent(),
             missing: Vec::new(),
             kept: std::collections::HashMap::new(),
@@ -633,6 +638,8 @@ impl AppView {
             loop {
                 // Not while an update is installed: it stops the backend.
                 let Ok(backend) = this.update(cx, |this, _| {
+                    // A count that rises while the app syncs is its own doing.
+                    this.review.asked_during_own_work = review::own_work(this.busy.as_deref());
                     this.backend.clone().filter(|_| !this.update.installing())
                 }) else {
                     return;
@@ -661,7 +668,8 @@ impl AppView {
 
     /// Keep what the backend answered to `GET /v1/status`; `None` when it
     /// was not asked. The window shows none of it, so nothing is redrawn,
-    /// unless the backend has just been lost: a banner then says so.
+    /// unless the backend has just been lost: a banner then says so. New
+    /// proposals are told by a notice (`take_proposal_counts`).
     fn take_status(
         &mut self,
         answer: Option<Result<Option<Value>, String>>,
@@ -682,10 +690,13 @@ impl AppView {
         }
         match answer {
             Some(Ok(Some(body))) => {
-                self.backend_status = status::parse(&body);
+                let status = status::parse(&body);
+                self.take_proposal_counts(status.proposals.clone(), cx);
+                self.backend_status = status;
                 self.backend_silent = false;
             }
             Some(Ok(None)) => {
+                self.take_proposal_counts(None, cx);
                 self.backend_status = status::Backend {
                     updating: Vec::new(),
                     bridge: status::Bridge::OldBackend,
@@ -702,6 +713,7 @@ impl AppView {
                 self.backend_silent = true;
             }
             None => {
+                self.take_proposal_counts(None, cx);
                 self.backend_status = status::Backend::default();
                 self.backend_silent = false;
             }
@@ -1205,14 +1217,31 @@ impl AppView {
             }
             return;
         }
+        self.reload_notes(cx, |_, _| {});
+    }
+
+    /// Load the open repository's notes and proposals again, quietly, then
+    /// do `then`: after the backend came back, after a decision on the
+    /// review page, and when new proposals wait.
+    pub(crate) fn reload_notes(
+        &mut self,
+        cx: &mut Context<Self>,
+        then: impl FnOnce(&mut Self, &mut Context<Self>) + 'static,
+    ) {
+        let Some(repo) = self.repo.clone() else {
+            return;
+        };
         let id = repo.id.clone();
         self.settings_request(
             cx,
             move |b| load_notes(b, &repo.id),
-            move |this, result, _| match result {
+            move |this, result, cx| match result {
                 // Unless another repository was opened meanwhile.
                 Ok(_) if this.repo.as_ref().is_none_or(|open| open.id != id) => {}
-                Ok((notes, proposals)) => this.take_notes(&notes, &proposals),
+                Ok((notes, proposals)) => {
+                    this.take_notes(&notes, &proposals);
+                    then(this, cx);
+                }
                 Err(error) => log::warn!("could not load the notes again: {error}"),
             },
         );
@@ -1658,7 +1687,7 @@ impl AppView {
         self.notes_loaded = false;
         self.pending_proposals.clear();
         self.history.clear();
-        if from_home && landing == Landing::WikiMap {
+        if from_home && matches!(landing, Landing::WikiMap | Landing::Review) {
             // Back leads to Home, where the repository was picked.
             self.history.push(Page::Home);
         }
@@ -1687,6 +1716,9 @@ impl AppView {
                     }
                     Landing::WikiMap => this.open_note(WIKI_MAP.into(), false, cx),
                     Landing::Startup => this.open_startup_view(cx),
+                    Landing::Review => {
+                        this.show_review(review_view::Show::Page { remember: false }, cx)
+                    }
                 }
             },
         );
@@ -1697,18 +1729,10 @@ impl AppView {
     fn take_notes(&mut self, notes: &Value, proposals: &Value) {
         self.notes = parse_notes(notes);
         self.notes_loaded = true;
-        self.pending_proposals = proposals
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|p| p["status"] == "pending")
-            .filter_map(|p| {
-                Some((
-                    p["id"].as_str()?.to_string(),
-                    p["note_path"].as_str()?.to_string(),
-                ))
-            })
-            .collect();
+        self.pending_proposals = review::pending(proposals);
+        // What was decided, here or elsewhere, is no longer selected.
+        let pending = self.review_order();
+        self.review.selection.retain(&pending);
     }
 
     /// Show the view the launch named (its second argument, or that of the
@@ -1729,6 +1753,10 @@ impl AppView {
         }
         if first == "graph:" {
             self.open_graph(cx);
+            return;
+        }
+        if first == "review:" {
+            self.show_review(review_view::Show::Page { remember: false }, cx);
             return;
         }
         // Forms used to open the app on a view from a script.
@@ -2108,6 +2136,7 @@ impl AppView {
             Command::Repo(id) => self.open_repo(&id, cx),
             Command::Search(query) => self.run_search(query, cx),
             Command::Sync => self.sync(cx),
+            Command::Review => self.open_review(cx),
             Command::Graph => self.open_graph(cx),
             Command::Hotspots => self.open_hotspots(cx),
             Command::Decisions => {
@@ -2297,7 +2326,7 @@ impl AppView {
             Page::Message(_)
             | Page::Notice(_)
             | Page::Generated { .. }
-            | Page::Proposal { .. }
+            | Page::Review { .. }
             | Page::Graph
             | Page::Home
             | Page::Settings(_) => String::new(),
@@ -2624,61 +2653,6 @@ impl AppView {
         );
     }
 
-    fn open_proposal(&mut self, id: String, cx: &mut Context<Self>) {
-        let Some(repo) = self.repo.clone() else {
-            return;
-        };
-        let request = id.clone();
-        self.run(
-            "Loading proposal",
-            cx,
-            move |b| b.get(&format!("/v1/repos/{}/proposals/{request}", repo.id)),
-            move |this, detail, _| {
-                this.set_page(
-                    Page::Proposal {
-                        id,
-                        doc: Rc::new(live::proposal_page(&detail)),
-                    },
-                    true,
-                );
-            },
-        );
-    }
-
-    fn decide_proposal(&mut self, id: String, approve: bool, cx: &mut Context<Self>) {
-        let Some(repo) = self.repo.clone() else {
-            return;
-        };
-        let verb = if approve { "approve" } else { "reject" };
-        self.run(
-            if approve {
-                "Applying proposal"
-            } else {
-                "Rejecting proposal"
-            },
-            cx,
-            move |b| {
-                b.post(
-                    &format!("/v1/repos/{}/proposals/{id}/{verb}", repo.id),
-                    &json!({}),
-                )
-            },
-            move |this, done, cx| {
-                let path = done["note_path"].as_str().unwrap_or("").to_string();
-                this.history.clear();
-                this.refresh(Landing::Stay, cx);
-                if approve {
-                    this.open_note(path, false, cx);
-                } else {
-                    this.set_page(
-                        Page::Message("Proposal rejected. The note is unchanged.".into()),
-                        false,
-                    );
-                }
-            },
-        );
-    }
-
     /// Follow a link clicked in a note.
     fn follow_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(target) = url.strip_prefix(NOTE_SCHEME) {
@@ -2850,6 +2824,7 @@ impl AppView {
             Action::OpenRepo(id) => self.open_repo(id, cx),
             Action::ForgetRepo(id) => self.forget_repo(id.clone(), cx),
             Action::Sync => self.sync(cx),
+            Action::OpenReview(id) => self.open_review_of(id, cx),
             Action::OpenLogs => self.open_logs(cx),
             // The rest belong to the Settings page.
             other => {
@@ -3154,12 +3129,7 @@ impl AppView {
                     .label(format!("Review ({pending})"))
                     .small()
                     .when(pending > 0, |b| b.contained())
-                    .disabled(pending == 0)
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        if let Some((id, _)) = this.pending_proposals.first().cloned() {
-                            this.open_proposal(id, cx);
-                        }
-                    })),
+                    .on_click(cx.listener(|this, _, _, cx| this.open_review(cx))),
             )
             .child(
                 IconButton::new("toggle-details", icons::DETAILS)
@@ -3719,9 +3689,6 @@ impl AppView {
             .when_some(self.error.clone(), |this, error| {
                 this.child(div().p_2().child(feedback::alert(Tone::Error, error, cx)))
             })
-            .when_some(self.proposal_actions(cx), |this, actions| {
-                this.child(actions)
-            })
             .when_some(self.agent_view_notice(cx), |this, notice| {
                 this.child(notice)
             })
@@ -3786,9 +3753,10 @@ impl AppView {
                         .child(reading::frame(note, self.pane_width, measure, cx))
                         .into_any_element()
                 }
-                Page::Generated { doc, .. } | Page::Proposal { doc, .. } | Page::Notice(doc) => {
+                Page::Generated { doc, .. } | Page::Notice(doc) => {
                     return self.doc_element(doc, cx);
                 }
+                Page::Review { doc, .. } => return self.review_page(doc, cx),
                 Page::Message(message) => {
                     return self.doc_element(&Rc::new(live::message_page(message)), cx);
                 }
@@ -4151,38 +4119,6 @@ impl AppView {
         )
     }
 
-    fn proposal_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let Page::Proposal { id, .. } = &self.page else {
-            return None;
-        };
-        let (approve_id, reject_id) = (id.clone(), id.clone());
-        Some(
-            h_flex()
-                .gap_2()
-                .p_2()
-                .border_b_1()
-                .border_color(cx.theme().border)
-                .child(
-                    Button::new("approve")
-                        .label("Approve and write")
-                        .small()
-                        .contained()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.decide_proposal(approve_id.clone(), true, cx)
-                        })),
-                )
-                .child(
-                    Button::new("reject")
-                        .label("Reject")
-                        .small()
-                        .error()
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.decide_proposal(reject_id.clone(), false, cx)
-                        })),
-                ),
-        )
-    }
-
     fn details(&self, cx: &mut Context<Self>) -> Div {
         let muted = cx.theme().muted_foreground;
         let accent = cx.theme().link;
@@ -4284,21 +4220,7 @@ impl AppView {
                             .child("Served from the index, not stored in the vault."),
                     );
             }
-            Page::Proposal { .. } => {
-                pane = pane.child(heading("REVIEW QUEUE"));
-                for (id, path) in &self.pending_proposals {
-                    let id = id.clone();
-                    pane = pane.child(
-                        Button::new(SharedString::from(format!("proposal-{id}")))
-                            .label(path.rsplit('/').next().unwrap_or(path).to_string())
-                            .small()
-                            .text()
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.open_proposal(id.clone(), cx)
-                            })),
-                    );
-                }
-            }
+            Page::Review { .. } => pane = pane.child(self.review_details(cx)),
             Page::Graph => {
                 pane = pane.child(heading("GRAPH")).child(
                     div()
@@ -4440,7 +4362,7 @@ fn page_title(page: &Page) -> String {
             }
         }
         Page::Generated { title, .. } => title.clone(),
-        Page::Proposal { .. } => "Review".into(),
+        Page::Review { .. } => "Review".into(),
         Page::Graph => "Graph".into(),
         Page::Settings(_) => "Settings".into(),
     }
@@ -4514,7 +4436,7 @@ impl Render for AppView {
         let chrome = if self.fills_window() {
             0.0
         } else {
-            self.side_width()
+            self.side_width() + self.review_queue_width()
         };
         self.pane_width = (window.viewport_size().width / px(1.) - chrome).max(0.0);
         // The palette stays drawn for a moment after it closes, to fade out.

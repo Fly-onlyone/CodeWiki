@@ -764,6 +764,8 @@ impl AppView {
         self.repos.clear();
         self.missing.clear();
         self.close_repo();
+        // The next backend's counts of proposals are its first: no news.
+        self.review.counts = None;
         self.settings.backend = None;
         self.busy = Some("Connecting".into());
         self.error = None;

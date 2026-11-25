@@ -17,6 +17,8 @@ pub enum Command {
     /// Run a full-text search for this query.
     Search(String),
     Sync,
+    /// Open the review page: the proposals that wait for a decision.
+    Review,
     Graph,
     Hotspots,
     Ownership,
@@ -115,6 +117,7 @@ pub fn actions() -> Vec<Entry> {
     [
         ("Home", Command::Home),
         ("Sync wiki", Command::Sync),
+        ("Review", Command::Review),
         ("Open graph", Command::Graph),
         ("Show hotspots", Command::Hotspots),
         ("Show ownership", Command::Ownership),

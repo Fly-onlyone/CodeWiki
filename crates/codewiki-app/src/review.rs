@@ -328,6 +328,7 @@ pub fn decided_notices(approve: bool, results: &[DecideResult], items: &[Item]) 
         title,
         body: None,
         action: None,
+        throttle: false,
     };
     let (done, failed): (Vec<&DecideResult>, Vec<&DecideResult>) =
         results.iter().partition(|result| result.ok);
@@ -396,6 +397,8 @@ pub fn rise_notice(id: &str, name: &str, increase: usize) -> Notice {
         title,
         body: None,
         action: Some(("Open review".into(), Action::OpenReview(id.to_string()))),
+        // The status poll may tell it again every few seconds.
+        throttle: true,
     }
 }
 
@@ -538,6 +541,18 @@ pub fn news(
 pub fn loaded(counts: &mut Option<HashMap<String, usize>>, open: &str, pending: usize) {
     if let Some(counts) = counts {
         counts.insert(open.to_string(), pending);
+    }
+}
+
+/// Take an answer of `GET /v1/status` into the counts the app knows: each
+/// repository in it gets its new count, and one it leaves out keeps the
+/// count known before. On slow storage the backend leaves out what it did
+/// not count in time, rather than give a count that may be older than what
+/// the app loaded since ([`loaded`]).
+pub fn take_counts(known: &mut Option<HashMap<String, usize>>, answer: HashMap<String, usize>) {
+    match known {
+        Some(known) => known.extend(answer),
+        None => *known = Some(answer),
     }
 }
 
@@ -1138,6 +1153,25 @@ mod tests {
         let mut none = None;
         loaded(&mut none, "open", 3);
         assert_eq!(none, None);
+    }
+
+    #[test]
+    fn an_answer_updates_the_counts_it_holds_and_keeps_the_others() {
+        let mut known = None;
+        take_counts(&mut known, map(&[("a", 1), ("b", 0)]));
+        assert_eq!(known, Some(map(&[("a", 1), ("b", 0)])));
+        // The app loaded b's queue itself, then a slow answer left b out.
+        loaded(&mut known, "b", 3);
+        let slow = map(&[("a", 2)]);
+        assert_eq!(
+            news(known.as_ref(), &slow, Some("b"), false),
+            vec![("a".to_string(), 2, 1)]
+        );
+        take_counts(&mut known, slow);
+        assert_eq!(known, Some(map(&[("a", 2), ("b", 3)])));
+        // When b is counted again, it is measured from the load.
+        let full = map(&[("a", 2), ("b", 3)]);
+        assert!(news(known.as_ref(), &full, Some("b"), false).is_empty());
     }
 
     #[test]

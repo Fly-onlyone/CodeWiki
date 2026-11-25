@@ -28,7 +28,8 @@ pub struct Backend {
     /// runs.
     pub model_job: Option<String>,
     /// How many proposals wait for review in each repository, by id. `None`
-    /// from a backend too old to say.
+    /// from a backend too old to say. On slow storage it may lack some
+    /// repositories: those the backend did not count in time.
     pub proposals: Option<HashMap<String, usize>>,
 }
 

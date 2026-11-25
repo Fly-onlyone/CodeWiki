@@ -24,9 +24,10 @@ const MAX_SENT: usize = 8;
 /// The id of the one button a Windows notification has.
 const ACTION_ID: &str = "action";
 
-/// The least time between two Windows notifications with one key, and how
-/// long one counts as live. Without it, proposals that keep coming would
-/// show a notification every 5 s, at each status poll.
+/// The least time between two Windows notifications with one key that
+/// repeats ([`Notice::throttle`]), and how long one counts as live. Without
+/// it, proposals that keep coming would show a notification every 5 s, at
+/// each status poll.
 pub const SYSTEM_GAP: Duration = Duration::from_secs(60);
 
 /// One message for the user.
@@ -40,6 +41,10 @@ pub struct Notice {
     pub body: Option<String>,
     /// A label, and what pressing it does.
     pub action: Option<(String, Action)>,
+    /// Whether the notice can come again at every status poll. Such a notice
+    /// goes to Windows at most once in [`SYSTEM_GAP`]; any other is shown at
+    /// once, since it says a state or the result of the user's own action.
+    pub throttle: bool,
 }
 
 /// A notice on screen. `seq` tells it apart from an earlier one with the same
@@ -83,6 +88,10 @@ impl Toasts {
     /// Show a notice and return its sequence number, for `expire`. One with
     /// the same key is replaced and the new one is the newest.
     pub fn push(&mut self, notice: Notice) -> u64 {
+        // A notice that waits to go to Windows with this key is older; told
+        // later, it would replace this one.
+        self.waiting
+            .retain(|(waiting, _)| waiting.key != notice.key);
         if let Some(index) = self.shown.iter().position(|t| t.notice.key == notice.key) {
             // Replaced in place: the new one is drawn at once, with no fade.
             self.shown.remove(index);
@@ -157,18 +166,21 @@ impl Toasts {
         notice.action.as_ref().map(|(_, action)| action.clone())
     }
 
-    /// Offer a notice to Windows at `now`: it is shown at once, unless one
-    /// with its key was shown less than [`SYSTEM_GAP`] ago; then it waits.
+    /// Offer a notice to Windows at `now`: it is shown at once, unless it is
+    /// one that repeats ([`Notice::throttle`]) and one with its key was shown
+    /// less than [`SYSTEM_GAP`] ago; then it waits.
     pub fn offer(&mut self, notice: Notice, now: Instant) -> Offer {
-        if let Some(waiting) = self.waiting.iter_mut().find(|(w, _)| w.key == notice.key) {
-            waiting.0 = notice;
-            return Offer::Later(None);
-        }
         self.shown_at.retain(|_, at| now < *at + SYSTEM_GAP);
-        if let Some(&at) = self.shown_at.get(&notice.key) {
-            let due = at + SYSTEM_GAP;
-            self.waiting.push((notice, due));
-            return Offer::Later(Some(due - now));
+        if notice.throttle {
+            if let Some(waiting) = self.waiting.iter_mut().find(|(w, _)| w.key == notice.key) {
+                waiting.0 = notice;
+                return Offer::Later(None);
+            }
+            if let Some(&at) = self.shown_at.get(&notice.key) {
+                let due = at + SYSTEM_GAP;
+                self.waiting.push((notice, due));
+                return Offer::Later(Some(due - now));
+            }
         }
         self.shown_at.insert(notice.key.clone(), now);
         self.sent(&notice);
@@ -234,6 +246,7 @@ mod tests {
             title: format!("title of {key}"),
             body: None,
             action: None,
+            throttle: true,
         }
     }
 
@@ -424,6 +437,48 @@ mod tests {
             toasts.offer(titled("a", "3"), t0 + secs(60)),
             Offer::Now(titled("a", "3"))
         );
+    }
+
+    #[test]
+    fn a_notice_that_does_not_repeat_is_never_held() {
+        let mut toasts = Toasts::default();
+        let t0 = Instant::now();
+        let reconnected = Notice {
+            throttle: false,
+            ..titled("backend", "Reconnected")
+        };
+        assert_eq!(
+            toasts.offer(reconnected.clone(), t0),
+            Offer::Now(reconnected.clone())
+        );
+        assert_eq!(
+            toasts.offer(reconnected.clone(), t0 + secs(5)),
+            Offer::Now(reconnected)
+        );
+        assert_eq!(toasts.next_due(t0 + secs(5)), None);
+    }
+
+    #[test]
+    fn a_toast_drops_the_notice_that_waits_with_its_key() {
+        let mut toasts = Toasts::default();
+        let t0 = Instant::now();
+        toasts.offer(titled("a", "1"), t0);
+        assert_eq!(
+            toasts.offer(titled("a", "2"), t0 + secs(5)),
+            Offer::Later(Some(secs(55)))
+        );
+        // The window is back, and a newer rise is a toast: the older notice
+        // that waited must not replace it later.
+        toasts.push(titled("a", "3"));
+        assert_eq!(toasts.next_due(t0 + secs(30)), None);
+        assert!(toasts.take_due(t0 + secs(60)).is_empty());
+        assert_eq!(toasts.shown()[0].notice.title, "3");
+        // So whatever waits while a toast shows came after the toast.
+        assert_eq!(
+            toasts.offer(titled("a", "4"), t0 + secs(35)),
+            Offer::Later(Some(secs(25)))
+        );
+        assert_eq!(toasts.take_due(t0 + secs(60)), vec![titled("a", "4")]);
     }
 
     #[test]

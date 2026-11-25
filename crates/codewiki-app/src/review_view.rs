@@ -308,7 +308,7 @@ impl AppView {
             open.as_deref(),
             own_work,
         );
-        self.review.counts = Some(counts);
+        review::take_counts(&mut self.review.counts, counts);
         for (id, count, increase) in news {
             log::info!("{increase} new proposals in {id}; {count} wait");
             if open.as_deref() == Some(id.as_str()) && self.notes_loaded {

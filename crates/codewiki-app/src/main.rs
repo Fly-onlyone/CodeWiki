@@ -964,6 +964,7 @@ impl AppView {
                         .into(),
                 ),
                 action: None,
+                throttle: false,
             },
             cx,
         );
@@ -1241,6 +1242,7 @@ impl AppView {
                 title: title.into(),
                 body: None,
                 action: None,
+                throttle: false,
             },
             cx,
         );

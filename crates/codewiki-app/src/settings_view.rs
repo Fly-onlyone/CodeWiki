@@ -453,6 +453,7 @@ impl AppView {
                                     ),
                                     body: None,
                                     action: None,
+                                    throttle: false,
                                 },
                                 cx,
                             );

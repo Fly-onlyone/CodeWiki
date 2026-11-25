@@ -2,7 +2,8 @@
 # runs this past Windows's default script policy.
 #
 # Removes the programs, the PATH entry, the Start Menu shortcut, the start
-# with Windows and the name Windows shows the app's notification under. Wikis live
+# with Windows and the name and icon Windows shows the app's notifications
+# under. Wikis live
 # inside each repository and are not touched. The index cache, the installed
 # logs in %LOCALAPPDATA%\CodeWiki (or CODEWIKI_DATA_DIR), the embedding models
 # an older version downloaded there (its folder models) and the settings in
@@ -84,11 +85,19 @@ if ($started -and $started.Trim() -ieq ('"{0}" --tray' -f (Join-Path $Target "co
     Remove-ItemProperty -Path $run -Name "CodeWiki"
 }
 
-# The app shows one notification, the first time its window is hidden to the
-# tray, and Windows keeps the name it showed it under (APP_IDENTITY in
-# crates/codewiki-app/src/main.rs).
+# The name and the icon Windows shows above the app's notifications
+# (APP_IDENTITY in crates/codewiki-app/src/main.rs, and identity.rs beside
+# it). The icon is a copy of the app's logo in the data folder that the key
+# names, so it goes with the key, and only by its own file name. A copy left
+# behind harms nothing.
 $identity = "HKCU:\Software\Classes\AppUserModelId\CodeWiki.App"
-if (Test-Path $identity) { Remove-Item -Recurse -Force $identity }
+if (Test-Path $identity) {
+    $icon = (Get-ItemProperty -Path $identity -Name "IconUri" -ErrorAction SilentlyContinue).IconUri
+    if ($icon -and (Split-Path -Leaf $icon) -ieq "notification-icon.png" -and (Test-Path -LiteralPath $icon -PathType Leaf)) {
+        Remove-Item -Force -LiteralPath $icon -ErrorAction SilentlyContinue
+    }
+    Remove-Item -Recurse -Force $identity
+}
 
 if ($PurgeData) {
     # The same folders the programs use: cw_core::paths::data_dir() for the

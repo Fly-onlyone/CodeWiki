@@ -32,6 +32,7 @@ mod palette;
 mod panes;
 mod prefs;
 mod reading;
+mod review;
 mod settings;
 mod settings_layout;
 mod settings_pages;
@@ -689,6 +690,7 @@ impl AppView {
                     updating: Vec::new(),
                     bridge: status::Bridge::OldBackend,
                     model_job: None,
+                    proposals: None,
                 };
                 self.backend_silent = false;
             }

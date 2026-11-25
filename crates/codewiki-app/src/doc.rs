@@ -55,6 +55,9 @@ pub enum Action {
     ResetAgentsList,
     /// Bring the open repository's wiki up to date.
     Sync,
+    /// Open the review page of the repository with this id, opening the
+    /// repository first when another is open.
+    OpenReview(String),
     /// Show the folder of the log files in Explorer.
     OpenLogs,
     /// Open the settings: at this category, or at the first.

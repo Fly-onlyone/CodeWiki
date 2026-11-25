@@ -6,6 +6,8 @@
 //! this module is a function of its arguments, so that the words can be
 //! tested without a backend or a tray.
 
+use std::collections::HashMap;
+
 use serde_json::Value;
 
 /// An agent's MCP bridge that called within this many seconds is "active".
@@ -25,6 +27,9 @@ pub struct Backend {
     /// What the backend's embedding job is doing, in a few words, while it
     /// runs.
     pub model_job: Option<String>,
+    /// How many proposals wait for review in each repository, by id. `None`
+    /// from a backend too old to say.
+    pub proposals: Option<HashMap<String, usize>>,
 }
 
 /// When an agent's MCP bridge last called the backend.
@@ -60,7 +65,37 @@ pub fn parse(body: &Value) -> Backend {
         updating,
         bridge,
         model_job: model_job_text(&body["model_job"]),
+        proposals: body["proposals"].as_object().map(|counts| {
+            counts
+                .iter()
+                .filter_map(|(id, count)| {
+                    Some((id.clone(), usize::try_from(count.as_u64()?).ok()?))
+                })
+                .collect()
+        }),
     }
+}
+
+/// The repositories whose count of waiting proposals went up from `before`
+/// to `after`: each with its id, its new count and how much it rose, by id.
+/// Only a repository in both counts; with no `before`, which is the first
+/// answer, there is nothing to compare and so no rise.
+pub fn rises(
+    before: Option<&HashMap<String, usize>>,
+    after: &HashMap<String, usize>,
+) -> Vec<(String, usize, usize)> {
+    let Some(before) = before else {
+        return Vec::new();
+    };
+    let mut rises: Vec<(String, usize, usize)> = after
+        .iter()
+        .filter_map(|(id, &count)| {
+            let was = *before.get(id)?;
+            (count > was).then(|| (id.clone(), count, count - was))
+        })
+        .collect();
+    rises.sort();
+    rises
 }
 
 /// What the embedding job is doing, in a few words; `None` when none runs.
@@ -195,6 +230,7 @@ mod tests {
                 updating: names(&["alpha"]),
                 bridge: Bridge::Called(120),
                 model_job: None,
+                proposals: None,
             }
         );
         // No bridge yet, nothing running.
@@ -205,6 +241,7 @@ mod tests {
                 updating: vec![],
                 bridge: Bridge::Never,
                 model_job: None,
+                proposals: None,
             }
         );
         // A call the backend's clock puts in the future is "just now".
@@ -217,8 +254,54 @@ mod tests {
                 updating: vec![],
                 bridge: Bridge::Never,
                 model_job: None,
+                proposals: None,
             }
         );
+    }
+
+    fn counts(pairs: &[(&str, usize)]) -> HashMap<String, usize> {
+        pairs.iter().map(|(id, n)| (id.to_string(), *n)).collect()
+    }
+
+    #[test]
+    fn the_waiting_proposals_are_counted_per_repository() {
+        let body = json!({ "now": 5, "proposals": { "alpha": 2, "beta": 0 } });
+        assert_eq!(
+            parse(&body).proposals,
+            Some(counts(&[("alpha", 2), ("beta", 0)]))
+        );
+        assert_eq!(
+            parse(&json!({ "now": 5, "proposals": {} })).proposals,
+            Some(HashMap::new())
+        );
+        // A count that is not a number is left out.
+        assert_eq!(
+            parse(&json!({ "proposals": { "alpha": "many", "beta": 1 } })).proposals,
+            Some(counts(&[("beta", 1)]))
+        );
+        // An older backend says nothing of proposals.
+        assert_eq!(parse(&json!({ "now": 5 })).proposals, None);
+    }
+
+    #[test]
+    fn a_rise_is_a_count_that_went_up_in_a_repository_known_before() {
+        let before = counts(&[("alpha", 2), ("beta", 1), ("gamma", 4)]);
+        let after = counts(&[("alpha", 3), ("beta", 1), ("gamma", 1), ("delta", 5)]);
+        assert_eq!(
+            rises(Some(&before), &after),
+            vec![("alpha".to_string(), 3, 1)]
+        );
+        // From none to some is a rise too.
+        assert_eq!(
+            rises(
+                Some(&counts(&[("a", 0), ("b", 1)])),
+                &counts(&[("a", 2), ("b", 3)])
+            ),
+            vec![("a".to_string(), 2, 2), ("b".to_string(), 3, 2)]
+        );
+        // The first answer is the baseline.
+        assert!(rises(None, &after).is_empty());
+        assert!(rises(Some(&after), &after).is_empty());
     }
 
     #[test]

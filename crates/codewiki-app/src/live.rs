@@ -333,6 +333,18 @@ pub fn proposal_page(detail: &Value) -> Doc {
     doc
 }
 
+/// The review page when no proposal waits.
+pub fn review_empty_page() -> Doc {
+    let mut doc = Doc::new("Review");
+    doc.push(Block::Text(vec![strong("Nothing waits for review.")]));
+    doc.push(Block::Alert {
+        tone: Tone::Info,
+        text: "A sync proposes a change to a note you edited by hand, and a coding agent proposes its explanation of such a note. Each waits here until you approve or reject it.".into(),
+        button: None,
+    });
+    doc
+}
+
 /// What a sync did.
 pub fn sync_page(report: &Value) -> Doc {
     let count = |key: &str| report[key].as_array().map(Vec::len).unwrap_or(0);
@@ -1160,6 +1172,21 @@ mod tests {
         });
         assert_eq!(diff, Some("@@ -1 +1 @@\n-old\n+new"));
         assert!(!words.contains("picture"));
+    }
+
+    #[test]
+    fn an_empty_review_says_that_nothing_waits_and_what_would() {
+        let page = review_empty_page();
+        let words = page.words();
+        assert!(words.contains("Nothing waits for review"), "{words}");
+        assert!(words.contains("A sync proposes a change to a note you edited by hand"));
+        assert!(words.contains("a coding agent proposes its explanation"));
+        // Nothing on it to press.
+        assert!(
+            page.blocks
+                .iter()
+                .all(|block| !matches!(block, Block::Buttons(_)))
+        );
     }
 
     #[test]

@@ -24,7 +24,13 @@ codex plugin add codewiki@codewiki
 
 The first line adds the `plugins` folder of an installation made from the release zip (in PowerShell: `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`). Codex reads its marketplace from `.agents/plugins/marketplace.json` in that folder.
 
-Without that installation, add the repository in its place: `codex plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone.
+Without that installation, add the repository in its place, or the folder of a clone:
+
+```
+codex plugin marketplace add Fly-onlyone/CodeWiki --sparse .agents/plugins --sparse plugins/codex
+```
+
+With `--sparse`, Codex downloads only the marketplace file and this plugin's folder, not the whole repository. A marketplace added from GitHub without `--sparse` holds the whole repository with its history: run `codex plugin marketplace remove codewiki`, then add it again with this command.
 
 Then start a new Codex session in the repository.
 

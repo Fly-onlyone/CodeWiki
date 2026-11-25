@@ -2233,22 +2233,28 @@ $global:LASTEXITCODE = 0
     }
 
     # README's other way, for a build from source: the repository at GitHub
-    # as the marketplace. Claude Code clones it, which is why it needs git.
+    # as the marketplace. Claude Code clones it, which is why it needs git;
+    # `--sparse` keeps the clone to the marketplace file and the plugin.
     # It installs the plugin as the repository's default branch has it.
-    Test-Case "CC8" "The repository as marketplace" "claude plugin marketplace add Fly-onlyone/CodeWiki clones it, and the plugin installs from it" {
+    Test-Case "CC8" "The repository as marketplace" "claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code checks out only the plugin, and the plugin installs from it" {
         $run = Invoke-GuestScript -TimeoutSec 900 -Script @'
 $claude = "$env:USERPROFILE\.local\bin\claude.exe"
-"--- claude plugin marketplace add Fly-onlyone/CodeWiki"; & $claude plugin marketplace add Fly-onlyone/CodeWiki 2>&1; "add exit: $LASTEXITCODE"
+"--- claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code"; & $claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code 2>&1; "add exit: $LASTEXITCODE"
+$m = "$env:USERPROFILE\.claude\plugins\marketplaces\codewiki"
+"--- the clone"; Get-ChildItem $m -Name -Force
+"whole: $(Test-Path "$m\crates")"
+"plugin: $(Test-Path "$m\plugins\claude-code\.claude-plugin\plugin.json")"
 "--- claude plugin install codewiki@codewiki"; & $claude plugin install codewiki@codewiki 2>&1; "install exit: $LASTEXITCODE"
 "--- claude plugin list"; $list = @(& $claude plugin list 2>&1 | ForEach-Object { "$_" }); $list
 "listed: $([bool]($list -match 'codewiki@codewiki'))"
 "--- removal"; & $claude plugin uninstall codewiki@codewiki 2>&1; & $claude plugin marketplace remove codewiki 2>&1; "removal exit: $LASTEXITCODE"
 $global:LASTEXITCODE = 0
 '@
-        $ok = $run.Output -match "add exit: 0" -and $run.Output -match "install exit: 0" -and $run.Output -match "listed: True"
-        Add-Result -Id "CC8" -Title "The repository as marketplace" -Expect "cloned, and the plugin installs from it" `
+        $ok = $run.Output -match "add exit: 0" -and $run.Output -match "whole: False" -and $run.Output -match "plugin: True" -and
+            $run.Output -match "install exit: 0" -and $run.Output -match "listed: True"
+        Add-Result -Id "CC8" -Title "The repository as marketplace" -Expect "only the marketplace file and the plugin folder checked out, and the plugin installs from it" `
             -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-            -Observed $(if ($ok) { "the repository was cloned as the marketplace and codewiki@codewiki installed from it; removed again" } else { "it did not install; see the output" })
+            -Observed $(if ($ok) { "only the marketplace file and the plugin folder were checked out, and codewiki@codewiki installed from them; removed again" } else { "the clone held the whole repository, or the plugin did not install; see the output" })
     }
 
     # Whatever the cases did: the token does not stay in the guest.

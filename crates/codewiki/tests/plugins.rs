@@ -147,6 +147,70 @@ fn every_marketplace_lists_a_plugin_that_exists() {
     }
 }
 
+/// The folders a `marketplace add` command checks out: Claude Code's
+/// `--sparse` takes every word after it, Codex's one word per flag.
+fn sparse_paths<'a>(cli: &str, args: &'a str) -> Vec<&'a str> {
+    let mut paths = Vec::new();
+    let mut taking = false;
+    for word in args.split_whitespace() {
+        if word.starts_with("--") {
+            taking = word == "--sparse";
+        } else if taking {
+            paths.push(word);
+            taking = cli == "claude";
+        }
+    }
+    paths
+}
+
+#[test]
+fn repository_marketplace_checks_out_only_the_plugin() {
+    // Adding the repository at GitHub as a marketplace clones it. The commands
+    // the docs give name the folders to check out, so the clone holds the
+    // marketplace file and the plugin, not the whole repository.
+    // (document, agent's command, marketplace file)
+    let docs = [
+        ("README.md", "claude", ".claude-plugin/marketplace.json"),
+        (
+            "plugins/claude-code/README.md",
+            "claude",
+            ".claude-plugin/marketplace.json",
+        ),
+        ("README.md", "codex", ".agents/plugins/marketplace.json"),
+        (
+            "plugins/codex/README.md",
+            "codex",
+            ".agents/plugins/marketplace.json",
+        ),
+    ];
+    for (doc, cli, file) in docs {
+        let source = &json(file)["plugins"][0]["source"];
+        let plugin = source
+            .as_str()
+            .or_else(|| source["path"].as_str())
+            .and_then(|path| path.strip_prefix("./"))
+            .expect(file);
+        let mut needed = vec![file.rsplit_once('/').expect(file).0, plugin];
+        needed.sort();
+
+        let add = format!("{cli} plugin marketplace add Fly-onlyone/CodeWiki");
+        let text = read(doc);
+        let commands: Vec<&str> = text
+            .lines()
+            .filter_map(|line| {
+                let at = line.find(&add)?;
+                line[at + add.len()..].split('`').next()
+            })
+            .collect();
+        assert!(!commands.is_empty(), "{doc} has no `{add}`");
+        for args in commands {
+            let mut paths = sparse_paths(cli, args);
+            paths.sort();
+            assert_eq!(paths, needed, "{doc}: `{add}{args}`");
+        }
+    }
+}
+
 #[test]
 fn codex_skills_are_named_after_their_folders() {
     let mut names = Vec::new();

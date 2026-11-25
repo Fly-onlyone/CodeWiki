@@ -318,6 +318,53 @@ if (`$h -ne [IntPtr]::Zero) {
     }
 }
 
+# Move and size a program's main window so that its client area (what the app
+# draws in) is at -Left, -Top with the given size, in screen pixels: the same
+# layout on screens of different sizes. Returns the window as Get-GuestWindowInfo does.
+function Set-GuestWindowClient {
+    param(
+        [Parameter(Mandatory)][string]$ProcessName,
+        [int]$Left = 16, [int]$Top = 12, [int]$Width = 992, [int]$Height = 688
+    )
+    $run = Invoke-GuestScript -TimeoutSec 60 -Script @"
+Add-Type -Namespace VmTest -Name Place -MemberDefinition '
+[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+[StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);'
+[void][VmTest.Place]::SetProcessDPIAware()
+$script:GuestWindowType
+`$h = [IntPtr]::Zero
+foreach (`$process in @(Get-Process '$ProcessName' -ErrorAction SilentlyContinue)) {
+    `$h = [VmTest.Windows]::Largest(`$process.Id)
+    if (`$h -ne [IntPtr]::Zero) { break }
+}
+if (`$h -eq [IntPtr]::Zero) { 'placed=none'; return }
+# A maximized window ignores a new size: restore it first (SW_RESTORE).
+[void][VmTest.Place]::ShowWindow(`$h, 9)
+`$outer = New-Object VmTest.Place+Rect
+`$client = New-Object VmTest.Place+Rect
+`$origin = New-Object VmTest.Place+Point
+[void][VmTest.Place]::GetWindowRect(`$h, [ref]`$outer)
+[void][VmTest.Place]::GetClientRect(`$h, [ref]`$client)
+[void][VmTest.Place]::ClientToScreen(`$h, [ref]`$origin)
+`$dx = `$origin.X - `$outer.Left
+`$dy = `$origin.Y - `$outer.Top
+`$extraWidth = (`$outer.Right - `$outer.Left) - `$client.Right
+`$extraHeight = (`$outer.Bottom - `$outer.Top) - `$client.Bottom
+# SWP_NOZORDER | SWP_NOACTIVATE
+[void][VmTest.Place]::SetWindowPos(`$h, [IntPtr]::Zero, $Left - `$dx, $Top - `$dy, $Width + `$extraWidth, $Height + `$extraHeight, 0x0014)
+'placed=done'
+"@
+    if ($run.Output -notmatch 'placed=done') { throw "could not place the window of '$ProcessName': $($run.Output) $($run.Stderr)" }
+    Start-Sleep -Seconds 2
+    Get-GuestWindowInfo $ProcessName
+}
+
 # Click the way a person does who has stopped the pointer on a control first:
 # move there, rest, then press without moving. A click that follows its own
 # pointer move at once reaches a control that has only just been redrawn for
@@ -775,17 +822,31 @@ function Send-Click {
         [Parameter(Mandatory)][int]$X,
         [Parameter(Mandatory)][int]$Y,
         [ValidateSet("left", "right", "middle")][string]$Button = "left",
-        [switch]$Double
+        [switch]$Double,
+        # Keys held down for the click, as in a Ctrl+click: "ctrl", "shift".
+        [string[]]$Hold = @()
     )
     $index = @{ left = 1; right = 2; middle = 3 }[$Button]
     Move-Pointer -X $X -Y $Y
     Start-Sleep -Milliseconds 150
-    Invoke-Device Mouse ClickButton @{ ButtonIndex = [uint32]$index }
-    if ($Double) {
-        Start-Sleep -Milliseconds 80
+    foreach ($key in $Hold) { Invoke-Device Keyboard PressKey @{ KeyCode = [uint32]$script:KeyCodes[$key] }; Start-Sleep -Milliseconds 50 }
+    try {
         Invoke-Device Mouse ClickButton @{ ButtonIndex = [uint32]$index }
+        if ($Double) {
+            Start-Sleep -Milliseconds 80
+            Invoke-Device Mouse ClickButton @{ ButtonIndex = [uint32]$index }
+        }
+    } finally {
+        foreach ($key in $Hold) { Start-Sleep -Milliseconds 50; Invoke-Device Keyboard ReleaseKey @{ KeyCode = [uint32]$script:KeyCodes[$key] } }
     }
     Start-Sleep -Milliseconds 300
+}
+
+# Hold the left mouse button down, or let it go, where the pointer is: to see
+# what a control looks like while it is pressed.
+function Set-MouseButton {
+    param([Parameter(Mandatory)][bool]$Down)
+    Invoke-Device Mouse SetButtonState @{ ButtonIndex = [uint32]1; IsDown = $Down }
 }
 
 # Turn the mouse wheel; a positive number scrolls up.
@@ -811,22 +872,24 @@ Add-Type -Namespace VmTest -Name Dpi -MemberDefinition '[DllImport("user32.dll")
 $automation = [System.Windows.Automation.AutomationElement]
 $scope = [System.Windows.Automation.TreeScope]
 foreach ($class in $classes) {
-    $ofClass = New-Object System.Windows.Automation.PropertyCondition($automation::ClassNameProperty, $class)
+    # "*" asks every top-level window, for a window whose class is not known.
+    $ofClass = if ($class -eq "*") { [System.Windows.Automation.Condition]::TrueCondition } else { New-Object System.Windows.Automation.PropertyCondition($automation::ClassNameProperty, $class) }
     foreach ($window in $automation::RootElement.FindAll($scope::Children, $ofClass)) {
+        $label = if ($class -eq "*") { $window.Current.ClassName -replace ';', ' ' } else { $class }
         foreach ($element in $window.FindAll($scope::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
             $current = $element.Current
             if ($current.Name -notlike $like) { continue }
             $box = $current.BoundingRectangle
             $place = if ($box.IsEmpty) { "0,0,0,0" } else { "$([int]$box.X),$([int]$box.Y),$([int]$box.Width),$([int]$box.Height)" }
             $kind = $current.ControlType.ProgrammaticName -replace "^ControlType\.", ""
-            "element=$class;$kind;$place;$([int]$current.IsOffscreen);$([int]$current.IsEnabled);$($current.ClassName -replace ';', ' ');$($current.Name -replace '\s+', ' ')"
+            "element=$label;$kind;$place;$([int]$current.IsOffscreen);$([int]$current.IsEnabled);$($current.ClassName -replace ';', ' ');$($current.Name -replace '\s+', ' ')"
         }
     }
 }
 '@
 
 # The elements of the guest's screen, under top-level windows of the given
-# window classes, whose name is like -Like. Each has Class (of the window),
+# window classes ("*" for every top-level window), whose name is like -Like. Each has Class (of the window),
 # Kind, UiClass (of the element itself), Name, its place (Left, Top, Width,
 # Height), the point in its middle (X, Y), and whether it is on screen
 # (OnScreen) and can be chosen (Enabled).

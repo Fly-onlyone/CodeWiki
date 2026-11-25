@@ -83,6 +83,17 @@ try {
     "file holds the text: $held"
     $again = Invoke-Tool "get_note_brief" @{ note = $path }
     "brief again, section written by an agent: $($again -match [regex]::Escape("- ${heading}: an agent wrote it"))"
+
+    # Claims: each claiming listing is its own agent. The first keeps two
+    # notes for 30 minutes; the second, asking for more, is told that another
+    # agent writes them and is not given them.
+    $first = Invoke-Tool "list_waiting_notes" @{ limit = 2; claim = $true }
+    $firstNotes = @([regex]::Matches($first, '(?m)^\d+\. (.+?)\s{2}\(') | ForEach-Object { $_.Groups[1].Value.Trim() })
+    "claim first: $($firstNotes.Count) notes; kept: $($first -match 'kept for you for 30 minutes')"
+    $second = Invoke-Tool "list_waiting_notes" @{ limit = 20; claim = $true }
+    $secondNotes = @([regex]::Matches($second, '(?m)^\d+\. (.+?)\s{2}\(') | ForEach-Object { $_.Groups[1].Value.Trim() })
+    $overlap = @($secondNotes | Where-Object { $firstNotes -contains $_ }).Count
+    "claim second: $($secondNotes.Count) notes; told of another agent: $($second -match 'being written by another agent|another agent is writing'); notes of the first among them: $overlap"
 } finally {
     $bridge.StandardInput.Close()
     if (-not $bridge.WaitForExit(10000)) { $bridge.Kill() }

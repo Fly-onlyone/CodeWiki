@@ -103,12 +103,18 @@ if (Test-Path $backendFile) {
 }
 
 # What the app keeps outside its folders: the value that starts it with
-# Windows, the name Windows shows its one notification under, and whether it
-# has told the user that it stays in the tray.
+# Windows, the name and icon Windows shows its notifications under (written
+# with the first Windows notification), the icon file, and whether it has
+# told the user that it stays in the tray.
+$identityKey = "HKCU:\Software\Classes\AppUserModelId\CodeWiki.App"
+$identity = Get-ItemProperty $identityKey
 $registry = [ordered]@{
-    autostart   = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CodeWiki").CodeWiki
-    appIdentity = Test-Path "HKCU:\Software\Classes\AppUserModelId\CodeWiki.App"
-    trayHint    = Test-Path (Join-Path $prefsDir "tray_hint.txt")
+    autostart        = (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "CodeWiki").CodeWiki
+    appIdentity      = Test-Path $identityKey
+    appIdentityName  = $identity.DisplayName
+    appIdentityIcon  = $identity.IconUri
+    notificationIcon = Test-Path (Join-Path $dataDir "notification-icon.png")
+    trayHint         = Test-Path (Join-Path $prefsDir "tray_hint.txt")
 }
 
 $events = @()

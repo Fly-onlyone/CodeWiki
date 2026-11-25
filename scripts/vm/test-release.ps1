@@ -63,12 +63,16 @@ param(
     # For one case that can stand alone, such as U2; most cases build on the
     # ones before them.
     [string[]]$Only,
+    # Leave these cases out (their IDs; wildcards allowed, as "OL*"): for the
+    # main pass of a release, whose real embedding servers run alone.
+    [string[]]$Skip,
     # Multiplies every wait; raise it on a slow host.
     [double]$Pace = 1.0
 )
 $ErrorActionPreference = "Stop"
 # "pwsh -File ... -Only A1,C1" hands the list over as one text.
 if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+if ($Skip) { $Skip = @($Skip | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 . (Join-Path $PSScriptRoot "Vm.ps1")
 Initialize-Vm -Name $VmName -User $User -Password $Password
 # The host must not fall asleep under a run nobody is watching.
@@ -108,6 +112,7 @@ New-Item -ItemType Directory -Force $shots, $logs, (Join-Path $Report "recording
 $Report = (Resolve-Path $Report).Path
 # Evidence of an earlier run into the same folder would mix with this one's.
 Get-ChildItem $shots -Filter "*.png" | Remove-Item -Force
+Get-ChildItem $shots -Directory | Remove-Item -Recurse -Force
 Get-ChildItem $logs -Filter "probe-*.json" | Remove-Item -Force
 
 # The guest's folders. They are set once the guest is up, from what the guest
@@ -150,6 +155,7 @@ function Add-Result {
 function Test-Case {
     param([string]$Id, [string]$Title, [string]$Expect, [scriptblock]$Body)
     if ($Only -and $Only -notcontains $Id) { return }
+    if ($Skip | Where-Object { $Id -like $_ }) { return }
     try {
         & $Body
     } catch {
@@ -233,6 +239,8 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
     if ($entries -notcontains "plugins/.claude-plugin/marketplace.json") { $missing += "plugins/.claude-plugin/marketplace.json" }
     # The same for Codex.
     if ($entries -notcontains "plugins/.agents/plugins/marketplace.json") { $missing += "plugins/.agents/plugins/marketplace.json" }
+    # The agent that the session-start hook has explain waiting notes.
+    if ($entries -notcontains "plugins/claude-code/agents/note-writer.md") { $missing += "plugins/claude-code/agents/note-writer.md" }
     $unpacked = Join-Path ([System.IO.Path]::GetTempPath()) "cwvm-zip-$PID"
     Expand-Archive -Path $Zip -DestinationPath $unpacked -Force
     # Names of the DLLs each program asks Windows for, read from the file itself.
@@ -677,6 +685,19 @@ Test-Case "H1" "Close the window" "Alt+F4 hides it; the app and its backend stay
         -Observed "after Alt+F4: app processes $($app.Count), with a window $windows; backend pid $($probe.backend.pid) alive $($probe.backend.pidAlive) (it was $firstBackendPid before); tray_hint.txt written: $($probe.registry.trayHint); Windows has the app's name for notifications: $($probe.registry.appIdentity); the screenshot must show the notification 'CodeWiki is still running'"
 }
 
+# The app gives Windows its name and logo with its first Windows notification,
+# H1's: the values under its AppUserModelId key and the picture they name.
+Test-Case "NI1" "Windows knows the app's notification name and icon" "after the first Windows notification: DisplayName 'CodeWiki' and an IconUri naming notification-icon.png in the data folder, which exists" {
+    $probe = if ($closedProbe) { $closedProbe } else { Get-Probe "notification-identity" -Quick }
+    $name = "$($probe.registry.appIdentityName)"
+    $icon = "$($probe.registry.appIdentityIcon)"
+    $expected = "$guestHome\AppData\Local\CodeWiki\notification-icon.png"
+    $ok = $probe.registry.appIdentity -and $name -eq "CodeWiki" -and $icon -ieq $expected -and $probe.registry.notificationIcon
+    Add-Result -Id "NI1" -Title "Windows knows the app's notification name and icon" -Expect "DisplayName 'CodeWiki'; IconUri '$expected'; the file exists" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) `
+        -Observed "key present: $($probe.registry.appIdentity); DisplayName '$name'; IconUri '$icon'; notification-icon.png in the data folder: $($probe.registry.notificationIcon); H1's screenshot shows the notification with this name and logo"
+}
+
 Test-Case "TR1" "The tray icon says what the app is doing" "its tooltip names the repository, the state and the MCP status" {
     $icons = @(Get-GuestTrayIcons)
     $name = "$(($icons | Select-Object -First 1).Name)"
@@ -786,8 +807,8 @@ Test-Case "SI1" "Starting the app again shows the running one" "with the window 
     $info = Get-GuestWindowInfo "codewiki-app"
     $sameApp = $hiddenApp -and $app.Count -eq 1 -and $app[0].id -eq $hiddenApp.id
     $sameBackend = [bool]($probe.backend -and $probe.backend.pid -eq $firstBackendPid) -and (Get-Backend $probe).Count -eq 1
-    $ok = -not $hidden -and $sameApp -and $sameBackend -and $info -and -not $info.Minimized
-    Add-Result -Id "SI1" -Title "Starting the app again shows the running one" -Expect "one app, the same process; one backend, the same; its window on screen" `
+    $ok = -not $hidden -and $sameApp -and $sameBackend -and $info -and -not $info.Minimized -and $info.Foreground
+    Add-Result -Id "SI1" -Title "Starting the app again shows the running one" -Expect "one app, the same process; one backend, the same; its window on screen and in front" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($search, $shot) `
         -Observed "Alt+F4 left a window: $([bool]$hidden); after the Start menu: app processes $($app.Count), the same process: $([bool]$sameApp); backend processes $((Get-Backend $probe).Count), pid $($probe.backend.pid) (it was $firstBackendPid); window on screen: $([bool]$info), in front: $($info.Foreground)"
 }
@@ -1002,6 +1023,9 @@ $views = @(
     @{ name = "health"; args = @($guestRepo, "health:") }
     @{ name = "tests"; args = @($guestRepo, "tests:") }
     @{ name = "settings"; args = @($guestRepo, "settings:") }
+    @{ name = "review"; args = @($guestRepo, "review:") }
+    # The toolbar shows "To explain (N)"; the page lists the notes that wait.
+    @{ name = "waiting"; args = @($guestRepo, "waiting:") }
     # No "themes:" here: it opens the theme menu, and the click that gives the
     # window the focus closes a menu. T1 and T2 open it by keyboard instead.
 )
@@ -1135,6 +1159,403 @@ foreach ($mode in "reduced", "system") {
 }
 # Back to what the rest of the run uses.
 Set-GuestMotion $(if ($starved) { "reduced" } else { "system" })
+
+# ---------------------------------------------------------------- helpers for notices, recovery and the look
+# Screenshots at a steady pace, for what shows only for a while: the banner
+# while the backend is away, a toast for six seconds. The frames go to a
+# folder of their own; the case keeps a contact sheet of them, four to a row.
+# Returns the sheet's file name, or the folder's when ffmpeg is missing.
+function Save-ShotBurst {
+    param([Parameter(Mandatory)][string]$Name, [double]$Seconds = 30, [double]$Every = 2)
+    $script:shotCount += 1
+    $base = "{0:d2}-{1}" -f $script:shotCount, $Name
+    $folder = Join-Path $shots $base
+    New-Item -ItemType Directory -Force $folder | Out-Null
+    $deadline = (Get-Date).AddSeconds($Seconds * $Pace)
+    $count = 0
+    do {
+        $count += 1
+        Save-Screenshot (Join-Path $folder ("frame-{0:d2}.png" -f $count)) | Out-Null
+        Start-Sleep -Milliseconds ([int]($Every * 1000))
+    } while ((Get-Date) -lt $deadline)
+    $ffmpeg = Find-Ffmpeg
+    if (-not $ffmpeg) { return $base }
+    $rows = [math]::Ceiling($count / 4)
+    & $ffmpeg -y -loglevel error -framerate 1 -i (Join-Path $folder "frame-%02d.png") -vf "scale=640:-1,tile=4x$rows" -frames:v 1 (Join-Path $shots "$base.png") 2>&1 | Out-Null
+    if (Test-Path (Join-Path $shots "$base.png")) { "$base.png" } else { $base }
+}
+
+# The number of lines in the app's log, and the lines after such a mark that
+# match a pattern (a regular expression without quotes).
+function Get-AppLogMark {
+    $run = Invoke-GuestScript -Script "@(Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue).Count"
+    if ($run.Output -match '(\d+)') { [int]$Matches[1] } else { 0 }
+}
+function Get-AppLogSince {
+    param([int]$Mark, [string]$Pattern = ".")
+    $run = Invoke-GuestScript -Script "@(Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue) | Select-Object -Skip $Mark | Select-String -Pattern '$Pattern' | ForEach-Object { `$_.Line }"
+    @($run.Output -split "`r?`n" | Where-Object { $_.Trim() })
+}
+
+# The backend that backend.json names: its pid, whether it runs and what its
+# health route answers (0 for no answer). Null without a backend.json.
+function Get-GuestBackendState {
+    $run = Invoke-GuestScript -TimeoutSec 60 -Script @'
+$file = Join-Path $env:LOCALAPPDATA 'CodeWiki\backend.json'
+if (-not (Test-Path $file)) { 'backend=none'; return }
+$json = Get-Content $file -Raw | ConvertFrom-Json
+$alive = [bool](Get-Process -Id $json.pid -ErrorAction SilentlyContinue)
+$health = 0
+try { $health = [int](Invoke-WebRequest -UseBasicParsing -TimeoutSec 3 "$($json.url)/v1/health").StatusCode } catch { }
+"backend=$($json.pid);$alive;$health"
+'@
+    if ($run.Output -match 'backend=(\d+);(True|False);(\d+)') {
+        [pscustomobject]@{ Pid = [int]$Matches[1]; Alive = $Matches[2] -eq "True"; Health = [int]$Matches[3] }
+    }
+}
+
+# Wait until a backend other than -Not answers its health route.
+function Wait-NewBackend {
+    param([int]$Not, [int]$TimeoutSec = 75)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec * $Pace)
+    do {
+        $state = Get-GuestBackendState
+        if ($state -and $state.Pid -ne $Not -and $state.Alive -and $state.Health -eq 200) { return $state }
+        Start-Sleep -Seconds 3
+    } while ((Get-Date) -lt $deadline)
+    $state
+}
+
+# Start a backend from outside the app, as a coding agent's session or a user
+# at a terminal does: `codewiki serve` as a program of its own on the desktop
+# (Start-GuestExe), in a console without a window. Not from Invoke-GuestScript,
+# which ends its task by force and the backend with it; not through the MCP
+# bridge, which waits for a request before it connects. Returns the backend
+# once it answers, or null.
+function Start-GuestBackendOutside {
+    $old = Get-GuestBackendState
+    Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", "$guestTarget\codewiki.exe", "serve" -WorkingDirectory $guestRepo
+    Wait-NewBackend -Not $(if ($old -and $old.Alive) { -1 } else { 0 }) -TimeoutSec 60
+}
+
+# End the backend the way a crash would: no request, no clean-up.
+function Stop-GuestBackend {
+    Invoke-GuestScript -Script 'Get-Process codewiki -ErrorAction SilentlyContinue | Stop-Process -Force' | Out-Null
+    Wait-For 1
+}
+
+# Where a point of the app's window is on the guest's screen: X and Y are in
+# the app's own pixels from the top left of the client area (the title bar is
+# its top 34), as the layout in main.rs gives them.
+function Get-AppPoint {
+    param([Parameter(Mandatory)]$Info, [double]$X, [double]$Y)
+    @(($Info.Left + [int]($X * $Info.Scale)), ($Info.Top + [int]($Y * $Info.Scale)))
+}
+
+# The app's layout on a repository page, in its own pixels from the top left
+# of the client area (main.rs): a 34 high title bar, a 280 wide sidebar, then
+# the toolbar, the tab bar (44) and the page; the details pane is 260 wide.
+# Everything here is placed from the left, so it holds for any window width,
+# except a negative X, which counts from the right edge. Read off screenshots
+# of the release's window (2026-11-25).
+$layout = @{
+    neutral     = @(600, 17)    # the middle of the title bar: hovers nothing
+    sidebarRow  = @(124, 248)   # Core > Overview, a sidebar row that is not open
+    homeIcon    = @(333, 61)    # the toolbar's Home icon button
+    searchField = @(432, 61)    # the toolbar's search field, just after its icon (a click on the icon does not focus it)
+    tab         = @(330, 112)   # the first tab
+    noteLink    = @(354, 540)   # the link 'cw-core' of _HOME, with the window at 992x688
+    detailsButton = @(-130, 433) # "Open in Obsidian" in the details pane of _HOME
+    detailsBlank = @(-130, 600) # empty space in the details pane, below that button
+    reviewAll   = @(311, 158)   # the review queue's header checkbox (select all)
+    reviewRow3  = @(388, 304)   # the queue's third row, its label
+    approve     = @(620, 157)   # "Approve N" / "Approve and write", its left part
+    reject      = @(762, 157)   # "Reject" beside "Approve and write"
+}
+function Get-LayoutPoint {
+    param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)][string]$Name)
+    $x, $y = $layout[$Name]
+    if ($x -lt 0) { $x = $Info.Width / $Info.Scale + $x }
+    Get-AppPoint -Info $Info -X $x -Y $y
+}
+
+# ---------------------------------------------------------------- BG1 and HV1, the look
+# The background graph is drawn behind the glass, beside the page; off, the
+# glass shows the plain backdrop. Settings > Appearance > Background graph
+# writes backdrop.txt; the case writes it, then starts the app again.
+Test-Case "BG1" "The background graph, on and off" "with the graph on the window shows notes and links behind the glass; off it does not; neither keeps the processors busy" {
+    Invoke-GuestScript -Script "Remove-Item `"`$env:APPDATA\CodeWiki\backdrop.txt`" -ErrorAction SilentlyContinue" | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    Move-Pointer -X ($appWindow.Left + 400) -Y ($appWindow.Top + 17)
+    Wait-For 3
+    $onShot = Shot "background-graph-on"
+    $onLoad = Get-GuestProcessorLoad -Seconds 15
+    Stop-GuestApp
+    Invoke-GuestScript -Script "Set-Content `"`$env:APPDATA\CodeWiki\backdrop.txt`" 'off' -NoNewline" | Out-Null
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    Move-Pointer -X ($appWindow.Left + 400) -Y ($appWindow.Top + 17)
+    Wait-For 3
+    $offShot = Shot "background-graph-off"
+    $offLoad = Get-GuestProcessorLoad -Seconds 15
+    Stop-GuestApp
+    Invoke-GuestScript -Script "Remove-Item `"`$env:APPDATA\CodeWiki\backdrop.txt`" -ErrorAction SilentlyContinue" | Out-Null
+    $change = Get-ImageChange (Join-Path $shots $onShot) (Join-Path $shots $offShot)
+    $idle = if ($null -ne $idleLoad) { $idleLoad } else { 10 }
+    # The graph is faint by design (soft dots and lines behind the glass): on
+    # a software adapter, where it stands still, about one percent of the
+    # window changes.
+    $ok = $change -ge 0.005 -and $onLoad -le $idle + 15 -and $offLoad -le $idle + 15
+    Add-Result -Id "BG1" -Title "The background graph, on and off" -Expect "the two pictures differ where the graph is; the guest's processors stay near idle both ways" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($onShot, $offShot) `
+        -Observed "share of the window that changed between graph on and off: $([math]::Round($change * 100, 1)) percent; the guest's processors over 15 s: $onLoad percent with the graph, $offLoad percent without ($idle before the app started); read the first screenshot: dots and lines behind the glass beside the page; the second: none"
+}
+
+# Hover, press and selection, made clearly visible in 0.4.0, are judged by eye
+# from these pictures: each is taken after the pointer has rested a second.
+Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and link each look different from at rest; a pressed row darkens; the open note's row is marked" {
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    # The same window on both checkpoints' screens (1024x768 and 1600x900),
+    # so that the note's text wraps alike and the link is where it was measured.
+    $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
+    if (-not $info) { throw "the app has no window" }
+    Wait-For 3
+    # In two runs the note's text was shown selected once the pointer passed
+    # over it after the start's click on the title bar, with no button down;
+    # it did not happen by hand. A click on empty space first leaves no
+    # selection to mistake for a hover.
+    $x, $y = Get-LayoutPoint -Info $info -Name "detailsBlank"
+    Send-RestedClick -X $x -Y $y
+    Wait-For 1
+    $taken = @()
+    foreach ($target in "neutral", "sidebarRow", "homeIcon", "detailsButton", "tab", "noteLink") {
+        $x, $y = Get-LayoutPoint -Info $info -Name $target
+        Move-Pointer -X $x -Y $y
+        Start-Sleep -Milliseconds 1200
+        $taken += Shot "hover-$target"
+    }
+    $pressed = "not taken"
+    $x, $y = Get-LayoutPoint -Info $info -Name "sidebarRow"
+    Move-Pointer -X $x -Y $y
+    Start-Sleep -Milliseconds 1200
+    try {
+        Set-MouseButton -Down $true
+        Start-Sleep -Milliseconds 400
+        $taken += Shot "press-sidebarRow"
+        $pressed = "taken"
+    } catch {
+        $pressed = "the VM's mouse could not hold its button: $($_.Exception.Message)"
+    } finally {
+        try { Set-MouseButton -Down $false } catch { }
+    }
+    Start-Sleep -Milliseconds 1500
+    $taken += Shot "selected-row"
+    Stop-GuestApp
+    Add-Result -Id "HV1" -Title "Hover, press and selection" -Expect "each hovered control differs from the first picture; the pressed row is darker; the open note's row carries the bar" -Status note -Shots $taken `
+        -Observed "window placed at 992x688; pointer rested 1.2 s on: the title bar (rest), a sidebar row, the Home icon, 'Open in Obsidian', the first tab and the link 'cw-core' of _HOME; the row held down: $pressed; read the screenshots: the row fills and shifts right with its icon grown, the Home icon grows and brightens, the outlined button tints, the tab tints, the link gets a solid underline; the pressed row fills darker; in the last the row of the note opened by the press has a glowing bar at its left edge"
+}
+
+# ---------------------------------------------------------------- RC1, NW1 and RC2, the backend lost and found
+# The app asks its backend for its status every five seconds. Two silent
+# polls mean it is lost: a banner says so, and the app starts a new backend
+# itself. When it answers, a toast says "Reconnected", or, with the window
+# hidden, a Windows notification (connection.rs, main.rs take_attempt).
+Test-Case "RC1" "The backend ends while the window is open" "a banner says so, the app starts a new backend by itself, and a toast says 'Reconnected'" {
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 20
+    $before = Get-GuestBackendState
+    if (-not $before) { throw "no backend.json while the app is open" }
+    $mark = Get-AppLogMark
+    Stop-GuestBackend
+    $sheet = Save-ShotBurst "backend-lost-and-back" -Seconds 40 -Every 2
+    $after = Wait-NewBackend -Not $before.Pid
+    $lines = Get-AppLogSince $mark "toast|Windows notification|backend"
+    $toast = [bool]($lines | Where-Object { $_ -match "toast backend" })
+    $probe = Get-Probe "backend-back" -Quick
+    $shot = Shot "backend-back"
+    $ok = $after -and $after.Pid -ne $before.Pid -and $after.Health -eq 200 -and $toast -and (Get-App $probe).Count -eq 1 -and (Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })
+    Add-Result -Id "RC1" -Title "The backend ends while the window is open" -Expect "a new backend answers; the log says 'toast backend'; the app still shows cw-core" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($sheet, $shot) -Output ($lines -join "`n") `
+        -Observed "backend $($before.Pid) ended by force; then backend $($after.Pid) alive $($after.Alive), health $($after.Health); the app's log: toast 'backend' $toast; app processes $((Get-App $probe).Count); read the contact sheet (a frame each 2 s): the banner 'Backend not reachable, reconnecting…' above the page, then the toast 'Reconnected' at the bottom right"
+}
+
+# The same with the window closed to the tray: the notice goes to Windows. It
+# is clicked in the notification centre (Win+N), as a user who missed it does;
+# the click brings the window back in front.
+Test-Case "NW1" "A Windows notification while the window is hidden" "the backend is lost and found with the window in the tray: a Windows notification 'Reconnected'; a click on it in the notification centre shows the window in front" {
+    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-For 15 }
+    [void](Show-GuestWindow -ProcessName "codewiki-app")
+    Send-Keys "alt+f4"
+    Wait-For 4
+    $before = Get-GuestBackendState
+    $mark = Get-AppLogMark
+    Stop-GuestBackend
+    $after = Wait-NewBackend -Not $before.Pid
+    Wait-For 3
+    $lines = Get-AppLogSince $mark "toast|Windows notification|notification was clicked"
+    $sent = [bool]($lines | Where-Object { $_ -match "Windows notification backend" })
+    # The notification centre closes as soon as another program starts, and
+    # every question to the guest starts one: it cannot be read through UI
+    # Automation. Its newest card is at a fixed place from the screen's top
+    # right corner (the panel's header, then the app's name, then the card),
+    # so it is photographed and clicked there; the app's log says whether the
+    # click reached it.
+    Send-Keys "win+n"
+    Wait-For 4
+    $centre = Shot "notification-centre"
+    $screen = Get-GuestScreenSize
+    Send-RestedClick -X ($screen.Width - 181) -Y 150
+    Wait-For 5
+    $clicked = [bool](Get-AppLogSince $mark "notification was clicked")
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $shot = Shot "after-notification-click"
+    # The notification centre stays open when the click missed the card.
+    if (-not $clicked) { Send-Keys "esc"; Wait-For 1 }
+    $status = if (-not $sent) { "fail" } elseif (-not $clicked) { "note" } elseif ($info -and $info.Foreground -and -not $info.Minimized) { "pass" } else { "fail" }
+    Add-Result -Id "NW1" -Title "A Windows notification while the window is hidden" -Expect "the log says 'Windows notification backend'; a click on the notification in the notification centre reaches the app and shows the window in front" `
+        -Status $status -Shots @($centre, $shot) -Output ($lines -join "`n") `
+        -Observed "backend $($before.Pid) ended with the window in the tray; new backend $($after.Pid) health $($after.Health); the app sent a Windows notification: $sent; Win+N, click on the newest card at ($($screen.Width - 181),150): the app's log says it was clicked: $clicked; window $(if ($info) { "on screen, in front $($info.Foreground)" } else { 'not on screen' })$(if (-not $clicked) { '; the click did not reach the app (not verified by the rig): read the notification centre screenshot, which must show CodeWiki and Reconnected' })"
+    Stop-GuestApp
+}
+
+# A start when no backend can start (its program is held away for the start):
+# the app shows its offline page and goes on looking. A backend that another
+# program starts later, here `codewiki serve` as a coding agent's session or a terminal does,
+# is found and taken, with a toast "Connected".
+Test-Case "RC2" "A start with no backend, then one appears" "the offline page; then a backend started outside the app is taken by itself, with a toast 'Connected'" {
+    Stop-GuestApp
+    Stop-GuestBackend
+    $held = "$guestTarget\codewiki.exe.vmhold"
+    Invoke-GuestScript -Script "Rename-Item -LiteralPath '$guestTarget\codewiki.exe' -NewName 'codewiki.exe.vmhold'" | Out-Null
+    try {
+        Start-GuestApp -Arguments $guestRepo, "_HOME"
+        Wait-For 20
+        $offline = Shot "offline-page"
+        $mark = Get-AppLogMark
+    } finally {
+        Invoke-GuestScript -Script "if (Test-Path -LiteralPath '$held') { Rename-Item -LiteralPath '$held' -NewName 'codewiki.exe' }" | Out-Null
+    }
+    $started = Start-GuestBackendOutside
+    $sheet = Save-ShotBurst "backend-appears" -Seconds 40 -Every 2
+    $state = Get-GuestBackendState
+    $lines = Get-AppLogSince $mark "toast|backend"
+    $toast = [bool]($lines | Where-Object { $_ -match "toast backend" })
+    $probe = Get-Probe "backend-found" -Quick
+    $shot = Shot "backend-found"
+    $ok = $state -and $state.Alive -and $state.Health -eq 200 -and $toast -and (Get-App $probe).Count -eq 1
+    Add-Result -Id "RC2" -Title "A start with no backend, then one appears" -Expect "the offline page; the log says 'toast backend' once the bridge's backend answers" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($offline, $sheet, $shot) -Output ($lines -join "`n") `
+        -Observed "codewiki.exe held away for the start; codewiki serve started outside the app brought up backend $(if ($started) { "$($started.Pid), health $($started.Health)" } else { 'none' }); afterwards backend $($state.Pid) alive $($state.Alive), health $($state.Health); the app's log: toast 'backend' $toast; read the first screenshot: 'The backend is not reachable.' with 'Try again'; the contact sheet: the page comes back and the toast 'Connected' shows"
+    Stop-GuestApp
+}
+
+# ---------------------------------------------------------------- RV1, RV2 and SG1, reviews and search
+# A note edited by hand is not rewritten when the code under it changes: the
+# sync proposes the change instead (cw-vault lifecycle). Three such notes are
+# made here, and a sync from outside the app (the backend's update route, as
+# a coding agent's sync_wiki does) raises them while the app is open.
+$reviewRepoId = $null
+Test-Case "RV1" "New reviews arrive while the window is open" "three notes edited by hand, the code under them changed and a sync run from outside: the toast '3 new reviews in cw-core'" {
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 20
+    $mark = Get-AppLogMark
+    $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
+$id = Get-RepoId 'cw-core'
+"repo: $id"
+$repo = '{{REPO}}'
+$notes = Invoke-Backend GET "/v1/repos/$id/notes" | ConvertFrom-Json
+$all = @($notes)
+$n = 0
+foreach ($source in 'src/paths.rs', 'src/hash.rs', 'src/logs.rs') {
+    $own = @($all | Where-Object { @($_.sources).Count -eq 1 -and @($_.sources)[0] -eq $source })
+    if (-not $own) { "no note of its own for $source"; continue }
+    $n += 1
+    $note = $own[0]
+    Add-Content -LiteralPath (Join-Path $repo ('obsidian\' + ($note.path -replace '/', '\'))) -Value "`nA line written by hand in the release test.`n"
+    Add-Content -LiteralPath (Join-Path $repo ($source -replace '/', '\')) -Value "`n/// A function the release test adds, so that the note's draft changes.`npub fn vm_probe_$n() {}`n"
+    "edited: $($note.path) for $source"
+}
+'update: ' + (Invoke-Backend POST "/v1/repos/$id/update" $null 600)
+$deadline = (Get-Date).AddSeconds(180)
+do {
+    Start-Sleep -Seconds 3
+    $status = Invoke-Backend GET '/v1/status' | ConvertFrom-Json
+} while ($status.updating -and (Get-Date) -lt $deadline)
+"pending: $($status.proposals.$id)"
+'@).Replace('{{REPO}}', $guestRepo)
+    $script:reviewRepoId = if ($run.Output -match "(?m)^repo: (\S+)") { $Matches[1] } else { $null }
+    $sheet = Save-ShotBurst "new-reviews" -Seconds 20 -Every 2
+    $lines = Get-AppLogSince $mark "toast|Windows notification"
+    $toast = [bool]($lines | Where-Object { $_ -match "toast review:" })
+    $pending = if ($run.Output -match "(?m)^pending: (\d+)") { [int]$Matches[1] } else { 0 }
+    $edited = @([regex]::Matches($run.Output, "(?m)^edited: ")).Count
+    $ok = $edited -eq 3 -and $pending -ge 3 -and $toast
+    Add-Result -Id "RV1" -Title "New reviews arrive while the window is open" -Expect "3 notes edited; 3 or more proposals pending; the log says 'toast review:<repo>'" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($sheet) -Output ($run.Output + "`n" + ($lines -join "`n")) `
+        -Observed "notes edited by hand with their code changed: $edited; proposals pending after the sync: $pending; the app's log: a review toast $toast; read the contact sheet: the toast '$pending new reviews in cw-core' with 'Open review' at the bottom right, and 'Review ($pending)' in the toolbar"
+}
+
+# The queue sits beside the open proposal. The header's box selects every
+# row; a Ctrl+click takes one out again; "Approve 2" writes two notes. The
+# third is opened alone and rejected.
+Test-Case "RV2" "Approve two proposals at once, reject the third" "the queue's boxes select several; 'Approve 2' writes both notes; the last one is rejected; nothing waits afterwards" {
+    if (-not $reviewRepoId) { throw "RV1 made no proposals" }
+    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "review:"; Wait-For 15 }
+    else {
+        [void](Show-GuestWindow -ProcessName "codewiki-app")
+        Send-Keys "ctrl+k"; Wait-For 2
+        Send-Text "review"; Wait-For 2
+        Send-Keys "enter"; Wait-For 6
+    }
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $page = Shot "review-page"
+    $x, $y = Get-LayoutPoint -Info $info -Name "reviewAll"
+    Send-RestedClick -X $x -Y $y; Wait-For 2
+    $x, $y = Get-LayoutPoint -Info $info -Name "reviewRow3"
+    Send-Click -X $x -Y $y -Hold "ctrl"; Wait-For 2
+    $two = Shot "review-two-selected"
+    $x, $y = Get-LayoutPoint -Info $info -Name "approve"
+    Send-RestedClick -X $x -Y $y; Wait-For 8
+    $approved = Shot "review-approved-two"
+    $x, $y = Get-LayoutPoint -Info $info -Name "reject"
+    Send-RestedClick -X $x -Y $y; Wait-For 8
+    $rejected = Shot "review-rejected-last"
+    $run = Invoke-GuestBackendScript -Script (@'
+$list = Invoke-Backend GET "/v1/repos/{{ID}}/proposals" | ConvertFrom-Json
+$all = @($list)
+foreach ($state in 'pending', 'approved', 'rejected') { "${state}: $(@($all | Where-Object { $_.status -eq $state }).Count)" }
+'@).Replace('{{ID}}', $reviewRepoId)
+    $count = { param($state) if ($run.Output -match "(?m)^${state}: (\d+)") { [int]$Matches[1] } else { -1 } }
+    $ok = (& $count "pending") -eq 0 -and (& $count "approved") -eq 2 -and (& $count "rejected") -eq 1
+    Add-Result -Id "RV2" -Title "Approve two proposals at once, reject the third" -Expect "2 approved, 1 rejected, none pending" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($page, $two, $approved, $rejected) -Output $run.Output `
+        -Observed "the header's box, then Ctrl+click on the third row, 'Approve 2', then 'Reject' on the one left: proposals pending $(& $count 'pending'), approved $(& $count 'approved'), rejected $(& $count 'rejected'); read the screenshots: the queue beside the open proposal, '2 of 3 selected' with 'Approve 2', the toast 'Approved 2', then the empty review page"
+}
+
+# Search suggests while the user types: the field under the toolbar lists
+# notes, symbols and files; Down and Enter open the first.
+Test-Case "SG1" "Search suggests while typing" "typing in the toolbar's search field lists hits under it; Down and Enter open the first note" {
+    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-For 15 }
+    else { [void](Show-GuestWindow -ProcessName "codewiki-app") }
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $x, $y = Get-LayoutPoint -Info $info -Name "searchField"
+    Send-RestedClick -X $x -Y $y; Wait-For 1
+    $empty = Shot "search-field"
+    Send-Text "paths"; Wait-For 3
+    $listed = Shot "search-suggestions"
+    Send-Keys "down"; Wait-For 1
+    Send-Keys "enter"; Wait-For 5
+    $opened = Shot "search-opened"
+    $shown = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $listed)
+    $moved = Get-ImageChange (Join-Path $shots $listed) (Join-Path $shots $opened)
+    $ok = $shown -ge 0.01 -and $moved -ge 0.05
+    Add-Result -Id "SG1" -Title "Search suggests while typing" -Expect "a list appears under the field; the page changes to the chosen note" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($empty, $listed, $opened) `
+        -Observed "typed 'paths' into the search field: $([math]::Round($shown * 100, 1)) percent of the window changed; Down, Enter: $([math]::Round($moved * 100, 1)) percent changed; read the screenshots: groups 'Notes', 'Symbols', 'Files' under the field, then the Paths note"
+    Stop-GuestApp
+}
 
 Test-Case "L1" "The app writes a log" "logs\app.log names the graphics adapter" {
     $run = Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'graphics adapter|Using GPU|ERROR|WARN|panic' | Select-Object -Last 8 | ForEach-Object { `$_.Line }"
@@ -1790,10 +2211,13 @@ Test-Case "D4" "Write a note through the MCP bridge" "list_waiting_notes, get_no
     $submit = & $line "submit"
     $held = (& $line "file holds the text") -eq "True"
     $again = (& $line "brief again, section written by an agent") -eq "True"
-    $ok = $note -and $stale -match "Not saved" -and $wrong -match "Not saved" -and $submit -match "^Saved " -and $held -and $again
-    Add-Result -Id "D4" -Title "Write a note through the MCP bridge" -Expect "a stale base and a section that is not the agent's are refused; the submission is saved; the note's file holds the text" `
+    $first = & $line "claim first"
+    $second = & $line "claim second"
+    $claimed = $first -match "^2 notes; kept: True" -and $second -match "told of another agent: True; notes of the first among them: 0$"
+    $ok = $note -and $stale -match "Not saved" -and $wrong -match "Not saved" -and $submit -match "^Saved " -and $held -and $again -and $claimed
+    Add-Result -Id "D4" -Title "Write a note through the MCP bridge" -Expect "a stale base and a section that is not the agent's are refused; the submission is saved; the note's file holds the text; a claiming listing keeps its notes from the next one" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Output $run.Output `
-        -Observed "note '$note'; old base: '$stale'; wrong section: '$wrong'; submission: '$submit'; the vault file holds the submitted text: $held; the brief now shows the section as written by an agent: $again"
+        -Observed "note '$note'; old base: '$stale'; wrong section: '$wrong'; submission: '$submit'; the vault file holds the submitted text: $held; the brief now shows the section as written by an agent: $again; first claiming listing: $first; second: $second"
 }
 
 # Each program keeps a log of its own. By now the app, a backend and the MCP
@@ -2223,6 +2647,67 @@ $global:LASTEXITCODE = 0
             -Observed "'codewiki agents off' on a new folder, then Claude asked for a wiki there: a CodeWiki tool was called: $toolCalled, the tool's answer said 'turned off': $toolRefused; obsidian folder or repos.json entry before/after: none/none: $clean; session-start hook silent: $hookQuiet; Claude's answer: '$answer'; the folder is removed and 'agents on' run again either way (a registration the case caused is removed first)$leftover"
     }
 
+    # Auto explaining, live, once: the switch on, a real session in the demo
+    # repository gets the hook's order to launch the note-writer agent, and the
+    # agent writes explanations through submit_note. The agent runs on the
+    # account's Sonnet and explains up to 20 notes; the switch is off again
+    # afterwards, as for every other session of the run.
+    Test-Case "AE1" "Auto explaining in a live session" "with the switch on, the session-start hook orders the note-writer agent, the session launches it, and notes get explanations by claude-code" {
+        if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
+        $count = @'
+$id = Get-RepoId 'cw-core'
+$notes = Invoke-Backend GET "/v1/repos/$id/notes" | ConvertFrom-Json
+$all = @($notes)
+"explained by claude-code: $(@($all | Where-Object { $_.explained_by -eq 'claude-code' }).Count)"
+$waiting = (Invoke-Backend GET "/v1/repos/$id/explanations?all=true" | ConvertFrom-Json).waiting
+"waiting: $($waiting.behind) behind, $($waiting.unexplained) never explained"
+'@
+        # The counts come from the backend: have one running.
+        if (-not (Get-GuestBackendState | Where-Object { $_.Health -eq 200 })) { Start-GuestBackendOutside | Out-Null }
+        $before = Invoke-GuestBackendScript -Script $count
+        Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline" | Out-Null
+        try {
+            $run = Invoke-GuestScript -TimeoutSec 1800 -Script (@'
+Set-Location '{{REPO}}'
+$env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+$out = "$env:TEMP\claude-auto-explain.jsonl"
+& "$env:USERPROFILE\.local\bin\claude.exe" -p "Do what the CodeWiki session-start lines ask about auto explaining, and wait until that agent has finished. Then answer with one line: the agent's own last line." --permission-mode default --allowedTools "Agent,Task,Read,Grep,Glob,Skill,mcp__plugin_codewiki_codewiki__*" --output-format stream-json --verbose --max-turns 12 --model haiku 2>&1 | Out-File -Encoding utf8 $out
+"claude exit: $LASTEXITCODE"
+function Cut { param([string]$Text, [int]$Length) $flat = $Text -replace "\s+", " "; $flat.Substring(0, [Math]::Min($Length, $flat.Length)) }
+$submits = 0
+foreach ($line in Get-Content $out) {
+    try { $event = $line | ConvertFrom-Json } catch { continue }
+    if ($event.type -eq "system" -and $event.subtype -eq "hook_response") {
+        "briefing: $(Cut "$($event.output)" 900)"
+    } elseif ($event.type -eq "assistant") {
+        foreach ($part in $event.message.content) {
+            if ($part.type -ne "tool_use") { continue }
+            if ($part.name -match '^(Agent|Task)$') { "agent launched: $($part.input.subagent_type)" }
+            elseif ($part.name -match 'submit_note$') { $submits += 1 }
+        }
+    } elseif ($event.type -eq "result") {
+        "result: error $($event.is_error), turns $($event.num_turns), denials $(@($event.permission_denials).Count)"
+        "answer: $(Cut "$($event.result)" 300)"
+    }
+}
+"submit_note calls seen: $submits"
+Remove-Item $out -Force
+$global:LASTEXITCODE = 0
+'@).Replace("{{REPO}}", $guestRepo)
+        } finally {
+            Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'off' -NoNewline" | Out-Null
+        }
+        $after = Invoke-GuestBackendScript -Script $count
+        $explained = { param($text) if ($text -match "explained by claude-code: (\d+)") { [int]$Matches[1] } else { -1 } }
+        $gained = if ((& $explained $before.Output) -ge 0 -and (& $explained $after.Output) -ge 0) { (& $explained $after.Output) - (& $explained $before.Output) } else { 0 }
+        $ordered = $run.Output -match "(?m)^briefing: .*note-writer"
+        $launched = $run.Output -match "(?m)^agent launched: codewiki:note-writer"
+        $answer = if ($run.Output -match "(?m)^answer: (.+)$") { $Matches[1].Trim() } else { "" }
+        Add-Result -Id "AE1" -Title "Auto explaining in a live session" -Expect "the briefing orders codewiki:note-writer; the session launches it; more notes explained by claude-code afterwards" `
+            -Status $(if ($ordered -and $launched -and $gained -gt 0) { "pass" } else { "fail" }) -Output ($before.Output + "`n" + $run.Output + "`n" + $after.Output) `
+            -Observed "the briefing orders the agent: $ordered; the session launched codewiki:note-writer: $launched; notes explained by claude-code before $(& $explained $before.Output), after $(& $explained $after.Output); $(($run.Output -split "`n" | Where-Object { $_ -match 'submit_note calls seen' }) -join ''); Claude's answer: '$answer'; the switch is off again"
+    }
+
     Test-Case "CC7" "Remove the plugin as README says" "the plugin and the marketplace are gone" {
         $run = Invoke-GuestScript -TimeoutSec 300 -Script @'
 $claude = "$env:USERPROFILE\.local\bin\claude.exe"
@@ -2371,6 +2856,36 @@ $hits = @($parsed)
     Add-Result -Id "SE1" -Title "A stand-in embedding server: models and vectors" -Expect "the model is listed; the test answers with 16 dimensions; the job is done with every document embedded; a search sends the query to the server" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("stand-in's /v1/models: $listing`nsettings change: $set`n" + $run.Output + "`n" + $search.Output) `
         -Observed "llama.cpp chosen with the model '$stubModel' at $stubUrl; the server's list shows the model: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }), the stand-in answered $($before.Posts) requests with $($before.Texts) texts; a search for 'settings' gave $hits hits and the stand-in then had $($after.Posts) requests (a query is embedded): $queried; read the screenshot: Settings > Semantic search names llama.cpp and $stubModel with no warning"
+    if ($Only -and $Only -notcontains "SE2") {
+        Set-GuestEmbedder -Provider "local" | Out-Null
+        Stop-EmbedStub
+        Stop-GuestApp
+    }
+}
+
+# While Settings > Semantic search is on screen and the chosen server does not
+# answer, the page says so and asks again by itself, every 3 s at first and
+# then less often (settings_view.rs). When the server is back, the page lists
+# its models and a toast says "Connected to Llama".
+Test-Case "SR1" "The embedding server comes back by itself" "with the stand-in stopped the page says it does not answer; once the stand-in runs again the page lists its model and a toast says 'Connected to Llama'" {
+    if (-not $stubUp) { Start-EmbedStub | Out-Null }
+    Set-GuestEmbedder -Provider "llamacpp" -Model $stubModel -Url $stubUrl | Out-Null
+    Stop-EmbedStub
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "settings:search"
+    Wait-For 12
+    $down = Shot "settings-search-server-down"
+    $mark = Get-AppLogMark
+    $listing = Start-EmbedStub
+    $sheet = Save-ShotBurst "settings-search-server-back" -Seconds 40 -Every 2
+    $lines = Get-AppLogSince $mark "toast|Windows notification"
+    $toast = [bool]($lines | Where-Object { $_ -match "toast embed-server" })
+    $models = Invoke-GuestBackendScript -Script "'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')"
+    $reachable = $models.Output -match '"reachable":\s*true'
+    Add-Result -Id "SR1" -Title "The embedding server comes back by itself" -Expect "the log says 'toast embed-server' after the stand-in starts; the server answers again" `
+        -Status $(if ($toast -and $reachable) { "pass" } else { "fail" }) -Shots @($down, $sheet) -Output ("stand-in's /v1/models: $listing`n" + $models.Output + "`n" + ($lines -join "`n")) `
+        -Observed "the stand-in stopped and the app started on Settings > Semantic search; the stand-in started again: the app's log says toast 'embed-server' $toast; the backend reaches the server: $reachable; read the first screenshot: a warning that ends 'CodeWiki tries again on its own.' with Refresh; the contact sheet: the toast 'Connected to Llama' and a Model list instead of the text field"
+    Stop-GuestApp
     if ($Only -and $Only -notcontains "SE2") {
         Set-GuestEmbedder -Provider "local" | Out-Null
         Stop-EmbedStub
@@ -3529,9 +4044,10 @@ Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH
     if ($probe.shortcut) { $problems += "shortcut left" }
     if ($probe.registry.autostart) { $problems += "the start with Windows is left: $($probe.registry.autostart)" }
     if ($probe.registry.appIdentity) { $problems += "the app's name for notifications is left in the registry" }
-    Add-Result -Id "K1" -Title "Uninstall while the app runs" -Expect "processes stopped; programs, PATH entry, shortcut, start with Windows and notification name removed" `
+    if ($probe.registry.notificationIcon) { $problems += "notification-icon.png is left in the data folder" }
+    Add-Result -Id "K1" -Title "Uninstall while the app runs" -Expect "processes stopped; programs, PATH entry, shortcut, start with Windows, notification name and its icon file removed" `
         -Status $(if ($problems -or $run.ExitCode -ne 0) { "fail" } else { "pass" }) -Shots @($shot) -Output $run.Output `
-        -Observed "exit $($run.ExitCode); running before: $($before.processes.Count) processes; start with Windows before: '$($before.registry.autostart)', notification name before: $($before.registry.appIdentity); $(if ($problems) { $problems -join '; ' } else { 'removed' }); left in the install folder: $(if ($left) { $left -join ', ' } else { 'nothing' }); data folder files: $(Get-FileCount $probe.dataDir.files); settings folder files: $(Get-FileCount $probe.prefsDir.files)"
+        -Observed "exit $($run.ExitCode); running before: $($before.processes.Count) processes; start with Windows before: '$($before.registry.autostart)', notification name before: $($before.registry.appIdentity), its icon file before: $($before.registry.notificationIcon);$(if ($problems) { $problems -join '; ' } else { 'removed' }); left in the install folder: $(if ($left) { $left -join ', ' } else { 'nothing' }); data folder files: $(Get-FileCount $probe.dataDir.files); settings folder files: $(Get-FileCount $probe.prefsDir.files)"
 }
 
 Test-Case "K2" "Reinstall, then uninstall with -PurgeData" "the data and settings folders are removed" {
@@ -3588,6 +4104,8 @@ $prefs = Join-Path $env:APPDATA 'CodeWiki'
 "prefsdir=$(Test-Path -LiteralPath $prefs)"
 "datamarker=$(Test-Path -LiteralPath (Join-Path $data 'marker.txt'))"
 "prefsmarker=$(Test-Path -LiteralPath (Join-Path $prefs 'marker.txt'))"
+"aumid=$(Test-Path -LiteralPath 'HKCU:\Software\Classes\AppUserModelId\CodeWiki.App')"
+"notifyicon=$(Test-Path -LiteralPath (Join-Path $data 'notification-icon.png'))"
 "procs=$(@(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'codewiki*' }).Count)"
 # What a new shell would find: the machine PATH and the user PATH as stored.
 $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + $user
@@ -3710,6 +4228,7 @@ if (Test-Path -LiteralPath (Join-Path $t 'uninstall.cmd')) {
     & "$env:SystemRoot\System32\cmd.exe" /c (Join-Path $t 'uninstall.cmd') -PurgeData | Out-Null
 }
 if (Test-Path -LiteralPath $key) { Remove-Item -LiteralPath $key -Recurse -Force -ErrorAction SilentlyContinue }
+Remove-Item -LiteralPath 'HKCU:\Software\Classes\AppUserModelId\CodeWiki.App' -Recurse -Force -ErrorAction SilentlyContinue
 if (Test-Path -LiteralPath $t) { Remove-Item -LiteralPath $t -Recurse -Force -ErrorAction SilentlyContinue }
 foreach ($folder in (Join-Path $env:LOCALAPPDATA 'CodeWiki'), (Join-Path $env:APPDATA 'CodeWiki')) {
     if (Test-Path -LiteralPath $folder) { Remove-Item -LiteralPath $folder -Recurse -Force -ErrorAction SilentlyContinue }
@@ -3898,13 +4417,21 @@ if ($Setup) {
             $install = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is2-install.log")
             if ($install.ExitCode -ne 0) { throw "the silent install failed first: exit $($install.ExitCode)" }
             # What a user has by then: the start with Windows on (what AS1 turns on),
-            # the app running, and data and settings to keep.
+            # the app's name and logo for notifications (what its first Windows
+            # notification writes, NI1), the app running, and data and settings
+            # to keep.
             Invoke-GuestScript -Script (@'
 New-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' -Name 'CodeWiki' -Value '{{RUN}}' -PropertyType String -Force | Out-Null
 New-Item -ItemType Directory -Force (Join-Path $env:LOCALAPPDATA 'CodeWiki'), (Join-Path $env:APPDATA 'CodeWiki') | Out-Null
 Set-Content -Path (Join-Path $env:LOCALAPPDATA 'CodeWiki\marker.txt') -Value 'data'
 Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'settings'
-'@).Replace('{{RUN}}', $autostartCommand) | Out-Null
+$icon = Join-Path $env:LOCALAPPDATA 'CodeWiki\notification-icon.png'
+Copy-Item -LiteralPath '{{TARGET}}\codewiki-app.exe' -Destination $icon -Force
+$key = 'HKCU:\Software\Classes\AppUserModelId\CodeWiki.App'
+New-Item -Path $key -Force | Out-Null
+New-ItemProperty -Path $key -Name 'DisplayName' -Value 'CodeWiki' -PropertyType String -Force | Out-Null
+New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandString -Force | Out-Null
+'@).Replace('{{RUN}}', $autostartCommand).Replace('{{TARGET}}', $guestTarget) | Out-Null
             Start-GuestApp -Arguments $guestRepo
             Wait-For 15
             $before = Get-SetupState
@@ -3917,6 +4444,9 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
             $problems = @()
             if ($before.procs -eq "0") { $problems += "the app was not running before the uninstall" }
             if ($before.run -ne $autostartCommand) { $problems += "the Run value was not in place before ('$($before.run)')" }
+            if ($before.aumid -ne "True" -or $before.notifyicon -ne "True") { $problems += "the notification name or icon was not in place before (key $($before.aumid), icon $($before.notifyicon))" }
+            if ($after.aumid -eq "True") { $problems += "the notification name is left in the registry" }
+            if ($after.notifyicon -eq "True") { $problems += "notification-icon.png is left in the data folder" }
             if ($run.ExitCode -ne 0) { $problems += "uninstall exited with $($run.ExitCode)" }
             if ($after.folder -eq "True") { $problems += "the folder is left: $($after.names -join ', ')" }
             if ($after.pathcount -ne "0") { $problems += "PATH entry left" }

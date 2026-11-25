@@ -394,11 +394,89 @@ pub fn rise_notice(id: &str, name: &str, increase: usize) -> Notice {
     }
 }
 
+/// What the buttons above the open proposal decide.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Targets {
+    /// Nothing that waits is open or selected.
+    Nothing,
+    /// The proposal on the page, alone.
+    Open(String),
+    /// The selected proposals, in the queue's order.
+    Selected(Vec<String>),
+}
+
+impl Targets {
+    /// The ids to decide.
+    pub fn ids(&self) -> Vec<String> {
+        match self {
+            Self::Nothing => Vec::new(),
+            Self::Open(id) => vec![id.clone()],
+            Self::Selected(ids) => ids.clone(),
+        }
+    }
+
+    /// The labels of the approve and the reject button; `None` when there
+    /// is nothing to decide.
+    pub fn labels(&self) -> Option<(String, String)> {
+        match self {
+            Self::Nothing => None,
+            Self::Open(_) => Some(("Approve and write".into(), "Reject".into())),
+            Self::Selected(ids) => Some((
+                format!("Approve {}", ids.len()),
+                format!("Reject {}", ids.len()),
+            )),
+        }
+    }
+}
+
+/// What a decision acts on: the selection whenever it holds anything, the
+/// open proposal only while nothing is selected. A selection of the open
+/// proposal alone is that proposal. Only what waits in `order` counts.
+pub fn targets(order: &[String], selection: &Selection, open: Option<&str>) -> Targets {
+    let open = open.filter(|open| order.iter().any(|id| id == open));
+    match (selection.in_order(order).as_slice(), open) {
+        ([], Some(open)) => Targets::Open(open.to_string()),
+        ([], None) => Targets::Nothing,
+        ([one], Some(open)) if one == open => Targets::Open(open.to_string()),
+        (selected, _) => Targets::Selected(selected.to_vec()),
+    }
+}
+
+/// The notes an approval wrote, by vault path: none for a rejection.
+pub fn written(approve: bool, results: &[DecideResult], items: &[Item]) -> Vec<String> {
+    if !approve {
+        return Vec::new();
+    }
+    results
+        .iter()
+        .filter(|result| result.ok)
+        .filter_map(|result| {
+            result.note_path.clone().or_else(|| {
+                let item = items.iter().find(|item| item.id == result.id)?;
+                Some(item.note_path.clone())
+            })
+        })
+        .collect()
+}
+
+/// Drop from `history` every page of a note in `written`, which shows the
+/// note as it was before: going back to one and editing it would save the
+/// old text over the approved one. `note` gives the path of a page that is a
+/// note, `None` for any other page, which stays.
+pub fn forget_written<T>(
+    history: &mut Vec<T>,
+    written: &[String],
+    note: impl Fn(&T) -> Option<&str>,
+) {
+    history.retain(|page| note(page).is_none_or(|path| !written.iter().any(|w| w == path)));
+}
+
 /// Whether the app itself is busy with work that may add proposals to the
-/// open repository: its own sync, and the loading of its notes after one.
-/// Counts that rise meanwhile are the app's own doing.
-pub fn own_work(busy: Option<&str>) -> bool {
-    matches!(busy, Some("Syncing wiki" | "Loading"))
+/// open repository: its own sync, and the loading of the open repository's
+/// notes. `marked` says that the work running now is such work; a report
+/// that loads is not. Counts that rise meanwhile are the app's own doing.
+pub fn own_work(marked: bool, busy: Option<&str>) -> bool {
+    marked && busy.is_some()
 }
 
 /// The repositories to tell the user about: those whose count rose between
@@ -429,6 +507,12 @@ pub struct State {
     pub counts: Option<HashMap<String, usize>>,
     /// Whether the app's own work ran when the status was last asked for.
     pub asked_during_own_work: bool,
+    /// Whether the work the app runs now is its own sync or the loading of
+    /// the open repository's notes ([`own_work`]).
+    pub own_work: bool,
+    /// The error a proposal that did not load left on the page; the next
+    /// proposal that loads takes it away.
+    pub load_error: Option<String>,
 }
 
 #[cfg(test)]
@@ -777,11 +861,117 @@ mod tests {
     }
 
     #[test]
+    fn with_nothing_selected_the_buttons_decide_the_open_proposal() {
+        let order = ids(&["a", "b", "c"]);
+        let none = Selection::default();
+        assert_eq!(targets(&order, &none, Some("b")), Targets::Open("b".into()));
+        assert_eq!(
+            Targets::Open("b".into()).labels(),
+            Some(("Approve and write".to_string(), "Reject".to_string()))
+        );
+        assert_eq!(Targets::Open("b".into()).ids(), ids(&["b"]));
+        // An open proposal that no longer waits, or none: nothing to decide.
+        assert_eq!(targets(&order, &none, Some("z")), Targets::Nothing);
+        assert_eq!(targets(&order, &none, None), Targets::Nothing);
+        assert_eq!(Targets::Nothing.labels(), None);
+        assert!(Targets::Nothing.ids().is_empty());
+    }
+
+    #[test]
+    fn a_selection_is_decided_and_never_the_open_proposal_beside_it() {
+        let order = ids(&["a", "b", "c"]);
+        // The open proposal selected alone is that proposal.
+        let mut open_alone = Selection::default();
+        open_alone.click(&order, "b", Click::Plain);
+        assert_eq!(
+            targets(&order, &open_alone, Some("b")),
+            Targets::Open("b".into())
+        );
+        // One selected that is not the open one: that one, by count.
+        let mut other = Selection::default();
+        other.toggle("c");
+        let one = targets(&order, &other, Some("b"));
+        assert_eq!(one, Targets::Selected(ids(&["c"])));
+        assert_eq!(one.ids(), ids(&["c"]));
+        assert_eq!(
+            one.labels(),
+            Some(("Approve 1".to_string(), "Reject 1".to_string()))
+        );
+        // The same with nothing open, as after a detail that did not load.
+        assert_eq!(
+            targets(&order, &other, None),
+            Targets::Selected(ids(&["c"]))
+        );
+        // Several, in the queue's order, whether or not the open one is
+        // among them.
+        let mut several = Selection::default();
+        several.toggle("c");
+        several.toggle("a");
+        let both = targets(&order, &several, Some("b"));
+        assert_eq!(both, Targets::Selected(ids(&["a", "c"])));
+        assert_eq!(
+            both.labels(),
+            Some(("Approve 2".to_string(), "Reject 2".to_string()))
+        );
+        several.toggle("b");
+        assert_eq!(
+            targets(&order, &several, Some("b")),
+            Targets::Selected(ids(&["a", "b", "c"]))
+        );
+        // What no longer waits is not decided.
+        let gone = ids(&["a"]);
+        assert_eq!(targets(&gone, &other, Some("b")), Targets::Nothing);
+    }
+
+    #[test]
+    fn an_approval_names_the_notes_it_wrote() {
+        let items = [
+            item("a", "Parser", Kind::Sync),
+            item("b", "Lexer", Kind::Agent),
+        ];
+        let results = [
+            ok("a", "Parser"),
+            failed("b", "changed since"),
+            // A backend that did not name the note: the queue's path.
+            DecideResult {
+                note_path: None,
+                ..ok("b", "Lexer")
+            },
+        ];
+        assert_eq!(
+            written(true, &results, &items),
+            ["01-Core/Parser.md", "01-Core/Lexer.md"]
+        );
+        // A rejection writes nothing.
+        assert!(written(false, &results, &items).is_empty());
+    }
+
+    #[test]
+    fn the_history_forgets_the_notes_an_approval_wrote() {
+        // A page: a note's path, or another page.
+        let mut history = vec![
+            Some("01-Core/Parser.md"),
+            None,
+            Some("01-Core/Lexer.md"),
+            Some("01-Core/Parser.md"),
+        ];
+        forget_written(&mut history, &ids(&["01-Core/Parser.md"]), |page| *page);
+        assert_eq!(history, vec![None, Some("01-Core/Lexer.md")]);
+        forget_written(&mut history, &[], |page| *page);
+        assert_eq!(history.len(), 2);
+    }
+
+    #[test]
     fn the_apps_own_sync_is_no_news_in_the_open_repository() {
-        assert!(own_work(Some("Syncing wiki")));
-        assert!(own_work(Some("Loading")));
-        assert!(!own_work(Some("Opening note")));
-        assert!(!own_work(None));
+        // Marked work: the app's sync, the loading of the open repository.
+        assert!(own_work(true, Some("Syncing wiki")));
+        assert!(own_work(true, Some("Loading")));
+        // A report loads under the same word, and is no such work.
+        assert!(!own_work(false, Some("Loading")));
+        assert!(!own_work(false, Some("Syncing wiki")));
+        // A mark left from work that ended counts for nothing.
+        assert!(!own_work(true, None));
+        assert!(!own_work(false, None));
         let map = |pairs: &[(&str, usize)]| -> HashMap<String, usize> {
             pairs.iter().map(|(id, n)| (id.to_string(), *n)).collect()
         };

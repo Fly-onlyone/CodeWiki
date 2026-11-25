@@ -639,7 +639,8 @@ impl AppView {
                 // Not while an update is installed: it stops the backend.
                 let Ok(backend) = this.update(cx, |this, _| {
                     // A count that rises while the app syncs is its own doing.
-                    this.review.asked_during_own_work = review::own_work(this.busy.as_deref());
+                    this.review.asked_during_own_work =
+                        review::own_work(this.review.own_work, this.busy.as_deref());
                     this.backend.clone().filter(|_| !this.update.installing())
                 }) else {
                     return;
@@ -1026,6 +1027,10 @@ impl AppView {
             return;
         };
         self.busy = Some(label.to_string());
+        // The app's sync and the loading of the open repository mark
+        // themselves as its own work after this (`review::own_work`);
+        // nothing else is.
+        self.review.own_work = false;
         self.error = None;
         cx.notify();
         let label = label.to_string();
@@ -1722,6 +1727,9 @@ impl AppView {
                 }
             },
         );
+        // The open repository's proposals load with its notes: a count that
+        // rises meanwhile is known to the app, not news.
+        self.review.own_work = true;
     }
 
     /// Keep the open repository's notes and pending proposals, as the backend
@@ -2651,6 +2659,8 @@ impl AppView {
                 this.refresh(Landing::Stay, cx);
             },
         );
+        // What the sync proposes is the app's own doing, not news.
+        self.review.own_work = true;
     }
 
     /// Follow a link clicked in a note.

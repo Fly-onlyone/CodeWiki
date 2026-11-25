@@ -156,15 +156,25 @@ impl AppView {
                     Show::InPlace => return,
                 };
                 match result {
-                    Ok(detail) => this.set_page(
-                        Page::Review {
-                            open: Some(id),
-                            doc: Rc::new(live::proposal_page(&detail)),
-                        },
-                        remember,
-                    ),
+                    Ok(detail) => {
+                        // The error of a proposal that did not load goes
+                        // once one does; any other error stays.
+                        if let Some(failed) = this.review.load_error.take()
+                            && this.error.as_ref() == Some(&failed)
+                        {
+                            this.error = None;
+                        }
+                        this.set_page(
+                            Page::Review {
+                                open: Some(id),
+                                doc: Rc::new(live::proposal_page(&detail)),
+                            },
+                            remember,
+                        );
+                    }
                     Err(error) => {
                         log::warn!("could not load the proposal {id}: {error}");
+                        this.review.load_error = Some(error.clone());
                         this.error = Some(error);
                     }
                 }
@@ -183,17 +193,33 @@ impl AppView {
         cx.notify();
     }
 
-    /// What the buttons decide: the selection when it holds several, else
-    /// the open proposal while it waits.
-    fn review_targets(&self) -> Vec<String> {
-        let order = self.review_order();
-        if self.review.selection.len() > 1 {
-            return self.review.selection.in_order(&order);
+    /// What the buttons decide: the selection whenever it holds anything,
+    /// the open proposal only while nothing is selected.
+    fn review_targets(&self) -> review::Targets {
+        review::targets(
+            &self.review_order(),
+            &self.review.selection,
+            self.review_open(),
+        )
+    }
+
+    /// Forget the pages of the notes an approval wrote, in every tab's
+    /// history: going back to one would show the note as it was, and an
+    /// edit there would save that over the approved text.
+    fn forget_written_notes(&mut self, written: &[String]) {
+        fn note(page: &Page) -> Option<&str> {
+            match page {
+                Page::Note { path, .. } => Some(path.as_str()),
+                _ => None,
+            }
         }
-        self.review_open()
-            .filter(|open| order.iter().any(|id| id == open))
-            .map(|open| vec![open.to_string()])
-            .unwrap_or_default()
+        if written.is_empty() {
+            return;
+        }
+        review::forget_written(&mut self.history, written, note);
+        for tab in &mut self.tabs {
+            review::forget_written(&mut tab.history, written, note);
+        }
     }
 
     /// Approve or reject what the buttons decide.
@@ -201,7 +227,7 @@ impl AppView {
         let Some(repo) = self.repo.clone() else {
             return;
         };
-        let ids = self.review_targets();
+        let ids = self.review_targets().ids();
         if ids.is_empty() {
             return;
         }
@@ -221,6 +247,7 @@ impl AppView {
                 for notice in review::decided_notices(approve, &results, &items) {
                     this.notify_user(notice, cx);
                 }
+                this.forget_written_notes(&review::written(approve, &results, &items));
                 let decided: Vec<String> = results.into_iter().map(|result| result.id).collect();
                 this.reload_notes(cx, move |this, cx| {
                     if !matches!(this.page, Page::Review { .. }) {
@@ -251,7 +278,8 @@ impl AppView {
             return;
         };
         let open = self.repo.as_ref().map(|repo| repo.id.clone());
-        let own_work = review::own_work(self.busy.as_deref()) || self.review.asked_during_own_work;
+        let own_work = review::own_work(self.review.own_work, self.busy.as_deref())
+            || self.review.asked_during_own_work;
         let news = review::news(
             self.review.counts.as_ref(),
             &counts,
@@ -386,16 +414,10 @@ impl AppView {
             )
     }
 
-    /// The buttons above the open proposal: for it alone while one or none
-    /// is selected, for the selection while it holds several.
+    /// The buttons above the open proposal: for the selection whenever it
+    /// holds anything, for the open proposal while nothing is selected.
     fn review_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let (approve, reject) = match self.review.selection.len() {
-            several if several > 1 => (format!("Approve {several}"), format!("Reject {several}")),
-            _ if !self.review_targets().is_empty() => {
-                ("Approve and write".to_string(), "Reject".to_string())
-            }
-            _ => return None,
-        };
+        let (approve, reject) = self.review_targets().labels()?;
         let busy = self.busy.is_some();
         Some(
             h_flex()

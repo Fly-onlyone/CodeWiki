@@ -1745,3 +1745,152 @@ async fn local_lists_no_models() {
     assert_eq!(list["models"], Value::Null);
     assert_eq!(list["problem"], Value::Null);
 }
+
+/// A registered, explained repository with three pending proposals: two that
+/// can be approved, on notes the wiki wrote, and one on a new note that is
+/// written by hand afterwards, which supersedes it.
+async fn repo_with_proposals(h: &Harness) -> (String, Vec<String>) {
+    let (id, _) = h.register(h.repo.path()).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let vault = h.repo.path().join("obsidian");
+    let meta = cw_vault::VaultMeta::load(&vault).unwrap();
+    let mut ids = Vec::new();
+    for (n, (note_id, entry)) in meta.notes.iter().take(2).enumerate() {
+        let current = fs::read_to_string(vault.join(&entry.path)).unwrap();
+        let proposed = format!("{current}\nZebrafish {n} wrote this.\n");
+        let p = cw_vault::proposal::create(
+            &vault,
+            note_id,
+            &entry.path,
+            &current,
+            &proposed,
+            &format!("inputhash{n:04}"),
+            "test",
+        )
+        .unwrap();
+        ids.push(p.id);
+    }
+    assert_eq!(ids.len(), 2, "the wiki wrote at least two notes");
+    let p = cw_vault::proposal::create(
+        &vault,
+        "extra",
+        "01-Core/Extra.md",
+        "",
+        "# Extra\n",
+        "inputhash0009",
+        "test",
+    )
+    .unwrap();
+    write(&vault, "01-Core/Extra.md", "# Extra\n\nWritten by hand.\n");
+    ids.push(p.id);
+    (id, ids)
+}
+
+#[tokio::test]
+async fn the_status_counts_pending_proposals_per_repository() {
+    let h = Harness::new();
+    let (id, ids) = repo_with_proposals(&h).await;
+    let status = h.get("/v1/status").await;
+    assert_eq!(status["proposals"][&id], 3, "{status}");
+
+    h.post(&format!("/v1/repos/{id}/proposals/{}/reject", ids[0]), None)
+        .await;
+    assert_eq!(h.get("/v1/status").await["proposals"][&id], 2);
+}
+
+#[tokio::test]
+async fn a_repository_whose_folder_is_gone_is_left_out_of_the_status() {
+    let h = Harness::new();
+    let gone = tempfile::tempdir().unwrap();
+    let (id, _) = h.register(gone.path()).await;
+    assert_eq!(h.get("/v1/status").await["proposals"][&id], 0);
+    drop(gone);
+    let (status, body) = h.call("GET", "/v1/status", Some(TOKEN), None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["proposals"], json!({}));
+}
+
+#[tokio::test]
+async fn deciding_several_proposals_approves_what_it_can() {
+    let h = Harness::new();
+    let (id, ids) = repo_with_proposals(&h).await;
+    let uri = format!("/v1/repos/{id}/proposals/decide");
+    let answer = h
+        .post(&uri, Some(json!({ "decision": "approve", "ids": ids })))
+        .await;
+    let results = answer["results"].as_array().unwrap();
+    assert_eq!(results.len(), 3, "{answer}");
+    for (result, wanted) in results.iter().zip(&ids) {
+        assert_eq!(result["id"], json!(wanted));
+    }
+    assert_eq!(results[0]["ok"], true);
+    assert_eq!(results[1]["ok"], true);
+    assert!(results[0]["note_path"].as_str().unwrap().ends_with(".md"));
+    assert_eq!(results[2]["ok"], false);
+    assert!(
+        results[2]["error"]
+            .as_str()
+            .unwrap()
+            .contains("changed since"),
+        "{answer}"
+    );
+
+    // The index was refreshed: the written text is found.
+    let hits = h
+        .get(&format!("/v1/repos/{id}/search?q=zebrafish&kind=note"))
+        .await;
+    assert!(!hits.as_array().unwrap().is_empty(), "{hits}");
+    // All three are decided, the superseded one included.
+    assert_eq!(h.get("/v1/status").await["proposals"][&id], 0);
+
+    // Deciding again gives a reason for each, not a failure.
+    let again = h
+        .post(&uri, Some(json!({ "decision": "reject", "ids": [ids[0]] })))
+        .await;
+    assert_eq!(again["results"][0]["ok"], false);
+    assert!(
+        again["results"][0]["error"]
+            .as_str()
+            .unwrap()
+            .contains("not pending")
+    );
+}
+
+#[tokio::test]
+async fn deciding_several_proposals_rejects_them() {
+    let h = Harness::new();
+    let (id, ids) = repo_with_proposals(&h).await;
+    let mut named = ids.clone();
+    named.push("no-such-proposal".into());
+    let answer = h
+        .post(
+            &format!("/v1/repos/{id}/proposals/decide"),
+            Some(json!({ "decision": "reject", "ids": named })),
+        )
+        .await;
+    let ok: Vec<bool> = answer["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["ok"].as_bool().unwrap())
+        .collect();
+    // A rejection needs no note, so the superseded-to-be one goes through.
+    assert_eq!(ok, [true, true, true, false], "{answer}");
+    assert_eq!(h.get("/v1/status").await["proposals"][&id], 0);
+}
+
+#[tokio::test]
+async fn deciding_needs_ids_and_a_known_decision() {
+    let h = Harness::new();
+    let (id, ids) = repo_with_proposals(&h).await;
+    let uri = format!("/v1/repos/{id}/proposals/decide");
+    for body in [
+        json!({ "decision": "approve", "ids": [] }),
+        json!({ "decision": "maybe", "ids": ids }),
+    ] {
+        let (status, answer) = h.call("POST", &uri, Some(TOKEN), Some(body)).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{answer}");
+        assert!(answer["error"].is_string());
+    }
+    assert_eq!(h.get("/v1/status").await["proposals"][&id], 3);
+}

@@ -230,6 +230,34 @@ pub fn list(vault: &Path) -> Result<Vec<Proposal>> {
     Ok(out)
 }
 
+/// How many proposals wait for a decision. Reads only the `status` of each
+/// proposal file, so a patch or a text is never loaded.
+pub fn pending_count(vault: &Path) -> Result<usize> {
+    #[derive(Deserialize)]
+    struct Status {
+        status: ProposalStatus,
+    }
+    let dir = proposals_dir(vault);
+    let entries = match std::fs::read_dir(&dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(Error::io(dir, e)),
+    };
+    let mut count = 0;
+    for entry in entries {
+        let path = entry.map_err(|e| Error::io(&dir, e))?.path();
+        if path.extension().is_some_and(|e| e == "json") {
+            let text = std::fs::read_to_string(&path).map_err(|e| Error::io(&path, e))?;
+            let found: Status = serde_json::from_str(&text)
+                .map_err(|e| Error::external("parsing a proposal", e))?;
+            if found.status == ProposalStatus::Pending {
+                count += 1;
+            }
+        }
+    }
+    Ok(count)
+}
+
 pub fn get(vault: &Path, id: &str) -> Result<Proposal> {
     check_id(id)?;
     let path = proposals_dir(vault).join(format!("{id}.json"));
@@ -423,6 +451,26 @@ mod tests {
             get(dir.path(), &p.id).unwrap().status,
             ProposalStatus::Superseded
         );
+    }
+
+    #[test]
+    fn only_pending_proposals_are_counted() {
+        let dir = vault_with_note();
+        assert_eq!(pending_count(dir.path()).unwrap(), 0, "no proposals yet");
+        let first = queue(dir.path(), "inputhash0001");
+        create(
+            dir.path(),
+            "other",
+            "01-Core/Other.md",
+            "",
+            NEW,
+            "inputhash0002",
+            "new",
+        )
+        .unwrap();
+        assert_eq!(pending_count(dir.path()).unwrap(), 2);
+        reject(dir.path(), &first.id).unwrap();
+        assert_eq!(pending_count(dir.path()).unwrap(), 1);
     }
 
     #[test]

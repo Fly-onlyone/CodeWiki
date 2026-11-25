@@ -207,6 +207,7 @@ pub fn routes(state: AppState) -> Router {
             post(approve_proposal),
         )
         .route("/repos/{id}/proposals/{pid}/reject", post(reject_proposal))
+        .route("/repos/{id}/proposals/decide", post(decide_proposals))
         .route("/repos/{id}/contracts", get(repo_contracts))
         .route("/workspace", get(workspace_view))
         .route("/workspace/contracts", get(workspace_contracts))
@@ -245,7 +246,31 @@ async fn backend_status(State(state): State<AppState>) -> Json<Value> {
     // The background embedding job that runs, or null. The field keeps its
     // old name, so that older and newer clients read it alike.
     report["model_job"] = state.0.jobs.status();
+    // Proposals that wait, per repository. The answer never fails: the app
+    // takes a failing status for a lost backend, so a repository whose vault
+    // cannot be read is left out.
+    let data_dir = state.0.config.data_dir.clone();
+    let pending = tokio::task::spawn_blocking(move || pending_proposals(&data_dir))
+        .await
+        .unwrap_or_default();
+    report["proposals"] = json!(pending);
     Json(report)
+}
+
+/// The number of pending proposals of each registered repository whose
+/// folder is present, by repository id.
+fn pending_proposals(data_dir: &std::path::Path) -> std::collections::BTreeMap<String, usize> {
+    let mut counts = std::collections::BTreeMap::new();
+    for entry in repos::load(data_dir).unwrap_or_default() {
+        let root = PathBuf::from(&entry.path);
+        if !root.is_dir() {
+            continue;
+        }
+        if let Ok(count) = proposal::pending_count(&root.join(VAULT_DIR)) {
+            counts.insert(entry.id, count);
+        }
+    }
+    counts
 }
 
 /// Stop the backend once the requests already running are done. The app calls
@@ -960,6 +985,43 @@ async fn reject_proposal(
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         explanations::reject(&repo.root, &pid)
+    })
+    .await
+}
+
+#[derive(Deserialize)]
+struct DecideBody {
+    decision: String,
+    ids: Vec<String>,
+}
+
+/// Approve or reject several proposals at once. Each gets its own result, so
+/// one that cannot be decided does not stop the others.
+async fn decide_proposals(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<DecideBody>,
+) -> Api<Value> {
+    blocking(move || {
+        let decision = match body.decision.as_str() {
+            "approve" => explanations::Decision::Approve,
+            "reject" => explanations::Decision::Reject,
+            other => {
+                return Err(Error::invalid(format!(
+                    "unknown decision '{other}'; use 'approve' or 'reject'"
+                )));
+            }
+        };
+        if body.ids.is_empty() {
+            return Err(Error::invalid("no proposals named"));
+        }
+        let repo = Repo::open(&state, &id)?;
+        let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+        let results = explanations::decide_all(&repo.root, decision, &body.ids);
+        if decision == explanations::Decision::Approve && results.iter().any(|r| r.ok) {
+            service::index_notes(&repo.root, &mut repo.index()?)?;
+        }
+        Ok(json!({ "results": results }))
     })
     .await
 }

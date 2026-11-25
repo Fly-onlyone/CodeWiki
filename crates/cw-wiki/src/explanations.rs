@@ -825,3 +825,53 @@ pub fn reject(root: &Path, id: &str) -> Result<proposal::Proposal> {
     }
     Ok(done)
 }
+
+/// What a batch does with each proposal it names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Decision {
+    Approve,
+    Reject,
+}
+
+/// The outcome for one proposal of a batch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Decided {
+    pub id: String,
+    pub ok: bool,
+    /// Vault-relative path of the note, when the decision went through.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note_path: Option<String>,
+    /// Why the decision did not go through.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Apply `decision` to each of the proposals `ids`, in order. A proposal
+/// that is missing, superseded or already decided is reported and the rest
+/// still run. The caller holds the repository's write lock for the whole
+/// batch, and indexes the notes once afterwards when an approval went
+/// through.
+pub fn decide_all(root: &Path, decision: Decision, ids: &[String]) -> Vec<Decided> {
+    ids.iter()
+        .map(|id| {
+            let done = match decision {
+                Decision::Approve => approve(root, id),
+                Decision::Reject => reject(root, id),
+            };
+            match done {
+                Ok(done) => Decided {
+                    id: id.clone(),
+                    ok: true,
+                    note_path: Some(done.note_path),
+                    error: None,
+                },
+                Err(e) => Decided {
+                    id: id.clone(),
+                    ok: false,
+                    note_path: None,
+                    error: Some(e.to_string()),
+                },
+            }
+        })
+        .collect()
+}

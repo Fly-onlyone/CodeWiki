@@ -714,6 +714,59 @@ impl Backend {
             }
         }
     }
+
+    /// Approve (`approve` true) or reject several proposals of `repo` in one
+    /// call. One result per id, in the order given: a proposal that cannot be
+    /// decided does not stop the others. An older backend has no such route;
+    /// the error says so, and the proposals can still be decided one by one.
+    pub fn decide_proposals(
+        &self,
+        repo: &str,
+        approve: bool,
+        ids: &[String],
+    ) -> Result<Vec<DecideResult>, String> {
+        let body = serde_json::json!({
+            "decision": if approve { "approve" } else { "reject" },
+            "ids": ids,
+        });
+        let answer = self
+            .post(&format!("/v1/repos/{repo}/proposals/decide"), &body)
+            .map_err(|e| {
+                if e.contains("404") {
+                    "this backend cannot decide several proposals at once; update it".to_string()
+                } else {
+                    e
+                }
+            })?;
+        parse_decide_results(&answer)
+    }
+}
+
+/// What the backend did with one proposal of a batch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DecideResult {
+    pub id: String,
+    pub ok: bool,
+    /// Vault-relative path of the note, when the decision went through.
+    pub note_path: Option<String>,
+    /// Why the decision did not go through.
+    pub error: Option<String>,
+}
+
+fn parse_decide_results(answer: &Value) -> Result<Vec<DecideResult>, String> {
+    let results = answer["results"]
+        .as_array()
+        .ok_or("the backend answered without results")?;
+    let text = |item: &Value, key: &str| item[key].as_str().map(str::to_string);
+    Ok(results
+        .iter()
+        .map(|item| DecideResult {
+            id: text(item, "id").unwrap_or_default(),
+            ok: item["ok"].as_bool().unwrap_or(false),
+            note_path: text(item, "note_path"),
+            error: text(item, "error"),
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -726,6 +779,19 @@ mod tests {
         assert_eq!(encode("a b&c=d"), "a%20b%26c%3Dd");
         assert_eq!(encode("Ünï"), "%C3%9Cn%C3%AF");
         assert_eq!(encode("safe-_.~09azAZ"), "safe-_.~09azAZ");
+    }
+
+    #[test]
+    fn batch_results_keep_their_order_and_reasons() {
+        let answer = serde_json::json!({ "results": [
+            { "id": "a", "ok": true, "note_path": "01/A.md" },
+            { "id": "b", "ok": false, "error": "proposal b is not pending" },
+        ] });
+        let results = parse_decide_results(&answer).unwrap();
+        assert_eq!(results.len(), 2);
+        assert!(results[0].ok && results[0].note_path.as_deref() == Some("01/A.md"));
+        assert!(!results[1].ok && results[1].error.is_some());
+        assert!(parse_decide_results(&serde_json::json!({})).is_err());
     }
 
     #[test]

@@ -12,7 +12,7 @@ The server exposes data only; it serves no web frontend. Every route except `/v1
 
 `POST /v1/shutdown` stops the server. The desktop app calls it when the user quits it, and before an update replaces the programs, so the old backend does not keep serving.
 
-`GET /v1/status` says what the backend is doing: the wiki updates that are running and when an agent's MCP bridge last called (`activity`). Its `notes_rev` is a counter that moves whenever a vault or a claim on a waiting note changes, so a client knows when to list the waiting notes again.
+`GET /v1/status` says what the backend is doing: the wiki updates that are running and when an agent's MCP bridge last called (`activity`), and how many proposals wait in each repository (`pending`). Its `notes_rev` is a counter that moves whenever a vault or a claim on a waiting note changes, so a client knows when to list the waiting notes again.
 
 ## Source
 
@@ -36,6 +36,7 @@ Modules:
 - [[Api Module]] — routes and handlers.
 - [[Claims Module]] — which waiting notes an agent holds.
 - [[Embed Job Module]] — the background embedding job: the one long job that may run.
+- [[Pending Module]] — how many proposals wait in each repository, for `GET /v1/status`.
 - [[Repos Module]] — the list of repositories this backend manages, stored as `repos.json`.
 - [[Settings Module (cw-server)]] — what the settings routes do: describe the settings in effect, and change the saved ones.
 - [[Workspace Module (cw-server)]] — views across every repository the backend manages.

@@ -12,7 +12,7 @@ tags: [core, codewiki-app]
 
 ## How it works
 
-1. `file_page` and `home_page` in [[Live Module]], and 20 more, call `new`.
+1. `file_page` and `home_page` in [[Live Module]], and 21 more, call `new`.
 
 ## Items
 
@@ -20,7 +20,7 @@ Declared as `pub struct Doc`.
 
 Members:
 
-- `pub fn new(title: impl Into<String>) -> Self` — public method, returns `Self`; called by `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page` and 18 more.
+- `pub fn new(title: impl Into<String>) -> Self` — public method, returns `Self`; called by `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page` and 19 more.
 - `pub fn lead(mut self, lead: impl Into<String>) -> Self` — public method, returns `Self`.
 - `pub fn push(&mut self, block: Block)` — public method; called by `Doc::actions`, `Doc::heading`, `Doc::text`, `Doc::words` and 2 more.
 - `pub fn heading(&mut self, title: impl Into<String>)` — public method.
@@ -42,8 +42,8 @@ Members:
 
 ## Used by
 
-- [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Live Module]] — from `file_page`, `home_page`, `hotspots_page`, `message_page`
+- [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[codewiki-app]] — from `Page`, `doc_element`, `home_doc`, `open_global`
 - [[Doc View Module]] — from `DocPage`, `column`, `draw_strip`, `show`
 - [[Settings Pages Module]] — from `page`

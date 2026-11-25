@@ -49,7 +49,7 @@ Members:
 - [[Generate Module]] — from `adopt_existing`, `generate_with`
 - [[Service Module]] — from `index_notes`, `is_stale`
 - [[codewiki]] — from `run`
-- [[Proposal Module]] — from `proposals_dir`
+- [[cw-server]] — from `repo_with_proposals`
 
 ## See also
 

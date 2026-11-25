@@ -17,10 +17,12 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 ## How it works
 
 1. `AppView::take_status` in [[codewiki-app]] calls `parse`. `parse` calls `model_job_text`.
-2. `AppView::tray_snapshot` in [[codewiki-app]] calls `state_with_job`.
-3. `AppView::tray_snapshot` in [[codewiki-app]] calls `mcp_text`. `mcp_text` calls `ago`.
-4. `AppView::tray_snapshot` in [[codewiki-app]] calls `state_text`.
-5. `tooltip` in [[Tray Module]] calls `tooltip`. `tooltip` calls `cut_utf16`.
+2. `news` in [[Review Module]] calls `rises`.
+3. `AppView::tray_snapshot` in [[codewiki-app]] calls `state_with_job`.
+4. `AppView::tray_snapshot` in [[codewiki-app]] calls `mcp_text`. `mcp_text` calls `ago`.
+5. `AppView::tray_snapshot` in [[codewiki-app]] calls `state_text`.
+
+1 more entry point: `tooltip`.
 
 ## Items
 
@@ -29,6 +31,7 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 - `pub struct Backend` — what the backend last said it is doing.
 - `pub enum Bridge` — when an agent's MCP bridge last called the backend.
 - `pub fn parse(body: &Value) -> Backend` — read the body of `GET /v1/status`. Times are ages by the backend's own clock (`now`), so that a backend on another machine with another clock reads the same.
+- `rises` — the repositories whose count of waiting proposals went up from `before` to `after`: each with its id, its new count and how much it rose, by id. Only a repository in both counts; with no `before`, which is the first answer, there is nothing to compare and so no rise.
 - `fn model_job_text(job: &Value) -> Option<String>` — what the embedding job is doing, in a few words; `None` when none runs. An older backend says nothing of it.
 - `pub fn state_with_job(state: String, model_job: Option<&str>) -> String` — the state the tray shows: what `state_text` says, except that a backend that would be idle but for its work on a model says that work.
 - `fn ago(seconds: u64) -> String` — an age in the largest unit that fits: "just now", "12 min ago", "3 h ago", "2 days ago".
@@ -44,6 +47,7 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `take_status`, `tray_snapshot`
+- [[Review Module]] — from `news`
 - [[Tray Module]] — from `tooltip`
 
 ## See also

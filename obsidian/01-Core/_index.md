@@ -9,7 +9,7 @@ tags: [moc, core]
 ## Folders
 
 - [[01-Core/codewiki/_index|codewiki]] — 2 notes
-- [[01-Core/codewiki-app/_index|codewiki-app]] — 68 notes
+- [[01-Core/codewiki-app/_index|codewiki-app]] — 75 notes
 - [[01-Core/codewiki-mcp/_index|codewiki-mcp]] — 3 notes
 - [[01-Core/cw-client/_index|cw-client]] — 3 notes
 - [[01-Core/cw-core/_index|cw-core]] — 20 notes
@@ -19,7 +19,7 @@ tags: [moc, core]
 - [[01-Core/cw-index/_index|cw-index]] — 7 notes
 - [[01-Core/cw-mermaid/_index|cw-mermaid]] — 2 notes
 - [[01-Core/cw-parse/_index|cw-parse]] — 13 notes
-- [[01-Core/cw-server/_index|cw-server]] — 13 notes
+- [[01-Core/cw-server/_index|cw-server]] — 14 notes
 - [[01-Core/cw-telemetry/_index|cw-telemetry]] — 3 notes
 - [[01-Core/cw-update/_index|cw-update]] — 8 notes
 - [[01-Core/cw-vault/_index|cw-vault]] — 14 notes

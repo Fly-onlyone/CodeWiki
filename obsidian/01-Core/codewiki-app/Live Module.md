@@ -16,13 +16,13 @@ Like the reports in `pages`, each turns what the backend sent into a `Doc`. Thes
 
 ## How it works
 
-1. `Suggestions::show` in [[Suggestions]] calls `hit_groups`. `hit_groups` calls `list`, then `hit_target`. `hit_target` calls `string`, then `note_stem`, then `plain_snippet`.
+1. `Suggestions::show` in [[Suggest Module]] calls `hit_groups`. `hit_groups` calls `list`, then `hit_target`. `hit_target` calls `string`, then `note_stem`, then `plain_snippet`.
 2. `AppView::open_symbol` in [[codewiki-app]] calls `symbol_page`. `symbol_page` calls `Doc::new` in [[Doc]], then `string`, then `text`, then `file` (both in [[Doc Module]]), then `number`, then `list`, and 4 more.
 3. `AppView::run_search` in [[codewiki-app]] calls `search_page`. `search_page` calls `Doc::new` in [[Doc]], then `list`, then `hit_groups`, then `Row::new` in [[Doc Module]], then `section`.
 4. `AppView::open_hotspots` in [[codewiki-app]] calls `hotspots_page`. `hotspots_page` calls `list`, then `Doc::new` in [[Doc]], then `Table::new`, then `Column::new`, then `Column::numeric`, then `file` (all in [[Doc Module]]), and 3 more.
 5. `AppView::open_file` in [[codewiki-app]] calls `file_page`. `file_page` calls `string`, then `Doc::new` in [[Doc]], then `Stat::new` in [[Doc Module]], then `number`, then `code` in [[Doc Module]], then `list`, and 8 more.
 
-10 more entry points: `proposal_page`, `sync_page`, `waiting_count`, `waiting_page`, `agent_view_line`, `explanation_lines`, and 4 more.
+11 more entry points: `proposal_page`, `review_empty_page`, `sync_page`, `waiting_count`, `waiting_page`, `agent_view_line`, and 5 more.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -37,6 +37,7 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn hotspots_page(rows: &Value) -> Doc` — the hotspot ranking.
 - `pub fn file_page(context: &Value, risk: &Value, radius: &Value) -> Doc` — one file: risk, symbols, relations and notes.
 - `pub fn proposal_page(detail: &Value) -> Doc` — one proposal for review.
+- `pub fn review_empty_page() -> Doc` — the review page when no proposal waits.
 - `pub fn sync_page(report: &Value) -> Doc` — what a sync did.
 - `pub fn waiting_count(queue: Option<&Value>) -> u64` — how many notes wait for a coding agent, from the queue of `GET /explanations?all=true`: those behind the code and those never explained. 0 until the queue has been read.
 - `pub fn waiting_page(queue: Option<&Value>, auto_on: bool) -> Doc` — the notes that wait for a coding agent to explain them, from the queue of `GET /explanations?all=true`, in the backend's order: those behind the code first. `None` while the queue is being read. `auto_on` says whether agents explain some of them by themselves at the start of a session.
@@ -45,11 +46,10 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `pub fn message_page(message: &str) -> Doc` — A page that only says something, such as that there is no wiki yet.
 - `pub enum Kept` — whether coding agents are kept out of a project's registered folder.
 - `pub fn kept_by(entries: &[PathBuf], folder: &str) -> Kept` — how `entries` keep agents out of `folder`. A parent entry wins over the folder's own: removing the own entry would leave the folder kept. It looks at the file system (a link is followed), so the app works it out when Home's data is refreshed, never while a page is built.
-- `pub struct Project<'a>` — A registered repository, as Home lists it.
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
-- `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: where its log is, and a button that tries again. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
+- `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: that the app keeps looking for one, where its log is, and a button that tries again at once. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 14 more items.
+And 15 more items.
 
 ## Depends on
 
@@ -62,8 +62,9 @@ And 14 more items.
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `agent_view_notice`, `connect`, `details`
-- [[Suggestions]] — from `Suggestions`, `chosen`, `groups`, `show`
+- [[Suggest Module]] — from `Suggestions`, `chosen`, `groups`, `show`
 - [[Palette Module]] — from `agents_entry`
+- [[Review View Module]] — from `empty_review`
 
 ## See also
 

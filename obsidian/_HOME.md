@@ -6,7 +6,7 @@ tags: [moc, home]
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 17 crates and 342 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 360 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
@@ -39,7 +39,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 
 ## 🔌 External Integrations
 
-→ [[03-Integrations/_index|All integrations]] — axum, gpui_kit, rusqlite, semver, sentry, serde, serde_json, sha2, tree_sitter.
+→ [[03-Integrations/_index|All integrations]] — axum, gpui_kit, rusqlite, semver, sentry, serde, serde_json, sha2, tree_sitter, windows_registry.
 
 ## 🧩 Patterns
 

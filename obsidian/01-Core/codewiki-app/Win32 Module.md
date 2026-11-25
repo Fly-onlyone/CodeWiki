@@ -18,13 +18,13 @@ This is the only module of the workspace with `unsafe` code: keep every such cal
 
 ## How it works
 
-1. `AppView::listen` and `AppView::start_tray` in [[codewiki-app]] call `hwnd`.
+1. `AppView::listen` and `AppView::new` in [[codewiki-app]], and 1 more, call `hwnd`.
 2. `AppView::listen` in [[codewiki-app]] calls `hide`.
 3. `AppView::listen` in [[codewiki-app]] calls `show`.
-4. `AppView::listen` in [[codewiki-app]] calls `is_visible`.
-5. `Tray::new` in [[Tray Module]] calls `keep_open`.
+4. `AppView::listen` and `AppView::window_on_screen` in [[codewiki-app]] call `is_visible`.
+5. `AppView::window_on_screen` in [[codewiki-app]] calls `is_minimized`.
 
-4 more entry points: `small_icon_size`, `wheel_scroll_lines`, `allow_foreground`, `on_console_stop`.
+5 more entry points: `keep_open`, `small_icon_size`, `wheel_scroll_lines`, `allow_foreground`, `on_console_stop`.
 
 ## Items
 
@@ -33,6 +33,7 @@ This is the only module of the workspace with `unsafe` code: keep every such cal
 - `pub fn hide(window: Hwnd)` — take the window off the screen and off the taskbar. It keeps everything: its place, its page, what was typed.
 - `pub fn show(window: Hwnd)` — put a window that `hide` took away back where it was. It does not bring it to the front; GPUI's `activate_window` does.
 - `pub fn is_visible(window: Hwnd) -> bool` — whether the window is on screen, minimized or not; false once hidden.
+- `pub fn is_minimized(window: Hwnd) -> bool` — whether the window is minimized to the taskbar.
 - `static TRAY_PROCEDURE: AtomicIsize` — the window procedure the tray icon's window had before `keep_open` replaced it; 0 until then.
 - `pub fn keep_open(window: HWND)` — make the window behind the tray icon ignore a request to close. The tray icon lives in a window of its own that never shows. Opening the icon's menu makes that window the one that has the keyboard, and it stays so after the menu closes. Alt+F4 then goes to it. Windows' own answer to that is to destroy the window, and the icon went with it while the app ran on, with nothing left on screen to reach it by. The window must end only when the icon is dropped, which destroys it directly and asks nobody. `window` is what `TrayIcon::window_handle` returns: a window of this process that lives as long as the icon. Call this once, from the thread that made the icon, before that thread handles another message.
 - `tray_procedure` — the tray window's procedure after `keep_open`: a close request is answered as handled and does nothing; every other message goes to the procedure the window had before.
@@ -50,7 +51,7 @@ This is the only module of the workspace with `unsafe` code: keep every such cal
 
 ## Used by
 
-- [[codewiki-app]] — from `listen`, `main`, `start_tray`
+- [[codewiki-app]] — from `AppView`, `listen`, `main`, `new`
 - [[Backdrop Module]] — from `render`
 - [[Instance Module]] — from `hand_over`
 - [[Tray Module]] — from `new`

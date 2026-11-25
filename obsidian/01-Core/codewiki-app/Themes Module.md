@@ -69,11 +69,10 @@ And 3 more items.
 
 - [[codewiki-app]] — from `main`, `open_theme_menu`, `palette_matches`, `select_theme`
 - [[Backdrop Module]] — from `shapes`, `sky`
+- [[List Module]] — from `render`, `subheader`
 - [[Reading Module]] — from `frame`, `style`
 - [[Standard Module]] — from `REFERENCE`, `from_json`
 - [[Doc View Module]] — from `choice_tint`
-- [[List Module]] — from `subheader`
-- [[ListItemButton]] — from `render`
 
 ## See also
 

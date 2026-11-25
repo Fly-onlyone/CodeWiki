@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The search box in the app's toolbar shows a list of hits under itself while you type, so you see results without pressing Enter. This module keeps the state of that list: the hits it shows, whether it is open, which row the arrow keys point at, and the lookup that waits for you to stop typing. The app's main view in [[codewiki-app]] owns one [[Suggestions]] value and changes it from the search box's events. [[Autocomplete Module]] draws the list.
+The search box in the app's toolbar shows a list of hits under itself while you type, so you see results without pressing Enter. This module keeps the state of that list: the hits it shows, whether it is open, which row the arrow keys point at, and the lookup that waits for you to stop typing. The app's main view in [[codewiki-app]] owns one Suggestions value and changes it from the search box's events. [[Autocomplete Module]] draws the list.
 
 The search box keeps the keyboard the whole time. Down moves from the box into the list and on down it; Up moves back up and, from the first row, back to the box. Enter opens the highlighted hit. With no row highlighted, Enter opens the full Search page, as it did before the list existed.
 
@@ -30,11 +30,16 @@ The root view catches Up, Down and Escape while the list is open, before the sea
 
 - `pub const PAUSE: Duration` — how long typing must pause before the field's text is looked up.
 - `pub const LIMIT: usize` — how many hits the list shows.
-- [[Suggestions]] — struct
+- `pub struct Suggestions` — public struct; used by `AppView`.
+
+## Depends on
+
+- [[Live Module]] — uses `HitTarget`, `hit_groups`
+- [[Menu Module]] — uses `AnchorBounds`
 
 ## Used by
 
-- [[codewiki-app]] — from `suggest`
+- [[codewiki-app]] — from `AppView`, `choose_suggestion`, `new`, `render`
 
 ## Gotchas
 

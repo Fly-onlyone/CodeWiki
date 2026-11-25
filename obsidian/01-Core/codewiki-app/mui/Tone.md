@@ -21,7 +21,7 @@ Declared as `pub enum Tone`.
 Members:
 
 - `pub fn color(self, cx: &App) -> Hsla` — the color that stands for this tone.
-- `fn icon(self) -> Glyph` — private method, returns `Glyph`.
+- `pub fn icon(self) -> Glyph` — the icon an alert of this tone starts with.
 
 ## Depends on
 
@@ -34,8 +34,9 @@ Members:
 - [[Feedback Module]] — from `alert`, `alert_titled`, `chip`
 - [[Text Field Module]] — from `TextField`, `helper`
 - [[Illustration Module]] — from `tone_of`
+- [[Snackbar Module]] — from `Content`
 - [[Settings Pages Module]] — from `job`
-- [[Block]] — from `Block`
+- [[Toasts Module]] — from `Notice`
 
 ## See also
 

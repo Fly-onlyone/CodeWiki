@@ -30,7 +30,7 @@ A page function turns backend data into a `Doc`: a title, and blocks such as tab
 - [[Span]] — A stretch of text within a line.
 - `pub type Line = Vec<Span>` — A line of text made of spans.
 - `pub fn text(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `Cell::text`, `Doc::text`, `Doc::words`, `agents_card` and 25 more.
-- `pub fn strong(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `message_page`, `workspace_page`.
+- `pub fn strong(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `message_page`, `review_empty_page`, `workspace_page`.
 - `pub fn code(text: impl Into<String>) -> Span` — public function, returns `Span`; called by `agents_card`, `appearance`, `backend`, `contracts_page` and 14 more.
 - `pub fn rich(source: &str) -> Line` — text from the backend, in which backticks mark code: `like this`.
 - `pub fn file(path: &str) -> Span` — A link to a source file, labelled with its path.

@@ -34,13 +34,13 @@ GPUI cannot scale an element, so entrances keep Framer's fade and travel and dro
 - `pub const PAGE: Spring` — the spring of `pageEntrance` and `scrollReveal`.
 - `pub const PAGE_RISE: f32` — travel of `pageEntrance`, in pixels.
 - `pub const CARD_RISE: f32` — travel of a `staggerCascade` item.
-- `pub const ROW_SLIDE: f32` — travel of a `listStagger` item, from the left.
 - `pub const CARD_STAGGER: Duration` — `staggerCascade`: time between two cards.
 - `pub const STAGGER_CAP: usize` — items after this many enter together with the last staggered one. Without a cap the last row of a long table would arrive seconds late.
+- `pub const EXIT: Duration` — `scaleIn` exit, and the exit of `tabSwitch` and `pageEntrance`.
 - `pub const PRESS_IN: Duration` — how fast a control takes its pressed look, and lets it go. Not a motion of MUI, whose press is the ripple alone: quick enough to answer the press at once, and slow enough on the way back that a short click shows.
-- `pub const PRESS_OUT: Duration` — public constant; used by `Base::new`.
 - `pub const NOTE_HOLD: Duration` — how long the word "Saved" stays beside a setting. Not a motion of MUI or of TradingAgent: long enough to be read, and gone before the next change.
 - `pub const LEVEL_HOLD: Duration` — how long the zoom level stays in the title bar after a change. Not a motion of MUI or of TradingAgent: long enough to read the figure while the wheel turns, and gone soon after it stops.
+- `pub const TOAST_HOLD: Duration` — how long a toast stays on screen. Not a motion: the `autoHideDuration` of MUI's Snackbar docs example (`autoHideDuration={6000}`), long enough to read a title and a line under it.
 - `pub fn scale() -> f32` — the factor every motion is stretched by; 1 unless `CODEWIKI_MOTION_SCALE` says otherwise.
 - `pub fn scaled(duration: Duration) -> Duration` — `duration` stretched by `scale`.
 - `drawer` — how much of a side pane shows, from 0 (hidden) to 1 (shown), on the way to `open`: MUI's persistent `Drawer`. It enters over `enteringScreen` on `easeOut` and leaves over `leavingScreen` on `sharp` (`Drawer/Drawer.js`, `Slide/Slide.js`). A pane that starts hidden starts at 0, with no motion.
@@ -49,7 +49,7 @@ GPUI cannot scale an element, so entrances keep Framer's fade and travel and dro
 - `pub struct Enter` — an entrance: where the element comes from, on which spring, after what wait.
 - `pub trait EnterExt: Styled + IntoElement + Sized + 'static` — elements that can make an entrance.
 
-And 5 more items.
+And 6 more items.
 
 ## Depends on
 
@@ -68,7 +68,7 @@ And 5 more items.
 - [[Button Module]] — from `ease`, `render`
 - [[Autocomplete Module]] — from `render`
 - [[Base Module]] — from `new`
-- [[Feedback Module]] — from `linear_progress`
+- [[Checkbox Module]] — from `render`
 
 ## Gotchas
 

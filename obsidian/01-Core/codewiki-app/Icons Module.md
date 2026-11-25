@@ -29,13 +29,12 @@ Every icon the app draws is a constant here. gpui-kit's own components draw a fe
 - `app_icons` — declare the app's icons: embed each file, and name it as a constant.
 - `pub fn for_theme(name: &str) -> Glyph` — the icon that stands for the theme `name` in the theme menu. A light theme shares the icon of its dark twin; a theme the app does not know, such as one of the user's own, takes the palette.
 - `pub const LOGO: &str` — the app's own logo, the same art as its Windows icon, served under this path. Draw it with `img(icons::LOGO)`.
+- `pub const LOGO_BYTES: &[u8]` — the logo's PNG file, which the header of a Windows notification shows too (`identity.rs`).
 - `pub fn for_command(command: &Command) -> Glyph` — the icon shown beside a palette entry.
 - `pub enum Hue` — the theme color an icon is drawn in, so that the chrome carries the theme's palette and each kind of thing keeps the same color.
 - `pub fn hue(icon: Glyph) -> Option<Hue>` — the hue of `icon` in the sidebar and the toolbar, or `None` for an icon that stays neutral, such as back or close.
 - `pub fn tint(icon: Glyph, cx: &App) -> Option<Hsla>` — `hue` in the active theme.
 - `pub struct AppAssets` — the app's asset source: its own icons first, then gpui-kit's defaults, which the kit's components need.
-
-And 1 more private item with no comment.
 
 ## Depends on
 
@@ -47,6 +46,7 @@ And 1 more private item with no comment.
 - [[codewiki-app]] — from `main`, `palette_view`, `settings_entry`, `settings_frame`
 - [[Doc View Module]] — from `choice_tint`, `draw`
 - [[Instance Module]] — from `listen`
+- [[Snackbar Module]] — from `snackbar`
 - [[Reading Module]] — from `heading_hue`
 - [[Settings Pages Module]] — from `appearance`
 - [[Win32 Module]] — from `tray_procedure`

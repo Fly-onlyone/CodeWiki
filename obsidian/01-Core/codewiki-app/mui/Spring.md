@@ -46,8 +46,8 @@ Members:
 - [[Doc View Module]] — from `stat_tile`
 - [[Button Module]] — from `render`
 - [[Interaction Module]] — from `Interaction`
+- [[List Module]] — from `render`
 - [[Tabs Module]] — from `render`
-- [[ListItemButton]] — from `render`
 
 ## Gotchas
 

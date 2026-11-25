@@ -33,6 +33,7 @@ Row size and spacing follow MUI's dense list. How a row answers the pointer foll
 - `pub const ROW_HEIGHT: f32` — A dense `ListItemButton`: 4 px above and below a 14 px label with MUI's 4 px text margins.
 - `const TWO_LINE_HEIGHT: f32` — A dense row with MUI's `secondary` text under its label, at 12 px.
 - `const INSET: f32` — `ListItemButton.js`: `paddingLeft: 16`. Half of it is the list's own inset here, so the row's fill stops short of the edges.
+- `pub const ROW_START: f32` — where a top row's content starts, from the list's edge: what lines up with the rows, such as a heading's checkbox.
 - `const INDENT: f32` — each level of nesting; MUI's examples indent by `pl: 4`.
 - `const FONT: f32` — `Sidebar.tsx`: `fontSize: "0.875rem"`, a small icon.
 - `const BAR_HEIGHT: f32` — `Sidebar.tsx`: the bar of the selected row is 24 px high. Its width, and how far a row shifts and its icon grows, are in `interaction`.
@@ -44,28 +45,28 @@ Row size and spacing follow MUI's dense list. How a row answers the pointer foll
 - `icon_color` — the color of a row's icon. One with a hue of its own keeps it, made `lifted` lighter. Else it is muted at rest, primary under the pointer, and the selected label's accent while selected.
 - `fn bar_place(width: f32, shown: f32) -> (f32, f32)` — where the bar of a selected row is, `shown` of the way in: its left edge and its height, centred on the row. It grows from its middle as it slides in from the left.
 - `pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div` — the heading over a group of rows, in the theme's secondary color, which is its link color.
-- [[ListItemButton]] — A row that can be pressed.
+- `pub struct ListItemButton` — A row that can be pressed.
 - `pub struct ListFolder` — A row that opens and closes the rows under it.
 
 And 4 more private items with no comment.
 
 ## Depends on
 
-- [[ListItemButton]] — uses `ListItemButton`, `icon`, `new`, `on_click`
-- [[Interaction Module]] — uses `Interaction`, `lift`
-- [[Motion Module (mui)]] — uses `scaled`
+- [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
+- [[Interaction Module]] — uses `Interaction`, `current`, `lift`, `pressed`
+- [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
+- [[Duration Module]] — uses `SHORTEST`, `STANDARD`
+- [[Themes Module]] — uses `brand`, `of`
 - [[Tokens Module]] — uses `easing`
 - [[Curve Module]] — uses `EASE_IN_OUT`
-- [[Duration Module]] — uses `STANDARD`
-- [[Themes Module]] — uses `brand`
 - [[Zoom Module]] — uses `px`
 
 ## Used by
 
-- [[codewiki-app]] — from `sidebar`
+- [[codewiki-app]] — from `palette_view`, `review_queue`, `settings_entry`, `settings_frame`
+- [[Doc View Module]] — from `draw_row`
 - [[Autocomplete Module]] — from `render`
 - [[Menu Module]] — from `render`
-- [[ListItemButton]] — from `render`
 
 ## Gotchas
 

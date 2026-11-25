@@ -18,8 +18,8 @@ MUI paths are relative to `@mui/material`; TradingAgent paths to its `frontend/s
 
 ## How it works
 
-1. `table_row` in [[Doc View Module]] and `Base::new` in [[Base Module]], and 11 more, call `easing`.
-2. `Button::render` and `IconButton::render` in [[Button Module]], and 2 more, call `states`.
+1. `table_row` in [[Doc View Module]] and `Base::new` in [[Base Module]], and 12 more, call `easing`.
+2. `Button::render` and `IconButton::render` in [[Button Module]], and 3 more, call `states`.
 3. `paper` in [[Surfaces Module]] and `Switch::render` in [[Switch Module]] call `elevation`. `elevation` calls `elevation_between`. `elevation_between` calls `black`, then `px` in [[Zoom Module]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
@@ -54,11 +54,11 @@ Submodules: [[Curve Module]], [[Duration Module]].
 - [[Doc View Module]] — from `line`, `render`, `stat_tile`, `table_row`
 - [[Button Module]] — from `ease`, `line`, `render`
 - [[Surfaces Module]] — from `card_content`, `paper`, `text`
+- [[Checkbox Module]] — from `of`, `render`
 - [[Base Module]] — from `new`
 - [[Feedback Module]] — from `indeterminate`
 - [[Interaction Module]] — from `LIGHT_RATIO`
 - [[List Module]] — from `render`
-- [[Motion Module (mui)]] — from `drawer`
 
 ## See also
 

@@ -16,8 +16,8 @@ Sizes are MUI's (`Alert/Alert.js`, `Chip/Chip.js`, `LinearProgress/LinearProgres
 
 ## How it works
 
-1. `AppView::page_view` and `AppView::viewer` in [[codewiki-app]], and 2 more, call `alert`. `alert` calls `alert_titled`.
-2. `AppView::graph_view` and `title_bar` in [[codewiki-app]], and 2 more, call `chip`. `chip` calls `px` in [[Zoom Module]].
+1. `AppView::page_view` and `AppView::reconnect_banner` in [[codewiki-app]], and 4 more, call `alert`. `alert` calls `alert_titled`.
+2. `AppView::graph_view` and `AppView::review_queue` in [[codewiki-app]], and 3 more, call `chip`. `chip` calls `px` in [[Zoom Module]].
 3. `AppView::body` in [[codewiki-app]] and `draw` in [[Doc View Module]] call `linear_progress`. `linear_progress` calls `px` in [[Zoom Module]], then `scaled` in [[Motion Module (mui)]], then `indeterminate`. `indeterminate` calls `easing` in [[Tokens Module]].
 4. `render` in [[Illustration Module]] calls `alert_titled`. `alert_titled` calls `px` in [[Zoom Module]].
 5. `draw` in [[Doc View Module]] calls `alert_action`. `alert_action` calls `px` in [[Zoom Module]].
@@ -60,7 +60,7 @@ And 7 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `body`, `graph_view`, `page_view`, `settings_frame`
+- [[codewiki-app]] — from `body`, `graph_view`, `page_view`, `reconnect_banner`
 - [[Doc View Module]] — from `draw`, `draw_cell`
 - [[Illustration Module]] — from `render`
 - [[Button Module]] — from `render`

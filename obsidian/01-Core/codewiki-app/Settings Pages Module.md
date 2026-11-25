@@ -19,6 +19,7 @@ A setting the backend keeps can be out of the user's hands here for one of three
 ## How it works
 
 1. `AppView::settings_frame` in [[codewiki-app]] calls `page`. `page` calls `Doc::new` in [[Doc]], then `appearance`, then `search`, then `backend`, then `repositories`, then `updates`, and 2 more. `appearance` calls `card`, then `for_theme` in [[Icons Module]], then `text`, then `code` (both in [[Doc Module]]), then `zoom_card`, then `startup`. `search` calls `without_settings`, then `provider`, then `server_rows`, then `in_use`, then `text`, then `Press::new` (both in [[Doc Module]]), and 5 more.
+2. `AppView::probe_embed_models` in [[codewiki-app]] calls `server_label`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -35,10 +36,10 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - `fn without_settings(model: &Model) -> Vec<Block>` — what a page that needs the backend's settings shows without them.
 - `fn lock(model: &Model, settings: &Value, entry: &Value) -> Option<String>` — why the setting `entry` describes cannot be changed here, when it cannot.
 - `provider` — A select over the `options` the backend lists for `section.provider`.
-- `select` — A select over the `options` the backend lists for `section.field`.
 - `fn in_use(settings: &Value, section: &str, nothing: &str) -> Block` — what the settings of `section` select, or why they select nothing usable.
 - `fn search(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn server_rows(model: &Model, settings: &Value, provider: &str) -> Vec<Block>` — the address and key rows of a server, then its model, then how to start it. Nothing for the word-form embedder and for none.
+- `pub(crate) fn server_label(provider: &str) -> &str` — how the page names the server of `provider`, as its address row does.
 - `pub fn job_runs(job: &Value) -> bool` — whether an embedding job is under way.
 - `fn job(job: &Value) -> Vec<Block>` — what the embedding job that runs, or the last that ran, has to say.
 - `fn backend(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
@@ -61,7 +62,7 @@ And 17 more items.
 ## Used by
 
 - [[Settings View Module]] — from `State`, `job_ended`, `read_agents_off`, `test_line`
-- [[codewiki-app]] — from `settings_frame`, `take_embed_job`
+- [[codewiki-app]] — from `probe_embed_models`, `settings_frame`, `take_embed_job`
 
 ## See also
 

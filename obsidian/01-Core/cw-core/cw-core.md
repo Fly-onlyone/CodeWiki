@@ -43,9 +43,9 @@ Defined at the crate root:
 ## Used by
 
 - [[Query Module]] — from `answer`, `list_notes`, `notes_citing`, `overview`
+- [[codewiki-app]] — from `APP_IDENTITY`, `after_hide`, `main`, `show_system_notification`
 - [[Explanations Module]] — from `approve`, `brief`, `fits_all`, `reject`
-- [[codewiki-app]] — from `APP_IDENTITY`, `after_hide`, `main`, `sidebar`
-- [[Api Module]] — from `health`, `require_token`, `vault`
+- [[Api Module]] — from `health`, `pending_proposals`, `require_token`, `vault`
 - [[Decisions Module]] — from `create`, `list`, `why`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`
 - [[codewiki]] — from `batch_and_claim_texts_follow_the_backend`, `run`

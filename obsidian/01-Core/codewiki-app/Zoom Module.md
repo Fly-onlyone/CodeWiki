@@ -23,7 +23,7 @@ The title bar stays as it is, as a browser's does: it is built at 100% (`unscale
 
 ## How it works
 
-1. `AppView::body` and `AppView::details` in [[codewiki-app]], and 66 more, call `px`. `px` calls `factor`.
+1. `AppView::body` and `AppView::details` in [[codewiki-app]], and 70 more, call `px`. `px` calls `factor`.
 2. `title_bar` in [[codewiki-app]] and `zoom_card` in [[Settings Pages Module]] call `label`.
 3. `AppView::run_command` and `main` in [[codewiki-app]], and 1 more, call `step_by`. `step_by` calls `set`, then `step`, then `percent`.
 4. `DocPage::new` and `DocPage::render` in [[Doc View Module]] call `factor`.

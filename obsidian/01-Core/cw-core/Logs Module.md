@@ -19,7 +19,7 @@ The desktop app has no console, and the backend it starts has none either, so wh
 ## How it works
 
 1. `AppView::connect` and `AppView::open_logs` in [[codewiki-app]], and 2 more, call `dir`. `dir` calls `dir_from`. `dir_from` calls `data_dir` in [[Paths Module]].
-2. `AppView::connect` in [[codewiki-app]] and `Backend::connect` in [[Backend]] call `path`. `path` calls `dir`.
+2. `AppView::connect` in [[codewiki-app]] and `Backend::start_in` in [[Backend]] call `path`. `path` calls `dir`.
 3. `main` and `AppView::run_settings_action` in [[codewiki-app]] call `level_named`.
 4. `AppView::settings_frame` in [[codewiki-app]] calls `level_name`.
 5. `AppView::settings_frame` in [[codewiki-app]] calls `level_in_env`. `level_in_env` calls `level_named`.
@@ -62,9 +62,10 @@ And 8 more items.
 - [[codewiki-app]] — from `connect`, `main`, `open_logs`, `run_settings_action`
 - [[cw-telemetry]] — from `flush`, `init`
 - [[codewiki]] — from `main`
+- [[cw-client]] — from `spawn_backend`
 - [[cw-embed]] — from `answer`
 - [[cw-server]] — from `stand_in`
-- [[Backend]] — from `connect`
+- [[Backend]] — from `start_in`
 
 ## See also
 

@@ -12,7 +12,7 @@ tags: [core, cw-core, module]
 
 ## How it works
 
-1. `agents` and `run` in [[codewiki]], and 22 more, call `data_dir`. `data_dir` calls `data_dir_from`.
+1. `agents` and `run` in [[codewiki]], and 24 more, call `data_dir`. `data_dir` calls `data_dir_from`.
 2. `add` in [[Repos Module]] calls `repo_id`. `repo_id` calls `sha256_hex` in [[Hash Module]].
 3. `open_index` in [[Service Module]] calls `index_path`. `index_path` calls `index_path_in`, then `data_dir`.
 4. `open_existing_index_in` and `open_index_in` in [[Service Module]] call `index_path_in`. `index_path_in` calls `repo_id`.
@@ -43,8 +43,8 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Service Module]] — from `open_existing_index_in`, `open_index`, `open_index_in`, `update`
 - [[codewiki-mcp]] — from `listed_folders`, `screen`
 - [[Settings View Module]] — from `new`, `read_agents_off`
+- [[Backend]] — from `connect`, `find`
 - [[cw-telemetry]] — from `consent_path`
-- [[Serve Module]] — from `run`
 
 ## See also
 

@@ -16,8 +16,8 @@ The card is TradingAgent's (`components.ts`, `MuiCard`): tinted glass with a thi
 
 ## How it works
 
-1. `AppView::diagram_viewer_view` and `AppView::palette_view` in [[codewiki-app]], and 2 more, call `paper`. `paper` calls `tinted_border` in [[Glass Module]], then `elevation` in [[Tokens Module]].
-2. `AppView::details` and `AppView::diagram_viewer_view` in [[codewiki-app]], and 14 more, call `text`. `text` calls `px` in [[Zoom Module]].
+1. `AppView::diagram_viewer_view` and `AppView::palette_view` in [[codewiki-app]], and 3 more, call `paper`. `paper` calls `tinted_border` in [[Glass Module]], then `elevation` in [[Tokens Module]].
+2. `AppView::details` and `AppView::diagram_viewer_view` in [[codewiki-app]], and 16 more, call `text`. `text` calls `px` in [[Zoom Module]].
 3. `code_block` and `draw` in [[Doc View Module]], and 4 more, call `card`. `card` calls `tinted_border` in [[Glass Module]], then `card_fill`, then `card_shadow`, then `hairline` in [[Glass Module]]. `card_shadow` calls `px` in [[Zoom Module]].
 4. `draw_strip` in [[Doc View Module]] calls `card_piece`. `card_piece` calls `tinted_border` in [[Glass Module]], then `card_fill`, then `hairline` in [[Glass Module]].
 5. `draw` and `empty` in [[Doc View Module]], and 1 more, call `card_content`. `card_content` calls `px` in [[Zoom Module]].
@@ -49,10 +49,11 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[Doc View Module]] — from `caption`, `code_block`, `column`, `draw`
-- [[codewiki-app]] — from `details`, `diagram_viewer_view`, `palette_view`, `settings_frame`
+- [[codewiki-app]] — from `details`, `diagram_viewer_view`, `palette_view`, `review_details`
 - [[Illustration Module]] — from `flow`, `render`, `step`
 - [[Autocomplete Module]] — from `render`
 - [[Menu Module]] — from `render`
+- [[Snackbar Module]] — from `snackbar`
 
 ## See also
 

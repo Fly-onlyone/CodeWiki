@@ -64,6 +64,7 @@ And 7 more items.
 - [[Diagrams Module]] — uses `store`
 - [[Icons Module]] — uses `load`
 - [[Prefs Module]] — uses `dir`
+- [[Review Module]] — uses `name`
 - [[Win32 Module]] — uses `allow_foreground`
 
 ## Used by

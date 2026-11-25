@@ -26,9 +26,9 @@ The command line is `codewiki-app [--tray] [<folder> [<view>]]`. Flags may stand
 2. `Request::new` in [[Instance Module]] calls `named_repo`. `named_repo` calls `looks_like_repo`.
 3. `AppView::open_startup_view` and `AppView::settings_frame` in [[codewiki-app]] call `open_last`. `open_last` calls `read` in [[Prefs Module]].
 4. `AppView::run_action` in [[codewiki-app]] calls `set_open_last`. `set_open_last` calls `write` in [[Prefs Module]].
-5. `AppView::connect` in [[codewiki-app]] calls `repo`. `repo` calls `choose`, then `launch`, then `read` in [[Prefs Module]]. `choose` calls `looks_like_repo`.
+5. `AppView::select_repo` in [[codewiki-app]] calls `remember`. `remember` calls `write` in [[Prefs Module]], then `touched`, then `recent`.
 
-3 more entry points: `remember`, `recent`, `keep_recent`.
+2 more entry points: `recent`, `keep_recent`.
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 
@@ -58,10 +58,11 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[cw-core]] — uses `MANIFEST_DIR`, `VAULT_DIR`
 - [[Prefs Module]] — uses `read`, `write`
+- [[Review Module]] — uses `retain`
 
 ## Used by
 
-- [[codewiki-app]] — from `connect`, `listen`, `main`, `new`
+- [[codewiki-app]] — from `listen`, `main`, `new`, `open_startup_view`
 - [[Instance Module]] — from `acquire`, `new`
 
 ## See also

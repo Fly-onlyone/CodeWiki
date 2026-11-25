@@ -25,5 +25,8 @@
   },
   "tree_sitter": {
     "description": "Rust bindings to the Tree-sitter parsing library"
+  },
+  "windows_registry": {
+    "description": "Windows registry"
   }
 }

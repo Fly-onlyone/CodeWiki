@@ -16,7 +16,7 @@ tags: [core, cw-wiki, module]
 2. `run` in [[codewiki]] and `reindex_repo` in [[Api Module]] call `reindex`. `reindex` calls `scan_repo` in [[Scan Module]], then `analyze` in [[Analyze Module]], then `refresh` in [[Semantic Module]], then `head_commit` in [[Git Module]], then `save`, then `mine` (both in [[Gitintel Module]]).
 3. `run` in [[codewiki]] calls `open_index`. `open_index` calls `built`, then `Index::open` in [[Index]], then `index_path` in [[Paths Module]].
 4. `after_update` and `embed_repo` in [[Embed Job Module]], and 1 more, call `open_existing_index_in`. `open_existing_index_in` calls `index_path_in` in [[Paths Module]], then `Index::open` in [[Index]].
-5. `approve_proposal` and `write_explanation` in [[Api Module]], and 1 more, call `index_notes`. `index_notes` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `refresh` in [[Semantic Module]].
+5. `approve_proposal` and `decide_proposals` in [[Api Module]], and 2 more, call `index_notes`. `index_notes` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `refresh` in [[Semantic Module]].
 
 3 more entry points: `update`, `update_in`, `is_stale`.
 
@@ -53,7 +53,7 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `an_index_that_was_never_built_is_not_opened`, `apply_writes_both_files_and_preserves_the_authors_text`, `fixture`
-- [[Api Module]] — from `approve_proposal`, `index`, `reindex_repo`, `run_update`
+- [[Api Module]] — from `approve_proposal`, `decide_proposals`, `index`, `reindex_repo`
 - [[Embed Job Module]] — from `after_update`, `embed_repo`, `resume`
 - [[codewiki]] — from `run`
 - [[cw-server]] — from `waits`

@@ -44,14 +44,14 @@ Two helpers do the color work. `lift` changes only lightness and clamps it to 0.
 
 ## Used by
 
+- [[List Module]] — from `fill`, `icon_color`, `render`
 - [[Button Module]] — from `glow`, `render`
-- [[List Module]] — from `fill`, `icon_color`
 - [[Base Module]] — from `attach`
+- [[Checkbox Module]] — from `of`
 - [[Select Module]] — from `render`
 - [[Switch Module]] — from `render`
 - [[Tabs Module]] — from `render`
 - [[Text Field Module]] — from `render`
-- [[Reading Module]] — from `link_hover`
 
 ## Gotchas
 

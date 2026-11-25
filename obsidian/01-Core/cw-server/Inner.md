@@ -17,6 +17,7 @@ Declared as `pub(crate) struct Inner`.
 ## Depends on
 
 - [[cw-server]] — uses `ServerConfig`
+- [[Pending Module]] — uses `ProposalCounts`
 - [[Activity]] — uses `Activity`
 - [[Claims]] — uses `Claims`
 - [[Jobs (cw-server)]] — uses `Jobs`

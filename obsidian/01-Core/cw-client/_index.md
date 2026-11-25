@@ -8,7 +8,7 @@ tags: [moc, core, cw-client]
 
 ## Notes
 
-- [[Backend]] — `Backend` struct defined in `cw_client` with 18 methods.
+- [[Backend]] — `Backend` struct defined in `cw_client` with 26 methods.
 - [[cw-client]] — client for the CodeWiki backend: discovery, autostart and HTTP calls.
 - [[Remote Module]] — A backend on another machine, or in Docker, that the user chose in the app instead of naming it with `CODEWIKI_URL`.
 

@@ -4,7 +4,7 @@ tags: [moc, core, cw-server]
 
 # Core / cw-server — Map of Content
 
-> Notes for `cw-server`: 13 concepts.
+> Notes for `cw-server`: 14 concepts.
 
 ## Notes
 
@@ -18,6 +18,7 @@ tags: [moc, core, cw-server]
 - [[Embed Job Module]] — the background embedding job: the one long job that may run.
 - [[Inner]] — `Inner` struct defined in `cw_server`.
 - [[Jobs (cw-server)]] — the job that runs, or the last one that ran.
+- [[Pending Module]] — how many proposals wait in each repository, for `GET /v1/status`.
 - [[Repos Module]] — the list of repositories this backend manages, stored as `repos.json`.
 - [[Settings Module (cw-server)]] — what the settings routes do: describe the settings in effect, and change the saved ones.
 - [[Workspace Module (cw-server)]] — views across every repository the backend manages.

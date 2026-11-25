@@ -110,6 +110,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::mui::checkbox",
+    "path": "01-Core/codewiki-app/mui/Checkbox Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::ci",
     "path": "01-Core/cw-wiki/Ci Module.md",
     "kind": "concept"
@@ -162,6 +167,11 @@
   {
     "id": "type:cw_core::model::Confidence",
     "path": "01-Core/cw-core/Confidence.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::connection",
+    "path": "01-Core/codewiki-app/Connection Module.md",
     "kind": "concept"
   },
   {
@@ -440,6 +450,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::identity",
+    "path": "01-Core/codewiki-app/Identity Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::illustration",
     "path": "01-Core/codewiki-app/Illustration Module.md",
     "kind": "concept"
@@ -547,11 +562,6 @@
   {
     "id": "mod:cw_embed::list",
     "path": "01-Core/cw-embed/List Module (cw-embed).md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:codewiki_app::mui::list::ListItemButton",
-    "path": "01-Core/codewiki-app/mui/ListItemButton.md",
     "kind": "concept"
   },
   {
@@ -700,6 +710,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_server::pending",
+    "path": "01-Core/cw-server/Pending Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_illustrate::Picture",
     "path": "01-Core/cw-illustrate/Picture.md",
     "kind": "concept"
@@ -817,6 +832,16 @@
   {
     "id": "type:cw_parse::resolve::Resolver",
     "path": "01-Core/cw-parse/Resolver.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::review",
+    "path": "01-Core/codewiki-app/Review Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::review_view",
+    "path": "01-Core/codewiki-app/Review View Module.md",
     "kind": "concept"
   },
   {
@@ -980,6 +1005,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::mui::snackbar",
+    "path": "01-Core/codewiki-app/mui/Snackbar Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_vault::manifest::SourceRef",
     "path": "01-Core/cw-vault/SourceRef.md",
     "kind": "concept"
@@ -1025,8 +1055,8 @@
     "kind": "concept"
   },
   {
-    "id": "type:codewiki_app::suggest::Suggestions",
-    "path": "01-Core/codewiki-app/Suggestions.md",
+    "id": "type:codewiki_app::connection::Supervisor",
+    "path": "01-Core/codewiki-app/Supervisor.md",
     "kind": "concept"
   },
   {
@@ -1077,6 +1107,16 @@
   {
     "id": "mod:codewiki_app::themes",
     "path": "01-Core/codewiki-app/Themes Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:codewiki_app::toasts::Toasts",
+    "path": "01-Core/codewiki-app/Toasts.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::toasts",
+    "path": "01-Core/codewiki-app/Toasts Module.md",
     "kind": "concept"
   },
   {
@@ -1148,6 +1188,11 @@
     "id": "mod:codewiki_app::win32",
     "path": "01-Core/codewiki-app/Win32 Module.md",
     "kind": "concept"
+  },
+  {
+    "id": "integration:windows_registry",
+    "path": "03-Integrations/windows_registry.md",
+    "kind": "integration"
   },
   {
     "id": "mod:cw_update::wire_tests",

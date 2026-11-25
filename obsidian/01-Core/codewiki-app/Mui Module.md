@@ -18,7 +18,7 @@ Three things GPUI cannot do shape the result: it cannot scale an element, blur w
 
 ## Items
 
-Submodules: [[Autocomplete Module]], [[Base Module]], [[Button Module]], [[Feedback Module]], [[Interaction Module]], [[List Module]], [[Menu Module]], [[Motion Module (mui)]], [[Ripple Module]], [[Select Module]], [[Surfaces Module]], [[Switch Module]], [[Tabs Module]], [[Text Field Module]], [[Tokens Module]].
+Submodules: [[Autocomplete Module]], [[Base Module]], [[Button Module]], [[Checkbox Module]], [[Feedback Module]], [[Interaction Module]], [[List Module]], [[Menu Module]], [[Motion Module (mui)]], [[Ripple Module]], [[Select Module]], [[Snackbar Module]], [[Surfaces Module]], [[Switch Module]], [[Tabs Module]], [[Text Field Module]], [[Tokens Module]].
 
 ## See also
 

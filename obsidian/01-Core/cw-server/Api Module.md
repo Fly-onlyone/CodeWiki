@@ -24,8 +24,8 @@ tags: [core, cw-server, module]
 - `pub fn routes(state: AppState) -> Router` — public function, returns `Router`; called by `router`, `serve`.
 - `fn lock_claims(state: &AppState) -> std::sync::MutexGuard<'_, crate::claims::Claims>` — the claims on waiting notes. Take it inside the write lock, never the other way round, and hold it briefly.
 - `async fn backend_status(State(state): State<AppState>) -> Json<Value>` — what the backend is doing: the wiki updates that are running, whoever started them, and when an agent's MCP bridge last called. The app shows it in its tray icon. Unlike `/v1/health` it needs the token.
+- `fn pending_proposals(data_dir: &std::path::Path, found: &mut dyn FnMut(String, pending::Found))` — count the pending proposals of each registered repository, by repository id, and tell each to `found`: `None` for one whose folder is gone or whose vault cannot be read.
 - `fn embed_closed(state: &AppState) -> Option<Response>` — the answer of every embedding job route on a backend that listens beyond this machine. The job runs on the backend's machine and calls the model server its settings name; like the settings, that is decided there.
-- `async fn cancel_embed_job(State(state): State<AppState>) -> Response` — stop the running job. What it embedded stays, and the next job goes on from there.
 - `struct Repo` — resolved repository: its root folder and its index.
 - `struct ListedRepo` — A registered repository as `GET /v1/repos` lists it. `present` is worked out on each request, on this machine, where the paths are; it is never written to `repos.json`.
 - `fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report>` — Re-index a repository and bring its wiki up to date, holding the write lock. Shared by the update route and the git webhook.
@@ -37,15 +37,15 @@ tags: [core, cw-server, module]
 - `const MAX_AGENT_LEN: usize` — the longest agent id accepted.
 - `struct WriteExplanationQuery` — which note an agent writes, and who it is.
 
-And 82 more items.
+And 85 more items.
 
 ## Depends on
 
 - [[Query Module]] — uses `Answer`, `Context`, `NoteContent`, `NoteInfo`
 - [[Explanations Module]] — uses `Brief`, `Outcome`, `Queue`, `Scope`
 - [[Gitintel Module]] — uses `BlastRadius`, `ChangeRisk`, `FileRisk`, `GitIntel`
-- [[Index]] — uses `Index`, `edges`, `files`, `find_symbols`
 - [[Proposal Module]] — uses `Proposal`, `get`, `list`, `patch_text`
+- [[Index]] — uses `Index`, `edges`, `files`, `find_symbols`
 - [[Coverage Module]] — uses `CoverageReport`, `import`, `import_text`, `load`
 - [[Health Module]] — uses `DeadSymbol`, `DocReport`, `FileHealth`, `dead_code`
 - [[Claims]] — uses `Claims`, `claim`, `expire`, `others`

@@ -24,7 +24,7 @@ The chrome, the page and the borders are all tinted a little toward the theme's 
 
 ## How it works
 
-1. `AppView::details` and `AppView::sidebar` in [[codewiki-app]], and 7 more, call `tinted_border`.
+1. `AppView::details` and `AppView::sidebar` in [[codewiki-app]], and 8 more, call `tinted_border`.
 2. `AppView::body` and `AppView::palette_view` in [[codewiki-app]], and 4 more, call `hairline`. `hairline` calls `px` in [[Zoom Module]].
 3. `nudge_texts` in [[Standard Module]] calls `matched_backdrop`. `matched_backdrop` calls `over` in [[Contrast Module]].
 4. `AppView::render` and `title_bar` in [[codewiki-app]] call `Levels::for_window`. `Levels::for_window` calls `Levels::compute`, then `rgb`, then `tint`. `Levels::compute` calls `fit_alpha` in [[Contrast Module]], then `matched_backdrop`.

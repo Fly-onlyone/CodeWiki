@@ -22,7 +22,13 @@ claude plugin install codewiki@codewiki
 
 The first line adds the `plugins` folder of an installation made from the release zip (in PowerShell: `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`). The folder holds the plugin and nothing else. Claude Code reads it where it is, so nothing is downloaded and git is not needed.
 
-Without that installation, add the repository in its place: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, which needs git.
+Without that installation, add the repository in its place, or the folder of a clone:
+
+```
+claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code
+```
+
+With `--sparse`, Claude Code checks out only the marketplace file and this plugin's folder, not the whole repository. It needs git. A marketplace added from GitHub without `--sparse` holds the whole repository: run `claude plugin marketplace remove codewiki`, then add it again with this command.
 
 The plugin is installed for your user; `--scope project` on the install records it in the repository's `.claude/settings.json` instead.
 

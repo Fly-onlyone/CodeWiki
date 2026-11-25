@@ -225,7 +225,13 @@ To install the plugin:
 
    In PowerShell the folder is `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`. It holds the agent plugins and nothing else, and Claude Code reads it where it is: nothing is downloaded, and git is not needed.
 
-   Without the Windows package (programs built from source, or a backend on another machine), add this repository instead: `claude plugin marketplace add Fly-onlyone/CodeWiki`, or the folder of a clone. Claude Code then clones the whole repository, and that needs git.
+   Without the Windows package (programs built from source, or a backend on another machine), add this repository instead, or the folder of a clone:
+
+   ```
+   claude plugin marketplace add Fly-onlyone/CodeWiki --sparse .claude-plugin plugins/claude-code
+   ```
+
+   With `--sparse`, Claude Code checks out only the marketplace file and the plugin's folder, not the whole repository. It needs git. A marketplace added from GitHub without `--sparse` holds the whole repository: run `claude plugin marketplace remove codewiki`, then add it again with this command.
 3. Install the plugin:
 
    ```
@@ -260,7 +266,13 @@ codex plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
 codex plugin add codewiki@codewiki
 ```
 
-Without the Windows package, add the repository instead: `codex plugin marketplace add Fly-onlyone/CodeWiki`.
+Without the Windows package, add the repository instead:
+
+```
+codex plugin marketplace add Fly-onlyone/CodeWiki --sparse .agents/plugins --sparse plugins/codex
+```
+
+With `--sparse`, Codex downloads only the marketplace file and the plugin's folder, not the whole repository. A marketplace added from GitHub without `--sparse` holds the whole repository with its history: run `codex plugin marketplace remove codewiki`, then add it again with this command.
 
 Codex skips a hook that comes with a plugin until you trust it. Run `/hooks` in Codex once and trust the `SessionStart` hook that runs `codewiki hook session-start`.
 

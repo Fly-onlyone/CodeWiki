@@ -312,7 +312,8 @@ impl AppView {
         for (id, count, increase) in news {
             log::info!("{increase} new proposals in {id}; {count} wait");
             if open.as_deref() == Some(id.as_str()) && self.notes_loaded {
-                self.reload_notes(cx, |this, cx| this.review_queue_grew(cx));
+                // The loaded queue opens its first on an empty review page.
+                self.reload_notes(cx, |_, _| {});
             }
             let name = self
                 .repos
@@ -320,14 +321,23 @@ impl AppView {
                 .chain(&self.missing)
                 .find(|repo| repo.id == id)
                 .map_or_else(|| id.clone(), |repo| repo.name.clone());
-            self.notify_user(review::rise_notice(&id, &name, increase), cx);
+            // While its notice is still before the user, it says all that
+            // came since it was first shown, not this poll's share alone.
+            let live = self
+                .toasts
+                .live(&review::rise_key(&id), std::time::Instant::now());
+            let total = self.review.told.rose(&id, increase, live);
+            self.notify_user(review::rise_notice(&id, &name, total), cx);
         }
     }
 
-    /// The queue loaded again with new proposals in it. The review page that
-    /// said nothing waits opens the first.
-    fn review_queue_grew(&mut self, cx: &mut Context<Self>) {
-        if matches!(self.page, Page::Review { open: None, .. }) {
+    /// The queue has loaded. The review page that says nothing waits, shown
+    /// before new proposals came or while the queue loaded, opens the first.
+    pub(crate) fn review_queue_grew(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.page, Page::Review { open: None, .. })
+            && !self.pending_proposals.is_empty()
+            && self.review.wanted.is_none()
+        {
             self.show_review(Show::InPlace, cx);
         }
     }

@@ -6,6 +6,9 @@
 //! notice goes and draws the stack (`mui::snackbar`), and this module keeps
 //! what is shown and what a click on a Windows notification means.
 
+use std::collections::HashMap;
+use std::time::{Duration, Instant};
+
 use gpui_kit::{SystemNotification, SystemNotificationAction};
 
 use crate::doc::Action;
@@ -20,6 +23,11 @@ const MAX_SENT: usize = 8;
 
 /// The id of the one button a Windows notification has.
 const ACTION_ID: &str = "action";
+
+/// The least time between two Windows notifications with one key, and how
+/// long one counts as live. Without it, proposals that keep coming would
+/// show a notification every 5 s, at each status poll.
+pub const SYSTEM_GAP: Duration = Duration::from_secs(60);
 
 /// One message for the user.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,6 +50,18 @@ pub struct Toast {
     pub notice: Notice,
 }
 
+/// What becomes of a notice offered to Windows ([`Toasts::offer`]).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Offer {
+    /// Show it now.
+    Now(Notice),
+    /// It waits until [`SYSTEM_GAP`] has passed since the last notification
+    /// with its key, in place of any that waited with that key. Give it back
+    /// after the wait, when one is given ([`Toasts::take_due`]); without one
+    /// it took the place of a notice that already waits.
+    Later(Option<Duration>),
+}
+
 /// The toasts on screen, the ones that are leaving, and the notices sent to
 /// Windows.
 #[derive(Debug, Default)]
@@ -52,6 +72,11 @@ pub struct Toasts {
     /// `shown`.
     leaving: Vec<Toast>,
     sent: Vec<Notice>,
+    /// When a Windows notification with each key was last shown, for the
+    /// last [`SYSTEM_GAP`].
+    shown_at: HashMap<String, Instant>,
+    /// The notices that wait for their gap, each with when it ends.
+    waiting: Vec<(Notice, Instant)>,
 }
 
 impl Toasts {
@@ -130,6 +155,54 @@ impl Toasts {
         }
         let notice = self.sent.iter().find(|notice| notice.key == tag)?;
         notice.action.as_ref().map(|(_, action)| action.clone())
+    }
+
+    /// Offer a notice to Windows at `now`: it is shown at once, unless one
+    /// with its key was shown less than [`SYSTEM_GAP`] ago; then it waits.
+    pub fn offer(&mut self, notice: Notice, now: Instant) -> Offer {
+        if let Some(waiting) = self.waiting.iter_mut().find(|(w, _)| w.key == notice.key) {
+            waiting.0 = notice;
+            return Offer::Later(None);
+        }
+        self.shown_at.retain(|_, at| now < *at + SYSTEM_GAP);
+        if let Some(&at) = self.shown_at.get(&notice.key) {
+            let due = at + SYSTEM_GAP;
+            self.waiting.push((notice, due));
+            return Offer::Later(Some(due - now));
+        }
+        self.shown_at.insert(notice.key.clone(), now);
+        self.sent(&notice);
+        Offer::Now(notice)
+    }
+
+    /// The notices whose wait is over at `now`, in the order they began to
+    /// wait. Each is told again, as a toast or to Windows.
+    pub fn take_due(&mut self, now: Instant) -> Vec<Notice> {
+        let (due, waiting) = std::mem::take(&mut self.waiting)
+            .into_iter()
+            .partition(|(_, due)| *due <= now);
+        self.waiting = waiting;
+        due.into_iter().map(|(notice, _)| notice).collect()
+    }
+
+    /// How long until the next waiting notice is due; `None` when none waits.
+    pub fn next_due(&self, now: Instant) -> Option<Duration> {
+        self.waiting
+            .iter()
+            .map(|(_, due)| due.saturating_duration_since(now))
+            .min()
+    }
+
+    /// Whether a notice with this key is still before the user: a toast on
+    /// screen, or a Windows notification shown in the last [`SYSTEM_GAP`] or
+    /// waiting to be.
+    pub fn live(&self, key: &str, now: Instant) -> bool {
+        self.shown.iter().any(|toast| toast.notice.key == key)
+            || self.waiting.iter().any(|(notice, _)| notice.key == key)
+            || self
+                .shown_at
+                .get(key)
+                .is_some_and(|at| now < *at + SYSTEM_GAP)
     }
 }
 
@@ -305,6 +378,80 @@ mod tests {
         toasts.sent(&with_action("a"));
         toasts.sent(&notice("a"));
         assert_eq!(toasts.route("a", None), None);
+    }
+
+    fn titled(key: &str, title: &str) -> Notice {
+        Notice {
+            title: title.into(),
+            ..notice(key)
+        }
+    }
+
+    fn secs(n: u64) -> Duration {
+        Duration::from_secs(n)
+    }
+
+    #[test]
+    fn a_windows_notification_waits_a_minute_after_the_last_with_its_key() {
+        let mut toasts = Toasts::default();
+        let t0 = Instant::now();
+        assert_eq!(
+            toasts.offer(titled("a", "1"), t0),
+            Offer::Now(titled("a", "1"))
+        );
+        // The next one with the key waits for the rest of the minute.
+        assert_eq!(
+            toasts.offer(titled("a", "2"), t0 + secs(5)),
+            Offer::Later(Some(secs(55)))
+        );
+        assert_eq!(toasts.next_due(t0 + secs(5)), Some(secs(55)));
+        // A newer one takes the place of the one that waits.
+        assert_eq!(
+            toasts.offer(titled("a", "3"), t0 + secs(10)),
+            Offer::Later(None)
+        );
+        // Another key does not wait.
+        assert_eq!(
+            toasts.offer(notice("b"), t0 + secs(10)),
+            Offer::Now(notice("b"))
+        );
+        assert!(toasts.take_due(t0 + secs(59)).is_empty());
+        assert_eq!(toasts.take_due(t0 + secs(60)), vec![titled("a", "3")]);
+        assert!(toasts.take_due(t0 + secs(61)).is_empty());
+        assert_eq!(toasts.next_due(t0 + secs(61)), None);
+        // Given back after the wait, it is shown.
+        assert_eq!(
+            toasts.offer(titled("a", "3"), t0 + secs(60)),
+            Offer::Now(titled("a", "3"))
+        );
+    }
+
+    #[test]
+    fn an_offered_notice_answers_a_click() {
+        let mut toasts = Toasts::default();
+        toasts.offer(with_action("a"), Instant::now());
+        assert!(toasts.route("a", None).is_some());
+    }
+
+    #[test]
+    fn a_notice_is_live_while_its_toast_shows_or_for_a_minute_in_windows() {
+        let mut toasts = Toasts::default();
+        let t0 = Instant::now();
+        assert!(!toasts.live("a", t0));
+        let seq = toasts.push(notice("a"));
+        assert!(toasts.live("a", t0));
+        toasts.expire(seq);
+        assert!(!toasts.live("a", t0));
+
+        toasts.offer(notice("a"), t0);
+        assert!(toasts.live("a", t0 + secs(59)));
+        assert!(!toasts.live("a", t0 + secs(60)));
+        assert!(!toasts.live("b", t0));
+        // One that waits is live too.
+        toasts.offer(notice("a"), t0 + secs(30));
+        assert!(toasts.live("a", t0 + secs(61)));
+        toasts.take_due(t0 + secs(61));
+        assert!(!toasts.live("a", t0 + secs(61)));
     }
 
     #[test]

@@ -379,6 +379,11 @@ pub fn decided_notices(approve: bool, results: &[DecideResult], items: &[Item]) 
 const DECIDED_KEY: &str = "review-decided";
 const FAILED_KEY: &str = "review-failed";
 
+/// The key of the notice that new proposals wait in the repository `id`.
+pub fn rise_key(id: &str) -> String {
+    format!("review:{id}")
+}
+
 /// The notice that new proposals wait in the repository `id`, named `name`.
 pub fn rise_notice(id: &str, name: &str, increase: usize) -> Notice {
     let title = match increase {
@@ -386,7 +391,7 @@ pub fn rise_notice(id: &str, name: &str, increase: usize) -> Notice {
         n => format!("{n} new reviews in {name}"),
     };
     Notice {
-        key: format!("review:{id}"),
+        key: rise_key(id),
         tone: Tone::Info,
         title,
         body: None,
@@ -503,7 +508,9 @@ pub fn to_reload<'a>(
 /// Whether the app itself is busy with work that may add proposals to the
 /// open repository: its own sync, and the loading of the open repository's
 /// notes. `marked` says that the work running now is such work; a report
-/// that loads is not. Counts that rise meanwhile are the app's own doing.
+/// that loads is not. Counts that rise meanwhile are the app's own doing;
+/// once the queue has loaded, it is what later counts are measured from
+/// ([`loaded`]).
 pub fn own_work(marked: bool, busy: Option<&str>) -> bool {
     marked && busy.is_some()
 }
@@ -524,6 +531,37 @@ pub fn news(
         .collect()
 }
 
+/// Take the queue the app loaded for the open repository `open`, `pending`
+/// proposals long, as the count its rises are measured from: what the app
+/// loaded itself is no news, however fast its sync ran. Nothing changes
+/// before the first answer that counts.
+pub fn loaded(counts: &mut Option<HashMap<String, usize>>, open: &str, pending: usize) {
+    if let Some(counts) = counts {
+        counts.insert(open.to_string(), pending);
+    }
+}
+
+/// How many new proposals the notice of each repository says, so that a
+/// rise while that notice is still before the user adds to it.
+#[derive(Debug, Default)]
+pub struct Told(HashMap<String, usize>);
+
+impl Told {
+    /// What the notice of the repository `id` says after a rise of
+    /// `increase`: added to what it said while it is `live`
+    /// ([`crate::toasts::Toasts::live`]), else the rise alone.
+    pub fn rose(&mut self, id: &str, increase: usize, live: bool) -> usize {
+        let before = if live {
+            self.0.get(id).copied().unwrap_or(0)
+        } else {
+            0
+        };
+        let total = before + increase;
+        self.0.insert(id.to_string(), total);
+        total
+    }
+}
+
 /// What the app keeps of the review page and of the counts beside it.
 #[derive(Debug, Default)]
 pub struct State {
@@ -542,6 +580,8 @@ pub struct State {
     /// The error a proposal that did not load left on the page; the next
     /// proposal that loads takes it away.
     pub load_error: Option<String>,
+    /// How many new proposals each repository's notice says.
+    pub told: Told,
 }
 
 #[cfg(test)]
@@ -1073,5 +1113,42 @@ mod tests {
         );
         // The first answer is the baseline.
         assert!(news(None, &after, Some("open"), false).is_empty());
+    }
+
+    fn map(pairs: &[(&str, usize)]) -> HashMap<String, usize> {
+        pairs.iter().map(|(id, n)| (id.to_string(), *n)).collect()
+    }
+
+    #[test]
+    fn what_the_app_loaded_itself_is_the_baseline() {
+        // The poll before the app's sync saw one; the sync proposed two more,
+        // and no poll ran while it did.
+        let mut counts = Some(map(&[("open", 1), ("other", 0)]));
+        loaded(&mut counts, "open", 3);
+        assert_eq!(counts, Some(map(&[("open", 3), ("other", 0)])));
+        let after = map(&[("open", 3), ("other", 0)]);
+        assert!(news(counts.as_ref(), &after, Some("open"), false).is_empty());
+        // What comes after the load is news, by what it added.
+        let later = map(&[("open", 4), ("other", 0)]);
+        assert_eq!(
+            news(counts.as_ref(), &later, Some("open"), false),
+            vec![("open".to_string(), 4, 1)]
+        );
+        // Before the first answer that counts there is no baseline to set.
+        let mut none = None;
+        loaded(&mut none, "open", 3);
+        assert_eq!(none, None);
+    }
+
+    #[test]
+    fn rises_add_up_while_their_notice_is_live() {
+        let mut told = Told::default();
+        assert_eq!(told.rose("a", 1, false), 1);
+        assert_eq!(told.rose("a", 2, true), 3);
+        assert_eq!(told.rose("a", 1, true), 4);
+        // Another repository has its own notice.
+        assert_eq!(told.rose("b", 1, true), 1);
+        // Once the notice is gone, a rise starts over.
+        assert_eq!(told.rose("a", 1, false), 1);
     }
 }

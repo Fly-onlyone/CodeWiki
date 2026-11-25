@@ -843,10 +843,35 @@ impl AppView {
             .detach();
             cx.notify();
         } else {
-            log::info!("Windows notification {}", notice.key);
-            self.show_system_notification(&notice, cx);
-            self.toasts.sent(&notice);
+            match self.toasts.offer(notice, std::time::Instant::now()) {
+                toasts::Offer::Now(notice) => {
+                    log::info!("Windows notification {}", notice.key);
+                    self.show_system_notification(&notice, cx);
+                }
+                toasts::Offer::Later(Some(wait)) => self.tell_when_due(wait, cx),
+                toasts::Offer::Later(None) => {}
+            }
         }
+    }
+
+    /// After `wait`, tell the notices whose wait for Windows is over, as a
+    /// toast when the window is on screen by then; and wait again for any
+    /// that are not due yet.
+    fn tell_when_due(&mut self, wait: std::time::Duration, cx: &mut Context<Self>) {
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            this.update(cx, |this, cx| {
+                let now = std::time::Instant::now();
+                for notice in this.toasts.take_due(now) {
+                    this.notify_user(notice, cx);
+                }
+                if let Some(wait) = this.toasts.next_due(now) {
+                    this.tell_when_due(wait, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// The toasts in the window's corner, drawn over everything, with the
@@ -1248,7 +1273,7 @@ impl AppView {
                 // Unless another repository was opened meanwhile.
                 Ok(_) if this.repo.as_ref().is_none_or(|open| open.id != id) => {}
                 Ok((notes, proposals)) => {
-                    this.take_notes(&notes, &proposals);
+                    this.take_notes(&notes, &proposals, cx);
                     then(this, cx);
                 }
                 Err(error) => log::warn!("could not load the notes again: {error}"),
@@ -1717,7 +1742,7 @@ impl AppView {
             cx,
             move |b| load_notes(b, &repo.id),
             move |this, (notes, proposals), cx| {
-                this.take_notes(&notes, &proposals);
+                this.take_notes(&notes, &proposals, cx);
                 match landing {
                     Landing::Stay => {}
                     _ if this.notes.is_empty() => {
@@ -1739,13 +1764,23 @@ impl AppView {
 
     /// Keep the open repository's notes and pending proposals, as the backend
     /// listed them.
-    fn take_notes(&mut self, notes: &Value, proposals: &Value) {
+    fn take_notes(&mut self, notes: &Value, proposals: &Value, cx: &mut Context<Self>) {
         self.notes = parse_notes(notes);
         self.notes_loaded = true;
         self.pending_proposals = review::pending(proposals);
         // What was decided, here or elsewhere, is no longer selected.
         let pending = self.review_order();
         self.review.selection.retain(&pending);
+        // New proposals are counted from what the app has just loaded: those
+        // of its own sync are no news, however fast the sync ran.
+        if let Some(repo) = &self.repo {
+            review::loaded(
+                &mut self.review.counts,
+                &repo.id,
+                self.pending_proposals.len(),
+            );
+        }
+        self.review_queue_grew(cx);
     }
 
     /// Show the view the launch named (its second argument, or that of the

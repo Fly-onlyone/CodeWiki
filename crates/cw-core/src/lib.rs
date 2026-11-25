@@ -1,6 +1,7 @@
 //! Shared identifiers, hashing, configuration and error types for CodeWiki.
 
 pub mod agents_off;
+pub mod auto_explain;
 pub mod error;
 pub mod hash;
 pub mod logs;
@@ -34,6 +35,10 @@ pub const VAULT_DIR: &str = "obsidian";
 
 /// Folder inside the vault that holds machine metadata. Never rendered as notes.
 pub const MANIFEST_DIR: &str = ".codewiki";
+
+/// How many minutes a note listed for a coding agent stays reserved for it.
+/// Other agents are not offered the note until this time has passed.
+pub const CLAIM_MINUTES: u64 = 30;
 
 /// Request header in which a client of the backend says what it is. Only the
 /// MCP bridge sends it; the backend reports when a bridge last called.

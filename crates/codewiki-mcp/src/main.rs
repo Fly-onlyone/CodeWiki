@@ -5,9 +5,10 @@
 
 mod guard;
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use cw_client::{Backend, encode};
 use rmcp::handler::server::tool::ToolCallContext;
@@ -28,6 +29,8 @@ use serde_json::{Value, json};
 struct Bridge {
     /// Connected lazily so listing tools never starts a backend.
     backend: Arc<Mutex<Option<Backend>>>,
+    /// The agent id each note claimed through this bridge was listed under.
+    claims: Arc<ClaimIds>,
 }
 
 /// The backend in `slot`, connecting on first use. Only a success is kept:
@@ -197,6 +200,9 @@ struct WaitingParams {
     /// How many notes to list, 1 to 20. Defaults to 5.
     #[serde(default)]
     limit: Option<u32>,
+    /// True when you will write the listed notes now: they are kept for you for 30 minutes and other agents get other notes; submitting one frees it.
+    #[serde(default)]
+    claim: Option<bool>,
     /// Repository root path. Defaults to the directory the agent runs in.
     #[serde(default)]
     repo: Option<String>,
@@ -1418,7 +1424,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "List the wiki notes that wait for you to explain them. CodeWiki writes each note's facts from the code; what the thing is for and how it works is yours to write. Notes whose explanation may be behind the code come first, then notes never explained. Narrow the list with `folder` or `files`. Then call get_note_brief for a note."
+        description = "List the wiki notes that wait for you to explain them. CodeWiki writes each note's facts from the code; what the thing is for and how it works is yours to write. Notes whose explanation may be behind the code come first, then notes never explained. Narrow the list with `folder` or `files`. Pass `claim: true` when you will write the listed notes now: they are kept for you for 30 minutes and other agents get other notes. Then call get_note_brief for a note."
     )]
     async fn list_waiting_notes(
         &self,
@@ -1435,12 +1441,22 @@ impl Bridge {
         if let Some(limit) = p.limit {
             query.push(format!("limit={limit}"));
         }
+        let claim = p.claim == Some(true);
+        let listing = claim.then(|| self.claims.next());
+        if let Some(agent) = &listing {
+            query.push(format!("agent={}", encode(agent)));
+        }
+        let claims = self.claims.clone();
         let queue = self
             .call(p.repo, move |b, id| {
-                b.get(&format!("/v1/repos/{id}/explanations?{}", query.join("&")))
+                let queue = b.get(&format!("/v1/repos/{id}/explanations?{}", query.join("&")))?;
+                if let Some(agent) = &listing {
+                    claims.hold(id, agent, &queue);
+                }
+                Ok(queue)
             })
             .await?;
-        text(waiting_text(&queue))
+        text(waiting_text(&queue, claim))
     }
 
     #[tool(
@@ -1486,16 +1502,122 @@ impl Bridge {
             "read": p.read.unwrap_or_default(),
             "model": p.model,
         });
+        let claims = self.claims.clone();
         let outcome = self
             .call(p.repo, move |b, id| {
-                b.put(
-                    &format!("/v1/repos/{id}/explanation?path={}", encode(&note)),
+                // The id the note was listed under, so that the backend
+                // renews that listing's other notes.
+                let agent = claims.agent_for(id, &note);
+                let outcome = b.put(
+                    &format!(
+                        "/v1/repos/{id}/explanation?path={}&agent={}",
+                        encode(&note),
+                        encode(&agent)
+                    ),
                     &body,
-                )
+                )?;
+                claims.settle(id, &note, &outcome);
+                Ok(outcome)
             })
             .await?;
         text(outcome_text(&outcome))
     }
+}
+
+/// The agent ids this bridge lists notes under. Every listing that claims
+/// gets an id of its own: the main agent, its background note writer and a
+/// note writer launched after `/clear` all run through one bridge, and with
+/// one id for all of them a second batch was handed the notes the first
+/// still held. A submission sends the id its note was listed under.
+#[derive(Default)]
+struct ClaimIds {
+    /// How many ids were made.
+    made: AtomicU64,
+    /// (repository id, note path in the vault) to the id the note was
+    /// listed under.
+    held: Mutex<HashMap<(String, String), String>>,
+}
+
+impl ClaimIds {
+    /// A new id for one listing: `<pid>-<start nanos>-<count>`, some 50
+    /// characters at the most, within the backend's 64.
+    fn next(&self) -> String {
+        let count = self.made.fetch_add(1, Ordering::Relaxed) + 1;
+        format!("{}-{count}", agent_id())
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), String>> {
+        self.held
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    /// Note that the notes `queue` lists in `repo` were listed under `agent`.
+    fn hold(&self, repo: &str, agent: &str, queue: &Value) {
+        let mut held = self.lock();
+        for note in rows(queue, "notes") {
+            let path = field(note, "path");
+            if !path.is_empty() {
+                held.insert((repo.to_string(), path.to_string()), agent.to_string());
+            }
+        }
+    }
+
+    /// The id to submit `note` under: the id of the listing that claimed it,
+    /// or the bridge's own when it was not claimed through this bridge.
+    fn agent_for(&self, repo: &str, note: &str) -> String {
+        let held = self.lock();
+        held_key(&held, repo, note)
+            .and_then(|key| held.get(&key).cloned())
+            .unwrap_or_else(|| agent_id().to_string())
+    }
+
+    /// Forget the note an answer saved or proposed: the backend freed it.
+    fn settle(&self, repo: &str, note: &str, outcome: &Value) {
+        if !matches!(field(outcome, "outcome"), "saved" | "proposed") {
+            return;
+        }
+        let mut held = self.lock();
+        held.remove(&(repo.to_string(), field(outcome, "path").to_string()));
+        if let Some(key) = held_key(&held, repo, note) {
+            held.remove(&key);
+        }
+    }
+}
+
+/// The key of the note that `note` names in `repo`, read as the backend
+/// reads it: a vault path, or a note's name, which is its file name without
+/// `.md` in any case.
+fn held_key(
+    held: &HashMap<(String, String), String>,
+    repo: &str,
+    note: &str,
+) -> Option<(String, String)> {
+    let exact = (repo.to_string(), note.to_string());
+    if held.contains_key(&exact) {
+        return Some(exact);
+    }
+    let wanted = note.trim_end_matches(".md").to_lowercase();
+    held.keys()
+        .find(|(r, path)| {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            r == repo && name.trim_end_matches(".md").to_lowercase() == wanted
+        })
+        .cloned()
+}
+
+/// Names this bridge process to the backend, so it can keep notes for it. Made
+/// once. A listing that claims adds a count to it ([`ClaimIds::next`]); a
+/// note not claimed through this bridge is submitted under it alone.
+fn agent_id() -> &'static str {
+    static ID: OnceLock<String> = OnceLock::new();
+    ID.get_or_init(|| {
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        format!("{}-{nanos}", std::process::id())
+    })
 }
 
 /// How many notes wait for an agent, in words; empty when none does.
@@ -1539,23 +1661,42 @@ fn sync_text(report: &Value) -> String {
     summary
 }
 
-/// The queue of notes that wait, for an agent to read.
-fn waiting_text(queue: &Value) -> String {
+/// The queue of notes that wait, for an agent to read. `claimed` tells that
+/// the listing asked to keep the notes for this agent.
+fn waiting_text(queue: &Value, claimed: bool) -> String {
     let notes = rows(queue, "notes");
     let waiting = waiting_line(&queue["waiting"]);
     if waiting.is_empty() {
         return "No note waits for an explanation.\n".to_string();
     }
     let mut body = format!("{waiting}\n");
+    let others = queue["claimed"].as_u64().unwrap_or(0);
     if notes.is_empty() {
-        body.push_str("None of them fits what you asked for.\n");
+        if others > 0 {
+            body.push_str(&format!(
+                "None is free now: another agent is writing the {others} that fit what you asked for.\n"
+            ));
+        } else {
+            body.push_str("None of them fits what you asked for.\n");
+        }
         return body;
+    }
+    if others > 0 {
+        body.push_str(&format!(
+            "{others} more are being written by another agent.\n"
+        ));
     }
     body.push_str(&format!(
         "{} fit what you asked for; the first {}:\n\n",
         queue["matching"].as_u64().unwrap_or(0),
         notes.len()
     ));
+    if claimed {
+        body.push_str(&format!(
+            "These notes are kept for you for {} minutes.\n\n",
+            cw_core::CLAIM_MINUTES
+        ));
+    }
     for (index, note) in notes.iter().enumerate() {
         let why = match field(note, "why") {
             "behind" => "behind the code",
@@ -2351,16 +2492,19 @@ mod tests {
 
     #[test]
     fn the_queue_reads_as_a_list_of_work() {
-        let body = waiting_text(&json!({
-            "waiting": { "behind": 1, "unexplained": 7 },
-            "matching": 3,
-            "notes": [
-                { "path": "01-Core/app/Tray Module.md", "why": "behind",
-                  "behind": ["src/tray.rs changed"], "sources": ["src/tray.rs"] },
-                { "path": "01-Core/app/Autostart Module.md", "why": "unexplained",
-                  "sources": ["src/autostart.rs", "src/main.rs"] },
-            ],
-        }));
+        let body = waiting_text(
+            &json!({
+                "waiting": { "behind": 1, "unexplained": 7 },
+                "matching": 3,
+                "notes": [
+                    { "path": "01-Core/app/Tray Module.md", "why": "behind",
+                      "behind": ["src/tray.rs changed"], "sources": ["src/tray.rs"] },
+                    { "path": "01-Core/app/Autostart Module.md", "why": "unexplained",
+                      "sources": ["src/autostart.rs", "src/main.rs"] },
+                ],
+            }),
+            false,
+        );
         assert!(
             body.starts_with(
                 "8 notes wait for an explanation: 1 behind the code, 7 never explained.\n3 fit what you asked for; the first 2:\n\n1. 01-Core/app/Tray Module.md  (behind the code)\n   - src/tray.rs changed\n   about: src/tray.rs\n2. 01-Core/app/Autostart Module.md  (never explained)\n   about: src/autostart.rs, src/main.rs\n"
@@ -2369,16 +2513,129 @@ mod tests {
         );
         assert!(body.contains("call get_note_brief"), "{body}");
         assert_eq!(
-            waiting_text(&json!({ "waiting": { "behind": 0, "unexplained": 0 }, "notes": [] })),
+            waiting_text(
+                &json!({ "waiting": { "behind": 0, "unexplained": 0 }, "notes": [] }),
+                false
+            ),
             "No note waits for an explanation.\n"
         );
-        let none = waiting_text(&json!({
-            "waiting": { "behind": 0, "unexplained": 2 }, "matching": 0, "notes": [],
-        }));
+        let none = waiting_text(
+            &json!({
+                "waiting": { "behind": 0, "unexplained": 2 }, "matching": 0, "notes": [],
+            }),
+            false,
+        );
         assert!(
             none.ends_with("None of them fits what you asked for.\n"),
             "{none}"
         );
+    }
+
+    #[test]
+    fn the_queue_tells_about_claimed_notes() {
+        let queue = json!({
+            "waiting": { "behind": 0, "unexplained": 4 },
+            "matching": 2,
+            "claimed": 2,
+            "notes": [
+                { "path": "01-Core/a.md", "why": "unexplained", "sources": ["a.rs"] },
+            ],
+        });
+        let plain = waiting_text(&queue, false);
+        assert!(
+            plain.contains("2 more are being written by another agent.\n"),
+            "{plain}"
+        );
+        assert!(!plain.contains("kept for you"), "{plain}");
+        let kept = waiting_text(&queue, true);
+        let minutes = format!(
+            "These notes are kept for you for {} minutes.\n",
+            cw_core::CLAIM_MINUTES
+        );
+        assert!(kept.contains(&minutes), "{kept}");
+        let none = waiting_text(
+            &json!({ "waiting": { "behind": 0, "unexplained": 4 }, "notes": [] }),
+            false,
+        );
+        assert!(!none.contains("another agent"), "{none}");
+        // Every note that fits is held: none is free, though some fit.
+        let busy = waiting_text(
+            &json!({
+                "waiting": { "behind": 0, "unexplained": 4 }, "matching": 3,
+                "claimed": 3, "notes": [],
+            }),
+            true,
+        );
+        assert!(
+            busy.ends_with(
+                "None is free now: another agent is writing the 3 that fit what you asked for.\n"
+            ),
+            "{busy}"
+        );
+        assert!(!busy.contains("None of them fits"), "{busy}");
+        assert!(!busy.contains("kept for you"), "{busy}");
+    }
+
+    #[test]
+    fn the_agent_id_is_made_once() {
+        let id = agent_id();
+        assert!(!id.is_empty());
+        assert!(id.starts_with(&format!("{}-", std::process::id())));
+        assert_eq!(id, agent_id());
+    }
+
+    #[test]
+    fn each_claiming_listing_has_an_id_of_its_own() {
+        let claims = ClaimIds::default();
+        let (first, second) = (claims.next(), claims.next());
+        assert_ne!(first, second);
+        for id in [&first, &second] {
+            assert!(id.starts_with(&format!("{}-", agent_id())), "{id}");
+            assert!(id.chars().count() <= 64, "{id}");
+        }
+        let tray = "01-Core/app/Tray Module.md";
+        let autostart = "01-Core/app/Autostart Module.md";
+        claims.hold("r1", &first, &json!({ "notes": [{ "path": tray }] }));
+        claims.hold("r1", &second, &json!({ "notes": [{ "path": autostart }] }));
+        // A listed note goes with its listing's id, named by path or by name.
+        assert_eq!(claims.agent_for("r1", tray), first);
+        assert_eq!(claims.agent_for("r1", "Tray Module"), first);
+        assert_eq!(claims.agent_for("r1", "autostart module.md"), second);
+        // A note not claimed here, or in another repository, goes with the
+        // bridge's own id.
+        assert_eq!(claims.agent_for("r1", "01-Core/Other.md"), agent_id());
+        assert_eq!(claims.agent_for("r2", tray), agent_id());
+    }
+
+    #[test]
+    fn a_saved_or_proposed_note_is_forgotten_and_a_fault_keeps_it() {
+        let claims = ClaimIds::default();
+        let id = claims.next();
+        let tray = "01-Core/app/Tray Module.md";
+        let autostart = "01-Core/app/Autostart Module.md";
+        claims.hold(
+            "r1",
+            &id,
+            &json!({ "notes": [{ "path": tray }, { "path": autostart }] }),
+        );
+        claims.settle(
+            "r1",
+            "Tray Module",
+            &json!({ "outcome": "issues", "issues": ["Items is not yours"] }),
+        );
+        assert_eq!(claims.agent_for("r1", tray), id);
+        claims.settle(
+            "r1",
+            "Tray Module",
+            &json!({ "outcome": "saved", "path": tray }),
+        );
+        assert_eq!(claims.agent_for("r1", tray), agent_id());
+        claims.settle(
+            "r1",
+            autostart,
+            &json!({ "outcome": "proposed", "path": autostart }),
+        );
+        assert_eq!(claims.agent_for("r1", autostart), agent_id());
     }
 
     #[test]

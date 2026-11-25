@@ -804,3 +804,94 @@ fn a_fault_the_owner_wrote_is_not_held_against_the_agent() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert!(found[0].contains("Another Missing Note"));
 }
+
+#[test]
+fn claimed_notes_are_left_out_of_the_queue_and_counted() {
+    let dir = repo();
+    let root = dir.path();
+    let all = explanations::queue(
+        root,
+        &Scope {
+            limit: Some(explanations::MAX_LIMIT),
+            ..Scope::default()
+        },
+    )
+    .unwrap();
+    let first = all.notes[0].path.clone();
+    let second = all.notes[1].path.clone();
+
+    let queue = explanations::queue(
+        root,
+        &Scope {
+            claimed: vec![first.clone(), second.clone()],
+            limit: Some(explanations::MAX_LIMIT),
+            ..Scope::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(queue.claimed, 2);
+    assert_eq!(queue.matching, all.matching);
+    assert_eq!(queue.waiting, all.waiting);
+    assert_eq!(queue.notes.len(), all.notes.len() - 2);
+    assert!(
+        queue
+            .notes
+            .iter()
+            .all(|n| n.path != first && n.path != second)
+    );
+
+    // The limit applies after the held notes are out.
+    let limited = explanations::queue(
+        root,
+        &Scope {
+            claimed: vec![first.clone()],
+            limit: Some(2),
+            ..Scope::default()
+        },
+    )
+    .unwrap();
+    let paths: Vec<&str> = limited.notes.iter().map(|n| n.path.as_str()).collect();
+    assert_eq!(paths, [second.as_str(), all.notes[2].path.as_str()]);
+    assert_eq!(limited.claimed, 1);
+
+    // A path no note fits is not counted.
+    let none = explanations::queue(
+        root,
+        &Scope {
+            claimed: vec!["nothing.md".into()],
+            ..Scope::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(none.claimed, 0);
+}
+
+#[test]
+fn every_lists_all_waiting_notes_and_marks_the_claimed() {
+    let dir = repo();
+    let root = dir.path();
+    let counts = explanations::waiting_counts(root).unwrap();
+    let plain = explanations::every(root, &[]).unwrap();
+    assert_eq!(plain.notes.len(), counts.total());
+    assert_eq!(plain.waiting, counts);
+    assert_eq!(plain.claimed, 0);
+    assert!(plain.notes.iter().all(|n| !n.claimed));
+
+    let held = plain.notes[1].path.clone();
+    let marked = explanations::every(root, std::slice::from_ref(&held)).unwrap();
+    assert_eq!(marked.notes.len(), counts.total());
+    assert_eq!(marked.claimed, 1);
+    let paths =
+        |q: &explanations::Queue| q.notes.iter().map(|n| n.path.clone()).collect::<Vec<_>>();
+    assert_eq!(paths(&marked), paths(&plain));
+    for note in &marked.notes {
+        assert_eq!(note.claimed, note.path == held);
+    }
+    // Behind first, then by path.
+    assert!(
+        plain
+            .notes
+            .windows(2)
+            .all(|w| (w[0].why, &w[0].path) <= (w[1].why, &w[1].path))
+    );
+}

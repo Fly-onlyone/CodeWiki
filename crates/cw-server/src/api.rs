@@ -237,10 +237,33 @@ async fn health() -> Json<Value> {
     Json(json!({ "status": "ok", "name": "codewiki", "version": cw_core::VERSION }))
 }
 
+/// The claims on waiting notes. Take it inside the write lock, never the
+/// other way round, and hold it briefly.
+fn lock_claims(state: &AppState) -> std::sync::MutexGuard<'_, crate::claims::Claims> {
+    state
+        .0
+        .claims
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// What the backend is doing: the wiki updates that are running, whoever
 /// started them, and when an agent's MCP bridge last called. The app shows it
 /// in its tray icon. Unlike `/v1/health` it needs the token.
 async fn backend_status(State(state): State<AppState>) -> Json<Value> {
+    // A claim that ran out frees its note, which the count of waiting notes
+    // shows. A lister holds the claims while it reads the vault, and expires
+    // them itself; this async handler never waits for it.
+    let expired = match state.0.claims.try_lock() {
+        Ok(mut claims) => claims.expire(Instant::now()),
+        Err(std::sync::TryLockError::Poisoned(poisoned)) => {
+            poisoned.into_inner().expire(Instant::now())
+        }
+        Err(std::sync::TryLockError::WouldBlock) => false,
+    };
+    if expired {
+        state.0.activity.notes_changed();
+    }
     let mut report = state.0.activity.report();
     // The background embedding job that runs, or null. The field keeps its
     // old name, so that older and newer clients read it alike.
@@ -427,6 +450,8 @@ fn run_update(state: &AppState, id: &str) -> Result<cw_wiki::Report> {
     // Still under the lock: a background embedding that stores next sees
     // that the documents changed.
     embed_job::after_update(state, &repo.root);
+    // Notes may have come or gone, also when the update failed halfway.
+    state.0.activity.notes_changed();
     report
 }
 
@@ -645,6 +670,7 @@ async fn write_note(
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         query::write_note(&repo.root, &q.path, &body.text)?;
         service::index_notes(&repo.root, &mut repo.index()?)?;
+        state.0.activity.notes_changed();
         Ok(json!({ "saved": q.path }))
     })
     .await
@@ -661,7 +687,17 @@ struct ExplanationsQuery {
     files: Option<String>,
     #[serde(default)]
     limit: Option<usize>,
+    /// Who asks. The notes listed are lent to this agent for a while, and
+    /// notes other agents hold are left out.
+    #[serde(default)]
+    agent: Option<String>,
+    /// List every waiting note, held ones marked, and lend none.
+    #[serde(default)]
+    all: bool,
 }
+
+/// The longest agent id accepted.
+const MAX_AGENT_LEN: usize = 64;
 
 /// The notes that wait for a coding agent to explain them.
 async fn list_explanations(
@@ -670,7 +706,20 @@ async fn list_explanations(
     Query(q): Query<ExplanationsQuery>,
 ) -> Api<explanations::Queue> {
     blocking(move || {
-        let scope = explanations::Scope {
+        let agent = match q.agent.as_deref().map(str::trim) {
+            None => None,
+            Some(agent) if agent.is_empty() || agent.chars().count() > MAX_AGENT_LEN => {
+                return Err(Error::invalid(format!(
+                    "`agent` must be 1 to {MAX_AGENT_LEN} characters"
+                )));
+            }
+            Some(agent) => Some(agent.to_string()),
+        };
+        if q.all && agent.is_some() {
+            return Err(Error::invalid("`all` and `agent` cannot go together"));
+        }
+        let root = Repo::open(&state, &id)?.root;
+        let mut scope = explanations::Scope {
             folder: q.folder,
             files: q
                 .files
@@ -682,8 +731,27 @@ async fn list_explanations(
                 .map(str::to_string)
                 .collect(),
             limit: q.limit,
+            claimed: Vec::new(),
         };
-        explanations::queue(&Repo::open(&state, &id)?.root, &scope)
+        // List and lend under one lock, so that two agents never get the
+        // same note.
+        let mut claims = lock_claims(&state);
+        let now = Instant::now();
+        if claims.expire(now) {
+            state.0.activity.notes_changed();
+        }
+        if q.all {
+            return explanations::every(&root, &claims.others(&id, None));
+        }
+        scope.claimed = claims.others(&id, agent.as_deref());
+        let queue = explanations::queue(&root, &scope)?;
+        if let Some(agent) = &agent {
+            let listed: Vec<String> = queue.notes.iter().map(|n| n.path.clone()).collect();
+            if claims.claim(&id, agent, &listed, now) {
+                state.0.activity.notes_changed();
+            }
+        }
+        Ok(queue)
     })
     .await
 }
@@ -697,6 +765,15 @@ async fn read_explanation(
     blocking(move || explanations::brief(&Repo::open(&state, &id)?.root, &q.path)).await
 }
 
+/// Which note an agent writes, and who it is.
+#[derive(Deserialize)]
+struct WriteExplanationQuery {
+    path: String,
+    /// The agent that writes, so that its other claims are renewed.
+    #[serde(default)]
+    agent: Option<String>,
+}
+
 /// Take what a coding agent wrote for one note. Every outcome is an answer
 /// with status 200, also the one that lists faults: a client keeps the body
 /// of an answer and only one line of an error, and the agent must read each
@@ -704,16 +781,36 @@ async fn read_explanation(
 async fn write_explanation(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Query(q): Query<NoteQuery>,
+    Query(q): Query<WriteExplanationQuery>,
     Json(body): Json<explanations::Submission>,
 ) -> Api<explanations::Outcome> {
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         let outcome = explanations::submit(&repo.root, &q.path, &body)?;
-        if matches!(outcome, explanations::Outcome::Saved { .. }) {
-            service::index_notes(&repo.root, &mut repo.index()?)?;
+        let indexed = if matches!(outcome, explanations::Outcome::Saved { .. }) {
+            repo.index()
+                .and_then(|mut index| service::index_notes(&repo.root, &mut index))
+                .map(|_| ())
+        } else {
+            Ok(())
+        };
+        // The note is written or queued whatever the index makes of it, so
+        // its claim goes and `notes_rev` moves even when indexing failed.
+        if let explanations::Outcome::Saved { path, .. }
+        | explanations::Outcome::Proposed { path, .. } = &outcome
+        {
+            // The claims lock inside the write lock, as everywhere.
+            let mut claims = lock_claims(&state);
+            claims.release(&id, path);
+            // A note an agent writes keeps its other claims alive.
+            if let Some(agent) = q.agent.as_deref() {
+                claims.renew(&id, agent.trim(), Instant::now());
+            }
+            drop(claims);
+            state.0.activity.notes_changed();
         }
+        indexed?;
         Ok(outcome)
     })
     .await
@@ -957,6 +1054,7 @@ async fn approve_proposal(
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
         let done = explanations::approve(&repo.root, &pid)?;
         service::index_notes(&repo.root, &mut repo.index()?)?;
+        state.0.activity.notes_changed();
         Ok(done)
     })
     .await
@@ -969,7 +1067,9 @@ async fn reject_proposal(
     blocking(move || {
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-        explanations::reject(&repo.root, &pid)
+        let done = explanations::reject(&repo.root, &pid)?;
+        state.0.activity.notes_changed();
+        Ok(done)
     })
     .await
 }

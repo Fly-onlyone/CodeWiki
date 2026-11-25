@@ -89,6 +89,7 @@ fn never_fails_and_prints_nothing_on_an_error() {
         &["hook", "no-such-event"],
         &["hook"],
         &["hook", "session-start", "--unknown-flag"],
+        &["hook", "session-start", "--agent", "bogus"],
     ] {
         let output = codewiki(dir.path(), data.path(), args);
         assert!(output.status.success(), "{args:?}");
@@ -232,4 +233,258 @@ fn an_unlisted_project_still_gets_its_briefing() {
     assert!(output.status.success());
     let text = stdout(&output);
     assert!(text.contains("Pending proposals: 0."), "{text}");
+}
+
+const FACTS: &str = "write notes when the user asks";
+
+/// Run the hook with `stdin` piped in, then closed.
+fn hook_with_stdin(dir: &Path, data: &Path, args: &[&str], stdin: &str) -> Output {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codewiki"))
+        .current_dir(dir)
+        .args(args)
+        .env("CODEWIKI_DATA_DIR", data)
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the codewiki binary runs");
+    // The hook may exit before it reads; a broken pipe is not a failure.
+    let _ = child.stdin.take().unwrap().write_all(stdin.as_bytes());
+    child.wait_with_output().unwrap()
+}
+
+fn start(source: &str) -> String {
+    format!(r#"{{"source":"{source}","permission_mode":"default"}}"#)
+}
+
+#[test]
+fn a_fresh_claude_code_session_is_ordered_to_launch_the_agent() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    for source in ["startup", "resume", "clear"] {
+        let output = hook_with_stdin(
+            project.path(),
+            data.path(),
+            &["hook", "session-start"],
+            &start(source),
+        );
+        assert!(output.status.success());
+        let text = stdout(&output);
+        assert!(text.contains("`codewiki:note-writer`"), "{source}: {text}");
+        assert!(!text.contains(FACTS), "{text}");
+    }
+}
+
+#[test]
+fn a_fresh_codex_session_is_ordered_to_use_the_skill() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    let output = hook_with_stdin(
+        project.path(),
+        data.path(),
+        &["hook", "session-start", "--agent", "codex"],
+        &start("startup"),
+    );
+    assert!(output.status.success());
+    let text = stdout(&output);
+    assert!(text.contains("with the `write-notes` skill"), "{text}");
+    assert!(!text.contains("note-writer"), "{text}");
+}
+
+#[test]
+fn other_sessions_get_the_facts() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    let cases = [
+        start("compact"),
+        start("fork"),
+        r#"{"source":"startup","permission_mode":"plan"}"#.to_string(),
+        "{ not json".to_string(),
+        String::new(),
+    ];
+    for stdin in cases {
+        let output = hook_with_stdin(
+            project.path(),
+            data.path(),
+            &["hook", "session-start"],
+            &stdin,
+        );
+        assert!(output.status.success(), "{stdin}");
+        let text = stdout(&output);
+        assert!(text.contains(FACTS), "{stdin}: {text}");
+    }
+}
+
+#[test]
+fn the_switch_off_gives_the_facts() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    std::fs::write(data.path().join("auto-explain.txt"), "off").unwrap();
+    let output = hook_with_stdin(
+        project.path(),
+        data.path(),
+        &["hook", "session-start"],
+        &start("startup"),
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains(FACTS) && !text.contains("note-writer"),
+        "{text}"
+    );
+}
+
+/// Run git in `dir` with a fixed author, and fail the test when it fails.
+fn git(dir: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(["-c", "user.name=Ann", "-c", "user.email=dev@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn a_linked_worktree_gets_the_facts() {
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    git(project.path(), &["init", "-q", "-b", "main"]);
+    git(project.path(), &["add", "-A", "-f"]);
+    git(project.path(), &["commit", "-q", "-m", "first"]);
+    // The main checkout is ordered; its linked worktree is not.
+    let main = hook_with_stdin(
+        project.path(),
+        data.path(),
+        &["hook", "session-start"],
+        &start("startup"),
+    );
+    assert!(stdout(&main).contains("note-writer"), "{}", stdout(&main));
+    let holder = tempfile::tempdir().unwrap();
+    let linked = holder.path().join("linked");
+    git(
+        project.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    let output = hook_with_stdin(
+        &linked,
+        data.path(),
+        &["hook", "session-start"],
+        &start("startup"),
+    );
+    let text = stdout(&output);
+    assert!(
+        text.contains(FACTS) && !text.contains("note-writer"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_worktree_inside_the_checkout_with_no_vault_gets_the_facts() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    // The vault is not committed, so the worktree has none and the hook
+    // finds the main checkout's vault above it.
+    git(project.path(), &["init", "-q", "-b", "main"]);
+    git(project.path(), &["add", "Cargo.toml", "src"]);
+    git(project.path(), &["commit", "-q", "-m", "first"]);
+    let linked = project.path().join(".claude/worktrees/x");
+    git(
+        project.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    assert!(!linked.join("obsidian").exists());
+    // The main checkout is ordered.
+    let main = hook_with_stdin(
+        project.path(),
+        data.path(),
+        &["hook", "session-start"],
+        &start("startup"),
+    );
+    assert!(stdout(&main).contains("note-writer"), "{}", stdout(&main));
+    // The host names the worktree as the project folder and runs the hook
+    // from somewhere else.
+    let elsewhere = tempfile::tempdir().unwrap();
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codewiki"))
+        .current_dir(elsewhere.path())
+        .args(["hook", "session-start"])
+        .env("CODEWIKI_DATA_DIR", data.path())
+        .env("CLAUDE_PROJECT_DIR", &linked)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("the codewiki binary runs");
+    let _ = child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(start("startup").as_bytes());
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let text = stdout(&output);
+    // The briefing is the main checkout's wiki, without the order.
+    assert!(
+        text.contains("Its home note is `obsidian/_HOME.md`."),
+        "{text}"
+    );
+    assert!(
+        text.contains(FACTS) && !text.contains("codewiki:note-writer"),
+        "{text}"
+    );
+}
+
+#[test]
+fn an_open_stdin_does_not_hold_the_session() {
+    use std::process::Stdio;
+    let data = tempfile::tempdir().unwrap();
+    let project = project_with_wiki(data.path());
+    let mut child = Command::new(env!("CARGO_BIN_EXE_codewiki"))
+        .current_dir(project.path())
+        .args(["hook", "session-start"])
+        .env("CODEWIKI_DATA_DIR", data.path())
+        .env_remove("CLAUDE_PROJECT_DIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    // Keep the pipe: the host never closes it.
+    let _stdin = child.stdin.take();
+    let started = std::time::Instant::now();
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            assert!(status.success());
+            return;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(3) {
+            let _ = child.kill();
+            panic!("the hook waited for stdin");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }

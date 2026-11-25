@@ -25,6 +25,10 @@ pub struct Backend {
     /// What the backend's embedding job is doing, in a few words, while it
     /// runs.
     pub model_job: Option<String>,
+    /// A number that rises whenever a vault or a note an agent holds
+    /// changes; the waiting notes are read again when it moves. An older
+    /// backend does not send it.
+    pub notes_rev: Option<u64>,
 }
 
 /// When an agent's MCP bridge last called the backend.
@@ -60,6 +64,7 @@ pub fn parse(body: &Value) -> Backend {
         updating,
         bridge,
         model_job: model_job_text(&body["model_job"]),
+        notes_rev: body["notes_rev"].as_u64(),
     }
 }
 
@@ -190,6 +195,7 @@ mod tests {
             "now": 1_763_190_000u64,
             "updates": [{ "repo": "alpha", "started": 1_763_189_990u64 }],
             "bridge": { "last_call": 1_763_189_880u64 },
+            "notes_rev": 7,
         });
         assert_eq!(
             parse(&body),
@@ -197,9 +203,11 @@ mod tests {
                 updating: names(&["alpha"]),
                 bridge: Bridge::Called(120),
                 model_job: None,
+                notes_rev: Some(7),
             }
         );
-        // No bridge yet, nothing running.
+        // No bridge yet, nothing running, and a backend from before it
+        // counted changes of the notes.
         let quiet = json!({ "now": 5, "updates": [], "bridge": { "last_call": null } });
         assert_eq!(
             parse(&quiet),
@@ -207,7 +215,13 @@ mod tests {
                 updating: vec![],
                 bridge: Bridge::Never,
                 model_job: None,
+                notes_rev: None,
             }
+        );
+        // A backend that has just started counts from zero.
+        assert_eq!(
+            parse(&json!({ "now": 5, "notes_rev": 0 })).notes_rev,
+            Some(0)
         );
         // A call the backend's clock puts in the future is "just now".
         let ahead = json!({ "now": 5, "updates": [], "bridge": { "last_call": 9 } });
@@ -219,6 +233,7 @@ mod tests {
                 updating: vec![],
                 bridge: Bridge::Never,
                 model_job: None,
+                notes_rev: None,
             }
         );
     }

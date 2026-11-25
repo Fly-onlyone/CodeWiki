@@ -1872,6 +1872,12 @@ Test-Case "ER2" "The switch in Settings" "Settings > Diagnostics shows 'Send err
 if ($Plugin) {
     $market = "$guestTarget\plugins"
 
+    # VM plugin runs must not spend allowance on note batches: with auto
+    # explaining on (its default), the session-start hook would order Claude to
+    # explain up to 20 notes in every session. The switch is a file in the
+    # guest's data directory; the script sets no CODEWIKI_DATA_DIR there.
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force `"`$env:LOCALAPPDATA\CodeWiki`" | Out-Null; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'off' -NoNewline" | Out-Null
+
     # Hand the guest the access token of the host's own Claude login, and
     # nothing else of it. Not the refresh token: with it Claude Code in the
     # guest could renew the login, and a renewal there can end the login on

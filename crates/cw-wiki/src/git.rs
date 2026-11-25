@@ -52,3 +52,40 @@ pub fn changed_files(root: &Path, base: &str) -> Option<Vec<String>> {
             .collect(),
     )
 }
+
+/// True when `root` is a linked worktree: its git directory is not the
+/// repository's common one. Any failure counts as false.
+///
+/// Git 2.31 and later print both directories as absolute paths when asked
+/// with `--path-format=absolute`. An older git echoes the flag it does not
+/// know as a line of its own and prints paths relative to `root`, so that
+/// line is skipped and a relative path is read against `root`.
+pub fn is_linked_worktree(root: &Path) -> bool {
+    let Some(out) = run(
+        root,
+        &[
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-dir",
+            "--git-common-dir",
+        ],
+    ) else {
+        return false;
+    };
+    let mut dirs = out
+        .lines()
+        .filter(|line| !line.starts_with("--"))
+        .map(|line| {
+            let path = Path::new(line.trim());
+            let full = if path.is_absolute() {
+                path.to_path_buf()
+            } else {
+                root.join(path)
+            };
+            full.canonicalize().ok()
+        });
+    match (dirs.next().flatten(), dirs.next().flatten()) {
+        (Some(git_dir), Some(common)) => git_dir != common,
+        _ => false,
+    }
+}

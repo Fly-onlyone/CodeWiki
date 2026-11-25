@@ -27,7 +27,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnimationExt as _, AnyElement, App, Bounds, Context, Div, ElementId, Entity, EntityId,
     FontWeight, HighlightStyle, Hsla, InteractiveElement as _, InteractiveText, IntoElement,
-    ListAlignment, ListState, ParentElement as _, Pixels, Render, SharedString,
+    ListAlignment, ListOffset, ListState, ParentElement as _, Pixels, Render, SharedString,
     StatefulInteractiveElement as _, Styled as _, StyledText, Window, div, img, list, relative,
 };
 
@@ -238,13 +238,32 @@ impl DocPage {
         }
         if !same_doc || self.serial != serial {
             self.strips = Rc::new(strips(doc));
-            // A new page starts at its top.
+            // A new page starts at its top. The same page with new content,
+            // a live update, stays where the reader was.
+            let top = self.list.logical_scroll_top();
             self.list.reset(self.strips.len());
+            if self.serial == serial {
+                self.list.scroll_to(kept_top(top, self.strips.len()));
+            }
         }
         self.doc = doc.clone();
         self.serial = serial;
         self.width = width;
         notify_after_draw(cx.entity_id(), cx);
+    }
+}
+
+/// Where a page whose content changed in place goes back to, now that it
+/// has `len` strips: where it was, or the top of its last strip when it was
+/// further down than the page now reaches.
+fn kept_top(old: ListOffset, len: usize) -> ListOffset {
+    if old.item_ix < len {
+        old
+    } else {
+        ListOffset {
+            item_ix: len.saturating_sub(1),
+            offset_in_item: Pixels::ZERO,
+        }
     }
 }
 
@@ -1213,5 +1232,21 @@ mod tests {
             body: vec![table(SPLIT_ROWS * 3)],
         });
         assert_eq!(strips(&doc), [Strip::Title, Strip::Block(0)]);
+    }
+
+    #[test]
+    fn a_live_update_keeps_the_place_the_page_still_has() {
+        let at = |item_ix: usize, offset: f32| ListOffset {
+            item_ix,
+            offset_in_item: Pixels::from(offset),
+        };
+        // A row added or removed below: the reader stays where they were.
+        assert_eq!(kept_top(at(5, 12.0), 30), at(5, 12.0));
+        assert_eq!(kept_top(at(0, 0.0), 1), at(0, 0.0));
+        // The page got shorter than where the reader was: its last strip.
+        assert_eq!(kept_top(at(20, 12.0), 8), at(7, 0.0));
+        assert_eq!(kept_top(at(8, 3.0), 8), at(7, 0.0));
+        // A page is never empty, yet nothing goes below the first strip.
+        assert_eq!(kept_top(at(3, 1.0), 0), at(0, 0.0));
     }
 }

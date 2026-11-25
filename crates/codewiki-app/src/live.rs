@@ -1,6 +1,6 @@
 //! The live pages: one symbol, one file, search results, hotspots, the theme
-//! picker, a proposal, the result of a sync, and Home, the page the app
-//! starts on. Like the reports in `pages`,
+//! picker, a proposal, the result of a sync, the notes that wait for a coding
+//! agent, and Home, the page the app starts on. Like the reports in `pages`,
 //! each turns what the backend sent into a [`Doc`]. These show code that the
 //! vault deliberately does not hold as notes.
 
@@ -508,6 +508,88 @@ pub fn sync_page(report: &Value) -> Doc {
             ),
             button: None,
         });
+    }
+    doc
+}
+
+/// How many notes wait for a coding agent, from the queue of
+/// `GET /explanations?all=true`: those behind the code and those never
+/// explained. 0 until the queue has been read.
+pub fn waiting_count(queue: Option<&Value>) -> u64 {
+    queue.map_or(0, |queue| {
+        let counts = &queue["waiting"];
+        counts["behind"].as_u64().unwrap_or(0) + counts["unexplained"].as_u64().unwrap_or(0)
+    })
+}
+
+/// The notes that wait for a coding agent to explain them, from the queue of
+/// `GET /explanations?all=true`, in the backend's order: those behind the
+/// code first. `None` while the queue is being read. `auto_on` says whether
+/// agents explain some of them by themselves at the start of a session.
+pub fn waiting_page(queue: Option<&Value>, auto_on: bool) -> Doc {
+    let mut doc = Doc::new("Waiting notes").lead(
+        "These notes wait for a coding agent to explain what they are for and how they work.",
+    );
+    // 20 is `MAX_LIMIT` of `cw-wiki/src/explanations.rs`: the most notes an
+    // agent is lent at once.
+    doc.push(Block::Alert {
+        tone: Tone::Info,
+        text: if auto_on {
+            "Auto explaining is on: a coding agent with the CodeWiki plugin explains up to 20 of \
+             these at the start of a session. Run /codewiki:write-notes to explain more."
+        } else {
+            "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain these \
+             notes."
+        }
+        .into(),
+        button: Some((
+            "Settings".into(),
+            Action::Settings(Some(Category::Repositories)),
+        )),
+    });
+    let Some(queue) = queue else {
+        doc.push(Block::Empty("Reading the waiting notes…".into()));
+        return doc;
+    };
+    let counts = &queue["waiting"];
+    let behind = counts["behind"].as_u64().unwrap_or(0);
+    doc.push(Block::Stats(vec![
+        Stat::new("Behind the code", behind).tone(if behind > 0 {
+            Tone::Warning
+        } else {
+            Tone::Neutral
+        }),
+        Stat::new(
+            "Never explained",
+            counts["unexplained"].as_u64().unwrap_or(0),
+        ),
+        // The backend leaves `claimed` out when no agent holds a note.
+        Stat::new("Being written", queue["claimed"].as_u64().unwrap_or(0)),
+    ]));
+    let rows: Vec<Row> = list(&queue["notes"])
+        .into_iter()
+        .filter_map(|note| {
+            let path = note["path"].as_str()?;
+            let title = note["title"]
+                .as_str()
+                .filter(|title| !title.is_empty())
+                .unwrap_or(note_stem(path));
+            let mut detail = if note["why"] == "behind" {
+                "behind the code"
+            } else {
+                "never explained"
+            }
+            .to_string();
+            if note["claimed"].as_bool().unwrap_or(false) {
+                detail.push_str(" · an agent is writing it");
+            }
+            Some(Row::new(icons::NOTE, title, Action::Note(path.to_string())).detail(detail))
+        })
+        .collect();
+    if rows.is_empty() {
+        doc.push(Block::Empty("Every note is explained.".into()));
+    } else {
+        doc.push(Block::Rows(rows));
     }
     doc
 }
@@ -1439,6 +1521,154 @@ mod tests {
         assert!(words.contains("Not explained yet: 3"));
         assert!(words.contains("5 notes wait for a coding agent to explain them."));
         assert!(words.contains("/codewiki:write-notes"));
+    }
+
+    /// A queue as `GET /explanations?all=true` answers it: behind first, a
+    /// note an agent holds marked, `claimed` left out when it is 0.
+    fn queue() -> Value {
+        json!({
+            "notes": [
+                { "path": "01-Core/engine/Engine.md", "title": "Engine", "kind": "module",
+                  "why": "behind", "behind": ["src/engine.rs changed"],
+                  "sources": ["src/engine.rs"] },
+                { "path": "01-Core/Parser.md", "title": "Parser", "kind": "module",
+                  "why": "unexplained", "sources": ["src/parse.rs"], "claimed": true },
+                { "path": "02-Api/Routes.md", "title": "", "kind": "module",
+                  "why": "unexplained", "sources": ["src/api.rs"] }
+            ],
+            "matching": 3,
+            "claimed": 1,
+            "waiting": { "behind": 1, "unexplained": 2 }
+        })
+    }
+
+    fn rows(page: &Doc) -> Vec<&Row> {
+        page.blocks
+            .iter()
+            .filter_map(|block| match block {
+                Block::Rows(rows) => Some(rows),
+                _ => None,
+            })
+            .flatten()
+            .collect()
+    }
+
+    #[test]
+    fn the_waiting_page_says_whether_agents_explain_by_themselves() {
+        let alert = |auto_on: bool| {
+            waiting_page(Some(&queue()), auto_on)
+                .blocks
+                .into_iter()
+                .find_map(|block| match block {
+                    Block::Alert { text, button, .. } => Some((text, button)),
+                    _ => None,
+                })
+                .expect("the page has an alert")
+        };
+        let settings = Some((
+            "Settings".to_string(),
+            Action::Settings(Some(Category::Repositories)),
+        ));
+        assert_eq!(
+            alert(true),
+            (
+                "Auto explaining is on: a coding agent with the CodeWiki plugin explains up to \
+                 20 of these at the start of a session. Run /codewiki:write-notes to explain \
+                 more."
+                    .to_string(),
+                settings.clone()
+            )
+        );
+        assert_eq!(
+            alert(false),
+            (
+                "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain \
+                 these notes."
+                    .to_string(),
+                settings
+            )
+        );
+    }
+
+    #[test]
+    fn the_waiting_page_lists_the_notes_in_the_backends_order() {
+        let page = waiting_page(Some(&queue()), true);
+        assert_eq!(page.title, "Waiting notes");
+        assert_eq!(
+            page.lead.as_deref(),
+            Some(
+                "These notes wait for a coding agent to explain what they are for and how they work."
+            )
+        );
+        let words = page.words();
+        assert!(words.contains("Behind the code: 1"), "{words}");
+        assert!(words.contains("Never explained: 2"), "{words}");
+        assert!(words.contains("Being written: 1"), "{words}");
+        let rows = rows(&page);
+        let listed: Vec<(&str, Option<&str>, &Action)> = rows
+            .iter()
+            .map(|row| (row.label.as_str(), row.detail.as_deref(), &row.action))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                (
+                    "Engine",
+                    Some("behind the code"),
+                    &Action::Note("01-Core/engine/Engine.md".into())
+                ),
+                (
+                    "Parser",
+                    Some("never explained · an agent is writing it"),
+                    &Action::Note("01-Core/Parser.md".into())
+                ),
+                // A note with no title is named by its file.
+                (
+                    "Routes",
+                    Some("never explained"),
+                    &Action::Note("02-Api/Routes.md".into())
+                ),
+            ]
+        );
+        assert!(!words.contains("Every note is explained."));
+    }
+
+    #[test]
+    fn the_waiting_page_says_when_nothing_waits() {
+        let page = waiting_page(
+            Some(&json!({
+                "notes": [], "matching": 0,
+                "waiting": { "behind": 0, "unexplained": 0 }
+            })),
+            false,
+        );
+        assert!(
+            page.blocks
+                .contains(&Block::Empty("Every note is explained.".into()))
+        );
+        assert!(rows(&page).is_empty());
+        // No agent holds a note: the backend leaves `claimed` out.
+        assert!(page.words().contains("Being written: 0"));
+        assert_eq!(waiting_count(Some(&json!({ "notes": [] }))), 0);
+    }
+
+    #[test]
+    fn the_waiting_page_shows_that_it_is_reading() {
+        let page = waiting_page(None, true);
+        assert_eq!(page.title, "Waiting notes");
+        assert!(
+            page.blocks
+                .contains(&Block::Empty("Reading the waiting notes…".into()))
+        );
+        assert!(rows(&page).is_empty());
+        assert!(!page.words().contains("Every note is explained."));
+        assert!(!page.words().contains("Behind the code"));
+    }
+
+    #[test]
+    fn the_notes_to_explain_are_those_behind_and_those_never_explained() {
+        assert_eq!(waiting_count(Some(&queue())), 3);
+        assert_eq!(waiting_count(None), 0);
     }
 
     #[test]

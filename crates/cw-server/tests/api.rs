@@ -1764,3 +1764,160 @@ async fn local_lists_no_models() {
     assert_eq!(list["models"], Value::Null);
     assert_eq!(list["problem"], Value::Null);
 }
+
+fn paths(queue: &Value) -> Vec<String> {
+    queue["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|n| n["path"].as_str().unwrap().to_string())
+        .collect()
+}
+
+async fn notes_rev(h: &Harness) -> u64 {
+    h.get("/v1/status").await["notes_rev"].as_u64().unwrap()
+}
+
+#[tokio::test]
+async fn a_listed_note_is_lent_to_one_agent() {
+    no_model_server();
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let list = format!("/v1/repos/{id}/explanations");
+
+    // An update changes what waits.
+    let after_update = notes_rev(&h).await;
+    assert!(after_update > 0);
+
+    let a = h.get(&format!("{list}?agent=a&limit=2")).await;
+    let b = h.get(&format!("{list}?agent=b&limit=2")).await;
+    let (a_paths, b_paths) = (paths(&a), paths(&b));
+    assert_eq!(a_paths.len(), 2, "{a}");
+    assert!(!b_paths.is_empty(), "{b}");
+    assert!(a_paths.iter().all(|p| !b_paths.contains(p)), "{a} {b}");
+    assert_eq!(b["claimed"], 2, "{b}");
+    assert!(notes_rev(&h).await > after_update);
+
+    // The same agent asking again keeps its own notes.
+    let again = h.get(&format!("{list}?agent=a&limit=2")).await;
+    assert_eq!(paths(&again), a_paths);
+
+    // Every waiting note is listed, held ones marked.
+    let all = h.get(&format!("{list}?all=true")).await;
+    let mut marked: Vec<String> = all["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|n| n["claimed"] == true)
+        .map(|n| n["path"].as_str().unwrap().to_string())
+        .collect();
+    let mut held: Vec<String> = a_paths.iter().chain(&b_paths).cloned().collect();
+    marked.sort();
+    held.sort();
+    assert_eq!(marked, held, "{all}");
+
+    // Bad asks.
+    for query in ["all=true&agent=x", "agent=", "agent=%20%20"] {
+        let (status, _) = h
+            .call("GET", &format!("{list}?{query}"), Some(TOKEN), None)
+            .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}");
+    }
+    let long = "x".repeat(65);
+    let (status, _) = h
+        .call("GET", &format!("{list}?agent={long}"), Some(TOKEN), None)
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn a_saved_note_frees_its_claim_and_moves_notes_rev() {
+    no_model_server();
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let list = format!("/v1/repos/{id}/explanations");
+
+    let a = h
+        .get(&format!("{list}?agent=a&files=src/math.rs&limit=1"))
+        .await;
+    let path = paths(&a).remove(0);
+    let encoded = path.replace(' ', "%20");
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={encoded}"))
+        .await;
+    let before = notes_rev(&h).await;
+    let outcome = h
+        .put(
+            &format!("/v1/repos/{id}/explanation?path={encoded}&agent=a"),
+            json!({
+                "base": brief["base"],
+                "sections": [
+                    { "heading": "Gotchas", "text": "- A result above the largest number wraps in a release build." },
+                ],
+                "read": ["src/lib.rs"],
+                "model": "claude-code",
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "saved", "{outcome}");
+    assert!(notes_rev(&h).await > before);
+
+    // The saved note waits no more, and no other note was held: no row is
+    // marked. The release itself is `Claims::release`'s unit test; the test
+    // below shows a claim that a submission keeps.
+    let all = h.get(&format!("{list}?all=true")).await;
+    assert!(!paths(&all).contains(&path), "{all}");
+    assert!(
+        all["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|n| n["claimed"].is_null()),
+        "{all}"
+    );
+}
+
+#[tokio::test]
+async fn a_submission_with_faults_keeps_its_claim() {
+    no_model_server();
+    let h = Harness::new();
+    let (id, _) = h.register(h.repo.path()).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let list = format!("/v1/repos/{id}/explanations");
+
+    let a = h
+        .get(&format!("{list}?agent=a&files=src/math.rs&limit=1"))
+        .await;
+    let path = paths(&a).remove(0);
+    let encoded = path.replace(' ', "%20");
+    let brief = h
+        .get(&format!("/v1/repos/{id}/explanation?path={encoded}"))
+        .await;
+    let outcome = h
+        .put(
+            &format!("/v1/repos/{id}/explanation?path={encoded}&agent=a"),
+            json!({
+                "base": brief["base"],
+                "sections": [{ "heading": "Items", "text": "Mine." }],
+            }),
+        )
+        .await;
+    assert_eq!(outcome["outcome"], "issues", "{outcome}");
+
+    // The note is still lent to the agent: marked in the full list, and left
+    // out for another agent.
+    let all = h.get(&format!("{list}?all=true")).await;
+    let row = all["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|n| n["path"] == path.as_str())
+        .unwrap_or_else(|| panic!("{path} waits: {all}"));
+    assert_eq!(row["claimed"], true, "{all}");
+    let b = h
+        .get(&format!("{list}?agent=b&files=src/math.rs&limit=1"))
+        .await;
+    assert!(!paths(&b).contains(&path), "{b}");
+}

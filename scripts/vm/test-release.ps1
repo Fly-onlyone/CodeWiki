@@ -1611,11 +1611,14 @@ Test-Case "G2" "Tabs by keyboard" "Ctrl+T opens a tab, Ctrl+Tab switches, Ctrl+W
 }
 
 Test-Case "N1" "Toolbar by mouse" "a click on the Ctrl+K button opens the palette; a click on + opens a tab" {
-    # Distances from the window's top right corner, read off the screenshot
-    # "keys-before": the Ctrl+K button and the + at the end of the tab bar.
-    # (The window's own numbers include an unseen 8 pixel border.)
-    $paletteX = $appWindow.Right - 376; $paletteY = $appWindow.Top + 61
-    $tabX = $appWindow.Right - 33; $tabY = $appWindow.Top + 112
+    # Distances from the client area's top right corner: the Ctrl+K button and
+    # the + at the end of the tab bar. Since 0.4.0 "Review (N)" and "To
+    # explain (N)" stand right of Ctrl+K, about 500 pixels from the edge (read
+    # off the 0.4.0 run's screenshots; a digit more in N moves it 8).
+    $client = Get-GuestWindowInfo "codewiki-app"
+    if (-not $client) { throw "the app has no window" }
+    $paletteX = $client.Right - [int](502 * $client.Scale); $paletteY = $client.Top + [int](61 * $client.Scale)
+    $tabX = $client.Right - [int](25 * $client.Scale); $tabY = $client.Top + [int](112 * $client.Scale)
     Send-Click -X $paletteX -Y $paletteY; Wait-For 2
     $a = Shot "click-palette-button"
     Send-Keys "esc"; Wait-For 2
@@ -1744,7 +1747,7 @@ Test-Case "ST1" "The Settings page and its categories" "each row of the list ope
         $row += 1
     }
     Add-Result -Id "ST1" -Title "The Settings page and its categories" -Expect "seven categories, each opened by its row" -Status note -Shots $taken `
-        -Observed "started on 'settings:' and clicked the seven rows of the list; read the screenshots: each must show its own heading (Appearance, Semantic search, Backend, Repositories, Updates, Keyboard, Diagnostics) with its row marked, cards on the right, and no sidebar or tabs. No row is named AI model. Semantic search must have the card 'Keys and addresses'. Updates must have the 'Daily check' switch, Appearance the 'Start with Windows' switch"
+        -Observed "started on 'settings:' and clicked the seven rows of the list; read the screenshots: each must show its own heading (Appearance, Semantic search, Backend, Repositories, Updates, Keyboard, Diagnostics) with its row marked, cards on the right, and no sidebar or tabs. No row is named AI model. Semantic search shows the embedder in use ('Word forms: no model needed' here; the card 'Keys and addresses' comes with a server, see SE1). Updates must have the 'Daily check' switch. Appearance has Theme (with 'Background graph'), Motion and Zoom; its Startup card, with 'Start with Windows', is below the fold since 0.4.0 (AS1 to AS3 turn that switch through the palette)"
     Stop-GuestApp
 }
 
@@ -1998,8 +2001,11 @@ $global:LASTEXITCODE = 0
             -Observed "the demo workspace's wiki has no flow note with a Mermaid diagram; see the output"
         return
     }
-    # With both side panes hidden, the note's column is in the middle of the window.
-    Invoke-GuestScript -Script 'New-Item -ItemType Directory -Force "$env:APPDATA\CodeWiki" | Out-Null; Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" hidden -NoNewline' | Out-Null
+    # With both side panes hidden, the note's column is in the middle of the
+    # window. The background graph (0.4.0) is off: with a graphics card it
+    # drifts, the window then never matches its earlier picture, and every
+    # closed viewer looked like a link that had been followed.
+    Invoke-GuestScript -Script 'New-Item -ItemType Directory -Force "$env:APPDATA\CodeWiki" | Out-Null; Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\backdrop.txt" off -NoNewline' | Out-Null
     Start-GuestApp -Arguments $demo, $flowName
     # The diagram is drawn off the UI thread: a placeholder shows first.
     Wait-For 25
@@ -2050,7 +2056,7 @@ $global:LASTEXITCODE = 0
     Stop-GuestApp
     # Put the guest back as the cases after this one expect: the panes shown,
     # cw-core the last repository, the demo not registered.
-    Invoke-GuestScript -Script 'Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" shown -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" shown -NoNewline' | Out-Null
+    Invoke-GuestScript -Script 'Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" shown -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" shown -NoNewline; Remove-Item "$env:APPDATA\CodeWiki\backdrop.txt" -ErrorAction SilentlyContinue' | Out-Null
     Start-GuestApp -Arguments $guestRepo
     Wait-For 12
     Invoke-GuestBackendScript -Script (@'
@@ -2651,7 +2657,10 @@ $global:LASTEXITCODE = 0
     # repository gets the hook's order to launch the note-writer agent, and the
     # agent writes explanations through submit_note. The agent runs on the
     # account's Sonnet and explains up to 20 notes; the switch is off again
-    # afterwards, as for every other session of the run.
+    # afterwards, as for every other session of the run. The order says "in
+    # the background", but `claude -p` ends with its answer and takes a
+    # background agent with it (the first run, 2026-11-25): the prompt asks
+    # for the agent in the foreground.
     Test-Case "AE1" "Auto explaining in a live session" "with the switch on, the session-start hook orders the note-writer agent, the session launches it, and notes get explanations by claude-code" {
         if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
         $count = @'
@@ -2671,7 +2680,7 @@ $waiting = (Invoke-Backend GET "/v1/repos/$id/explanations?all=true" | ConvertFr
 Set-Location '{{REPO}}'
 $env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
 $out = "$env:TEMP\claude-auto-explain.jsonl"
-& "$env:USERPROFILE\.local\bin\claude.exe" -p "Do what the CodeWiki session-start lines ask about auto explaining, and wait until that agent has finished. Then answer with one line: the agent's own last line." --permission-mode default --allowedTools "Agent,Task,Read,Grep,Glob,Skill,mcp__plugin_codewiki_codewiki__*" --output-format stream-json --verbose --max-turns 12 --model haiku 2>&1 | Out-File -Encoding utf8 $out
+& "$env:USERPROFILE\.local\bin\claude.exe" -p "Do what the CodeWiki session-start lines ask about auto explaining, but run that agent in the foreground, not in the background, and wait for its result: this one-shot session ends with your answer, and a background agent would end with it. Then answer with one line: the agent's own last line." --permission-mode default --allowedTools "Agent,Task,Read,Grep,Glob,Skill,mcp__plugin_codewiki_codewiki__*" --output-format stream-json --verbose --max-turns 12 --model haiku 2>&1 | Out-File -Encoding utf8 $out
 "claude exit: $LASTEXITCODE"
 function Cut { param([string]$Text, [int]$Length) $flat = $Text -replace "\s+", " "; $flat.Substring(0, [Math]::Min($Length, $flat.Length)) }
 $submits = 0
@@ -4335,8 +4344,11 @@ foreach ($top in [VmTest.Wizard]::Tops()) {
     $title = [VmTest.Wizard]::TextOf($top) -replace '\s+', ' '
     $process = (Get-Process -Id ([VmTest.Wizard]::ProcessOf($top)) -ErrorAction SilentlyContinue).ProcessName
     if ($title) { "top=$class;$process;$title" }
-    # The wizard, and the uninstaller's message boxes ("CodeWiki Uninstall").
-    if ($class -ne 'TWizardForm' -and $title -notlike 'Setup - CodeWiki*' -and -not ($class -eq '#32770' -and $title -like '*CodeWiki*')) { continue }
+    # The wizard, and the uninstaller's message boxes: Inno's own is titled
+    # "CodeWiki Uninstall", the [Code] section's MsgBox only "Uninstall" (seen
+    # 2026-11-26), and both belong to the uninstaller's process.
+    $ofUninstaller = $class -eq '#32770' -and ($title -like '*CodeWiki*' -or $title -eq 'Uninstall' -or $process -match '^_?unins|^_iu')
+    if ($class -ne 'TWizardForm' -and $title -notlike 'Setup - CodeWiki*' -and -not $ofUninstaller) { continue }
     foreach ($child in [VmTest.Wizard]::Children($top)) {
         "control=$([VmTest.Wizard]::ClassOf($child));$([int][VmTest.Wizard]::IsWindowVisible($child));$([int][VmTest.Wizard]::IsWindowEnabled($child));$([VmTest.Wizard]::Place($child));$([VmTest.Wizard]::TextOf($child) -replace '\s+', ' ')"
     }
@@ -4717,7 +4729,8 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
             if ($command -notmatch '^"([^"]+)"\s*(.*)$') { throw "the Apps entry has no usable uninstall command: '$command'" }
             Start-GuestExe -Exe $Matches[1] -Arguments @($Matches[2] -split '\s+' | Where-Object { $_ })
             $answered = @()
-            $shots = @()
+            # Not $shots: Shot reads the screenshots folder by that name.
+            $pictures = @()
             # Inno's own "Are you sure ...", then CodeWiki's question, then
             # "... was successfully removed": Yes, Yes, OK.
             foreach ($step in @(@{ Name = "confirm"; Button = '^Yes$' }, @{ Name = "purge-question"; Button = '^Yes$' }, @{ Name = "removed"; Button = '^OK$' })) {
@@ -4727,7 +4740,7 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                     Start-Sleep -Seconds 2
                     $button = Find-SetupButton $step.Button
                 }
-                $shots += Shot "setup-uninstall-$($step.Name)"
+                $pictures += Shot "setup-uninstall-$($step.Name)"
                 $texts = @($script:setupWizardSeen.Controls | Where-Object { $_.Visible -and $_.Text -and $_.Class -notmatch 'Button' } | ForEach-Object { $_.Text })
                 $answered += "$($step.Name): $(if ($button) { "'$($button.Text -replace '&', '')' clicked" } else { 'no button' }); text '$(($texts -join ' ') -replace '\s+', ' ')'"
                 if (-not $button) { break }
@@ -4744,7 +4757,7 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
             if ($after.folder -eq "True") { $problems += "the install folder is left: $($after.names -join ', ')" }
             if ($after.entry -eq "True") { $problems += "Apps entry left" }
             Add-Result -Id "IS9" -Title "Uninstall from Settings > Apps, deleting data and settings" -Expect "the question about data and settings; after Yes, no install folder, no Apps entry, no data folder, no settings folder" `
-                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots $shots `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots $pictures `
                 -Observed "ran UninstallString '$command' as Settings > Apps does; $($answered -join '; '); after: $(Format-SetupState $after), data folder $($after.datadir), settings folder $($after.prefsdir); $(if ($problems) { $problems -join '; ' } else { 'all removed' })"
         } finally {
             Reset-SetupGuest

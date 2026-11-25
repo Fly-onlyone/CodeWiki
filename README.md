@@ -14,7 +14,9 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 
 - **Writes the wiki.** Parses the repository, builds a dependency graph, and writes notes for packages, modules, key types, startup flows, external integrations, patterns and operations, with Mermaid diagrams. Your coding agent then explains each note and adds pictures to it.
 - **Keeps it current.** After new commits it rewrites only the notes whose source changed.
-- **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them.
+- **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them. The Review page shows the queue beside the open proposal; you can select several (click, Ctrl, Shift or the checkboxes) and approve or reject them in one step.
+- **Tells you what happens.** A small notice appears in the corner of the window, and a Windows notification takes its place while the window is hidden or minimized. It says when the app has connected to its backend again and when new proposals wait for review.
+- **Reconnects by itself.** If the backend stops answering, the app tries again on its own, and so does the Settings page when your embedding model server is not running yet. No restart needed.
 - **Answers agents.** An MCP server gives Claude Code and other agents the wiki, symbol detail, search, risk and impact analysis.
 - **Searches by meaning.** Full-text search, joined by vectors from a model server on your machine (LM Studio, Ollama, Llama for Windows, Lemonade or mistral.rs) that you run and choose the model of. Without one, CodeWiki matches word forms. No key needed, no text leaves the machine.
 - **Analyses the code.** Hotspots, ownership, change coupling, blast radius, dead code, documentation drift, file health, test impact, coverage gaps, security patterns, refactoring suggestions, decision records and API contracts.

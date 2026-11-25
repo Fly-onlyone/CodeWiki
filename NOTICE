@@ -50,4 +50,5 @@ Version 2.0, license text in vendor/gpui-base/LICENSE-APACHE. It is the
 published crate with its tests and benches left out, and it is modified: a
 link under the pointer in a TextView takes a hover style the app sets
 (LinkHoverStyle). The changed files are src/text/style.rs, src/text/inline.rs
-and src/text/node.rs; each says so at the top or at the change.
+and src/text/node.rs; each says so at the top or at the change. The change
+is asked of gpui-kit in https://github.com/longbridge/gpui-kit/issues/4116.

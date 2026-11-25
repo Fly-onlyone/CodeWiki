@@ -4175,12 +4175,12 @@ do {
 # -Quiet runs QuietUninstallString (/SILENT), else UninstallString with
 # /VERYSILENT. Returns the run (ExitCode) and the log's text.
 function Invoke-GuestUninstall {
-    param([string]$Log, [switch]$Quiet)
+    param([string]$Log, [switch]$Quiet, [string[]]$Extra = @())
     $state = Get-SetupState
     $command = if ($Quiet) { $state.e_QuietUninstallString } else { $state.e_UninstallString }
     if ($command -notmatch '^"([^"]+)"\s*(.*)$') { throw "the Apps entry has no usable uninstall command: '$command'" }
     $exe = $Matches[1]
-    $arguments = @($Matches[2] -split '\s+' | Where-Object { $_ })
+    $arguments = @($Matches[2] -split '\s+' | Where-Object { $_ }) + $Extra
     if (-not $Quiet) { $arguments += "/VERYSILENT" }
     $arguments += "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=$Log"
     $run = Invoke-GuestExe -Exe $exe -TimeoutSec 240 -Arguments $arguments
@@ -4223,6 +4223,8 @@ $key = '{{KEY}}'
 Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -like '*hold-file.ps1*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'codewiki*' } | Stop-Process -Force -ErrorAction SilentlyContinue
+# An uninstaller a case left waiting on one of its questions (IS9).
+Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^_?unins|^_iu' } | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 2
 if (Test-Path -LiteralPath (Join-Path $t 'uninstall.cmd')) {
     & "$env:SystemRoot\System32\cmd.exe" /c (Join-Path $t 'uninstall.cmd') -PurgeData | Out-Null
@@ -4333,7 +4335,8 @@ foreach ($top in [VmTest.Wizard]::Tops()) {
     $title = [VmTest.Wizard]::TextOf($top) -replace '\s+', ' '
     $process = (Get-Process -Id ([VmTest.Wizard]::ProcessOf($top)) -ErrorAction SilentlyContinue).ProcessName
     if ($title) { "top=$class;$process;$title" }
-    if ($class -ne 'TWizardForm' -and $title -notlike 'Setup - CodeWiki*') { continue }
+    # The wizard, and the uninstaller's message boxes ("CodeWiki Uninstall").
+    if ($class -ne 'TWizardForm' -and $title -notlike 'Setup - CodeWiki*' -and -not ($class -eq '#32770' -and $title -like '*CodeWiki*')) { continue }
     foreach ($child in [VmTest.Wizard]::Children($top)) {
         "control=$([VmTest.Wizard]::ClassOf($child));$([int][VmTest.Wizard]::IsWindowVisible($child));$([int][VmTest.Wizard]::IsWindowEnabled($child));$([VmTest.Wizard]::Place($child));$([VmTest.Wizard]::TextOf($child) -replace '\s+', ' ')"
     }
@@ -4683,6 +4686,87 @@ $user = [Environment]::GetEnvironmentVariable('Path', 'User')
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) `
                 -Output ("setup log $log`n" + (Get-GuestLog $log) + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim() + "`n--- uninstall: $($uninstall.Command) $($uninstall.Arguments)`n" + $uninstall.Log).Trim() `
                 -Observed "setup silent twice: exit $($first.ExitCode), then $($run.ExitCode); then $(Format-SetupState $state); Apps entries named CodeWiki: $($entries.Count); codewiki --version: '$($state.version)'; uninstall from QuietUninstallString: exit $($uninstall.ExitCode); then $(Format-SetupState $gone), Apps entries $($left.Count); $(if ($problems) { $problems -join '; ' } else { 'one installation, removed' })"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    # Since 0.4.0 an uninstall the user watches asks whether to delete the
+    # data and settings too (No is the default), and /PURGEDATA says Yes for a
+    # silent one. Both start from a setup installation with data and settings
+    # to delete (marker files) and the app's notification key.
+    function Initialize-PurgeCase {
+        param([string]$Name)
+        Reset-SetupGuest
+        $install = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-$Name-install.log")
+        if ($install.ExitCode -ne 0) { throw "the silent install failed first: exit $($install.ExitCode)" }
+        Invoke-GuestScript -Script @'
+New-Item -ItemType Directory -Force (Join-Path $env:LOCALAPPDATA 'CodeWiki'), (Join-Path $env:APPDATA 'CodeWiki') | Out-Null
+Set-Content -Path (Join-Path $env:LOCALAPPDATA 'CodeWiki\marker.txt') -Value 'data'
+Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'settings'
+'@ | Out-Null
+    }
+
+    Test-Case "IS9" "Uninstall from Settings > Apps, deleting data and settings" "the uninstall asks whether to delete the data and settings; Yes deletes both folders with the program" {
+        Initialize-PurgeCase "is9"
+        try {
+            $before = Get-SetupState
+            # UninstallString as Settings > Apps runs it: no switches, so the
+            # uninstaller shows its questions.
+            $command = $before.e_UninstallString
+            if ($command -notmatch '^"([^"]+)"\s*(.*)$') { throw "the Apps entry has no usable uninstall command: '$command'" }
+            Start-GuestExe -Exe $Matches[1] -Arguments @($Matches[2] -split '\s+' | Where-Object { $_ })
+            $answered = @()
+            $shots = @()
+            # Inno's own "Are you sure ...", then CodeWiki's question, then
+            # "... was successfully removed": Yes, Yes, OK.
+            foreach ($step in @(@{ Name = "confirm"; Button = '^Yes$' }, @{ Name = "purge-question"; Button = '^Yes$' }, @{ Name = "removed"; Button = '^OK$' })) {
+                $button = $null
+                $deadline = (Get-Date).AddSeconds(90 * $Pace)
+                while (-not $button -and (Get-Date) -lt $deadline) {
+                    Start-Sleep -Seconds 2
+                    $button = Find-SetupButton $step.Button
+                }
+                $shots += Shot "setup-uninstall-$($step.Name)"
+                $texts = @($script:setupWizardSeen.Controls | Where-Object { $_.Visible -and $_.Text -and $_.Class -notmatch 'Button' } | ForEach-Object { $_.Text })
+                $answered += "$($step.Name): $(if ($button) { "'$($button.Text -replace '&', '')' clicked" } else { 'no button' }); text '$(($texts -join ' ') -replace '\s+', ' ')'"
+                if (-not $button) { break }
+                Send-RestedClick -X $button.X -Y $button.Y
+            }
+            Wait-GuestUninstaller
+            $after = Get-SetupState
+            $asked = [bool]($answered | Where-Object { $_ -match "^purge-question: 'Yes' clicked; text '.*Delete your CodeWiki data and settings" })
+            $problems = @()
+            if (-not $asked) { $problems += "the question about data and settings was not seen or not answered" }
+            if ($before.datamarker -ne "True" -or $before.prefsmarker -ne "True") { $problems += "no data and settings before the uninstall" }
+            if ($after.datadir -eq "True") { $problems += "the data folder is left" }
+            if ($after.prefsdir -eq "True") { $problems += "the settings folder is left" }
+            if ($after.folder -eq "True") { $problems += "the install folder is left: $($after.names -join ', ')" }
+            if ($after.entry -eq "True") { $problems += "Apps entry left" }
+            Add-Result -Id "IS9" -Title "Uninstall from Settings > Apps, deleting data and settings" -Expect "the question about data and settings; after Yes, no install folder, no Apps entry, no data folder, no settings folder" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Shots $shots `
+                -Observed "ran UninstallString '$command' as Settings > Apps does; $($answered -join '; '); after: $(Format-SetupState $after), data folder $($after.datadir), settings folder $($after.prefsdir); $(if ($problems) { $problems -join '; ' } else { 'all removed' })"
+        } finally {
+            Reset-SetupGuest
+        }
+    }
+
+    Test-Case "IS10" "Silent uninstall with /PURGEDATA" "QuietUninstallString plus /PURGEDATA exits 0 and deletes the data and settings folders with the program" {
+        Initialize-PurgeCase "is10"
+        try {
+            $before = Get-SetupState
+            $run = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is10.log" -Quiet -Extra "/PURGEDATA"
+            $after = Get-SetupState
+            $problems = @()
+            if ($before.datamarker -ne "True" -or $before.prefsmarker -ne "True") { $problems += "no data and settings before the uninstall" }
+            if ($run.ExitCode -ne 0) { $problems += "uninstall exited with $($run.ExitCode)" }
+            if ($after.datadir -eq "True") { $problems += "the data folder is left" }
+            if ($after.prefsdir -eq "True") { $problems += "the settings folder is left" }
+            if ($after.folder -eq "True") { $problems += "the install folder is left: $($after.names -join ', ')" }
+            if ($after.entry -eq "True") { $problems += "Apps entry left" }
+            Add-Result -Id "IS10" -Title "Silent uninstall with /PURGEDATA" -Expect "exit 0; no install folder, no Apps entry, no data folder, no settings folder" `
+                -Status $(if ($problems) { "fail" } else { "pass" }) -Output ("$($run.Command) $($run.Arguments)`n" + $run.Log).Trim() `
+                -Observed "ran QuietUninstallString plus $($run.Arguments): exit $($run.ExitCode); after: $(Format-SetupState $after), data folder $($after.datadir), settings folder $($after.prefsdir); $(if ($problems) { $problems -join '; ' } else { 'all removed' })"
         } finally {
             Reset-SetupGuest
         }

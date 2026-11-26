@@ -61,6 +61,10 @@ const BLOCK_GAP: f32 = 16.0;
 const SECTION_GAP: f32 = 12.0;
 /// MUI's `TableCell`, `size: 'small'`: `padding: '6px 16px'`.
 const CELL_PADDING: (f32, f32) = (16.0, 6.0);
+/// The bar of a share cell, and the room its label takes beside it.
+const SHARE_BAR: f32 = 56.0;
+const SHARE_GAP: f32 = 8.0;
+const SHARE_LABEL: f32 = 24.0;
 /// The narrowest a stat tile or a theme card gets before the row wraps.
 pub(crate) const TILE_MIN: f32 = 180.0;
 /// TradingAgent, `MuiTableRow`: the primary color at 5% under the pointer.
@@ -1048,9 +1052,26 @@ fn table_cell(table: &Table, index: usize) -> Div {
         .flex_grow(1.)
         .flex_shrink(1.)
         .min_w_0()
+        // A column of share cells keeps room for its bar and label: in a
+        // narrow window its share of the width was less, the label was
+        // drawn over the next column and the head wrapped ("Scor" / "e").
+        .when(holds_shares(table, index), |cell| {
+            cell.min_w(px(SHARE_BAR
+                + SHARE_GAP
+                + SHARE_LABEL
+                + 2. * CELL_PADDING.0))
+        })
         .px(px(CELL_PADDING.0))
         .py(px(CELL_PADDING.1))
         .when(column.numeric, |cell| cell.flex().justify_end())
+}
+
+/// Whether column `index` of the table holds share cells.
+fn holds_shares(table: &Table, index: usize) -> bool {
+    table
+        .rows
+        .iter()
+        .any(|row| matches!(row.get(index), Some(Cell::Share { .. })))
 }
 
 fn table_head(table: &Table, cx: &App) -> Div {
@@ -1154,9 +1175,9 @@ fn draw_cell(cell: &Cell, path: &str, page: &Page, cx: &App) -> AnyElement {
                 tone.color(cx)
             };
             h_flex()
-                .gap(px(8.))
+                .gap(px(SHARE_GAP))
                 .items_center()
-                .child(feedback::progress(*share, color, cx).w(px(56.)))
+                .child(feedback::progress(*share, color, cx).w(px(SHARE_BAR)))
                 .child(label.clone())
                 .into_any_element()
         }

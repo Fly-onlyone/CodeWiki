@@ -22,7 +22,9 @@ The functions read JSON with small helpers. `string` gives an empty text for a m
 
 Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, in that order, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a note's snippet so it reads as one plain line. The search suggestions in [[Suggest Module]] share this code with the search page.
 
-`kept_by` checks the file system to see if coding agents are kept out of a folder.
+`waiting_page` shows the notes that wait for a coding agent. Its top alert depends on the auto explain choice: all notes, up to a number of notes, or off. The alert has a button to the repositories settings. Rows say whether a note is behind the code or never explained, and whether an agent is writing it now. `waiting_count` gives the total for a badge.
+
+`kept_by` checks the file system to see how coding agents are kept out of a folder. It answers with `Kept`: open, kept by its own entry, kept by a parent folder's entry, or containing an entry.
 
 ## Items
 
@@ -71,6 +73,7 @@ And 15 more items.
 - A search hit of a kind the app does not open gives `None` from `hit_target` and is skipped.
 - A note row opens the note by its whole vault path. A bare folder path without `.md` is not found by the backend.
 - `kept_by` reads the file system and follows links. Call it when Home's data is refreshed, never while a page is built, since Home is built every frame.
+- A parent entry wins over a folder's own entry in `kept_by`, because removing the own entry would leave the folder kept.
 - `waiting_count` is 0 until the queue has been read, and `waiting_page` takes `None` while it is being read.
 - The offline page does not return to a backend on this machine by itself. It offers a button, because that backend could show other wikis or none.
 

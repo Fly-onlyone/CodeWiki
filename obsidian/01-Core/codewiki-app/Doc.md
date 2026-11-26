@@ -18,11 +18,11 @@ tags: [core, codewiki-app]
 
 A page starts with `Doc::new(title)`, optionally `lead`, and then fills itself with `push`, or with the shortcuts `heading` and `text`. The blocks stay in order. A [[Block]] such as a card holds its own list of blocks, so a page is a tree.
 
-Five methods exist only in tests and read a page back:
+Six methods exist only in tests and read a page back:
 
 - `flat` lists every block, with card bodies opened out.
 - `tables`, `headings` and `words` pick out tables, headings and all visible text, one block to a line.
-- `actions` lists every [[Action]] a link, row, button, choice or enabled switch carries.
+- `actions` lists every [[Action]] a link, row, button, choice, unlocked switch or select, or secret control carries. Disabled buttons are left out.
 - `fields` lists the inputs the page asks the user to fill in.
 
 Page tests use these to check what a page says and offers.
@@ -63,9 +63,9 @@ Members:
 
 ## Gotchas
 
-- `flat`, `words`, `actions` and `fields` exist only under test. They are not in the shipped app.
-- A locked switch or select offers no action in `actions`, because nothing can be done there. A locked field is still listed in `fields`, since its input shows the value.
-- A secret shows an input only while empty or being replaced. A saved one lists replace and remove actions instead.
+- `flat`, `tables`, `headings`, `words`, `actions` and `fields` exist only under test. They are not in the shipped app.
+- A locked switch, select or secret offers no action in `actions`, because nothing can be done there. A disabled button is skipped too. A locked field is still listed in `fields`, since its input shows the value.
+- A secret lists an input in `fields` only while empty or being replaced. A saved one lists replace and remove actions instead.
 - `Doc` is `Default`, with an empty title, so a blank page is easy to create by accident.
 
 ## See also

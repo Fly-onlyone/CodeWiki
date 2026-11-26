@@ -8,7 +8,7 @@ tags: [core, codewiki-app]
 
 ## What it does
 
-The order is the order of the list.
+`Category` is a group of settings with a page of its own in the app's Settings. There are seven: Appearance, Semantic search, Backend, Repositories, Updates, Keyboard and Diagnostics. The order of `ALL` is the order the list shows. Each category has a label, an icon and a slug.
 
 ## Source
 
@@ -16,7 +16,7 @@ The order is the order of the list.
 
 ## How it works
 
-1. `AppView::open_startup_view` in [[codewiki-app]] calls `from_slug`. `from_slug` calls `slug`.
+`label` and `icon` give what the settings list draws. `slug` is the category's short name in a startup argument of the form `settings:<slug>`. `AppView::open_startup_view` in [[codewiki-app]] passes the text after the colon to `from_slug`. `from_slug` trims it, lowercases it and finds the category whose slug matches. The [[Settings Pages Module]] builds a category's page, and the [[Settings View Module]] draws it.
 
 ## Items
 
@@ -41,6 +41,13 @@ Members:
 - [[Settings Pages Module]] — from `page`
 - [[Settings View Module]] — from `State`
 - [[Action]] — from `Action`
+
+## Gotchas
+
+- `from_slug` never fails. An empty or unknown slug opens Appearance, the first category. A test shows `ai`, the slug of a page CodeWiki once had, does this.
+- The match is case-insensitive and ignores spaces around the slug.
+- Each category must have its own icon. A test checks this.
+- The count in `ALL` is fixed at seven. Adding a category means adding it to `ALL`, `label`, `icon` and `slug`, and the page for it.
 
 ## See also
 

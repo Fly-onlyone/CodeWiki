@@ -6,6 +6,10 @@ tags: [core, codewiki]
 
 > CodeWiki command line and backend server.
 
+## What it does
+
+`codewiki` is the command line program of CodeWiki, and it also runs the backend server (`codewiki serve`). From the shell a user can index a repository, generate or update the wiki, search, look up symbols, and ask for reports such as hotspots, dead code, health, risk, impacted tests, coverage and security. It handles proposals (`approve`, `reject`) and the list of folders kept from coding agents (`agents`). Almost every command takes `--repo` and `--json` before or after it.
+
 ## Source
 
 - `crates/codewiki/Cargo.toml` — package manifest
@@ -13,11 +17,15 @@ tags: [core, codewiki]
 
 ## How it works
 
-Builds a binary.
+`main` parses the command line with clap. Four kinds of command are handled before a repository is resolved.
 
-1. The program starts at `main`. `main` calls `session_start_hook`, then `sentry_test`, then `agents`, then `init` in [[cw-telemetry]], then `init_console` in [[Logs Module]], then `run`. `session_start_hook` calls `vault_root` in [[Briefing Module]], then `data_dir` in [[Paths Module]], then `load`, then `blocking` (both in [[Agents Off Module]]), then `load` in [[Auto Explain Module]], then `hook_input`, and 4 more. `sentry_test` calls `init`, then `sending` (both in [[cw-telemetry]]), then `data_dir` in [[Paths Module]], then `send_test_report` in [[cw-telemetry]].
+`hook session-start` is run by an agent host at the start of a session. It prints a short briefing for the repository. Any error or panic is swallowed, and the program exits with success, so a hook never breaks a session. `sentry-test` sends one test error report. `agents` edits the list of folders closed to agents. `serve` hands over to the [[Serve Module]], which runs the HTTP backend.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+All other commands go through `run`. It resolves the repository root, then calls the wiki service or the index for that command and prints the result as text or, with `--json`, as pretty JSON. `print_report` shows what an update did: notes written, kept, proposed, removed, and how many explanations may be behind or are still missing.
+
+Only `serve` sends error reports. Other commands log warnings and errors only.
+
+The session-start hook finds the project folder from the `CLAUDE_PROJECT_DIR` variable when `--repo` is the default. It reads the agent's JSON from stdin only when auto explaining is on. `explain_for` then decides whether to ask the agent to explain waiting notes. In a linked worktree it only gives facts.
 
 ## Items
 
@@ -48,6 +56,14 @@ And 5 more private items with no comment.
 - [[Error]] — uses `Error`, `external`, `invalid`, `io`
 - [[cw-telemetry]] — uses `DSN_ENV`, `init`, `send_test_report`, `sending`
 - [[Coverage Module]] — uses `import`, `load`, `report`, `save`
+
+## Gotchas
+
+- The hook must stay silent and succeed. Wrong arguments to `hook` also exit with success. `--help` and `--version` still print.
+- A folder closed to coding agents, or one that holds a closed folder, gets no briefing. So does any run where the list cannot be read.
+- The hook reads stdin on a helper thread and waits one second, up to 64 KB. A host that keeps stdin open cannot hold up the session start.
+- `agents` never overwrites a list it cannot read. Every action then fails.
+- `sentry-test` fails with an error when error reports are off.
 
 ## See also
 

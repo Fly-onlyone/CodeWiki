@@ -8,7 +8,7 @@ tags: [integration]
 
 ## What it does
 
-A generic serialization/deserialization framework.
+serde turns Rust structs and enums into data formats and back. In CodeWiki the format is almost always JSON through `serde_json`. It shapes the HTTP API bodies, the MCP tool parameters, the manifest and list files kept on disk, the facts stored in the index, and the pictures an agent sends. A type that is sent or saved derives `Serialize`, `Deserialize`, or both.
 
 ## Used for
 
@@ -27,6 +27,30 @@ Imported by 33 source files. Main users:
 
 - `crates/codewiki-mcp/Cargo.toml`, `crates/cw-illustrate/Cargo.toml`, `crates/cw-server/Cargo.toml`, and 3 more — declare the dependency: version `1`, locked `1.0.229`, features `derive`
 - `crates/cw-core/Cargo.toml`, `crates/cw-index/Cargo.toml`, `crates/cw-parse/Cargo.toml` — declare the dependency: version `1.0.229`, locked `1.0.229`, features `derive`
+
+## Wire-up
+
+Crates enable the `derive` feature and write `#[derive(Serialize, Deserialize)]` on a type. No registration is needed.
+
+Common attributes in the code:
+
+- `rename_all` sets how names look on the wire. Enums such as the embed job phase use lowercase. The graph and symbol enums in `cw-core` use snake_case.
+- `default` fills a missing field. Request bodies and query structs in the API use it, so a client may leave a field out. `default = "..."` names a function, as for the search limit.
+- `skip_serializing_if` leaves out an empty field, such as an empty list of skipped repositories.
+- `flatten` merges a nested struct into its parent object.
+
+In the MCP bridge, parameter structs derive `Deserialize` next to `schemars::JsonSchema`. The doc comment on each field becomes the tool's field description. The `agents_off` module saves its folder list as a small JSON document with a `version` field.
+
+## Auth mode
+
+No sign-in. serde holds no secret and talks to no service.
+
+## Gotchas
+
+- Adding a field without `#[serde(default)]` to a type that is read from disk breaks older files. Stored data such as symbol `attrs` use `default` for this reason.
+- A renamed enum variant changes the stored or sent text. `rename_all` is part of the format, so change it with care.
+- Files with a `version` field, such as the agents-off list, refuse a version they do not know instead of guessing.
+- On the MCP side, a doc comment on a parameter field is the text an agent reads. Editing it changes the tool's description.
 
 ## See also
 

@@ -6,6 +6,10 @@ tags: [core, cw-wiki]
 
 > Concept selection and wiki generation pipeline for CodeWiki.
 
+## What it does
+
+The crate that turns a scanned repository into a wiki, and answers questions about it afterwards. It decides which notes a repository gets, renders them in the vault's house style, and holds the read-side queries that the app, the server and the MCP tools share. It also holds the analyses that sit on top of the index: health, hotspots, security findings, test map, coverage, contracts and decisions.
+
 ## Source
 
 - `crates/cw-wiki/Cargo.toml` — package manifest
@@ -13,7 +17,13 @@ tags: [core, cw-wiki]
 
 ## How it works
 
-Builds a library.
+The crate root only lists modules and re-exports a few names: `analyze`, `dependency_graph`, `generate`, `generate_with`, `Report`, `TEMPLATE_VERSION`, `Plan`, `Planned`, `Repo` and `Subject`. The work falls into groups.
+
+- Generation: [[Plan Module]] picks the notes, [[Units Module]] names the top-level parts, [[Render Module]] writes Markdown, and [[Generate Module]] runs the whole pipeline: scan, plan, freeze names, render, lint, write.
+- Agent explanations: [[Explanations Module]] is the only way a coding agent writes into a note. [[Doctext Module]] cleans doc comments so they fit the note rules. [[Explain Module]] adds the walk-through and item lists.
+- Questions: [[Query Module]], [[Semantic Module]] and [[Service Module]] answer from the index. Service holds the operations the CLI, server and MCP tools share.
+- Analyses: [[Analyze Module]], [[Gitintel Module]], [[Health Module]], [[Security Module]], [[Testmap Module]], [[Coverage Module]], [[Contracts Module]], [[Refactor Module]] and [[Decisions Module]].
+- Output for tools: [[Briefing Module]], [[Agentdocs Module]] and [[Ci Module]].
 
 ## Items
 
@@ -56,6 +66,11 @@ Modules:
 - [[Security Module]] — uses `COMMAND_INJECTION`, `HARDCODED_SECRET`, `INSECURE_HTTP`, `SQL_FORMAT`
 - [[Health Module]] — uses `DriftKind`, `dead_code`, `doc_drift`, `file_health`
 - [[Service Module]] — uses `is_stale`, `open_existing_index_in`, `open_index_in`, `reindex`
+
+## Gotchas
+
+- `explain`, `level` and `rustscan` are private modules. Use them through the public modules that wrap them.
+- `TEMPLATE_VERSION` is exported from `generate`. A change to how notes are laid out is tied to it, so check it when you change a template.
 
 ## See also
 

@@ -8,7 +8,9 @@ tags: [core, codewiki-mcp]
 
 ## What it does
 
-Standard output carries the MCP protocol, so nothing else may be printed there; diagnostics go to standard error.
+`codewiki-mcp` is the program a coding agent starts to use CodeWiki. It speaks the Model Context Protocol (MCP) over standard input and output. It holds no data of its own. Each tool the agent calls, such as `get_context`, `search_codebase` or `submit_note`, becomes an HTTP call to the CodeWiki backend through [[cw-client]]. The answer is turned into text an agent reads easily.
+
+Standard output carries the protocol, so nothing else may be printed there. Logs go to the log file and to standard error.
 
 ## Source
 
@@ -17,9 +19,15 @@ Standard output carries the MCP protocol, so nothing else may be printed there; 
 
 ## How it works
 
-Builds a binary.
+`main` starts [[cw-telemetry]], builds one `Bridge` and serves it on stdio until the agent closes the connection.
 
-1. The program starts at `main`. `main` calls `init` in [[cw-telemetry]].
+The bridge connects to the backend on the first tool call, through `connected`. It keeps only a success. A failed start is tried again on the next call. A backend that stops answering, for example because the app stopped it to install an update, is dropped and found again.
+
+Each tool is a method on `Bridge`. It runs its work on a blocking task through `call`, which finds the repository (by id, name or path, defaulting to the agent's working folder), calls the backend, and returns JSON. The tool then formats that JSON, for example `waiting_text`, `brief_text` and `outcome_text` for the note-writing tools.
+
+Before any tool runs, `call_tool` runs `screen`. It reads the list of folders the user kept from coding agents, in the [[Agents Off Module]]. A call for a closed folder gets a refusal text as a normal result, and no backend is started. `call` checks again once the repository id is known. Tools that span projects, such as `list_repos`, hide the listed projects through the [[Guard Module]].
+
+When an agent lists waiting notes with a claim, the bridge gives that listing an agent id, built by `ClaimIds`. A submission then sends the id its note was listed under.
 
 ## Items
 
@@ -61,6 +69,15 @@ And 24 more items.
 - [[cw-client]] — uses `encode`
 - [[cw-telemetry]] — uses `init`
 - [[Paths Module]] — uses `data_dir`
+
+## Gotchas
+
+- Never print to standard output. It would corrupt the protocol.
+- A list of kept folders that cannot be read refuses the call. It never counts as an empty list.
+- Refusals reach the agent as ordinary text, not as errors. `answered` converts the marked error back to text.
+- A repository given by name or relative path is turned into an id or an absolute path before the backend sees it, so the backend never reads it against its own folder.
+- Each claiming listing gets its own id. One id for all would hand a second batch the notes the first still holds, when a main agent and its background writers share one bridge.
+- `search_codebase` and `get_refactoring_plan` clamp `limit` to 1 to 50, and `list_waiting_notes` caps the batch it asks for.
 
 ## See also
 

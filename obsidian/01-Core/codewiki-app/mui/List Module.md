@@ -10,9 +10,9 @@ tags: [core, codewiki-app, module]
 
 Builds the lists of the app: the sidebar's note tree, menus, the command palette, the review queue, the settings pages and the search box's suggestions. It gives three pieces: `ListItemButton`, a pressable row; `subheader`, a heading over a group of rows; and `ListFolder`, a row that opens and closes the rows under it.
 
-Row size and spacing follow MUI's dense list. A row can hold a second, quieter line under its label (`secondary`), which makes it taller. Its label can be set in the code font. It can also hold a control at its start (`leading`), such as the review queue's checkbox, which takes its own clicks.
+Row size and spacing follow MUI's dense list. A row can hold a second, quieter line under its label (`secondary`), which makes it taller. Its label can be set in the code font. It can also hold a control at its start (`leading`), such as the review queue's checkbox, which takes its own clicks, and something at its end (`trailing`), such as a chip or a button.
 
-How a row answers the pointer follows TradingAgent's sidebar, at the strengths in [[Interaction Module]]. Under the pointer a row fills, shifts right and its icon grows. Pressed, it fills more and gives back part of its shift. A selected row has a stronger fill, a semibold label in the theme's link color, and a glowing bar on its left edge that grows and slides in. A row can carry its own icon hue, which it keeps in every state.
+How a row answers the pointer follows TradingAgent's sidebar, at the strengths in [[Interaction Module]]. Under the pointer a row fills, shifts right and its icon grows. Pressed, it fills more and gives back part of its shift. A selected row has a stronger fill, a semibold label in the theme's link color, and a glowing bar on its left edge that grows and slides in. A row can carry its own icon hue, which it keeps in every state. A row can also report a right or middle button press with its position, so a caller can open a menu there.
 
 ## Source
 
@@ -26,7 +26,9 @@ How a row answers the pointer follows TradingAgent's sidebar, at the strengths i
 - Hover: a spring runs from 0 to 1 and drives the right shift, the icon growth and the icon lift. While pressed, its target drops by the recoil share, so the row gives part of the shift back.
 - Bar: a second spring, with the knob's `bar_spring`, runs to 1 when selected. `bar_place` turns its value into the bar's left edge and height, so the bar grows from its middle while it slides in. The bar is drawn only while the spring is above 0.001, and its three-layer glow scales with the spring.
 
-The selected label's color is the theme's link color put through `lift` by `label_lift`. `icon_color` picks the icon color. A tinted icon keeps its hue and is only lightened by `lift`. An untinted icon is muted at rest, primary when hovered, and the selected label's color when selected. A tinted icon of a selected row also gets a glow, drawn as the shadow of a clear disc behind it.
+The selected label's color is the theme's link color put through `lift` by `label_lift`. `icon_color` picks the icon color. A tinted icon keeps its hue and is only lightened by `lift`. An untinted icon is muted at rest, primary when hovered, and the selected label's color when selected. A tinted icon of a selected row also gets a glow.
+
+After the row is built, `base.attach` wires pointer, focus and ripple, and `secondary` adds the right and middle button handlers. If the caller passed a `Placed` cell, a canvas child writes the row's window bounds into it on every frame. `offset_to_show` uses such bounds to scroll a list the least distance that brings a row into view.
 
 `ListFolder` keeps its open state under its id and eases a `shown` value. That value turns the arrow half a turn and drives `MotionReveal` for the rows. Closed and at rest, the rows are not built.
 
@@ -79,7 +81,9 @@ And 4 more private items with no comment.
 - The bar uses the theme's tertiary color, not primary, so it stands out from the primary fill. The row's fill and ripple stay primary.
 - On a light theme every lift is a darkening. The selected label and a tinted icon get darker, not lighter, so they still read on the row's fill. Row fills keep their dark-theme strength in both modes.
 - `highlighted` draws the row as hovered but does not trigger the press or ripple. Menus and the autocomplete list use it for the key-driven row.
-- A `ListFolder` is open only at first as `open_at_first` says. After that the user's state wins, even if the code asks again.
+- A `ListFolder` is open only at first as `open_at_first` says. After that the user's state wins, except that `reveal` opens it now, because one of its rows is to be shown.
+- A control in `leading` or `trailing` takes its own press, since the base stops propagation. The row does not open then.
+- `Placed` holds the bounds of the last frame, so it is empty until the row has been drawn once.
 - Row ids must be unique and stable: the springs and transitions are keyed on them.
 
 ## See also

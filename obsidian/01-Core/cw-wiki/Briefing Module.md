@@ -27,7 +27,9 @@ When a coding agent starts a session in a repository, this module builds the sho
 - It adds a line about waiting notes when any wait, using `waiting_counts`.
 - It ends with a pointer to `get_overview` and `get_context`.
 
-The waiting-notes line ends with a sentence chosen by `explain`. `explain_for` returns an order (`ClaudeCode` or `Codex`) only when auto explaining is on, the session source is `startup`, `resume` or `clear`, and the session is neither in plan mode nor in a linked worktree. In every other case it returns `Facts`, a sentence that only states what waits.
+The waiting-notes line ends with a sentence chosen by `explain_sentence`. `explain_for` returns an order (`ClaudeCode` or `Codex`, each with a [[Count]]) only when auto explaining is on, the session source is `startup`, `resume` or `clear`, and the session is neither in plan mode nor in a linked worktree. In every other case it returns `Facts`, a sentence that only states what waits.
+
+For Claude Code the order tells the agent to launch the `codewiki:note-writer` agent in the background after the user's first message. `launch_order` caps one agent at `MAX_LIMIT` (20) notes, so a larger count launches several agents at once, each told how many notes to take. For Codex the order tells the agent to use the `write-notes` skill after the first request, 20 notes at a time. The count is capped by how many notes wait.
 
 ## Items
 
@@ -61,7 +63,8 @@ The waiting-notes line ends with a sentence chosen by `explain`. `explain_for` r
 
 - The order to write notes is deliberately opt-in. Without it an agent might spend the user's usage allowance on notes at every session start.
 - Sessions with source `compact` or `fork` get facts only, never an order.
-- Linked worktrees never get the order, so parallel sessions do not all write notes at once.
+- Linked worktrees never get the order, so parallel sessions do not all write notes at once. The caller in the hook checks the worktree and downgrades the order to facts.
+- A count above 20 launches several agents in one message. A count of all with many waiting notes can launch a dozen agents.
 - The commit is shortened to 10 characters, and a missing manifest commit shows as unknown.
 - `HOME_NOTE` is fixed as `_HOME.md`; a vault without that file counts as having no wiki.
 

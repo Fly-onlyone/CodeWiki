@@ -16,11 +16,13 @@ This is the live Settings page: categories on the left, the chosen category's pa
 
 ## How it works
 
-`State` holds what the page remembers between frames: one text input per `FieldId` (created once, living as long as the app), what the backend last said each field holds, news beside each field, the open select menu, the embedding job and models, and the kept-folders list.
+`State` holds what the page remembers between frames: one text input per `FieldId` (created once, living as long as the app), what the backend last said each field holds, news beside each field, the open select menu, the embedding job and models, the kept-folders list, and the auto explain switch with its count.
 
-`open_settings` shows the page, resets connect news, re-reads the kept-folder list and auto-explain switch, fills the remote address field, and loads the backend settings. On the Search category it also loads the embedding job and models. Moving between categories does not add history, so Back leaves Settings in one step.
+`open_settings` shows the page, resets connect news, re-reads the kept-folder list and the auto explain switch and count (they are files another program may change), fills the remote address field, and loads the backend settings. On the Search category it also loads the embedding job and models. Moving between categories (`show_settings_category`) does not add history, so Back leaves Settings in one step. Opening Repositories re-reads the kept folders and the auto explain files again.
 
 A saved change is a `PUT /v1/settings` with a small body from `change` (section, field, value). `changes_the_embedder` tells whether the change touches the embedder, so the old job reading may be out of date. While an embedding job runs, the app asks again every second (`JOB_PAUSE`). `job_ended` notices when it stops, and the settings are read again. `test_line` turns a provider test answer into one line. `shown_value` shows a saved or environment value in a field; a default is left to the placeholder.
+
+A backend on another machine is not asked for the embedding job or models; those fields stay empty.
 
 The list of folders kept from coding agents is read by the app from the data folder, not through the backend (`read_agents_off`).
 
@@ -59,6 +61,7 @@ The list of folders kept from coding agents is read by the app from the data fol
 - Unsaved edits can keep the old page open: `open_settings` checks that the page really changed before it sets state.
 - Questions to the embedding server are numbered (`Sequence`). Leaving the page, a new embedder, another backend and a hidden window each take a number, so a late answer or retry from before is dropped.
 - The folder existence check runs once per read, never during drawing, because a folder on an offline share can answer slowly.
+- The auto explain switch and count are read from files when the page opens, so a change by another program shows up only after the page is opened or Repositories is shown again.
 - Secret inputs are masked, and a saved secret is never shown again.
 - `State::new` removes an old preference (model hint) left from a removed offer.
 

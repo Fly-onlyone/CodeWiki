@@ -18,6 +18,8 @@ This module builds the content of each Settings page as a [[Doc]]: Appearance, S
 
 `page` picks a builder for the category. The caller fills a `Model`, a bundle of everything the pages read: the theme list, backend settings once they arrive, news beside each field, the embedding job, the kept-folder list and more. Each builder returns blocks: cards, switches, selects, text fields and secret fields.
 
+The Appearance page holds the cards Theme, Motion, Zoom, Tabs and Startup. The Tabs card has a switch for tabs, and a second switch, "Open notes in a new tab", that is locked until tabs are on. The Repositories page lists the registered folders, then the Auto explaining card (a switch, and while it is on a select for how many notes a session explains), then the folders kept from coding agents.
+
 Fields that belong to the backend go through `field` or `secret`. Both call `lock`, which says why a setting cannot be changed here. There are three reasons: the backend is on another machine; the backend takes its settings from its environment only; or an environment variable sets that value. A locked control shows the reason. `secret` adds a fourth: a backend that cannot save keys safely says to set the variable instead. A secret shows as typing, saved with a hint, unreadable, or empty.
 
 The search page picks a provider, then `server_rows` shows its address, key, model and how to start the server. `job` reports the running or last embedding job. While settings are not yet read, `without_settings` shows a loading line or the read error.
@@ -67,6 +69,8 @@ And 19 more items.
 
 - A page that needs backend settings shows only a loading line or an error until they arrive.
 - Start with Windows is locked for a copy not installed, since a build run from `target` would leave Windows a program the next build replaces.
+- "Open notes in a new tab" shows as off and locked while tabs are off, whatever its saved value is.
+- A notes-per-session count in the file that is not one of the presets is still offered, placed by size, so the select never loses the current value.
 - The kept-folder list never checks whether a folder exists while drawing, because a folder on an offline share can answer slowly. The check happens when the list is read.
 - Secrets are never shown again once saved; only a hint is.
 

@@ -8,7 +8,9 @@ tags: [core, cw-mermaid]
 
 ## What it does
 
-All rendering goes through this crate so the renderer can be replaced in one place. Flowcharts, sequence diagrams and state diagrams are supported; any other diagram type returns an error and the caller shows the source.
+Turns Mermaid diagram text into an image. Notes hold diagrams as Mermaid source; the app needs pictures to show. This crate is the one place that does that work, so the renderer behind it can be swapped without touching callers.
+
+Flowcharts, sequence diagrams and state diagrams work. Any other type returns an error, and the caller shows the source text instead.
 
 ## Source
 
@@ -17,12 +19,15 @@ All rendering goes through this crate so the renderer can be replaced in one pla
 
 ## How it works
 
-Builds a library.
+Three entry points, all taking the source text and returning `Result<_, String>`.
 
-1. `AppView::draw_queued_diagrams` in [[codewiki-app]] calls `render_png`. `render_png` calls `render_png_scaled`.
-2. `AppView::sharpen_diagram` in [[codewiki-app]] calls `render_png_scaled`. `render_png_scaled` calls `themed`, then `lenient`.
+- `render_svg` returns an SVG document.
+- `render_png` returns PNG bytes at one pixel per diagram unit.
+- `render_png_scaled` does the same at a chosen `scale`, for a view that enlarges the picture. The app uses it to redraw a diagram sharper after zoom.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Every path first calls `lenient`. It repairs one common mistake in hand-written flowcharts: a label that is a URL path, such as `Agent[/ws/agent]`. Mermaid reads `[/` as the start of a slanted shape and rejects it. `lenient` quotes such labels. It touches only `flowchart` and `graph` sources, and leaves real slanted shapes alone.
+
+The PNG paths then call `themed` to apply the [[Palette]], and hand the text to the `merman` renderer. If the renderer finds no diagram, the error is `no Mermaid diagram detected`.
 
 ## Items
 
@@ -42,6 +47,13 @@ Defined at the crate root:
 ## Used by
 
 - [[codewiki-app]] — from `draw_queued_diagrams`, `sharpen_diagram`
+
+## Gotchas
+
+- The renderer holds a PNG to 4096 pixels a side. A large diagram at a big `scale` comes back smaller than asked, in the same ratio.
+- Errors are plain strings, not a typed error.
+- `render_svg` has no palette, so it is always light.
+- Unsupported kinds, such as a pie chart, are errors. They never panic.
 
 ## See also
 

@@ -8,7 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The queue of pending proposals is at the left, the open proposal at the right, drawn by the cached page view (`doc_element`), and above it the buttons that decide. A click on a row shows its proposal in place, with no history entry. One proposal is decided by its own routes, which every backend has; several go to the backend in one call. After a decision the queue loads again quietly and the next proposal opens.
+A proposal is a change to a note that the owner edited by hand. A sync makes one when the code under the note changed, and a coding agent makes one when it explains such a note. The text waits until the owner approves or rejects it. This module is the review page of the app: it draws the queue of waiting proposals and runs the decisions.
+
+The queue is at the left, each row with a checkbox, the note, its kind and why it was made. The open proposal is at the right, drawn by the cached page view (`doc_element`), with the Approve and Reject buttons above it. A click on a row shows its proposal in place, with no history entry. After a decision the queue loads again quietly and the next proposal opens.
 
 The status poll counts what waits in every repository; a count that rises is news (`take_proposal_counts`). What is selected, what opens next and what the user is told is worked out in `review.rs`.
 
@@ -20,11 +22,11 @@ The status poll counts what waits in every repository; a count that rises is new
 
 Showing: `show_review` selects the first proposal alone and calls `show_proposal`. That sends a quiet GET for the proposal (no progress bar) and remembers it as wanted. When the answer arrives, it is dropped if another proposal was asked for since, or the repository changed. With `Show::InPlace` it is also dropped if the user left the page. Otherwise the page becomes the proposal's page.
 
-Clicking: `click_review_row` updates the selection and opens the row in place when a plain click chose a new proposal.
+Clicking: `click_review_row` updates the selection with plain, control or shift click rules and opens the row in place when a click chose a new proposal. The checkboxes toggle one row or all rows. When a sync proposal and an agent proposal for one note are both selected, `review_clash` shows a warning.
 
-Deciding: `decide_review` takes the ids from `review_targets` and runs `decide` off the UI thread. `decide` posts to the proposal's own approve or reject route for one id, and calls `Backend::decide_proposals` for several. When results return: notices are shown, pages of written notes are forgotten in every tab (`forget_written_notes`), the notes reload, and `after_decision` picks the next proposal.
+Deciding: `decide_review` takes the ids from `review_targets` (the selection when it holds anything, else the open proposal) and runs `decide` off the UI thread. `decide` posts to the proposal's own approve or reject route for one id, and calls `Backend::decide_proposals` for several. When results return: notices are shown, pages of written notes are forgotten in every tab (`forget_written_notes`), the notes reload, and `after_decision` picks the next proposal or shows the empty review page.
 
-Counts: `take_proposal_counts` compares the new status counts with the old, tells the user about rises, and reloads the open repository's queue quietly. `review_queue_grew` opens the first proposal when the empty review page was shown and proposals arrive.
+Counts: `take_proposal_counts` compares the new status counts with the old, tells the user about rises, and reloads the open repository's queue quietly. `review_queue_grew` opens the first proposal when the empty review page was shown and proposals arrive. `review_details` fills the details pane with counts by kind and the number selected.
 
 ## Items
 

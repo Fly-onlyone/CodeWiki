@@ -8,7 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-A row of tabs for the app's tab bar. Each `Tab` has a label and an optional suffix, such as a close button. `Tabs` draws them with a bar under the selected one and calls back with the index when one is chosen.
+A row of tabs for the app's tab bar. Each `Tab` has a label and an optional suffix, such as a close button. `Tabs` draws them with a bar under the selected one and calls back with the index when one is chosen. It can also call back with the index, the mouse button and the position when the right or the middle button is pressed on a tab, so the app can open a tab menu or close a tab.
+
+Tabs that do not fit scroll sideways, with the wheel too, and a newly selected tab scrolls into view.
 
 Sizes follow TradingAgent: 44 px high, 8 px padding, 4 px gap. The selected tab is tinted and semibold. A tab under the pointer is tinted too, and its muted label brightens toward the text color. The strengths come from [[Interaction Module]]. The bar slides from the old tab to the new one on a spring, because GPUI cannot scale an element in from its middle.
 
@@ -18,11 +20,13 @@ Sizes follow TradingAgent: 44 px high, 8 px padding, 4 px gap. The selected tab 
 
 ## How it works
 
-The row cannot know where its tabs are before they are laid out. `Tabs::render` keeps a keyed state of each tab's left edge and width. `on_children_prepainted` measures the tabs after each paint and stores the result, and notifies only when it changed.
+The row cannot know where its tabs are before they are laid out. `Tabs::render` keeps a keyed state of each tab's left edge and width, measured from the first tab. `on_children_prepainted` measures the tabs after each paint and stores the result, and notifies only when it changed.
 
-On the next frame, the selected tab's measure goes through `bar`, which makes a bar 60% of the tab wide, at most 88 px, centred. Two springs (`bar-left`, `bar-width`) move the bar there. Until the first measure exists, no bar is drawn.
+On the next frame, the selected tab's measure goes through `bar`, which makes a bar 60% of the tab wide, at most 88 px, centred. Two springs (`bar-left`, `bar-width`) move the bar there. Until the first measure exists, no bar is drawn. The bar is a child of the scrolling row, so it scrolls with the tabs.
 
-Each tab gets its own `Base` (see [[Base Module]]). Its fill is primary at the selected strength plus the hover strength, eased by a transition, then raised by `pressed` while pressed. Its label color is primary when selected, else the muted color blended toward the foreground by hover progress.
+The row scrolls sideways. A keyed state remembers which index was last brought into view. When the selected index differs, `scroll_to_item` runs once, so the wheel can still move the tab out of view again.
+
+Each tab gets its own `Base` (see [[Base Module]]). Its fill is primary at the selected strength plus the hover strength, eased by a transition, then raised by `pressed` while pressed. Its label color is primary when selected, else the muted color blended toward the foreground by hover progress. Each tab is wrapped with `secondary`, which adds the right and middle button handlers.
 
 ## Items
 
@@ -61,6 +65,8 @@ And 3 more private items with no comment.
 - The bar is the last child of the row. The measuring code takes only the first `count` children so the bar is not counted as a tab.
 - Labels are cut at 180 px.
 - A tab does not size itself to the bar: a very narrow tab still gets a bar inside its own bounds, never outside.
+- A tab's own suffix, such as a close button, takes its press alone, since a control stops propagation of its mouse down.
+- The selected tab scrolls into view only when the selection changes, not on every frame.
 
 ## See also
 

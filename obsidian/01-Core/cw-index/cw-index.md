@@ -8,9 +8,9 @@ tags: [core, cw-index]
 
 ## What it does
 
-SQLite index for CodeWiki.
+Keeps what CodeWiki knows about a repository in one SQLite database: files, symbols, edges between them, graph metrics, full-text documents and embedding vectors. Other crates read it to answer questions fast, without parsing the code again.
 
-The index is a cache: everything in it can be rebuilt from the repository and the vault. It is safe to delete at any time.
+The index is a cache. Everything in it can be rebuilt from the repository and the vault, so it is safe to delete at any time.
 
 ## Source
 
@@ -19,19 +19,15 @@ The index is a cache: everything in it can be rebuilt from the repository and th
 
 ## How it works
 
-Builds a library.
+The crate root only declares four modules and re-exports their public types: `Index`, `NodeMetrics`, `Document`, `Hit` and `VectorRow`. The work is in the modules.
 
-What the functions of this crate call:
+The [[Store Module]] holds `Index`. `Index::open` opens the database file, and `Index::open_in_memory` makes one for tests. Both check the schema version stored in the SQLite `user_version` setting. `replace_facts` writes a whole set of parsed facts. `replace_metrics` stores graph scores.
 
-1. `Index::replace_documents` calls `db` in [[Store Module]].
-2. `Index::documents` calls `db` in [[Store Module]].
-3. `Index::search` calls `fts_query` in [[Search Module]], then `db` in [[Store Module]].
-4. `Index::vector_hashes` calls `db` in [[Store Module]].
-5. `Index::vector_kinds` calls `db` in [[Store Module]].
+The [[Search Module]] owns the full-text table. `Index::replace_documents` loads documents into it. `Index::search` turns the user's words into a safe query with `fts_query` and returns ranked hits.
 
-5 more entry points: `Index::store_vectors`, `Index::upsert_vectors`, `Index::prune_vectors`, `Index::nearest`, `Index::document_opening`.
+The [[Vectors Module]] stores embedding vectors. `store_vectors` and `upsert_vectors` write them, `prune_vectors` removes old ones, and `nearest` finds the closest ones. `vector_hashes` and `vector_kinds` let a caller see what is already embedded.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The [[Schema Module]] holds the table definitions and the version number.
 
 ## Items
 
@@ -58,6 +54,12 @@ Modules:
 - [[codewiki]] — from `run`
 - [[Embed Job Module]] — from `embed_repo`
 - [[Query Module]] — from `answer`
+
+## Gotchas
+
+- A database with a different schema version is dropped and rebuilt, not migrated. Anyone who changes a table must raise `SCHEMA_VERSION`.
+- Do not keep anything in the index that cannot be rebuilt. It is a cache and may be deleted.
+- Vectors are stored under the name of the embedder that made them. Vectors from different embedders are never compared.
 
 ## See also
 

@@ -88,7 +88,15 @@ flowchart LR
     n15 --> n14
 ```
 
-An arrow points from a crate to a crate it depends on. Foundations with no workspace dependencies: `cw-core`, `cw-mermaid`, `cw-update`, and `openui-lang`. Nothing in the workspace depends on `codewiki-app`, `codewiki-mcp`, and `codewiki`.
+The workspace has three layers.
+
+The top layer holds the programs. [[codewiki]] is the command line and the backend server. [[codewiki-app]] is the Windows desktop app. [[codewiki-mcp]] is a stdio bridge between coding agents and the backend. Nothing depends on them.
+
+The middle layer holds the engine. [[cw-server]] is the HTTP API of the backend and pulls together the wiki, vault, index, embedding, illustration and telemetry crates. [[cw-wiki]] is the generation pipeline. It uses [[cw-parse]] to read source, [[cw-index]] to keep the SQLite index, [[cw-vault]] for the note files, [[cw-graph]] for graphs, [[cw-embed]] for semantic search and [[cw-illustrate]] for note pictures.
+
+The bottom layer is [[cw-core]]: shared identifiers, hashing, configuration and errors. Twelve crates use it. [[cw-mermaid]], [[cw-update]] and [[openui-lang]] have no workspace dependencies.
+
+The app and the MCP bridge do not link the engine. Both reach the backend through [[cw-client]], which finds it, starts it if needed and makes the HTTP calls. So the app and the agents see the same backend. [[cw-telemetry]] is used by the programs and the server for opt-in error reports. The app also uses [[cw-update]] for self-update, [[cw-mermaid]] for diagrams and [[openui-lang]] for model-written UI, which [[cw-illustrate]] uses as well.
 
 ## Depends on
 
@@ -109,6 +117,12 @@ An arrow points from a crate to a crate it depends on. Foundations with no works
 - [[cw-vault]] — used by 3 workspace crates
 - [[cw-wiki]] — used by 2 workspace crates
 - [[openui-lang]] — used by 2 workspace crates
+
+## Gotchas
+
+- Keep the arrows pointing down. The app must not depend on the engine crates. It goes through [[cw-client]] over HTTP.
+- [[cw-core]] is the base of most crates. A change to it rebuilds nearly the whole workspace.
+- [[openui-lang]] has no dependencies on purpose, and [[cw-illustrate]] builds on it. Do not add a UI dependency to it.
 
 ## See also
 

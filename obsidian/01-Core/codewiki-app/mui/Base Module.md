@@ -22,7 +22,11 @@ State lives in a `Touch` entity keyed on the control's id: hover, pressed, the r
 
 `press` is a transition toward 1 while pressed and toward 0 otherwise. Going in it is fast (`PRESS_IN`), going out slow (`PRESS_OUT`), so a short click still shows its pressed look before it fades. Controls read `press` to fill, darken or sink; see [[Interaction Module]] for the strengths.
 
-`attach` adds the handlers. Hover sets the flag and releases on leave. Mouse down stops propagation, prevents default (so a mouse press does not take keyboard focus), and starts a wave at the pointer. Mouse up or up-outside releases it. A keyboard click starts and releases a centred wave at once. A canvas child paints the waves with the ripple opacities from the knobs (see [[Ripple Module]]). With reduced motion it paints a plain tint while pressed.
+`focused` is true only for a control that holds focus while the last input was the keyboard, like a browser's focus-visible. Once the mouse is used, the control keeps focus but not the ring.
+
+`attach` adds the handlers. Hover sets the flag and releases on leave. Left mouse down stops propagation, prevents default (so a mouse press does not take keyboard focus), and starts a wave at the pointer. Right and middle mouse down only prevent default, for the same reason. Mouse up or up-outside releases it. A keyboard click starts and releases a centred wave at once. A canvas child paints the waves with the ripple opacities from the knobs (see [[Ripple Module]]). With reduced motion it paints a plain tint while pressed.
+
+`secondary` is a separate helper: it adds right and middle button handlers that call an `OnSecondary` with the button and the pointer position.
 
 ## Items
 
@@ -61,7 +65,8 @@ State lives in a `Touch` entity keyed on the control's id: hover, pressed, the r
 - The press transition uses the name `touch-press`, not `press`, because `Button` keeps its own glow state under `press` for the same id.
 - The focus handle is made with `tab_index(0)` and `tab_stop(true)`. GPUI reads those from a tracked handle, not from the element. Without them no control was a tab stop and Tab stayed in the search box.
 - A disabled control gets no handlers and no ripple, and its hover and press state is cleared.
-- Mouse down stops propagation so a control inside another, such as a tab's close button, takes the press alone.
+- Left mouse down stops propagation so a control inside another, such as a tab's close button, takes the press alone. `secondary` does the same for the right and middle buttons.
+- A right or middle press must not take focus. GPUI gives focus on any button, and a right click once left a ring that nothing took away.
 - `focused` is only keyboard focus. A mouse press does not give it.
 
 ## See also

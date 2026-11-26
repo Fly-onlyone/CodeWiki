@@ -10,7 +10,7 @@ tags: [core, codewiki-app]
 
 This is the Windows desktop app of CodeWiki. It shows the wiki notes and the live index of a repository in a native window, built on GPUI (a Rust UI toolkit) and gpui-kit. It lives in the tray, so closing the window hides it and the app keeps running.
 
-All data comes from the backend over HTTP through `cw-client`. The app links none of the engine crates, only `cw-core` for paths and names. The one job it does by itself is to update its own installation, through `cw-update`. The crate root file holds `AppView`, the one big view that owns the pages, the tabs, the tray and the backend connection.
+All wiki data comes from the backend over HTTP through `cw-client`. The app links none of the engine crates (the indexer and the wiki writer). It uses `cw-core` for paths, names and the small files it reads itself, such as the list of folders kept from agents and the auto explain switch. It draws pictures and diagrams with `cw-illustrate`, `cw-mermaid` and `openui-lang`, sends error reports through `cw-telemetry`, and updates its own installation through `cw-update`. The crate root file holds `AppView`, the one big view that owns the pages, the tabs, the tray and the backend connection.
 
 ## Source
 
@@ -21,11 +21,11 @@ All data comes from the backend over HTTP through `cw-client`. The app links non
 
 `main` runs these steps before any window opens:
 
-1. It reads the log level from the prefs (or the `CODEWIKI_LOG` variable) and starts logging and error reports.
+1. It reads the log level from the prefs (`CODEWIKI_LOG` can name another for one run) and starts logging and, when the user turned them on, error reports with `cw_telemetry::init`.
 2. It makes a channel for events that come from outside GPUI: a second launch, the tray, a notification, Ctrl+C.
 3. `instance::acquire` decides whether this launch is the main app. A second launch hands its request over to the running one and returns at once with no window.
 4. `win32::on_console_stop` sends `Event::Quit` on Ctrl+C, so an IDE's Stop button quits like the tray does.
-5. Inside the GPUI run: `gpui_kit::init`, motion, backdrop, fonts, themes, then `zoom::init`. The key bindings are set, including the zoom keys. The window opens with a Mica backdrop.
+5. Inside the GPUI run: `gpui_kit::init`, motion, backdrop, tab prefs, fonts, themes, then `zoom::init`. The key bindings are set, including the tab and zoom keys. The window opens with a Mica backdrop, and a `Shell` draws the backdrop, the app and the generated page.
 
 `AppView::listen` is the one task that takes events from the channel. It hides or shows the window with the Win32 calls between two GPUI updates, then calls `handle_event`. Closing the window sends `Event::Hide` when a tray icon exists; without a tray, closing ends the app unless there are unsaved edits.
 

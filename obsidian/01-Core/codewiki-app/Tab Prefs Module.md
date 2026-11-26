@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Each is a file in the settings folder (`prefs`) and a global, so that a click reads it without a file.
+This module holds the two tab settings. One says whether the app has tabs at all. The other says whether a note the user opens goes to a tab of its own. Each is a small file in the settings folder, read through the [[Prefs Module]]. The module also keeps both as a GPUI global, so a click handler can read them without touching a file.
 
 ## Source
 
@@ -16,15 +16,11 @@ Each is a file in the settings folder (`prefs`) and a global, so that a click re
 
 ## How it works
 
-1. `main` in [[codewiki-app]] calls `init`. `init` calls `Settings::from`, then `read` in [[Prefs Module]].
-2. `AppView::body` and `AppView::context_items` in [[codewiki-app]], and 5 more, call `tabs`. `tabs` calls `settings`. `settings` calls `Settings::from`.
-3. `AppView::settings_frame` in [[codewiki-app]] calls `new_tab_switch`. `new_tab_switch` calls `settings`.
-4. `AppView::open_note_for_user` in [[codewiki-app]] calls `new_tab`. `new_tab` calls `settings`.
-5. `AppView::run_action_with` in [[codewiki-app]] calls `set_tabs`. `set_tabs` calls `write` in [[Prefs Module]], then `word`, then `settings`.
+`main` calls `init` once at start. `init` reads the two files and stores a `Settings` global. A file holds the word `on` or `off`. Tabs are on unless the file says `off`. New-tab opening is off unless the file says `on`.
 
-1 more entry point: `set_new_tab`.
+`tabs`, `new_tab_switch` and `new_tab` read the global. `tabs` says whether the app shows tabs. `new_tab_switch` is the switch exactly as the user set it. `new_tab` is true only when the switch is on and tabs are on too, so it is the one `open_note_for_user` should ask.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`set_tabs` and `set_new_tab` write the file first, then replace the global with the new value. Changes from the settings page therefore last across restarts and take effect at once.
 
 ## Items
 
@@ -48,6 +44,13 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `body`, `context_items`, `main`, `new_tab`
+
+## Gotchas
+
+- A word the module does not know keeps the default. `maybe` for tabs means tabs on, and `yes` for new tab means off. A test shows this.
+- With tabs off, the switch can still read `on`. `new_tab_switch` shows that, while `new_tab` says false. Use `new_tab` to decide where a note opens.
+- `init` must run before the readers. If the global is missing, the readers fall back to the defaults, so a missed `init` gives defaults, not an error.
+- Only a write that goes through `set_tabs` or `set_new_tab` updates the global. Editing the file by hand changes nothing until the next start.
 
 ## See also
 

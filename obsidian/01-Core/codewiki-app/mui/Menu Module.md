@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Anatomy and behaviour are MUI's (`Menu/Menu.js`, `Popover/Popover.js`, `MenuList/MenuList.js`, `MenuItem/MenuItem.js`); TradingAgent changes none of it. The surface is a `Paper` at elevation 8 that hangs under its anchor and stays inside the window. A click outside it, or Escape, closes it. The arrow keys, Home and End move a highlight that wraps at the ends, and Enter or Space choose the highlighted row.
+`Menu` is a short list of choices that opens beside the control that asked for it, such as the theme menu, a select's list or a right-click menu. Anatomy and behaviour are MUI's. The surface is a `Paper` at elevation 8 that hangs under its anchor and stays inside the window. A click outside it with any mouse button, or Escape, closes it. The arrow keys, Home and End move a highlight that wraps at the ends, and Enter or Space choose the highlighted row.
 
 The owner keeps the state: whether the menu is open, which row is highlighted, and the focus handle the menu takes its keys through. Tab is bound by the kit's root, which moves the focus on; the owner closes the menu when its handle loses the focus, as MUI closes a menu on Tab.
 
@@ -28,7 +28,7 @@ On render, each section becomes an optional subheading and a list of `ListItemBu
 
 Keys: `step` moves the highlight with Down, Up, Home and End, and wraps at the ends. Enter or Space call `on_select` with the highlighted row. Escape calls `on_close`. A key with a modifier is ignored.
 
-The layout: a full-window `scrim` takes the click that closes the menu. Inside it an `anchored` element hangs the paper under the anchor (4 px gap), lines up its left edge (`Align::Start`) or right edge (`Align::End`), and keeps 16 px from the window edge. The whole thing is `deferred` so it draws on top. The paper has elevation 8 from [[Surfaces Module]] and a fade-and-drop entrance.
+The layout: a full-window `scrim` takes the press that closes the menu. It listens for the left, right and middle buttons, so a right-click outside also closes the menu. Inside it an `anchored` element hangs the paper under the anchor (4 px gap), lines up its left edge (`Align::Start`) or right edge (`Align::End`), and keeps 16 px from the window edge. The whole thing is `deferred` so it draws on top. The paper has elevation 8 from [[Surfaces Module]] and a fade-and-drop entrance.
 
 ## Items
 

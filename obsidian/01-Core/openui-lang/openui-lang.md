@@ -8,18 +8,9 @@ tags: [core, openui-lang]
 
 ## What it does
 
-OpenUI Lang (<https://github.com/thesysdev/openui>, MIT) is a compact language in which a model describes a user interface as a list of `name = Component(args)` statements. This crate is an independent Rust implementation of the language's syntax, written against the published 1.0 specification and the behavior of the reference parser. It has no UI dependencies: rendering the resulting tree is the caller's job.
+OpenUI Lang is a compact language in which a model describes a user interface as a list of `name = Component(args)` statements. This crate parses that text and checks it against a library of allowed components. It turns the result into a plain tree of nodes. It is an independent Rust implementation, written against the published 1.0 specification and the behavior of the reference parser.
 
-```rust
-use openui_lang::{Kind, Library, Node, evaluate, parse};
-
-let library = Library::new(Some("Card"))
-    .component("Card", &[("children", Kind::List, true)])
-    .component("TextContent", &[("text", Kind::Text, true)]);
-let document = evaluate(&parse("root = Card([t])\nt = TextContent(\"Hi\")"), &library);
-assert!(document.is_valid());
-assert!(matches!(document.root, Some(Node::Element { .. })));
-```
+The crate has no dependencies, not even UI ones. Drawing the tree is the caller's job. The app uses it to turn model-written text into something it can render.
 
 ## Source
 

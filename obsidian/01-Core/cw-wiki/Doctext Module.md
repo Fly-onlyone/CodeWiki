@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A comment is written for the place it stands in: it may hold a heading (`# Errors`), a doctest, a rustdoc link, a Javadoc tag. A note has rules of its own, which the linter enforces by refusing the whole run: `## ` headings only from the note's template, no Markdown links, no tag in the text, no code span that reads as a line number. Every function here returns text that keeps those rules, whatever the comment holds.
+Cleans doc comments from source code so they can be pasted into a wiki note. A comment may hold a heading, a doctest, a rustdoc link or a Javadoc tag. A note has stricter rules, and the linter refuses a whole run that breaks them: headings only from the template, no Markdown links, no tags, and no code span that looks like a file with a line number. Every function here returns text that keeps those rules, whatever the comment holds.
 
 ## Source
 
@@ -16,13 +16,15 @@ A comment is written for the place it stands in: it may hold a heading (`# Error
 
 ## How it works
 
-1. `items` in [[Explain Module]] and `RenderCtx::render_crate` in [[RenderCtx]], and 1 more, call `first_sentence`. `first_sentence` calls `first_paragraph`, then `sentence_break`, then `ensure_period`. `first_paragraph` calls `clean_inline`.
-2. `RenderCtx::render_integration` and `RenderCtx::summary` in [[RenderCtx]] call `ensure_period`.
-3. `RenderCtx::render_integration` and `RenderCtx::summary` in [[RenderCtx]] call `clean_inline`.
-4. `RenderCtx::render_crate` and `RenderCtx::render_module` in [[RenderCtx]], and 2 more, call `doc_body`. `doc_body` calls `blocks`, then `clean_line`, then `sentence_break`. `blocks` calls `doc_tag`, then `list_item`. `clean_line` calls `clean_inline`, then `inline_tags`, then `is_line_ref` in [[Lint Module]].
-5. `items` in [[Explain Module]] calls `item_text`. `item_text` calls `blocks`, then `ensure_period`, then `clean_line`.
+There are three public ways to take text from a comment.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- `first_sentence` takes the first paragraph, cleans it with `clean_inline`, cuts at the first sentence end, and closes it with `ensure_period`. It is the one-line summary of an item.
+- `doc_body` gives the whole comment for a note. With `after_first_sentence` it leaves the summary out, for a note whose summary already is that sentence.
+- `item_text` gives a comment as the text of one list item. Paragraphs run on as one, nested lists follow as indented items, and code blocks are dropped.
+
+`doc_body` and `item_text` both call `blocks`. It reads the comment line by line into parts: running text, a label, a list, a code block or a table. A heading such as `# Errors` becomes a label, since a note takes headings only from its template. `doc_tag` turns Javadoc and JSDoc tags such as `@param` and `@returns` into list items. `clean_line` then runs `clean_inline` and `inline_tags` over each line, and rewrites any code span that would read as a line reference.
+
+`clean_inline` keeps code spans as written. It turns rustdoc links into plain text, and Markdown links keep only their text. It defuses wikilink brackets, drops a `#` that would read as a tag, and squeezes whitespace.
 
 ## Items
 
@@ -50,6 +52,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[RenderCtx]] — from `render_crate`, `render_integration`, `render_module`, `render_pattern`
 - [[Explain Module]] — from `items`
+
+## Gotchas
+
+- Tags with no value for a reader, such as `@author` and `@since`, are dropped, with the lines that follow them.
+- A fence labelled `mermaid` becomes `text`, because the app would draw a diagram and diagrams belong in a flow note.
+- An unlabelled fence in a Rust comment is `rust`. Rustdoc words such as `no_run` or `ignore` also mean `rust`.
+- `sentence_break` skips `e.g.`, `i.e.` and `etc` and anything inside backticks. A sentence that ends in another abbreviation is cut early.
+- A Python doctest block runs until the next blank line.
 
 ## See also
 

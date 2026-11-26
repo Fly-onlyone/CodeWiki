@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-Parts it does not know are kept as they are, so an older program does not drop what a newer one wrote.
+`Settings` is the content of `settings.json`: the settings the backend keeps for its user. It reads and writes values by [[Key]]. Parts of the file it does not know are kept as they are, so an older program does not drop what a newer one wrote. Secrets such as API keys are stored encrypted, with a readable hint of their last characters.
 
 ## Source
 
@@ -16,13 +16,11 @@ Parts it does not know are kept as they are, so an older program does not drop w
 
 ## How it works
 
-What the functions of this type call:
+`value` returns the saved text of a setting that is not a secret. A blank value counts as none. `secret` returns the saved form of a secret: the encrypted text and its hint, so a page can say which key is saved without decrypting anything.
 
-1. `value` calls `field`.
-2. `secret` calls `field`.
-3. `set` calls `clear`, then `protect`, then `hint` (both in [[Secret Module]]), then `put`.
+`set` trims the value. A blank value clears the setting. A secret is encrypted with `protect` and given a `hint`, in the [[Secret Module]], then stored. Other values are stored as text. `put` writes into the section, replacing a section that is not an object. `clear` removes the field and removes the section when it is empty.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The module's `update` function loads the file, applies a change and writes the whole file back through a temporary file and a rename. If the change fails, nothing is written. It also removes the retired sections and writes the layout version.
 
 ## Items
 
@@ -49,6 +47,13 @@ Members:
 - [[Settings Module (cw-core)]] — from `load`, `read`, `update`
 - [[Resolved]] — from `from_parts`, `saved_secret`
 - [[Settings Module (cw-server)]] — from `apply`
+
+## Gotchas
+
+- `set` for a secret fails on a system that cannot protect one. The error comes from the [[Secret Module]]. Nothing is saved then.
+- A file that cannot be read is moved to `settings.broken.json` before a new one is written, so its owner can get it back. `load` alone never fails: a missing or damaged file gives empty settings.
+- `value` returns `None` for a secret and `secret` returns `None` for a plain setting. Use the one that matches the key.
+- Retired sections from the old AI writer (`llm`, `anthropic`, `cliproxy`) are removed on every write, because a key no program uses should not lie on a disk.
 
 ## See also
 

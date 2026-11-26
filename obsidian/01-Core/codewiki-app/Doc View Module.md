@@ -18,13 +18,13 @@ The page is its own view, `DocPage`, drawn cached, so a ripple or hover in the w
 
 ## How it works
 
-`strips` cuts a page into strips: the title, one strip for each block, and for a table of more than 12 rows a head strip plus one strip for each row. `DocPage` hands them to a GPUI `list`, which builds only the strips on screen plus 400 px beyond. `draw_strip` adds the page's gutter from `reading::gutter`, spacing, and a staggered entrance for the first strips.
+`strips` cuts a page into strips: the title, one strip for each block, and for a table of more than 12 rows a head strip plus one strip for each row. `DocPage` hands them to a GPUI `list`, which builds only the strips on screen plus 400 px beyond. `draw_strip` adds the page's side gutter from `reading::gutter` (the wide measure, 1040 px, centred, never under 24 px), spacing, and a staggered entrance for the first strips.
 
 `draw` turns one block into elements. Controls report through `on_action`. `show` swaps the page: a new page starts at the top, the same page with new content keeps its scroll place (`kept_top` clamps it when the page got shorter). A zoom change re-measures the list.
 
-`column` draws a short page whole with live controls, such as a settings category. Only it has `Controls` for text inputs and selects, since those belong to the view that handles their events.
+`column` draws a short page whole with live controls, such as a settings category. Only it has `Controls` for text inputs and selects, since those belong to the view that handles their events. Settings blocks share one row layout: name and help on the left, control on the right, and under the control the reason it is locked or the news about its last change (`under`).
 
-`line` turns spans into one wrapping run of text with highlights. A line with no link is plain styled text. A line with links becomes a `LinkedLine`. It keeps the index of the hovered link in keyed state. The interactive text reports which link range the pointer is over. The render then joins `reading::link_hover` to that link's own highlight, so only the hovered link gets the lighter color and underline. Leaving the line clears it. Clicks map the range index to its `Action`.
+`line` turns spans into one wrapping run of text with highlights. A line with no link is plain styled text. A line with links becomes a `LinkedLine`, which keeps the index of the hovered link in keyed state. The render joins `reading::link_hover` to that link's own highlight, so only the hovered link gets the lighter color and underline. Leaving the line clears it. Clicks map the range index to its `Action`.
 
 ## Items
 
@@ -74,6 +74,8 @@ And 28 more items.
 - The page ids include a serial, so state kept for one page does not leak into the next.
 - `LinkedLine` is used only when a line has a link. Its highlight index points into the highlight list, so keep link and highlight pushes in step.
 - The list keeps measured heights. A strip off screen is not re-measured on a zoom change unless `remeasure` is called, which `render` does.
+- `DocPage` has no `Controls`. A `Field` or `Secret` input draws nothing there, and a `Select` shows only its chosen label. Pages with those controls must go through `column`.
+- A table inside a card is never split into row strips, however long it is.
 
 ## See also
 

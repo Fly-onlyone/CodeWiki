@@ -8,7 +8,7 @@ tags: [core, cw-core, module]
 
 ## What it does
 
-A one-word switch that says whether coding agents should explain waiting wiki notes by themselves at session start. The setting lives in `auto-explain.txt` in the data directory. The session-start hook in [[codewiki]] and the desktop app read it. Only the app writes it. It is on by default.
+Two small settings that say whether coding agents explain waiting wiki notes by themselves at session start, and how many. Each lives in its own text file in the data directory: `auto-explain.txt` holds the on or off switch, and `auto-explain-count.txt` holds how many notes one session explains. The session-start hook in [[codewiki]] and the desktop app read them. Only the app writes them. Auto explaining is on by default, with a count of 20.
 
 ## Source
 
@@ -18,9 +18,11 @@ A one-word switch that says whether coding agents should explain waiting wiki no
 
 `load` returns a bool. A missing file means on. Otherwise the trimmed text must equal `on`, ignoring case. Anything else (empty, `yes`, `true`, a folder in place of the file, an unreadable file) means off.
 
-`save` creates the data directory if needed, writes `on` or `off` to a temporary file, then renames it over the real one, so a reader never sees a half-written file.
+`load_count` reads the second file and returns a [[Count]]: a positive number, or `all`. A missing file, an unreadable file, `0`, a negative number or any other text gives `DEFAULT`, which is 20 notes. `Count::of` caps a number of waiting notes by the count. `PRESETS` lists the choices the app offers: 5, 10, 20, 50, 100 and all.
 
-In the hook, a result of on lets `hook_input` read the host's JSON from stdin and choose whether the briefing orders the agent to explain notes. With off, stdin is not even read.
+`save` and `save_count` create the data directory if needed, write to a temporary file, then rename it over the real one, so a reader never sees a half-written file. `save_count` never writes a count below 1.
+
+In the hook, a result of on lets `hook_input` read the host's JSON from stdin and choose whether the briefing orders the agent to explain notes, and how many. With off, stdin is not even read.
 
 ## Items
 
@@ -53,9 +55,11 @@ In the hook, a result of on lets `hook_input` read the host's JSON from stdin an
 
 ## Gotchas
 
-- Fail closed. A damaged file turns the feature off, so a broken file never spends anyone's usage allowance. Only a missing file means on.
-- Only the exact words `on` and `off` count. `true` or `1` written by hand mean off.
-- `save` returns an error for I/O failures, but `load` has no error case at all.
+- Fail closed for the switch. A damaged file turns the feature off, so a broken file never spends anyone's usage allowance. Only a missing file means on.
+- Fail to the default for the count. A damaged count file gives 20, not off and not unlimited.
+- Only the exact words `on` and `off` count for the switch. `true` or `1` written by hand mean off.
+- The count is kept while the switch is off. Turning the switch on again uses the saved count.
+- `save` and `save_count` return an error for I/O failures, but `load` and `load_count` have no error case at all.
 
 ## See also
 

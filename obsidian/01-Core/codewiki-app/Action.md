@@ -20,8 +20,8 @@ This split keeps pages free of window code. A page says "open this note" or "tur
 
 The variants fall into a few groups.
 
-- Navigation: `Note`, `Symbol` and `File` open a note, a symbol page or a source file page. `Settings` opens the settings at a [[Category]]. `OpenRepo`, `OpenReview` and `OpenFolder` move between repositories.
-- Switches and choices of the app: `Motion`, `Zoom`, `Theme`, `Autostart`, `AutoUpdate`, `AutoExplain`, `OpenLast`, `Backdrop`, `ErrorReports` and `LogLevel`. The `bool` variants carry the new state the click asks for, not a toggle.
+- Navigation: `Note`, `Symbol` and `File` open a note, a symbol page or a source file page. `Settings` opens the settings at a [[Category]], or at the first one. `OpenRepo`, `OpenReview` and `OpenFolder` move between repositories.
+- Switches and choices of the app: `Motion`, `Zoom`, `Theme`, `Autostart`, `AutoUpdate`, `AutoExplain`, `AutoExplainCount`, `OpenLast`, `Backdrop`, `TabsOn`, `NotesInNewTab`, `ErrorReports` and `LogLevel`. The `bool` variants carry the new state the click asks for, not a toggle. `AutoExplainCount` carries a [[Count]]: how many waiting notes a session explains by itself.
 - Agent folders: `KeepAgentsOut`, `LetAgentsIn`, `PickAgentsFolder`, `ResetAgentsList`.
 - Backend and secrets: `SetSetting`, `ReplaceSecret`, `KeepSecret`, `RemoveSecret` (each names a [[FieldId]]), `TestEmbedder`, `RefreshEmbedModels`, `ConnectRemote`, `UseLocalBackend`, `ForgetRemote`, `CancelEmbedJob`.
 - Housekeeping: `Reconnect`, `Sync`, `CheckUpdates`, `InstallUpdate`, `OpenLogs`, `OpenDataFolder`, `ForgetRepo`.
@@ -58,6 +58,7 @@ Declared as `pub enum Action`.
 - The `bool` variants carry the state the click asks for, so a switch row builds the opposite of what it shows.
 - `ForgetRepo` takes a repository off the list only. Its folder and wiki stay.
 - `KeepAgentsOut` covers the folder and everything below it.
+- `Doc::actions` leaves out the action of a locked switch or select, and of a disabled button, since they offer nothing to do.
 
 ## See also
 

@@ -44,7 +44,13 @@ sequenceDiagram
     p0->>p12: step_by()
 ```
 
-The sequence follows resolved calls outward from `main`, keeping only calls that cross from one documented part into another. Calls reached through trait objects or macros do not appear.
+`main` runs in two parts: setup before GPUI, then setup inside the GPUI run loop.
+
+Before GPUI, it reads the log level from the settings through the [[Prefs Module]]. `CODEWIKI_LOG` can name another level for one run. Every record at Info and above goes to the log file, because a release build has no console. It then starts [[cw-telemetry]], which sends error reports only if the user turned them on.
+
+Next it asks the [[Instance Module]] for the single-instance slot, passing the launch request from the [[Startup Module]]. If another copy of the app already runs, the request is handed over to it and `main` returns with no window. A primary copy holds the slot. A separate copy runs on its own. The [[Win32 Module]] then makes a console stop (Ctrl+C) quit the app the way the tray does.
+
+Inside the run loop, `gpui_kit::init` comes first, then the [[Motion Module]], the [[Backdrop Module]] and the [[Tab Prefs Module]], then the [[Fonts Module]] registers its fonts, then the [[Themes Module]] and finally the [[Zoom Module]]. Key bindings and the zoom actions are bound to the app. The window opens with the Mica backdrop and the `Shell` view, and the window-close, notification and quit hooks are set. On quit, the backend is asked to stop.
 
 ## Depends on
 
@@ -61,6 +67,15 @@ The sequence follows resolved calls outward from `main`, keeping only calls that
 - [[Fonts Module]]
 - [[Themes Module]]
 - [[Zoom Module]]
+
+## Gotchas
+
+- Instance handover must run before anything of GPUI. A handed-over launch ends with no window.
+- Fonts register before the themes, which name the font families. The Zoom Module comes after the themes, because it takes the theme's sizes as its 100% sizes.
+- Closing the window only hides it when a tray icon exists. Quit from the tray ends the app. Without a tray icon, close ends the app, unless unsaved edits keep the window open.
+- The zoom key actions are bound to the app, not to a view. A focused button in the generated page would not reach the view's handlers otherwise.
+- On quit the app does not wait for the backend. It asks the backend to stop, and the backend finishes its current work and exits itself.
+- The diagram keeps only calls that cross between documented parts. Calls inside `main.rs` do not show.
 
 ## See also
 

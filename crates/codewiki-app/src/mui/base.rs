@@ -68,7 +68,8 @@ pub struct Base {
     /// How far the control is into its pressed look, from 0 to 1: quick to
     /// get there, slower to leave, so that a short click still shows.
     pub press: f32,
-    /// Keyboard focus. A press with the mouse does not give focus.
+    /// Keyboard focus, while the keyboard was the last thing used. A press
+    /// with the mouse does not give focus.
     pub focused: bool,
 }
 
@@ -117,7 +118,12 @@ impl Base {
             window,
             cx,
         );
-        let focused = !disabled && state.read(cx).focus.is_focused(window);
+        // The ring shows the keys' place: once the mouse is used, the control
+        // the keys left keeps the focus but not the ring, as a browser's
+        // `:focus-visible`.
+        let focused = !disabled
+            && state.read(cx).focus.is_focused(window)
+            && window.last_input_was_keyboard();
         Self {
             hovered,
             pressed,
@@ -175,6 +181,11 @@ impl Base {
                     cx.notify();
                 });
             })
+            // Nor a press of the other buttons: GPUI gives focus on any, and
+            // a right-click left the control with a ring that nothing took
+            // away, drawn stronger than the selected row's fill.
+            .on_mouse_down(MouseButton::Right, |_, window, _| window.prevent_default())
+            .on_mouse_down(MouseButton::Middle, |_, window, _| window.prevent_default())
             .on_mouse_up(MouseButton::Left, move |_, _, cx| {
                 up.update(cx, |touch, cx| {
                     touch.release();

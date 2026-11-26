@@ -1484,6 +1484,13 @@ function Set-GuestTabPref {
 Test-Case "LK1" "A link by folder path" "a click on the link 'cw-core' of _HOME opens the cw-core folder's map" {
     Stop-GuestApp
     $info = Show-TabWindow
+    # As in HV1: after the start's click on the title bar, the pointer's way
+    # to the link selected the page's text, and the click on the link only
+    # ended that selection (the first run, 2026-11-26). A click on empty
+    # space first leaves nothing to select.
+    $bx, $by = Get-LayoutPoint -Info $info -Name "detailsBlank"
+    Send-RestedClick -X $bx -Y $by
+    Wait-For 1
     $x, $y = Get-LayoutPoint -Info $info -Name "noteLink"
     Send-RestedClick -X $x -Y $y
     Wait-For 4

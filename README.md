@@ -8,7 +8,7 @@ A native Windows app and a Rust backend that write and maintain a wiki for a cod
 
 The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives in the repository, so it is versioned with the code and readable without CodeWiki.
 
-> Status: version 0.4.0. See `ROADMAP.md` for what is verified and what is not.
+> Status: version 0.5.0. See `ROADMAP.md` for what is verified and what is not.
 
 ## What it does
 

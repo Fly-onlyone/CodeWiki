@@ -118,7 +118,9 @@ jobs:
           IS_TAG: ${{ startsWith(github.ref, 'refs/tags/v') }}
         run: |
           # Without a tag, the notes cover this commit under the Cargo.toml version.
-          $tag = if ($env:IS_TAG -eq 'true') { @('-Tag', $env:GITHUB_REF_NAME) } else { @() }
+          # A hashtable: splatting an array into a script passes "-Tag" as a
+          # value, not as the parameter's name (the v0.4.0 run failed on it).
+          $tag = if ($env:IS_TAG -eq 'true') { @{ Tag = $env:GITHUB_REF_NAME } } else { @{} }
           ./scripts/release-notes.ps1 @tag -OutFile dist/release-notes.md
           Get-Content dist/release-notes.md -Raw >> $env:GITHUB_STEP_SUMMARY
 

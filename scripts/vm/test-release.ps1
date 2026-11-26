@@ -51,6 +51,12 @@ param(
     # (guest\harden.ps1) before anything is installed, and make the whole run
     # under it. Case S1 records what is in force, case S2 what it stopped.
     [switch]$Hardened,
+    # With -Hardened: exempt CodeWiki's own files from the attack surface
+    # reduction rules, as an administrator does for an app those rules do not
+    # know yet (a new, unsigned release: its prevalence and age are nil). The
+    # antivirus still scans them; every other rule stays as harden.ps1 set it.
+    # Case SX records the exceptions.
+    [switch]$ExceptCodeWiki,
     # Also test the Claude Code plugin (cases CC0 to CC8): install Git for
     # Windows and Claude Code in the guest as their docs say, sign Claude Code
     # in with the access token of the host's own Claude login, install the
@@ -323,6 +329,34 @@ if ($Hardened) {
         Add-Result -Id "S1" -Title "Windows protection turned up" -Expect "every step succeeds" `
             -Status $(if ($failed) { "fail" } else { "pass" }) -Output $run.Stdout `
             -Observed "Defender $($state.defenderMode), real-time $($state.realTimeProtection), tamper protection $($state.tamperProtection); cloud block level $($state.cloudBlockLevel) (6 is zero tolerance), all samples sent; unwanted applications $($state.unwantedApplications), network protection $($state.networkProtection), controlled folder access $($state.controlledFolderAccess) (1 is on); attack surface reduction rules blocking: $($state.reductionRulesBlocking) of $($state.reductionRules); exclusions: $(@($state.exclusions).Count); UAC prompt $($state.uacPrompt) (2 is always notify); SmartScreen '$($state.smartScreen)'; firewall $($state.firewall -join ', '); LSA protection $($state.lsaProtection); steps that failed: $(if ($failed) { $failed -join '; ' } else { 'none' })"
+    }
+}
+
+if ($Hardened -and $ExceptCodeWiki) {
+    # Exceptions to the attack surface reduction rules only (not antivirus
+    # exclusions), by path with wildcards: the install folder under its long
+    # and its 8.3 name (programs, plugins and the update's .update folder),
+    # the setup program in Downloads, and the temporary copies Inno Setup
+    # runs (is-*.tmp for setup, _iu*.tmp for the uninstaller).
+    Test-Case "SX" "Exceptions for CodeWiki" "CodeWiki's own files are exempt from the attack surface reduction rules; nothing else is" {
+        $paths = @(
+            "C:\Users\*\AppData\Local\Programs\CodeWiki\*",
+            "C:\Users\*\Downloads\CodeWiki-*-windows-x64-setup.exe",
+            "C:\Users\*\AppData\Local\Temp\is-*.tmp\*",
+            "C:\Users\*\AppData\Local\Temp\_iu*.tmp"
+        )
+        $run = Invoke-InGuest -ArgumentList (, $paths) -ScriptBlock {
+            param($paths)
+            foreach ($path in $paths) { Add-MpPreference -AttackSurfaceReductionOnlyExclusions $path }
+            $preference = Get-MpPreference
+            "asr exceptions: " + (@($preference.AttackSurfaceReductionOnlyExclusions) -join " | ")
+            "antivirus exclusions: " + (@(@($preference.ExclusionPath) + @($preference.ExclusionProcess) | Where-Object { $_ }).Count)
+        }
+        $listed = "$($run.Output | Where-Object { $_ -like 'asr exceptions:*' })"
+        $missing = @($paths | Where-Object { $listed -notlike "*$_*" })
+        Add-Result -Id "SX" -Title "Exceptions for CodeWiki" -Expect "the four paths listed as attack surface reduction exceptions; no antivirus exclusion" `
+            -Status $(if (-not $missing -and ($run.Output -match 'antivirus exclusions: 0')) { "pass" } else { "fail" }) -Output (($run.Output + $run.Errors) -join "`n") `
+            -Observed "$listed; $(($run.Output | Where-Object { $_ -like 'antivirus exclusions:*' }) -join '')$(if ($missing) { "; not taken: $($missing -join ', ')" })"
     }
 }
 

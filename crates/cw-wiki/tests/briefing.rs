@@ -6,6 +6,7 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
+use cw_core::auto_explain::{Count, DEFAULT};
 use cw_index::Index;
 use cw_vault::proposal;
 use cw_wiki::briefing::{self, Explain};
@@ -162,7 +163,11 @@ fn the_line_about_waiting_notes_goes_when_none_waits() {
         });
     }
     meta.save(&vault).unwrap();
-    for explain in [Explain::Facts, Explain::ClaudeCode, Explain::Codex] {
+    for explain in [
+        Explain::Facts,
+        Explain::ClaudeCode(DEFAULT),
+        Explain::Codex(Count::All),
+    ] {
         let text = briefing::session_start(r, explain).unwrap();
         assert!(
             !text.contains("waiting for an explanation") && !text.contains("auto explaining"),
@@ -179,16 +184,23 @@ fn the_waiting_line_orders_a_batch_for_each_host() {
     write(r, "Cargo.toml", "[package]\nname = \"demo\"\n");
     write(r, "src/lib.rs", "//! Demo crate.\npub fn run() {}\n");
     update(r);
-    let max = cw_wiki::explanations::MAX_LIMIT.to_string();
+    // The demo has fewer notes than one agent is lent, so one agent gets
+    // them all, whatever the count.
+    let waiting = cw_wiki::explanations::waiting_counts(r).unwrap().total();
+    assert!(
+        (1..cw_wiki::explanations::MAX_LIMIT).contains(&waiting),
+        "{waiting}"
+    );
+    let up_to = format!("up to {waiting} waiting notes");
 
     let facts = briefing::session_start(r, Explain::Facts).unwrap();
     assert!(facts.contains("write notes when the user asks"), "{facts}");
     assert!(!facts.contains("auto explaining"), "{facts}");
 
-    let claude = briefing::session_start(r, Explain::ClaudeCode).unwrap();
+    let claude = briefing::session_start(r, Explain::ClaudeCode(Count::All)).unwrap();
     assert!(
-        claude.contains("`codewiki:note-writer`")
-            && claude.contains(&max)
+        claude.contains("launch the `codewiki:note-writer` agent")
+            && claude.contains(&up_to)
             && claude.contains("plan mode"),
         "{claude}"
     );
@@ -197,9 +209,9 @@ fn the_waiting_line_orders_a_batch_for_each_host() {
         "{claude}"
     );
 
-    let codex = briefing::session_start(r, Explain::Codex).unwrap();
+    let codex = briefing::session_start(r, Explain::Codex(DEFAULT)).unwrap();
     assert!(
-        codex.contains("`write-notes`") && codex.contains(&max),
+        codex.contains("`write-notes`") && codex.contains(&up_to),
         "{codex}"
     );
     assert!(!codex.contains("note-writer"), "{codex}");

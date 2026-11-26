@@ -351,9 +351,9 @@ struct AppView {
     waiting_seen: Option<u64>,
     /// The lookup of `waiting` under way; a newer one replaces it.
     waiting_task: Option<Task<()>>,
-    /// Whether auto explaining is on, read when the Waiting notes page
-    /// opens.
-    auto_explain_on: bool,
+    /// How many notes auto explaining explains in a session, or `None` while
+    /// it is off; read when the Waiting notes page opens.
+    auto_explain: Option<cw_core::auto_explain::Count>,
     focus: FocusHandle,
     theme_menu_open: bool,
     /// The row of the theme menu that the keys act on.
@@ -558,7 +558,7 @@ impl AppView {
             waiting: None,
             waiting_seen: None,
             waiting_task: None,
-            auto_explain_on: read_auto_explain(),
+            auto_explain: read_auto_explain(),
             focus: cx.focus_handle(),
             theme_menu_open: false,
             theme_menu_highlight: 0,
@@ -863,7 +863,7 @@ impl AppView {
         if matches!(self.page, Page::Waiting) {
             // `show_page` reads the switch when the page opens; it may have
             // changed since.
-            self.auto_explain_on = read_auto_explain();
+            self.auto_explain = read_auto_explain();
         } else {
             self.set_page(Page::Waiting, true);
         }
@@ -2175,7 +2175,7 @@ impl AppView {
         // The switch is a file another program may change; read it whenever
         // the page opens, by a click, Back or a tab.
         if matches!(self.page, Page::Waiting) {
-            self.auto_explain_on = read_auto_explain();
+            self.auto_explain = read_auto_explain();
         }
         self.prepare_page();
     }
@@ -4268,7 +4268,7 @@ impl AppView {
                 }
                 Page::Home => return self.doc_element(&Rc::new(self.home_doc()), cx),
                 Page::Waiting => {
-                    let doc = live::waiting_page(self.waiting.as_ref(), self.auto_explain_on);
+                    let doc = live::waiting_page(self.waiting.as_ref(), self.auto_explain);
                     return self.doc_element(&Rc::new(doc), cx);
                 }
                 // Each has a view of its own (`graph_view`, `settings_frame`).
@@ -4825,10 +4825,13 @@ fn load_notes(backend: &Backend, id: &str) -> Result<(Value, Value), String> {
     Ok((notes, proposals))
 }
 
-/// Whether auto explaining is on: `auto-explain.txt` in the data directory,
-/// which the app reads itself, as it does the folders kept from agents.
-fn read_auto_explain() -> bool {
-    cw_core::auto_explain::load(&cw_core::paths::data_dir())
+/// How many notes auto explaining explains in a session, or `None` while it
+/// is off: `auto-explain.txt` and `auto-explain-count.txt` in the data
+/// directory, which the app reads itself, as it does the folders kept from
+/// agents.
+fn read_auto_explain() -> Option<cw_core::auto_explain::Count> {
+    let data = cw_core::paths::data_dir();
+    cw_core::auto_explain::load(&data).then(|| cw_core::auto_explain::load_count(&data))
 }
 
 fn parse_notes(value: &Value) -> Vec<NoteInfo> {

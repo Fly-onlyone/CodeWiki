@@ -366,7 +366,8 @@ fn session_start_hook(repo: &std::path::Path, agent: HookAgent) {
     // Only a session that would be ordered needs the git call. The session's
     // own folder is asked first: a worktree inside the main checkout, with
     // no vault of its own, finds the main checkout's vault as its root.
-    let mut explain = explain_for(host, auto_on, source, plan, false);
+    let count = cw_core::auto_explain::load_count(&data);
+    let mut explain = explain_for(host, auto_on, count, source, plan, false);
     if explain != Explain::Facts
         && (cw_wiki::git::is_linked_worktree(&start)
             || (root != start && cw_wiki::git::is_linked_worktree(&root)))

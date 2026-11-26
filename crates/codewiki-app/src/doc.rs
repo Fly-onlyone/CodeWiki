@@ -38,6 +38,8 @@ pub enum Action {
     /// Let coding agents explain waiting notes by themselves at the start of a
     /// session, or stop them.
     AutoExplain(bool),
+    /// Choose how many waiting notes a session explains by itself.
+    AutoExplainCount(cw_core::auto_explain::Count),
     /// Start the app on the wiki map of the repository it opens, or on Home.
     OpenLast(bool),
     /// Draw the backdrop, its color and its sky of notes, or leave plain

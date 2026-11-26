@@ -16,10 +16,11 @@ use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, ElementId, FontWeight, InteractiveElement as _, IntoElement,
-    ParentElement as _, RenderOnce, SharedString, Styled as _, Window, div,
+    MouseButton, ParentElement as _, Pixels, Point, RenderOnce, ScrollHandle, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 
-use super::base::{Base, Ink, OnClick, focus_ring};
+use super::base::{Base, Ink, OnClick, OnSecondary, focus_ring, secondary};
 use super::interaction::{self, pressed};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{curve, duration, easing};
@@ -50,6 +51,9 @@ pub fn bar(left: f32, width: f32) -> (f32, f32) {
 
 /// What choosing the tab at an index does.
 type OnSelect = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+/// What a press of the right or the middle button on the tab at an index
+/// does, and where in the window it was.
+type OnTabSecondary = Rc<dyn Fn(usize, MouseButton, Point<Pixels>, &mut Window, &mut App)>;
 
 /// One tab: its label and, optionally, something after it, such as a close
 /// button.
@@ -74,13 +78,16 @@ impl Tab {
 
 impl gpui_kit::prelude::FluentBuilder for Tab {}
 
-/// A row of tabs with a bar under the selected one.
+/// A row of tabs with a bar under the selected one. Tabs that do not fit
+/// scroll sideways, with the wheel too, and a newly selected tab scrolls
+/// into view.
 #[derive(IntoElement)]
 pub struct Tabs {
     id: SharedString,
     tabs: Vec<Tab>,
     selected: usize,
     on_select: Option<OnSelect>,
+    on_secondary: Option<OnTabSecondary>,
 }
 
 impl Tabs {
@@ -90,7 +97,17 @@ impl Tabs {
             tabs: Vec::new(),
             selected: 0,
             on_select: None,
+            on_secondary: None,
         }
+    }
+
+    /// What a press of the right or the middle button on a tab does.
+    pub fn on_secondary(
+        mut self,
+        on_secondary: impl Fn(usize, MouseButton, Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_secondary = Some(Rc::new(on_secondary));
+        self
     }
 
     pub fn tabs(mut self, tabs: impl IntoIterator<Item = Tab>) -> Self {
@@ -124,9 +141,23 @@ impl RenderOnce for Tabs {
         let places = window.use_keyed_state(row_id.clone(), cx, |_, _| Vec::<(f32, f32)>::new());
         let place = places.read(cx).get(self.selected).copied();
         let count = self.tabs.len();
+        // The row scrolls; a tab that has just been selected is brought into
+        // view, once, so that the wheel can still move it out again.
+        let scroll = window.use_keyed_state(
+            ElementId::NamedChild(row_id.clone().into(), "scroll".into()),
+            cx,
+            |_, _| (ScrollHandle::new(), usize::MAX),
+        );
+        let (handle, shown) = scroll.read(cx).clone();
+        if shown != self.selected {
+            handle.scroll_to_item(self.selected);
+            let selected = self.selected;
+            scroll.update(cx, |(_, shown), _| *shown = selected);
+        }
 
         let mut row = h_flex()
             .relative()
+            .w_full()
             .h(px(HEIGHT))
             .gap(px(GAP))
             .on_children_prepainted({
@@ -148,7 +179,10 @@ impl RenderOnce for Tabs {
                         }
                     });
                 }
-            });
+            })
+            .id(row_id.clone())
+            .overflow_x_scroll()
+            .track_scroll(&handle);
 
         for (index, tab) in self.tabs.into_iter().enumerate() {
             let id = ElementId::NamedInteger(self.id.clone(), index as u64);
@@ -208,7 +242,20 @@ impl RenderOnce for Tabs {
                 centered: false,
                 color,
             };
-            row = row.child(base.attach(element, ink, false, on_click, cx));
+            let on_secondary = self.on_secondary.clone().map(|on_secondary| {
+                Rc::new(
+                    move |button: MouseButton,
+                          at: Point<Pixels>,
+                          window: &mut Window,
+                          cx: &mut App| {
+                        on_secondary(index, button, at, window, cx)
+                    },
+                ) as OnSecondary
+            });
+            row = row.child(secondary(
+                base.attach(element, ink, false, on_click, cx),
+                on_secondary,
+            ));
         }
 
         // The bar appears once the selected tab has been measured, and from

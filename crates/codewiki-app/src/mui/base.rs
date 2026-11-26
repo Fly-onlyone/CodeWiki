@@ -14,8 +14,8 @@ use std::time::Instant;
 use gpui_kit::base::motion as kit;
 use gpui_kit::{
     App, BoxShadow, ClickEvent, Div, ElementId, Entity, FocusHandle, Hsla, InteractiveElement as _,
-    MouseButton, ParentElement as _, Stateful, StatefulInteractiveElement as _, Styled as _,
-    Window, canvas, point,
+    MouseButton, ParentElement as _, Pixels, Point, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, canvas, point,
 };
 
 use super::interaction;
@@ -26,6 +26,10 @@ use crate::zoom::px;
 
 /// What a click does.
 pub type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>;
+
+/// What a press of the right or the middle button does, and where in the
+/// window it was.
+pub type OnSecondary = Rc<dyn Fn(MouseButton, Point<Pixels>, &mut Window, &mut App)>;
 
 /// The remembered state of one control.
 pub struct Touch {
@@ -244,6 +248,27 @@ impl Base {
                 .size_full(),
             )
     }
+}
+
+/// Call `on_secondary` when the right or the middle button is pressed on
+/// `element`, which takes the press alone. With `None` the element is left
+/// as it is.
+pub fn secondary(element: Stateful<Div>, on_secondary: Option<OnSecondary>) -> Stateful<Div> {
+    let Some(on_secondary) = on_secondary else {
+        return element;
+    };
+    let middle = on_secondary.clone();
+    element
+        .on_mouse_down(MouseButton::Right, move |event, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+            on_secondary(MouseButton::Right, event.position, window, cx);
+        })
+        .on_mouse_down(MouseButton::Middle, move |event, window, cx| {
+            window.prevent_default();
+            cx.stop_propagation();
+            middle(MouseButton::Middle, event.position, window, cx);
+        })
 }
 
 /// The ring a control shows while it has keyboard focus. TradingAgent's

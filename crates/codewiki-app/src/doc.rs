@@ -45,6 +45,11 @@ pub enum Action {
     /// Draw the backdrop, its color and its sky of notes, or leave plain
     /// Mica behind the glass.
     Backdrop(bool),
+    /// Show tabs, or keep one view that every note opens in.
+    TabsOn(bool),
+    /// Open every note the user opens in a tab of its own, or in the tab
+    /// that shows.
+    NotesInNewTab(bool),
     /// Send error reports to Sentry from the next start on, or stop at once.
     ErrorReports(bool),
     /// Open the registered repository with this id.

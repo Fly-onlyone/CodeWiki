@@ -1276,6 +1276,8 @@ impl AppView {
                     autostart: crate::autostart::enabled(),
                     open_last: crate::startup::open_last(),
                     backdrop: crate::backdrop::shown(cx),
+                    tabs: crate::tab_prefs::tabs(cx),
+                    new_tab: crate::tab_prefs::new_tab_switch(cx),
                     auto_explain: self.settings.auto_explain,
                     auto_explain_count: self.settings.auto_explain_count,
                     log_level: level,

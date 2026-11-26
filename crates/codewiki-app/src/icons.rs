@@ -84,6 +84,7 @@ app_icons! {
     FIT = "fit-screen",
     UPDATE = "system-update-alt",
     EXTERNAL = "open-in-new",
+    COPY = "content-copy",
     SUCCESS = "check-circle-outline",
     INFO = "info-outlined",
     WARNING = "report-problem-outlined",

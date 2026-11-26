@@ -17,12 +17,13 @@ use gpui_kit::base::motion::{self as kit, MotionReveal};
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Hsla,
-    InteractiveElement as _, IntoElement, ParentElement as _, RenderOnce, SharedString,
-    Styled as _, Transformation, Window, div, point, radians, size,
+    AnyElement, App, Bounds, BoxShadow, ClickEvent, Div, ElementId, FontWeight, Hsla,
+    InteractiveElement as _, IntoElement, MouseButton, ParentElement as _, Pixels, Point,
+    RenderOnce, SharedString, Styled as _, Transformation, Window, canvas, div, point, radians,
+    size,
 };
 
-use super::base::{Base, Ink, OnClick, focus_ring};
+use super::base::{Base, Ink, OnClick, OnSecondary, focus_ring, secondary};
 use super::interaction::{self, Interaction, lift, pressed};
 use super::motion::{SNAPPY, scaled};
 use super::tokens::{curve, duration, easing};
@@ -147,6 +148,28 @@ pub struct ListItemButton {
     leading: Option<AnyElement>,
     trailing: Option<AnyElement>,
     on_click: Option<OnClick>,
+    on_secondary: Option<OnSecondary>,
+    placed: Option<Placed>,
+}
+
+/// Where a row was drawn in the last frame, in the window.
+pub type Placed = std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>;
+
+/// The scroll offset that brings `row` into a list's `view` with the least
+/// movement, from the offset `current` it was drawn at. Offsets are GPUI's:
+/// 0 at the top, negative as the list scrolls down.
+pub fn offset_to_show(
+    current: Point<Pixels>,
+    view: Bounds<Pixels>,
+    row: Bounds<Pixels>,
+) -> Point<Pixels> {
+    let mut offset = current;
+    if row.top() < view.top() {
+        offset.y += view.top() - row.top();
+    } else if row.bottom() > view.bottom() {
+        offset.y -= row.bottom() - view.bottom();
+    }
+    offset
 }
 
 impl ListItemButton {
@@ -164,6 +187,8 @@ impl ListItemButton {
             leading: None,
             trailing: None,
             on_click: None,
+            on_secondary: None,
+            placed: None,
         }
     }
 
@@ -230,6 +255,23 @@ impl ListItemButton {
         on_click: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
     ) -> Self {
         self.on_click = Some(std::rc::Rc::new(on_click));
+        self
+    }
+
+    /// What a press of the right or the middle button on the row does, such
+    /// as opening a menu where it was.
+    pub fn on_secondary(
+        mut self,
+        on_secondary: impl Fn(MouseButton, Point<Pixels>, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_secondary = Some(std::rc::Rc::new(on_secondary));
+        self
+    }
+
+    /// Report where the row is drawn, in each frame, so that the list it is
+    /// in can be scrolled to it.
+    pub fn placed(mut self, placed: Option<Placed>) -> Self {
+        self.placed = placed;
         self
     }
 }
@@ -371,13 +413,28 @@ impl RenderOnce for ListItemButton {
                         )
                     }),
             )
-            .children(self.trailing);
+            .children(self.trailing)
+            .when_some(self.placed, |row, placed| {
+                row.child(
+                    canvas(
+                        move |bounds, _, _| placed.set(Some(bounds)),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full(),
+                )
+            });
         let ink = Ink {
             radius,
             centered: false,
             color: primary,
         };
-        base.attach(element, ink, false, self.on_click, cx)
+        secondary(
+            base.attach(element, ink, false, self.on_click, cx),
+            self.on_secondary,
+        )
     }
 }
 
@@ -390,6 +447,7 @@ pub struct ListFolder {
     tint: Option<Hsla>,
     arrow: Glyph,
     open_at_first: bool,
+    reveal: bool,
     rows: Vec<ListItemButton>,
 }
 
@@ -408,6 +466,7 @@ impl ListFolder {
             tint: None,
             arrow,
             open_at_first: false,
+            reveal: false,
             rows: Vec::new(),
         }
     }
@@ -425,6 +484,13 @@ impl ListFolder {
         self
     }
 
+    /// Open the folder now, however the user left it: one of its rows is
+    /// to be shown.
+    pub fn reveal(mut self, reveal: bool) -> Self {
+        self.reveal = reveal;
+        self
+    }
+
     pub fn rows(mut self, rows: impl IntoIterator<Item = ListItemButton>) -> Self {
         self.rows.extend(rows);
         self
@@ -436,6 +502,9 @@ impl RenderOnce for ListFolder {
         let id = ElementId::Name(self.id.clone());
         let open_at_first = self.open_at_first;
         let state = window.use_keyed_state(id.clone(), cx, |_, _| open_at_first);
+        if self.reveal && !*state.read(cx) {
+            state.update(cx, |open, _| *open = true);
+        }
         let open = *state.read(cx);
         let muted = cx.theme().muted_foreground;
 
@@ -483,6 +552,40 @@ impl RenderOnce for ListFolder {
 mod tests {
     use super::*;
     use gpui_kit::hsla;
+
+    /// A box `top` to `top + height` down the window.
+    fn band(top: f32, height: f32) -> Bounds<Pixels> {
+        Bounds::new(point(px(0.), px(top)), size(px(280.), px(height)))
+    }
+
+    fn at(y: f32) -> Point<Pixels> {
+        point(px(0.), px(y))
+    }
+
+    #[test]
+    fn a_row_in_view_leaves_the_list_where_it_is() {
+        let view = band(100.0, 500.0);
+        assert_eq!(
+            offset_to_show(at(-40.0), view, band(300.0, 36.0)),
+            at(-40.0)
+        );
+    }
+
+    #[test]
+    fn a_row_below_the_view_scrolls_up_to_its_bottom_edge() {
+        // The row ends 100 px under the view: the list moves 100 px.
+        let view = band(100.0, 500.0);
+        assert_eq!(offset_to_show(at(0.0), view, band(664.0, 36.0)), at(-100.0));
+    }
+
+    #[test]
+    fn a_row_above_the_view_scrolls_down_to_its_top_edge() {
+        let view = band(100.0, 500.0);
+        assert_eq!(
+            offset_to_show(at(-300.0), view, band(40.0, 36.0)),
+            at(-240.0)
+        );
+    }
 
     #[test]
     fn a_row_fills_with_the_row_strengths() {

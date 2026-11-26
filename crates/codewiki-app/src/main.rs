@@ -44,6 +44,8 @@ mod standard;
 mod startup;
 mod status;
 mod suggest;
+mod tab_ops;
+mod tab_prefs;
 mod themes;
 mod toasts;
 mod tray;
@@ -109,6 +111,11 @@ const PALETTE_ROWS: usize = 14;
 const THEME_MENU_WIDTH: f32 = 340.0;
 /// The mark of the theme in use, and the place kept for it in every row.
 const THEME_MARK: f32 = 18.0;
+/// Width of the menu a right-click on a tab or a sidebar note opens.
+const CONTEXT_MENU_WIDTH: f32 = 240.0;
+/// How long the sidebar follows a revealed note's row, besides the time its
+/// folder takes to open, which the motion setting scales.
+const REVEAL_FOLLOW: std::time::Duration = std::time::Duration::from_millis(400);
 /// Between the diagram viewer and the window's edges.
 const DIAGRAM_INSET: f32 = 24.0;
 /// Between the window's top right corner and a menu that hangs from it.
@@ -211,6 +218,51 @@ struct Tab {
     /// The page is a note an approval wrote since the tab was left: load it
     /// again when the tab is shown, or an edit would save the old text.
     reload: bool,
+}
+
+/// Where a note that loads is shown.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Place {
+    /// In the tab that shows; `remember` puts the page left on the way back.
+    Here { remember: bool },
+    /// In a tab of its own.
+    NewTab,
+}
+
+/// What a right-click opened a menu on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum MenuTarget {
+    /// The tab at this index.
+    Tab(usize),
+    /// The sidebar's row of the note at this vault path.
+    Note(String),
+}
+
+/// A menu that a right-click opened where the pointer was.
+struct ContextMenu {
+    target: MenuTarget,
+    at: Point<Pixels>,
+    /// The row the keys act on.
+    highlight: usize,
+}
+
+/// A note being shown in the sidebar (`reveal_note`).
+struct Reveal {
+    /// Its vault path.
+    path: String,
+    /// Where its row was drawn in the last frame.
+    row: list::Placed,
+    /// Until when the list follows the row, while the row's folder opens.
+    until: std::time::Instant,
+}
+
+/// What a row of a right-click menu does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum ContextCommand {
+    Close(tab_ops::Close),
+    OpenInNewTab(String),
+    Reveal(String),
+    CopyPath(String),
 }
 
 /// A note being edited.
@@ -365,6 +417,15 @@ struct AppView {
     /// Where the toolbar is: its width decides how much of it shows
     /// (`toolbar_fit`).
     toolbar_anchor: AnchorBounds,
+    /// The menu of a tab or of a note in the sidebar, while one is open.
+    context_menu: Option<ContextMenu>,
+    /// Holds the focus while that menu is open.
+    context_menu_focus: FocusHandle,
+    /// Where the sidebar's list of notes is scrolled to.
+    sidebar_scroll: ScrollHandle,
+    /// A note to show in the sidebar: its folder opens and the list scrolls
+    /// to its row.
+    reveal: Option<Reveal>,
     /// Set while the current note is open in the editor.
     editing: Option<Editing>,
     busy: Option<String>,
@@ -461,9 +522,10 @@ impl AppView {
         // What a link, row or button of a generated page asks for comes back
         // here.
         let view = cx.entity().downgrade();
-        let on_action: doc_view::OnAction = Rc::new(move |action, _, cx| {
+        let on_action: doc_view::OnAction = Rc::new(move |action, window, cx| {
             let action = action.clone();
-            _ = view.update(cx, |this, cx| this.run_action(&action, cx));
+            let new_tab = window.modifiers().control;
+            _ = view.update(cx, |this, cx| this.run_action_with(&action, new_tab, cx));
         });
         let doc_page = cx.new(|_| doc_view::DocPage::new(on_action));
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(SEARCH_HINT));
@@ -516,6 +578,11 @@ impl AppView {
         let theme_menu_blur = cx.on_blur(&theme_menu_focus, window, |this, window, cx| {
             this.close_theme_menu(false, window, cx);
         });
+        // And from a right-click menu, which closes too.
+        let context_menu_focus = cx.focus_handle();
+        let context_menu_blur = cx.on_blur(&context_menu_focus, window, |this, window, cx| {
+            this.close_context_menu(false, window, cx);
+        });
         // Whatever changes in the app may change what the tray says of it.
         let tray_follows = cx.observe_self(|this, _| this.refresh_tray());
         let sidebar_open = panes::load(Pane::Sidebar);
@@ -565,6 +632,10 @@ impl AppView {
             theme_menu_focus,
             theme_anchor: AnchorBounds::default(),
             toolbar_anchor: AnchorBounds::default(),
+            context_menu: None,
+            context_menu_focus,
+            sidebar_scroll: ScrollHandle::new(),
+            reveal: None,
             editing: None,
             busy: Some("Connecting".into()),
             error: None,
@@ -610,6 +681,7 @@ impl AppView {
                 palette_subscription,
                 appearance,
                 theme_menu_blur,
+                context_menu_blur,
                 tray_follows,
             ],
         };
@@ -1992,7 +2064,7 @@ impl AppView {
         }
         // Forms used to open the app on a view from a script.
         if let Some(note) = first.strip_prefix("agent:") {
-            self.open_note_as(note.to_string(), false, true, cx);
+            self.open_note_as(note.to_string(), Place::Here { remember: false }, true, cx);
             return;
         }
         if let Some(note) = first.strip_prefix("edit:") {
@@ -2218,13 +2290,22 @@ impl AppView {
     /// Open a new tab on the current page, so one copy can stay put while
     /// the other navigates.
     fn new_tab(&mut self, cx: &mut Context<Self>) {
+        // With tabs turned off there is one view.
+        if !tab_prefs::tabs(cx) {
+            return;
+        }
+        self.push_tab(self.page.clone(), cx);
+    }
+
+    /// Show `page` in a new tab after the others.
+    fn push_tab(&mut self, page: Page, cx: &mut Context<Self>) {
         if !self.can_leave() {
             cx.notify();
             return;
         }
         self.stash_tab();
         self.tabs.push(Tab {
-            page: self.page.clone(),
+            page,
             history: Vec::new(),
             reload: false,
         });
@@ -2233,22 +2314,66 @@ impl AppView {
         cx.notify();
     }
 
-    fn close_tab(&mut self, index: usize, cx: &mut Context<Self>) {
-        if self.tabs.len() <= 1 || index >= self.tabs.len() {
+    /// The page of the tab at `index`. The active tab's lives in the view.
+    fn tab_page(&self, index: usize) -> Option<&Page> {
+        if index == self.active_tab {
+            Some(&self.page)
+        } else {
+            self.tabs.get(index).map(|tab| &tab.page)
+        }
+    }
+
+    /// The tab that shows the note at `path`, if one does.
+    fn tab_with_note(&self, path: &str) -> Option<usize> {
+        (0..self.tabs.len()).find(|&index| {
+            matches!(self.tab_page(index), Some(Page::Note { path: shown, .. }) if shown == path)
+        })
+    }
+
+    /// Show a note that loaded for a tab of its own. A tab that already
+    /// shows it, such as one opened by a second click while the first
+    /// loaded, is shown instead.
+    fn show_in_new_tab(&mut self, page: Page, cx: &mut Context<Self>) {
+        if let Page::Note { path, .. } = &page
+            && let Some(index) = self.tab_with_note(path)
+        {
+            self.activate_tab(index, cx);
             return;
         }
-        if index == self.active_tab && !self.can_leave() {
+        self.push_tab(page, cx);
+    }
+
+    /// Close the tabs `close` names. Closing them all leaves one tab, on
+    /// the wiki map.
+    fn close_tabs(&mut self, close: tab_ops::Close, cx: &mut Context<Self>) {
+        let Some(outcome) = tab_ops::plan(self.tabs.len(), self.active_tab, close) else {
+            return;
+        };
+        if outcome.active_closed && !self.can_leave() {
             cx.notify();
             return;
         }
-        self.tabs.remove(index);
-        if index == self.active_tab {
-            self.active_tab = index.min(self.tabs.len() - 1);
-            if self.load_tab() {
-                self.reload_note(cx);
-            }
-        } else if index < self.active_tab {
-            self.active_tab -= 1;
+        let mut slots: Vec<Option<Tab>> = std::mem::take(&mut self.tabs)
+            .into_iter()
+            .map(Some)
+            .collect();
+        self.tabs = outcome
+            .keep
+            .iter()
+            .filter_map(|&index| slots.get_mut(index).and_then(Option::take))
+            .collect();
+        self.active_tab = outcome.active;
+        if self.tabs.is_empty() {
+            self.tabs.push(Tab {
+                page: Page::Message(String::new()),
+                history: Vec::new(),
+                reload: false,
+            });
+            self.active_tab = 0;
+            self.load_tab();
+            self.open_note(WIKI_MAP.into(), false, cx);
+        } else if outcome.active_closed && self.load_tab() {
+            self.reload_note(cx);
         }
         cx.notify();
     }
@@ -2293,6 +2418,10 @@ impl AppView {
     /// Entries the palette lists for what is typed now.
     fn palette_matches(&self, cx: &App) -> Vec<palette::Entry> {
         let mut entries = palette::actions();
+        // With tabs turned off there is no tab to open or close.
+        if !tab_prefs::tabs(cx) {
+            entries.retain(|entry| !matches!(entry.command, Command::NewTab | Command::CloseTab));
+        }
         let lost = self.connection.lost() == Some(connection::Lost::MidSession);
         if (self.backend.is_none() && self.busy.is_none()) || lost {
             entries.insert(
@@ -2381,7 +2510,7 @@ impl AppView {
         }
         match command {
             Command::Home => self.open_home(cx),
-            Command::Note(path) => self.open_note(path, true, cx),
+            Command::Note(path) => self.open_note_for_user(path, false, cx),
             Command::Theme(name) => self.select_theme(&name, cx),
             Command::Repo(id) => self.open_repo(&id, cx),
             Command::Search(query) => self.run_search(query, cx),
@@ -2431,7 +2560,7 @@ impl AppView {
             Command::ZoomOut => zoom::step_by(-1, cx),
             Command::ZoomReset => zoom::reset(cx),
             Command::NewTab => self.new_tab(cx),
-            Command::CloseTab => self.close_tab(self.active_tab, cx),
+            Command::CloseTab => self.close_tabs(tab_ops::Close::One(self.active_tab), cx),
             Command::ToggleSidebar => self.toggle_pane(Pane::Sidebar, cx),
             Command::ToggleDetails => self.toggle_pane(Pane::Details, cx),
             Command::OpenInObsidian => self.open_in_obsidian(cx),
@@ -2522,8 +2651,14 @@ impl AppView {
         let Page::Note { path, .. } = &self.page else {
             return None;
         };
+        self.note_file(path)
+    }
+
+    /// The file of the note at the vault path `path` on this machine, when
+    /// the repository is local.
+    fn note_file(&self, path: &str) -> Option<std::path::PathBuf> {
         let file = std::path::Path::new(&self.repo.as_ref()?.path)
-            .join("obsidian")
+            .join(cw_core::VAULT_DIR)
             .join(path);
         file.is_file().then_some(file)
     }
@@ -2642,7 +2777,24 @@ impl AppView {
     }
 
     fn open_note(&mut self, path_or_name: String, remember: bool, cx: &mut Context<Self>) {
-        self.open_note_as(path_or_name, remember, false, cx);
+        self.open_note_as(path_or_name, Place::Here { remember }, false, cx);
+    }
+
+    /// Open a note the user asked for: in a tab of its own when the setting
+    /// or the click (`new_tab`) says so, else in the tab that shows. A note
+    /// that a tab already shows switches to that tab.
+    fn open_note_for_user(&mut self, path_or_name: String, new_tab: bool, cx: &mut Context<Self>) {
+        let wanted = tab_prefs::tabs(cx)
+            && (new_tab || tab_prefs::new_tab(cx))
+            // A tab with nothing to keep takes the note itself.
+            && !matches!(self.page, Page::Message(_) | Page::Notice(_));
+        if !wanted {
+            self.open_note(path_or_name, true, cx);
+        } else if let Some(index) = self.tab_with_note(&path_or_name) {
+            self.activate_tab(index, cx);
+        } else {
+            self.open_note_as(path_or_name, Place::NewTab, false, cx);
+        }
     }
 
     /// Switch the note on the page between the whole note and the view a
@@ -2653,14 +2805,14 @@ impl AppView {
             return;
         };
         let (path, agent) = (path.clone(), *agent);
-        self.open_note_as(path, false, !agent, cx);
+        self.open_note_as(path, Place::Here { remember: false }, !agent, cx);
     }
 
     /// Open a note: whole, or with `agent` as a coding agent reads it.
     fn open_note_as(
         &mut self,
         path_or_name: String,
-        remember: bool,
+        place: Place,
         agent: bool,
         cx: &mut Context<Self>,
     ) {
@@ -2678,7 +2830,7 @@ impl AppView {
                     encode(&path_or_name)
                 ))
             },
-            move |this, content, _| {
+            move |this, content, cx| {
                 // A picture that does not pass the library's check is not
                 // drawn; the note reads without it.
                 let figures: Vec<(String, openui_lang::Node)> = content["pictures"]
@@ -2695,36 +2847,37 @@ impl AppView {
                     })
                     .collect();
                 let info = &content["info"];
-                this.set_page(
-                    Page::Note {
-                        path: info["path"].as_str().unwrap_or("").to_string(),
-                        text: content["text"].as_str().unwrap_or("").to_string(),
-                        sources: info["sources"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|s| s.as_str().map(str::to_string))
-                            .collect(),
-                        state: info["state"].as_str().unwrap_or("").to_string(),
-                        figures,
-                        explanation: info["explanation"].as_str().unwrap_or("").to_string(),
-                        explained_by: info["explained_by"].as_str().unwrap_or("").to_string(),
-                        behind: info["behind"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|reason| reason.as_str().map(str::to_string))
-                            .collect(),
-                        agent,
-                        left_out: content["left_out"]
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter_map(|heading| heading.as_str().map(str::to_string))
-                            .collect(),
-                    },
-                    remember,
-                );
+                let page = Page::Note {
+                    path: info["path"].as_str().unwrap_or("").to_string(),
+                    text: content["text"].as_str().unwrap_or("").to_string(),
+                    sources: info["sources"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|s| s.as_str().map(str::to_string))
+                        .collect(),
+                    state: info["state"].as_str().unwrap_or("").to_string(),
+                    figures,
+                    explanation: info["explanation"].as_str().unwrap_or("").to_string(),
+                    explained_by: info["explained_by"].as_str().unwrap_or("").to_string(),
+                    behind: info["behind"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|reason| reason.as_str().map(str::to_string))
+                        .collect(),
+                    agent,
+                    left_out: content["left_out"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|heading| heading.as_str().map(str::to_string))
+                        .collect(),
+                };
+                match place {
+                    Place::Here { remember } => this.set_page(page, remember),
+                    Place::NewTab => this.show_in_new_tab(page, cx),
+                }
             },
         );
     }
@@ -2795,6 +2948,232 @@ impl AppView {
             window.focus(&self.focus, cx);
         }
         cx.notify();
+    }
+
+    /// The rows of the menu a right-click on `target` opens, each with what
+    /// it does and its icon.
+    fn context_items(
+        &self,
+        target: &MenuTarget,
+        cx: &App,
+    ) -> Vec<(ContextCommand, &'static str, icons::Glyph)> {
+        let mut items = Vec::new();
+        match target {
+            MenuTarget::Tab(index) => {
+                items.extend(
+                    tab_ops::offered(self.tabs.len(), *index)
+                        .into_iter()
+                        .map(|close| (ContextCommand::Close(close), close.label(), icons::CLOSE)),
+                );
+                if let Some(Page::Note { path, .. }) = self.tab_page(*index) {
+                    items.push((
+                        ContextCommand::Reveal(path.clone()),
+                        "Reveal in sidebar",
+                        icons::SIDEBAR,
+                    ));
+                    if self.note_file(path).is_some() {
+                        items.push((
+                            ContextCommand::CopyPath(path.clone()),
+                            "Copy note path",
+                            icons::COPY,
+                        ));
+                    }
+                }
+            }
+            MenuTarget::Note(path) => {
+                if tab_prefs::tabs(cx) {
+                    items.push((
+                        ContextCommand::OpenInNewTab(path.clone()),
+                        "Open in new tab",
+                        icons::EXTERNAL,
+                    ));
+                }
+                if self.note_file(path).is_some() {
+                    items.push((
+                        ContextCommand::CopyPath(path.clone()),
+                        "Copy note path",
+                        icons::COPY,
+                    ));
+                }
+            }
+        }
+        items
+    }
+
+    /// Open the menu of a tab or of a sidebar note at the pointer. A target
+    /// with nothing to offer opens none.
+    fn open_context_menu(
+        &mut self,
+        target: MenuTarget,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_theme_menu(false, window, cx);
+        if self.palette_open {
+            self.toggle_palette(window, cx);
+        }
+        if self.context_items(&target, cx).is_empty() {
+            self.close_context_menu(true, window, cx);
+            return;
+        }
+        self.context_menu = Some(ContextMenu {
+            target,
+            at,
+            highlight: 0,
+        });
+        window.focus(&self.context_menu_focus, cx);
+        cx.notify();
+    }
+
+    /// Close the right-click menu. `restore_focus` is false when the focus
+    /// has already gone where it should be.
+    fn close_context_menu(
+        &mut self,
+        restore_focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.context_menu.take().is_none() {
+            return;
+        }
+        if restore_focus {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    fn run_context_command(
+        &mut self,
+        command: ContextCommand,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_context_menu(true, window, cx);
+        match command {
+            ContextCommand::Close(close) => self.close_tabs(close, cx),
+            ContextCommand::OpenInNewTab(path) => self.open_note_for_user(path, true, cx),
+            ContextCommand::Reveal(path) => self.reveal_note(path, cx),
+            ContextCommand::CopyPath(path) => {
+                if let Some(file) = self.note_file(&path) {
+                    let file = file.to_string_lossy();
+                    let file = file.strip_prefix(r"\\?\").unwrap_or(&file);
+                    cx.write_to_clipboard(ClipboardItem::new_string(file.to_string()));
+                }
+            }
+        }
+    }
+
+    /// A press of the right or the middle button on the sidebar's row of
+    /// the note at `path`: its menu, or the note in a new tab.
+    fn note_secondary(
+        &mut self,
+        path: String,
+        button: MouseButton,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match button {
+            MouseButton::Right => self.open_context_menu(MenuTarget::Note(path), at, window, cx),
+            MouseButton::Middle if tab_prefs::tabs(cx) => self.open_note_for_user(path, true, cx),
+            _ => {}
+        }
+    }
+
+    /// A press of the right or the middle button on the tab at `index`: its
+    /// menu, or the tab closed.
+    fn tab_secondary(
+        &mut self,
+        index: usize,
+        button: MouseButton,
+        at: Point<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match button {
+            MouseButton::Right => self.open_context_menu(MenuTarget::Tab(index), at, window, cx),
+            MouseButton::Middle => self.close_tabs(tab_ops::Close::One(index), cx),
+            _ => {}
+        }
+    }
+
+    /// Show the note at `path` in the sidebar: open the sidebar and the
+    /// note's folder, and scroll the list to it.
+    fn reveal_note(&mut self, path: String, cx: &mut Context<Self>) {
+        if !self.sidebar_open {
+            self.toggle_pane(Pane::Sidebar, cx);
+        }
+        self.reveal = Some(Reveal {
+            path,
+            row: list::Placed::default(),
+            until: std::time::Instant::now() + REVEAL_FOLLOW + mui::motion::scaled(REVEAL_FOLLOW),
+        });
+        cx.notify();
+    }
+
+    /// Scroll the sidebar to the row being revealed, in the next frame,
+    /// once the row has been drawn; and again in each frame while its folder
+    /// opens, which moves it.
+    fn follow_reveal(&mut self, window: &mut Window) {
+        let Some(reveal) = &self.reveal else {
+            return;
+        };
+        if std::time::Instant::now() > reveal.until {
+            self.reveal = None;
+            return;
+        }
+        let (row, handle) = (reveal.row.clone(), self.sidebar_scroll.clone());
+        window.on_next_frame(move |window, _| {
+            if let Some(row) = row.get() {
+                handle.set_offset(list::offset_to_show(handle.offset(), handle.bounds(), row));
+            }
+            // Nothing else asks for this frame: without it GPUI would skip
+            // it, and the list would show its old place.
+            window.refresh();
+        });
+    }
+
+    /// The open right-click menu.
+    fn context_menu_view(&self, cx: &mut Context<Self>) -> Option<Menu> {
+        let menu = self.context_menu.as_ref()?;
+        let items = self.context_items(&menu.target, cx);
+        let anchor = Bounds::new(menu.at, size(px(0.), px(0.)));
+        let rows: Vec<MenuItem> = items
+            .iter()
+            .map(|(_, label, icon)| MenuItem::new(*label).icon(*icon))
+            .collect();
+        let commands: Vec<ContextCommand> =
+            items.into_iter().map(|(command, _, _)| command).collect();
+        let (select, highlight, close) = (
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+        );
+        Some(
+            Menu::new("context-menu", anchor, &self.context_menu_focus)
+                .width(CONTEXT_MENU_WIDTH)
+                .align(mui::menu::Align::Start)
+                .highlighted(menu.highlight)
+                .section(MenuSection::plain().items(rows))
+                .on_select(move |index, window, cx| {
+                    if let Some(command) = commands.get(index).cloned() {
+                        _ = select
+                            .update(cx, |this, cx| this.run_context_command(command, window, cx));
+                    }
+                })
+                .on_highlight(move |index, _, cx| {
+                    _ = highlight.update(cx, |this, cx| {
+                        if let Some(menu) = this.context_menu.as_mut() {
+                            menu.highlight = index;
+                            cx.notify();
+                        }
+                    });
+                })
+                .on_close(move |window, cx| {
+                    _ = close.update(cx, |this, cx| this.close_context_menu(true, window, cx));
+                }),
+        )
     }
 
     /// Apply a theme and remember it. An open theme menu stays open, so that
@@ -2962,7 +3341,8 @@ impl AppView {
     /// Follow a link clicked in a note.
     fn follow_link(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(target) = url.strip_prefix(NOTE_SCHEME) {
-            self.run_action(&Action::Note(markdown::decode(target)), cx);
+            let new_tab = window.modifiers().control;
+            self.run_action_with(&Action::Note(markdown::decode(target)), new_tab, cx);
         } else if let Some(index) = url.strip_prefix(markdown::OPEN_DIAGRAM_SCHEME) {
             if let Ok(index) = index.parse() {
                 self.open_diagram(index, window, cx);
@@ -3080,8 +3460,14 @@ impl AppView {
 
     /// Do what a link, row or button of a generated page asks for.
     fn run_action(&mut self, action: &Action, cx: &mut Context<Self>) {
+        self.run_action_with(action, false, cx);
+    }
+
+    /// Do what a link, row or button asks for; a note goes to a tab of its
+    /// own when `new_tab`, as on a Ctrl+click.
+    fn run_action_with(&mut self, action: &Action, new_tab: bool, cx: &mut Context<Self>) {
         match action {
-            Action::Note(target) => self.open_note(target.clone(), true, cx),
+            Action::Note(target) => self.open_note_for_user(target.clone(), new_tab, cx),
             Action::Symbol(qualified) => self.open_symbol(qualified.clone(), cx),
             Action::File(path) => self.open_file(path.clone(), cx),
             Action::Motion(pref) => {
@@ -3120,6 +3506,23 @@ impl AppView {
             Action::Backdrop(on) => {
                 backdrop::set_shown(*on, cx);
                 log::info!("background graph: {}", if *on { "on" } else { "off" });
+                cx.notify();
+            }
+            Action::TabsOn(on) => {
+                tab_prefs::set_tabs(*on, cx);
+                log::info!("tabs: {}", if *on { "on" } else { "off" });
+                // One view is left: the tab that shows.
+                if !*on {
+                    self.close_tabs(tab_ops::Close::Others(self.active_tab), cx);
+                }
+                cx.notify();
+            }
+            Action::NotesInNewTab(on) => {
+                tab_prefs::set_new_tab(*on, cx);
+                log::info!(
+                    "open notes in a new tab: {}",
+                    if *on { "on" } else { "off" }
+                );
                 cx.notify();
             }
             Action::ErrorReports(on) => {
@@ -3180,8 +3583,19 @@ impl AppView {
                 .or_default()
                 .push(note);
         }
+        // The row whose menu is open is marked while it is.
+        let menu_on = match self.context_menu.as_ref().map(|menu| &menu.target) {
+            Some(MenuTarget::Note(path)) => path.as_str(),
+            _ => "",
+        };
+        let reveal = self.reveal.as_ref();
         let item = |note: &NoteInfo, level: usize, cx: &mut Context<Self>| {
             let path = note.path.clone();
+            let pressed = path.clone();
+            let view = cx.entity().downgrade();
+            let placed = reveal
+                .filter(|reveal| reveal.path == note.path)
+                .map(|reveal| reveal.row.clone());
             let label = match note.title.as_str() {
                 "_index" => "Overview".to_string(),
                 WIKI_MAP => "Wiki map".to_string(),
@@ -3197,7 +3611,17 @@ impl AppView {
                 .tint(icons::tint(icon, cx))
                 .level(level)
                 .selected(note.path == current)
-                .on_click(cx.listener(move |this, _, _, cx| this.open_note(path.clone(), true, cx)))
+                .highlighted(!menu_on.is_empty() && note.path == menu_on)
+                .placed(placed)
+                // Ctrl+click opens the note in a tab of its own.
+                .on_click(cx.listener(move |this, event: &ClickEvent, _, cx| {
+                    this.open_note_for_user(path.clone(), event.modifiers().control, cx)
+                }))
+                .on_secondary(move |button, at, window, cx| {
+                    _ = view.update(cx, |this, cx| {
+                        this.note_secondary(pressed.clone(), button, at, window, cx)
+                    });
+                })
         };
 
         let mut list = v_flex().pb_2();
@@ -3218,6 +3642,8 @@ impl AppView {
                     }
                 } else {
                     let open = notes.iter().any(|n| n.path == current);
+                    let revealed =
+                        reveal.is_some_and(|reveal| notes.iter().any(|n| n.path == reveal.path));
                     let rows: Vec<ListItemButton> = notes.iter().map(|n| item(n, 1, cx)).collect();
                     list = list.child(
                         ListFolder::new(
@@ -3228,6 +3654,7 @@ impl AppView {
                         )
                         .tint(icons::tint(icons::FOLDER, cx))
                         .open_at_first(open)
+                        .reveal(revealed)
                         .rows(rows),
                     );
                 }
@@ -3257,13 +3684,22 @@ impl AppView {
                         ),
                     ),
             )
+            // Scrolled through a handle of the view's own, so that a note can
+            // be revealed in it (`reveal_note`).
             .child(
                 div()
-                    .id("vault")
                     .flex_1()
                     .min_h_0()
-                    .overflow_y_scrollbar()
-                    .child(list),
+                    .relative()
+                    .child(
+                        div()
+                            .id("vault")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.sidebar_scroll)
+                            .child(list),
+                    )
+                    .vertical_scrollbar(&self.sidebar_scroll),
             )
             // The way into the settings stays in view under the notes,
             // however long their list is.
@@ -3569,13 +4005,13 @@ impl AppView {
                         .small()
                         .on_click(cx.listener(move |this, _, _, cx| {
                             cx.stop_propagation();
-                            this.close_tab(index, cx);
+                            this.close_tabs(tab_ops::Close::One(index), cx);
                         })),
                 )
             })
         });
         let tabs: Vec<TabItem> = tabs.collect();
-        let view = cx.entity().downgrade();
+        let (view, pressed) = (cx.entity().downgrade(), cx.entity().downgrade());
         h_flex()
             .w_full()
             .px_3()
@@ -3591,6 +4027,11 @@ impl AppView {
                         .selected(self.active_tab)
                         .on_select(move |index, _, cx| {
                             _ = view.update(cx, |this, cx| this.activate_tab(index, cx));
+                        })
+                        .on_secondary(move |index, button, at, window, cx| {
+                            _ = pressed.update(cx, |this, cx| {
+                                this.tab_secondary(index, button, at, window, cx)
+                            });
                         }),
                 ),
             )
@@ -4946,6 +5387,7 @@ impl Render for AppView {
             self.zoom_seen = zoom;
             self.close_theme_menu(true, window, cx);
             self.close_settings_menu(window, cx);
+            self.close_context_menu(true, window, cx);
         }
         // Read once so unused-field lints stay honest about what the UI shows.
         let _ = self.notes.iter().filter(|n| n.state == "stale").count();
@@ -4993,7 +5435,9 @@ impl Render for AppView {
                 cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)),
             )
             .on_action(cx.listener(|this, _: &NewTab, _, cx| this.new_tab(cx)))
-            .on_action(cx.listener(|this, _: &CloseTab, _, cx| this.close_tab(this.active_tab, cx)))
+            .on_action(cx.listener(|this, _: &CloseTab, _, cx| {
+                this.close_tabs(tab_ops::Close::One(this.active_tab), cx)
+            }))
             .on_action(cx.listener(|this, _: &NextTab, _, cx| this.next_tab(cx)))
             .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
             .on_action(cx.listener(|this, _: &SaveNote, _, cx| this.save_edit(cx)))
@@ -5050,6 +5494,7 @@ impl Render for AppView {
             })
             // The list of a select of the Settings page, while one is open.
             .children(self.settings_menu_view(cx))
+            .children(self.context_menu_view(cx))
             .children(self.suggestions_view(cx))
             .children(diagram_viewer)
             .children(toasts)
@@ -5057,6 +5502,9 @@ impl Render for AppView {
             .child(div().h(TITLE_BAR_HEIGHT).w_full().flex_none())
             .child(glass::hairline(cx))
             .child(self.body(window, cx));
+        // The note to reveal has its folder open in this frame; the list
+        // scrolls to its row once the frame has placed it.
+        self.follow_reveal(window);
         // With no generated page in this frame, the shell has none to draw.
         if !self.page_placed.get() {
             self.page_slot.set(None, cx);
@@ -5345,7 +5793,8 @@ impl AppView {
                     .when(self.busy.is_some(), |column| {
                         column.child(feedback::linear_progress("busy", cx))
                     })
-                    .child(self.tab_bar(cx))
+                    // With tabs turned off there is one view, and no strip.
+                    .when(tab_prefs::tabs(cx), |column| column.child(self.tab_bar(cx)))
                     .children(self.reconnect_banner(cx))
                     .child(
                         h_flex()
@@ -5416,6 +5865,7 @@ fn main() {
         gpui_kit::init(cx);
         motion::init(cx);
         backdrop::init(cx);
+        tab_prefs::init(cx);
         fonts::register(cx);
         themes::init(cx);
         // After the themes: zoom takes the theme's sizes as they are now as

@@ -98,6 +98,10 @@ pub struct Model<'a> {
     pub open_last: bool,
     /// Whether the backdrop and its sky of notes are drawn.
     pub backdrop: bool,
+    /// Whether the app shows tabs.
+    pub tabs: bool,
+    /// Whether the switch "Open notes in a new tab" is on.
+    pub new_tab: bool,
     /// Whether coding agents explain waiting notes at the start of a session.
     pub auto_explain: bool,
     /// How many notes they explain in a session.
@@ -206,8 +210,35 @@ fn appearance(model: &Model) -> Vec<Block> {
             ],
         ),
         zoom_card(model),
+        tabs_card(model),
         startup(model),
     ]
+}
+
+/// Whether the app has tabs, and where a note the user opens goes.
+fn tabs_card(model: &Model) -> Block {
+    card(
+        "Tabs",
+        vec![
+            Block::Switch {
+                label: "Tabs".into(),
+                help: Some("Off, one view that every note opens in".into()),
+                on: model.tabs,
+                action: Action::TabsOn(!model.tabs),
+                locked: None,
+            },
+            Block::Switch {
+                label: "Open notes in a new tab".into(),
+                help: Some("A note already open switches to its tab".into()),
+                on: model.tabs && model.new_tab,
+                action: Action::NotesInNewTab(!model.new_tab),
+                locked: (!model.tabs).then(|| "Turn tabs on first".into()),
+            },
+            Block::Text(vec![text(
+                "Ctrl+click or middle-click a note to open it in a new tab; middle-click a tab to close it. Right-click a tab for more.",
+            )]),
+        ],
+    )
 }
 
 /// How large the whole app is drawn.
@@ -1201,6 +1232,8 @@ mod tests {
         autostart: Option<bool>,
         open_last: bool,
         backdrop: bool,
+        tabs: bool,
+        new_tab: bool,
         auto_explain: bool,
         auto_explain_count: Count,
         log_level_locked: bool,
@@ -1232,6 +1265,8 @@ mod tests {
                 autostart: Some(false),
                 open_last: false,
                 backdrop: true,
+                tabs: true,
+                new_tab: false,
                 auto_explain: true,
                 auto_explain_count: auto_explain::DEFAULT,
                 log_level_locked: false,
@@ -1269,6 +1304,8 @@ mod tests {
                     autostart: self.autostart,
                     open_last: self.open_last,
                     backdrop: self.backdrop,
+                    tabs: self.tabs,
+                    new_tab: self.new_tab,
                     auto_explain: self.auto_explain,
                     auto_explain_count: self.auto_explain_count,
                     log_level: "info",
@@ -1377,6 +1414,37 @@ mod tests {
         let off = fixture.page(Category::Appearance);
         assert!(off.words().contains("Background graph: off"));
         assert!(off.actions().contains(&Action::Backdrop(true)));
+    }
+
+    #[test]
+    fn tabs_can_be_turned_off_and_notes_sent_to_new_tabs() {
+        let mut fixture = Fixture::new();
+        let start = fixture.page(Category::Appearance);
+        let words = start.words();
+        assert!(words.contains("Tabs: on"), "{words}");
+        assert!(words.contains("Open notes in a new tab: off"), "{words}");
+        assert!(start.actions().contains(&Action::TabsOn(false)));
+        assert!(start.actions().contains(&Action::NotesInNewTab(true)));
+
+        fixture.new_tab = true;
+        let new_tab = fixture.page(Category::Appearance);
+        assert!(new_tab.words().contains("Open notes in a new tab: on"));
+        assert!(new_tab.actions().contains(&Action::NotesInNewTab(false)));
+
+        // Without tabs there is no new tab to open: the switch is off and
+        // locked, whatever it was.
+        fixture.tabs = false;
+        let off = fixture.page(Category::Appearance);
+        let words = off.words();
+        assert!(words.contains("Tabs: off"), "{words}");
+        assert!(words.contains("Open notes in a new tab: off"), "{words}");
+        assert!(words.contains("Turn tabs on first"), "{words}");
+        assert!(off.actions().contains(&Action::TabsOn(true)));
+        assert!(
+            !off.actions()
+                .iter()
+                .any(|action| matches!(action, Action::NotesInNewTab(_)))
+        );
     }
 
     #[test]

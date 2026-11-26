@@ -420,10 +420,22 @@ impl RenderOnce for Menu {
             .size_full()
             .opacity(self.shown.clamp(0.0, 1.0))
             .when(open, |scrim| {
+                let (right, middle) = (on_close.clone(), on_close.clone());
+                // Any button pressed outside the menu closes it.
                 scrim
                     .occlude()
                     .on_mouse_down(MouseButton::Left, move |_, window, cx| {
                         if let Some(on_close) = &on_close {
+                            on_close(window, cx);
+                        }
+                    })
+                    .on_mouse_down(MouseButton::Right, move |_, window, cx| {
+                        if let Some(on_close) = &right {
+                            on_close(window, cx);
+                        }
+                    })
+                    .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
+                        if let Some(on_close) = &middle {
                             on_close(window, cx);
                         }
                     })

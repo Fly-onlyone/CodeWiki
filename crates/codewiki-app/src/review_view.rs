@@ -241,7 +241,7 @@ impl AppView {
         if let Page::Note { path, agent, .. } = &self.page {
             let (path, agent) = (path.clone(), *agent);
             log::info!("loading {path} again: an approval wrote it");
-            self.open_note_as(path, false, agent, cx);
+            self.open_note_as(path, crate::Place::Here { remember: false }, agent, cx);
         }
     }
 

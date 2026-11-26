@@ -8,9 +8,11 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Builds the lists of the app: the sidebar, menus, the command palette and settings pages. It gives three pieces: `ListItemButton`, a pressable row; `subheader`, a heading over a group of rows; and `ListFolder`, a row that opens and closes the rows under it.
+Builds the lists of the app: the sidebar's note tree, menus, the command palette, the review queue, the settings pages and the search box's suggestions. It gives three pieces: `ListItemButton`, a pressable row; `subheader`, a heading over a group of rows; and `ListFolder`, a row that opens and closes the rows under it.
 
-Row size and spacing follow MUI's dense list. How a row answers the pointer follows TradingAgent's sidebar, at the strengths in [[Interaction Module]]. Under the pointer a row fills, shifts right and its icon grows. A selected row has a stronger fill, a semibold label in a lightened accent, and a glowing bar on its left edge that grows and slides in. A row can carry its own icon hue, which it keeps in every state.
+Row size and spacing follow MUI's dense list. A row can hold a second, quieter line under its label (`secondary`), which makes it taller. Its label can be set in the code font. It can also hold a control at its start (`leading`), such as the review queue's checkbox, which takes its own clicks.
+
+How a row answers the pointer follows TradingAgent's sidebar, at the strengths in [[Interaction Module]]. Under the pointer a row fills, shifts right and its icon grows. Pressed, it fills more and gives back part of its shift. A selected row has a stronger fill, a semibold label in the theme's link color, and a glowing bar on its left edge that grows and slides in. A row can carry its own icon hue, which it keeps in every state.
 
 ## Source
 
@@ -24,7 +26,7 @@ Row size and spacing follow MUI's dense list. How a row answers the pointer foll
 - Hover: a spring runs from 0 to 1 and drives the right shift, the icon growth and the icon lift. While pressed, its target drops by the recoil share, so the row gives part of the shift back.
 - Bar: a second spring, with the knob's `bar_spring`, runs to 1 when selected. `bar_place` turns its value into the bar's left edge and height, so the bar grows from its middle while it slides in. The bar is drawn only while the spring is above 0.001, and its three-layer glow scales with the spring.
 
-`icon_color` picks the icon color. A tinted icon keeps its hue and is only lightened by `lift`. An untinted icon is muted at rest, primary when hovered, and the selected accent when selected. A tinted icon of a selected row also gets a glow, drawn as the shadow of a clear disc behind it.
+The selected label's color is the theme's link color put through `lift` by `label_lift`. `icon_color` picks the icon color. A tinted icon keeps its hue and is only lightened by `lift`. An untinted icon is muted at rest, primary when hovered, and the selected label's color when selected. A tinted icon of a selected row also gets a glow, drawn as the shadow of a clear disc behind it.
 
 `ListFolder` keeps its open state under its id and eases a `shown` value. That value turns the arrow half a turn and drives `MotionReveal` for the rows. Closed and at rest, the rows are not built.
 
@@ -73,7 +75,8 @@ And 4 more private items with no comment.
 - The bar spring starts at its target, so a row that first appears selected shows its bar at once, with no slide.
 - The bar spring may overshoot. `bar_place` clamps the height to 0..1 of the bar height, so the bar never goes negative or taller than the row.
 - The bar uses the theme's tertiary color, not primary, so it stands out from the primary fill. The row's fill and ripple stay primary.
-- `highlighted` draws the row as hovered but does not trigger the press or ripple. Menus use it for the key-driven row.
+- On a light theme every lift is a darkening. The selected label and a tinted icon get darker, not lighter, so they still read on the row's fill. Row fills keep their dark-theme strength in both modes.
+- `highlighted` draws the row as hovered but does not trigger the press or ripple. Menus and the autocomplete list use it for the key-driven row.
 - A `ListFolder` is open only at first as `open_at_first` says. After that the user's state wins, even if the code asks again.
 - Row ids must be unique and stable: the springs and transitions are keyed on them.
 

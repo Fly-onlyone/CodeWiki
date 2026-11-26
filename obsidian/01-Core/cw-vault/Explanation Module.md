@@ -20,8 +20,8 @@ It works in two directions. When an agent sends its text, the text goes into the
 
 `weave` takes a base note, the agent's sections and the note's kind. The base depends on the caller:
 
-- `submit` in [[Explanations Module]] weaves into the note on disk, after it has checked each section.
-- `weave_kept` in [[Generate Module]] weaves into the fresh draft that rules just wrote, when a sync finds that the code under an explained note changed. For a note its owner edited, the same call builds the text of the proposal, and also keeps sections such as `Gotchas` that rules never write.
+- `submit` in [[Explanations Module]] weaves into the note on disk, after it has checked each section, the pictures and the lint rules. For a note its owner edited, the same text becomes a proposal.
+- `weave_kept` in [[Generate Module]] weaves into the fresh draft that rules just wrote, when a sync finds that the code under an explained note changed. It also keeps sections such as `Gotchas` that rules never write.
 
 Inside `weave`:
 

@@ -8,11 +8,7 @@ tags: [core, cw-server, module]
 
 ## What it does
 
-A job embeds the documents of every repository that still wait for a vector of the embedder in use, whichever embedder that is. An update of a wiki leaves it what does not fit the inline budget, a backend starts one for what waits, and `POST /v1/embed/reembed` starts one by hand. It runs in the background and reports how far it is in `GET /v1/embed/job`. Nothing is kept on disk about it: a backend that starts looks at the indexes instead, and goes on where documents still wait for a vector.
-
-A job whose embedder fails ends with the reason, and the documents keep waiting. Nothing tries again by itself: the next update or reembed does.
-
-Locks: embedding takes minutes and holds none. The write lock is taken for each batch's write alone, so a note can be saved and a wiki updated while a job runs.
+Semantic search needs a vector for each document. This module builds them in the background, so a wiki update does not wait for a slow model. One job at a time embeds every repository that still lacks vectors for the embedder in use. Three things start a job: the end of a wiki update, the start of the backend, and `POST /v1/embed/reembed`. Progress shows in `GET /v1/embed/job`.
 
 ## Source
 
@@ -20,12 +16,13 @@ Locks: embedding takes minutes and holds none. The write lock is taken for each 
 
 ## How it works
 
-1. `serve` in [[cw-server]] and `test_embedder` in [[Settings Module (cw-server)]] call `resume`. `resume` calls `load` in [[Repos Module]], then `open_existing_index_in` in [[Service Module]], then `behind` in [[Semantic Module]], then `start`.
-2. `Jobs::begin` and `Jobs::change` in [[Jobs (cw-server)]], and 2 more, call `lock`.
-3. `reembed` in [[Api Module]] calls `start`. `start` calls `run`. `run` calls `embed_all`.
-4. `run_update` in [[Api Module]] calls `after_update`. `after_update` calls `open_existing_index_in` in [[Service Module]], then `behind` in [[Semantic Module]], then `start`.
+`start` asks the host for the embedder, takes the one place with `Jobs::begin` and spawns `run` on a blocking task. `run` calls `embed_all`, which makes up to `PASSES` passes over the registered repositories whose folder exists. `embed_repo` skips a repository that is not indexed or not behind. Otherwise it plans a `Run`, then loops: embed a batch with no lock held, take the write lock, and store the batch.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Each `after_update` raises the `updates` counter. If the counter moved while a batch was embedded, the batch is dropped and the run starts over from the index as it is now. A new pass starts when updates ran meanwhile.
+
+Failures split in two. An index that cannot be read puts that repository in `skipped` and the job goes on. A failing embedder ends the job as failed, because it would fail for the next repository too.
+
+`after_update` and `resume` start a job only when documents wait and none runs. `resume` runs at backend start and after a successful settings Test.
 
 ## Items
 
@@ -60,6 +57,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Api Module]] — from `reembed`, `run_update`
 - [[cw-server]] — from `serve`
 - [[Settings Module (cw-server)]] — from `test_embedder`
+
+## Gotchas
+
+- Nothing is saved about a job. A restart looks at the indexes and goes on from there.
+- Nothing retries a failed job. The next update, reembed or restart does.
+- When the backend is closing, `run` returns without setting a final phase.
+- With semantic search off, the job finishes at once with a note.
+- Only the write step takes the write lock, so notes can be saved while a job runs.
 
 ## See also
 

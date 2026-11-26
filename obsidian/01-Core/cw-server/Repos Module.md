@@ -6,18 +6,17 @@ tags: [core, cw-server, module]
 
 > The list of repositories this backend manages, stored as `repos.json`.
 
+## What it does
+
+Stores the list of repositories the backend manages, as `repos.json` in the data folder. Each entry has an id, a display name and the absolute path on the backend's machine. The API, the git webhook, the workspace view and the embedding job all read it.
+
 ## Source
 
 - `crates/cw-server/src/repos.rs` — module `cw_server::repos`
 
 ## How it works
 
-1. `git_hook` and `list_repos` in [[Api Module]], and 5 more, call `load`. `load` calls `file`, then `Error::external`, then `Error::io` (both in [[Error]]).
-2. `add_repo` in [[Api Module]] calls `add`. `add` calls `Error::invalid` in [[Error]], then `load`, then `repo_id` in [[Paths Module]], then `save`. `save` calls `Error::io`, then `Error::external` (both in [[Error]]), then `file`.
-3. `remove_repo` in [[Api Module]] calls `remove`. `remove` calls `load`, then `Error::not_found` in [[Error]], then `save`.
-4. `Repo::open` and `get_repo` in [[Api Module]], and 1 more, call `get`. `get` calls `load`, then `Error::not_found` in [[Error]].
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`load` reads and parses the file. A missing file gives an empty list. `add` turns the path into a canonical folder path, checks that it is a folder, and builds the id with `repo_id`. If that id is known, it returns the old entry. Otherwise it adds an entry named after the folder, sorts by lowercase name and saves. `remove` drops an entry by id and fails with not found if there is none. `get` finds one entry. `save` writes pretty JSON with a final newline.
 
 ## Items
 
@@ -40,6 +39,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Api Module]] — from `ListedRepo`, `add_repo`, `get_repo`, `git_hook`
 - [[Workspace Module (cw-server)]] — from `open`, `repo_contracts`, `summarize`, `workspace`
 - [[Embed Job Module]] — from `embed_all`, `embed_repo`, `resume`
+
+## Gotchas
+
+- Callers that change the list must hold the write lock. The module itself does no locking, and `save` rewrites the whole file.
+- `remove` forgets the entry only. The vault and the source stay.
+- On Windows the `\\?\` prefix of canonical paths is cut off, because tools reject it.
+- A corrupt `repos.json` makes `load` fail with an error. Only a missing file gives an empty list.
+- The same folder added by a different path spelling gives the same id and the same entry.
 
 ## See also
 

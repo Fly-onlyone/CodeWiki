@@ -8,11 +8,9 @@ tags: [core, cw-server]
 
 ## What it does
 
-The server exposes data only; it serves no web frontend. Every route except `/v1/health` requires `Authorization: Bearer <token>`. `/v1/hooks/git` is the other exception: a git host cannot send the token, so it signs its request with the webhook secret instead.
+cw-server is the HTTP API of the CodeWiki backend. It serves data only, with no web frontend. The app, the MCP bridge and git hosts talk to it. Every route except `/v1/health` needs `Authorization: Bearer <token>`. `/v1/hooks/git` is signed with the webhook secret instead, because a git host cannot send the token.
 
-`POST /v1/shutdown` stops the server. The desktop app calls it when the user quits it, and before an update replaces the programs, so the old backend does not keep serving.
-
-`GET /v1/status` says what the backend is doing: the wiki updates that are running and when an agent's MCP bridge last called (`activity`), and how many proposals wait in each repository (`pending`). Its `notes_rev` is a counter that moves whenever a vault or a claim on a waiting note changes, so a client knows when to list the waiting notes again.
+`POST /v1/shutdown` stops the server; the app calls it on quit and before an update replaces the programs. `GET /v1/status` reports running updates, the last bridge call, waiting proposals per repository, and `notes_rev`. That counter moves when a vault or a claim changes, so clients know when to list waiting notes again.
 
 ## Source
 
@@ -21,12 +19,11 @@ The server exposes data only; it serves no web frontend. Every route except `/v1
 
 ## How it works
 
-Builds a library.
+`serve` binds the address, tells the caller the bound port through `on_bound` (useful for port 0), and builds the shared state with `state`. It then points semantic search at the embedder named in the settings, sets a one second inline embedding budget, and starts `embed_job::resume` in the background. At last it runs axum with `api::routes`.
 
-1. `run` in [[Serve Module]] calls `Host::default`.
-2. `run` in [[Serve Module]] calls `serve`. `serve` calls `Error::external` in [[Error]], then `state`, then `configure` in [[Semantic Module]], then `resolved` in [[Settings Module (cw-server)]], then `set_inline_budget` in [[Semantic Module]], then `resume` in [[Embed Job Module]], and 1 more. `state` calls `Jobs::default` in [[Jobs (cw-server)]].
+The stop future ends on the caller's `shutdown` future or on the `stop` notify of `POST /v1/shutdown`. It also closes the embedding job, so a background job does not keep the process alive. Running requests finish first.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`router` builds the same router without a socket, for tests. `ServerConfig` holds the data folder, token, optional webhook secret, whether settings are writable, an environment reader and a `Host`. Tests replace `Host` and the reader, so no model server is called. See [[Api Module]] for routes and [[Inner]] for shared state.
 
 ## Items
 
@@ -68,6 +65,12 @@ Defined at the crate root:
 
 - [[Serve Module]] — from `run`
 - [[Inner]] — from `Inner`
+
+## Gotchas
+
+- `settings_writable` is false for a server that listens beyond this machine. Otherwise a token holder could point a provider address at their own host and be sent the API key.
+- With no webhook secret the git hook route answers 404.
+- Embedding inside an update is limited to about one second. The rest runs in the background, so the first search after an update may find fewer results by meaning.
 
 ## See also
 

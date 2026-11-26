@@ -6,17 +6,17 @@ tags: [core, cw-server]
 
 > `Activity` struct defined in `cw_server::activity` with 4 methods.
 
+## What it does
+
+`Activity` is the backend's in-memory status board. Other parts of the server tell it when a bridge calls, when notes change, and when an update starts. `GET /v1/status` reads it through `report`.
+
 ## Source
 
 - `crates/cw-server/src/activity.rs` — definition of `Activity`
 
 ## How it works
 
-What the functions of this type call:
-
-1. `bridge_called` calls `now` in [[Activity Module]].
-2. `begin_update` calls `now` in [[Activity Module]].
-3. `report` calls `now` in [[Activity Module]].
+Three kinds of state sit inside. `last_bridge_call` is an atomic time stamp, set by `bridge_called`. `notes` is an atomic counter that `notes_changed` raises by one. A client that sees the number move asks for the notes again. `updates` is a mutex-guarded list, filled by `begin_update`, which returns a guard. Dropping the guard removes the entry. `report` turns all of it into JSON with the version, the current time, the running updates, the last bridge call and `notes_rev`. See [[Activity Module]] for the guard and the clock helper.
 
 ## Items
 
@@ -39,6 +39,12 @@ Members:
 - [[Api Module]] — from `approve_proposal`, `backend_status`, `list_explanations`, `reject_proposal`
 - [[Activity Module]] — from `UpdateGuard`
 - [[Inner]] — from `Inner`
+
+## Gotchas
+
+- Counters use relaxed atomic ordering. They are hints for clients, not a lock.
+- `report` sends `now` so clients compute ages from the server clock, not their own.
+- State is lost on restart.
 
 ## See also
 

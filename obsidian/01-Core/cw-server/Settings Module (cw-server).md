@@ -8,7 +8,7 @@ tags: [core, cw-server, module]
 
 ## What it does
 
-A description never holds a secret: a key is reported as unset, saved, given by the environment, or unreadable, with the last characters of a saved one. A setting whose environment variable is set cannot be changed here; the variable wins, so a change would have no effect.
+Backs the settings routes. It describes the settings in effect, changes the saved ones, tests the chosen embedder and lists the models its server offers. A description never holds a secret. A key shows as unset, saved, given by the environment, or unreadable, with the last characters of a saved one. A setting whose environment variable is set cannot be changed here, because the variable wins.
 
 ## Source
 
@@ -16,13 +16,11 @@ A description never holds a secret: a key is reported as unset, saved, given by 
 
 ## How it works
 
-1. `serve` in [[cw-server]] calls `resolved`. `resolved` calls `Resolved::from_parts` in [[Resolved]], then `load` in [[Settings Module (cw-core)]].
-2. `read_settings` in [[Api Module]] calls `describe`. `describe` calls `resolved`, then `available` in [[Secret Module]], then `selected`, then `from_settings` in [[cw-embed]]. `selected` calls `message`.
-3. `test_embedder` in [[Api Module]] calls `test_embedder`. `test_embedder` calls `from_settings` in [[cw-embed]], then `resolved`, then `test_result`, then `resume` in [[Embed Job Module]], then `Error::invalid` in [[Error]]. `test_result` calls `message`.
-4. `embed_models` in [[Api Module]] calls `embed_models`. `embed_models` calls `resolved`, then `list_models_in` in [[cw-embed]], then `message`.
-5. `write_settings` in [[Api Module]] calls `change`. `change` calls `Error::invalid` in [[Error]], then `resolved`, then `update`, then `key_at` (both in [[Settings Module (cw-core)]]), then `apply`, then `Resolved::from_parts` in [[Resolved]], and 2 more. `apply` calls `Error::invalid` in [[Error]], then `checked`, then `available` in [[Secret Module]].
+`resolved` merges the saved settings file with the environment into a `Resolved`. `describe` walks every known key and reports its value, its source and its default. It also adds the provider options and the name of the embedder the settings select, or the problem that stops one.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`change` takes the settings lock and reads the body as sections that hold fields. For each field it checks the key exists and the environment does not set it, then `apply` does the work. `null` or empty text clears a setting. Plain text goes through `checked`: a provider must be on the known list, and an address must start with http:// or https://, with the end slash removed. A secret takes `{"set": ...}` or `{"remove": true}`. All changes happen inside `settings::update`, so one bad field leaves everything unchanged. If an embedder key changed, semantic search is configured again.
+
+`test_embedder` embeds one word with `probe`. On success it calls `resume`, so documents that wait for vectors get embedded. `embed_models` lists the provider's models and never fails: an unreachable server shows as `reachable: false` with a problem.
 
 ## Items
 
@@ -54,6 +52,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[Api Module]] — from `embed_models`, `read_settings`, `test_embedder`, `write_settings`
 - [[cw-server]] — from `serve`
+
+## Gotchas
+
+- Changing the provider without naming a model clears the saved model, since a model belongs to one provider. A model set by the environment stays.
+- If the system cannot store secrets, saving one fails with a hint to use the environment variable.
+- `settings_lock` is separate from the write lock, so a settings change never waits for a long update.
+- A successful Test is the only retry for a failed embedding job, besides an update or a restart.
 
 ## See also
 

@@ -18,13 +18,15 @@ The viewer looks at the diagram through a `Camera`, as the graph view looks at t
 
 ## How it works
 
-1. `AppView::diagram_viewer_view` in [[codewiki-app]] calls `fit`. `fit` calls `placed`.
-2. `AppView::diagram_viewer_view` in [[codewiki-app]] calls `actual`. `actual` calls `placed`.
-3. `AppView::diagram_viewer_view` and `AppView::zoom_diagram` in [[codewiki-app]] call `zoom_by`.
-4. `AppView::move_diagram` in [[codewiki-app]] calls `clamp`.
-5. `AppView::diagram_viewer_view` in [[codewiki-app]] calls `frame`.
+The viewer keeps a `Camera` from [[Graph Module (codewiki-app)]]. The diagram is the world, one unit per pixel of its natural size, with the origin at its top left corner. The stage is the viewer's area. Every function takes the image size and the stage size and returns or changes the camera.
 
-2 more entry points: `percent`, `png_size`.
+- `fit` shows the whole diagram inside a margin of 24 units, never larger than its natural size. `actual` shows 100 percent. Both call `placed`, which centres the diagram along an axis it fits in and starts at its beginning along an axis it does not.
+- `zoom_by` zooms by a factor between 0.1 and 4.0, keeping the point under the pointer fixed. The wheel gives a factor from `WHEEL` per pixel of travel, the buttons and `+` and `-` use `STEP`.
+- `clamp` is called after a drag. It keeps at least 64 units of the diagram in view.
+- `frame` returns the diagram's top left corner on the stage and its drawn size.
+- `percent` states the zoom. `png_size` reads the width and height from a PNG header, so the viewer can size the diagram without decoding it.
+
+After a zoom the app can draw the diagram again at `SHARP_SCALE` pixels per unit, so it stays sharp when enlarged.
 
 ## Items
 
@@ -51,6 +53,15 @@ The viewer looks at the diagram through a `Camera`, as the graph view looks at t
 ## Used by
 
 - [[codewiki-app]] — from `diagram_viewer_view`, `move_diagram`, `open_diagram`, `sharpen_diagram`
+
+## Gotchas
+
+- The limits are 10 percent and 400 percent. Past four times the picture is only blurred.
+- `fit` never enlarges a small diagram. It is centred at its natural size.
+- `zoom_by` repeats the graph camera's zoom with this view's limits, because the graph's own limits differ.
+- When the stage is narrower than the part that must stay in view, `clamp` holds nothing and leaves the centre alone.
+- `png_size` returns `None` for anything that is not a PNG with an `IHDR` chunk and a nonzero size.
+- The module has no view types, so tests run without a window.
 
 ## See also
 

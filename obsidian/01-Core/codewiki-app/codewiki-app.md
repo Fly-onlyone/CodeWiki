@@ -80,7 +80,6 @@ Defined at the crate root:
 - `enum Landing` — where the app goes once a repository's notes have loaded.
 - `enum Event` — what reaches the app from outside GPUI: from another thread, or from code that runs with no way to the app's state. Each is sent through a channel and carried out by one task of the app's view (`AppView::listen`), so that none of it ever runs while GPUI is in the middle of something.
 - `struct Tab` — A tab that is not on screen. The active tab's page and history live in the view itself; its slot is refreshed when the user leaves it.
-- `struct DiagramViewer` — A note being edited. A diagram of the page, opened over the window to be enlarged.
 - `enum Page` — what the centre pane shows.
 - `const SIDEBAR_WIDTH: f32` — width of the sidebar and of the details pane, in pixels.
 - `fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>)` — the registered repositories, split into those whose folders are there and those whose folders are gone. A backend from before the list said so counts every folder as there.
@@ -89,12 +88,13 @@ Defined at the crate root:
 - `fn reach(attempt: connection::Attempt, register: bool) -> Result<Reached, String>` — reach a backend as `attempt` allows and list its repositories. With `register`, also register the folder the app was started on; failure there is not fatal, the user may have other repositories. Blocks; run it off the UI thread.
 - `fn load_notes(backend: &Backend, id: &str) -> Result<(Value, Value), String>` — the notes of repository `id` and its proposals. Blocks; run it off the UI thread.
 - `fn read_auto_explain() -> bool` — whether auto explaining is on: `auto-explain.txt` in the data directory, which the app reads itself, as it does the folders kept from agents.
-- `fn min_window_size() -> Size<Pixels>` — the smallest the window may be made. The window's own measures are the screen's pixels, whatever the zoom.
 - `fn stops_backend_on_quit(remote: bool, installing: bool) -> bool` — whether ending the app also stops the backend. `remote` says that the backend is the one `CODEWIKI_URL` names; `installing` that an update is being installed or waits for a restart.
+- `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
+- `fn search_hint(width: f32) -> &'static str` — the placeholder for a search field `width` design units wide (icon and padding included): the whole hint, a short one, or none, where the magnifier says it alone. Never a hint cut in the middle.
 - `fn reading_measure(page: &Page) -> f32` — the widest a line of `page` runs.
 - `fn main()` — private function.
 
-And 25 more items.
+And 29 more items.
 
 ## Depends on
 

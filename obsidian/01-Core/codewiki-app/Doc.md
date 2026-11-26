@@ -6,13 +6,26 @@ tags: [core, codewiki-app]
 
 > A generated page.
 
+## What it does
+
+`Doc` is one generated page of the app: a title, an optional lead line under it, and a list of [[Block]]s. A page function in the live or settings code turns backend data into a `Doc`. The doc view then draws it. `Doc` holds no drawing code, so a test can build a page and read it without a window.
+
 ## Source
 
 - `crates/codewiki-app/src/doc.rs` — definition of `Doc`
 
 ## How it works
 
-1. `file_page` and `home_page` in [[Live Module]], and 21 more, call `new`.
+A page starts with `Doc::new(title)`, optionally `lead`, and then fills itself with `push`, or with the shortcuts `heading` and `text`. The blocks stay in order. A [[Block]] such as a card holds its own list of blocks, so a page is a tree.
+
+Five methods exist only in tests and read a page back:
+
+- `flat` lists every block, with card bodies opened out.
+- `tables`, `headings` and `words` pick out tables, headings and all visible text, one block to a line.
+- `actions` lists every [[Action]] a link, row, button, choice or enabled switch carries.
+- `fields` lists the inputs the page asks the user to fill in.
+
+Page tests use these to check what a page says and offers.
 
 ## Items
 
@@ -47,6 +60,13 @@ Members:
 - [[codewiki-app]] — from `Page`, `doc_element`, `home_doc`, `open_global`
 - [[Doc View Module]] — from `DocPage`, `column`, `draw_strip`, `show`
 - [[Settings Pages Module]] — from `page`
+
+## Gotchas
+
+- `flat`, `words`, `actions` and `fields` exist only under test. They are not in the shipped app.
+- A locked switch or select offers no action in `actions`, because nothing can be done there. A locked field is still listed in `fields`, since its input shows the value.
+- A secret shows an input only while empty or being replaced. A saved one lists replace and remove actions instead.
+- `Doc` is `Default`, with an empty title, so a blank page is easy to create by accident.
 
 ## See also
 

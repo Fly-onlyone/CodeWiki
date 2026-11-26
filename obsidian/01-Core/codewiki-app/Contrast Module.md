@@ -16,13 +16,13 @@ The window is glass: what sits behind a surface is not known. These functions an
 
 ## How it works
 
-1. `debug_backdrop` in [[Glass Module]] and `parse_rgba` in [[Standard Module]] call `parse_hex`.
-2. `matched_backdrop` in [[Glass Module]] and `nudge_texts` in [[Standard Module]] call `over`.
-3. `Levels::compute` in [[Glass Module]] and `nudge_texts` in [[Standard Module]] call `fit_alpha`. `fit_alpha` calls `ratio`, then `worst_ratio`.
-4. `readable_on` and `standard_colors` in [[Standard Module]] call `ratio`. `ratio` calls `luminance`.
-5. `nudge_texts` in [[Standard Module]] calls `worst_ratio`. `worst_ratio` calls `ratio`, then `over`.
+Colors are `Rgb` arrays of three floats. `parse_hex` reads `#RRGGBB` (an alpha pair is ignored). `over` mixes a top color at an alpha over an opaque one. `ratio` gives the WCAG contrast ratio of two opaque colors, from `luminance`, between 1 and 21.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The backdrop of a glass window is unknown, so `worst_ratio` tests the surface at its alpha over both ends of a backdrop range (usually black and white) and keeps the lower contrast.
+
+`fit_alpha` is the main entry. It starts at a floor opacity and raises it in steps of 0.02 until every text color is readable on the surface over the worst backdrop. Readable means the AA ratio of 4.5. If a text is weaker than that even on the opaque surface, the requirement drops to 90 percent of its own contrast (`KEEP`). When no opacity below 1.0 works, it returns 1.0, which means no glass.
+
+The glass and standard-colors code use these results to decide how opaque the chrome and the reading pane must be.
 
 ## Items
 
@@ -44,6 +44,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Standard Module]] — from `editor_colors`, `from_oklch`, `hex`, `nudge_texts`
 - [[Glass Module]] — from `DARK_MICA_LIMIT`, `LIGHT_MICA_LIMIT`, `UNKNOWN`, `compute`
 - [[Themes Module]] — from `swatches`, `to_hsla`, `to_rgb`
+
+## Gotchas
+
+- `PANE_FLOOR` is 0.88 on purpose. At 0.85 the status colors of the light themes fall below AA.
+- `parse_hex` accepts only `#` followed by 6 or 8 hex digits. Short forms such as `#fff` return `None`.
+- Luminance is computed from sRGB with the WCAG formula, so the numbers match the published reference values (black on white is 21).
+- The search steps up in 0.02 jumps, so the returned opacity can be up to one step above the true minimum.
+- A theme with weak text gets a relaxed target, not AA. Do not read a passing result as proof of AA for every theme.
 
 ## See also
 

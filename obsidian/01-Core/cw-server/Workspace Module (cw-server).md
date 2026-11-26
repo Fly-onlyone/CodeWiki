@@ -6,17 +6,19 @@ tags: [core, cw-server, module]
 
 > Views across every repository the backend manages.
 
+## What it does
+
+One backend can manage many repositories. This module builds views that span all of them. The workspace view gives each repository its counts, its top hotspots and the external packages that two or more repositories share. The contracts view matches HTTP calls in one repository against routes in another. The app and the CLI use these views to show how projects relate.
+
 ## Source
 
 - `crates/cw-server/src/workspace.rs` — module `cw_server::workspace`
 
 ## How it works
 
-1. `run` in [[codewiki]] and `workspace_view` in [[Api Module]] call `workspace`. `workspace` calls `load` in [[Repos Module]], then `summarize`. `summarize` calls `open`, then `status` in [[Query Module]], then `hotspots`, then `load` (both in [[Gitintel Module]]).
-2. `run` in [[codewiki]] and `workspace_contracts` in [[Api Module]] call `workspace_contracts`. `workspace_contracts` calls `load` in [[Repos Module]], then `repo_contracts`, then `match_workspace` in [[Contracts Module]].
-3. `repo_contracts` in [[Api Module]] calls `repo_contracts`. `repo_contracts` calls `scan` in [[Contracts Module]], then `open`. `open` calls `Error::not_found` in [[Error]], then `open_index_in` in [[Service Module]].
+`workspace` loads the registered repositories and calls `summarize` for each. `summarize` opens the index, reads the status, takes the top three hotspots and collects external packages: declared dependencies plus crates the source imports, minus the repository's own crates. The result feeds a map from package name to the repositories that use it. Only packages used by two or more repositories become `SharedDependency` entries.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`workspace_contracts` scans each repository with `repo_contracts` and passes all results to `match_workspace`, which pairs calls with routes. `repo_contracts` serves the single-repository route.
 
 ## Items
 
@@ -47,6 +49,12 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[Api Module]] — from `repo_contracts`, `workspace_contracts`, `workspace_view`
 - [[codewiki]] — from `run`
+
+## Gotchas
+
+- A repository that cannot be read does not fail the call. The workspace view lists it with zero counts and an `error`. The contracts view lists it in `errors`.
+- `open` fails with not found when the folder is gone, so a moved repository shows as an error, not as empty.
+- Contracts are found by reading source text. A path built at run time is not seen.
 
 ## See also
 

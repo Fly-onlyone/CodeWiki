@@ -18,11 +18,11 @@ The search box keeps the keyboard the whole time. Down moves from the box into t
 
 ## How it works
 
-The picture shows the path from a key to the list. `AppView::suggest` in [[codewiki-app]] starts it on every change of the text. An empty text calls `clear` instead, and the list goes away.
+The picture shows the path from a key to the list. `AppView::suggest` in [[codewiki-app]] starts it on every change of the text. An empty text calls `clear` instead, and the list goes away. Any text does the same while an update is being installed, because the update stops the backend.
 
-The lookup asks `GET /v1/repos/{id}/search` with `mode=text` and `limit` set to `LIMIT`. Text mode matches the start of each word and never calls the embedder, so asking at every pause stays cheap. `show` hands the hits to `hit_groups` in [[Live Module]], which sorts them into Notes, Symbols and Files.
+The lookup asks `GET /v1/repos/{id}/search` with `mode=text` and `limit` set to `LIMIT`. Text mode matches the start of each word and never calls the embedder, so asking at every pause stays cheap. `show` hands the hits to `hit_groups` in [[Live Module]], which sorts them into Notes, Symbols and Files. A kind with no hit gets no group.
 
-The root view catches Up, Down and Escape while the list is open, before the search box can use them, and calls `up`, `down` or `close`. Enter calls `chosen`: a highlighted hit is opened with the action that `hit_target` gave it; otherwise the full search runs.
+The root view catches Up, Down and Escape while the list is open, before the search box can use them, and calls `up`, `down` or `close`. The command palette takes these keys first while it is open, and the list is not drawn then. Enter calls `chosen`: a highlighted hit is opened with the action that `hit_target` gave it; otherwise the full search runs. A click on a row calls `AppView::choose_suggestion` with the row's number, and `target` turns that number into a hit.
 
 `close` hides the list but keeps its hits, and drops a lookup that has not answered. Escape, Enter, a chosen row and the box losing the focus all close it. When the box gets the focus back, or is clicked, `reopen` shows the list again, but only if the box still holds the text the hits were for.
 

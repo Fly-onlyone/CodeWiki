@@ -8,16 +8,7 @@ tags: [core, cw-telemetry]
 
 ## What it does
 
-Error reports to Sentry from the programs that run for a long time: the app, the backend and the MCP bridge.
-
-A program reports only when one of these holds:
-
-- `SENTRY_DSN` is set in its environment, as on a developer's machine;
-- the program was built with a DSN (`CODEWIKI_SENTRY_DSN` at compile time, which the release workflow sets) and the user turned on "Send error reports" in Settings → Diagnostics, which writes `CONSENT_FILE` in `%APPDATA%\CodeWiki`.
-
-Each program reads that file itself, so the MCP bridge and a backend an agent started follow the switch too. Turning it on takes effect at each program's next start. Turning it off holds at once, because every report is checked against the file again first.
-
-`init` replaces `cw_core::logs::init`: records still go to the log file, and an Error record also becomes a report, while Info and Warn records go along with the next report as its trail. The Error records of a lost graphics device that the UI recovers from are only trail too. A panic is reported with its backtrace. Before anything leaves the machine it is scrubbed (`scrub`): no host name, no absolute path, and no query string, headers or body of a request.
+Sends error reports to Sentry from the long-running programs: the app, the backend and the MCP bridge. It is opt-in. A program reports only if `SENTRY_DSN` is set in its environment, or if the build carries a DSN and the user turned on Send error reports in Settings. Everything is scrubbed first, see [[Scrub Module]].
 
 ## Source
 
@@ -26,17 +17,11 @@ Each program reads that file itself, so the MCP bridge and a backend an agent st
 
 ## How it works
 
-Builds a library.
+`init` replaces the plain log setup. `start` calls `choose`: the environment DSN always wins, and the built-in one is used only when the consent file says `on`. A DSN that does not parse means no reports, not a crash. The mode is stored once in `MODE`. Sentry is set up with no personal data, a stack trace on every event, and the trace rate from the environment (default 0.1, bad values ignored).
 
-1. `main` and `sentry_test` in [[codewiki]], and 2 more, call `init`. `init` calls `start`, then `init_with` in [[Logs Module]]. `start` calls `choose`, then `env_dsn`, then `built_in_dsn`, then `consent`, then `environment`, then `traces_rate`, and 3 more.
-2. `sentry_test` in [[codewiki]] and `trace_request` in [[Api Module]] call `sending`. `sending` calls `allowed`. `allowed` calls `switch_on`.
-3. `AppView::settings_frame` in [[codewiki-app]] calls `reporting`. `reporting` calls `env_dsn`, then `built_in_dsn`.
-4. `AppView::settings_frame` in [[codewiki-app]] calls `consent`. `consent` calls `consent_path`, then `read_consent`.
-5. `AppView::run_action` in [[codewiki-app]] calls `set_consent`. `set_consent` calls `consent_path`, then `write_consent`.
+The log layer maps records. An Error record becomes a report. Info and Warn become the trail (breadcrumbs). Debug and Trace are dropped. Panics are left to Sentry's own hook. Records from the sending crates are ignored, so reporting cannot report on itself. Error records of a recovered graphics device loss are only trail.
 
-3 more entry points: `flush`, `send_test_report`, `task_hub`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Every event passes `before_send`, which asks `allowed` again and then calls `scrub::event`. In switch mode `allowed` reads the consent file, but at most every five seconds. The consent file holds `on` or is absent. `set_consent` writes or removes it. `sending` tells whether this process reports now, and the backend traces a request only then. `task_hub` gives each request its own Sentry hub, so scopes do not mix.
 
 ## Items
 
@@ -84,6 +69,14 @@ And 12 more items.
 - [[codewiki-mcp]] — from `main`
 - [[Settings Pages Module]] — from `error_reports`
 - [[Api Module]] — from `trace_request`
+
+## Gotchas
+
+- Turning reports on takes effect at the next start of each program. Turning them off holds within about five seconds, with no restart.
+- `SENTRY_DSN` needs no switch. Whoever sets it chose to report, and the Settings switch does not stop it.
+- The release workflow may set the built-in DSN empty. An empty value counts as no DSN.
+- Hold the `Guard` until `main` ends. A program that exits another way should call `flush` first, which waits up to two seconds.
+- Development builds keep the consent file under a separate folder name.
 
 ## See also
 

@@ -8,7 +8,7 @@ tags: [core, cw-server, module]
 
 ## What it does
 
-Several coding-agent sessions may explain notes at once. The backend lends each note it lists to one agent for `cw_core::CLAIM_MINUTES` minutes, so that two agents never get the same one. Nothing is written to disk: a new backend starts with no claims, and an expired one frees itself.
+Several coding agents may explain wiki notes at once. This module lets the backend lend each waiting note to one agent for a fixed time (`CLAIM_MINUTES`), so two agents never write the same note. The state is in memory only. A new backend starts with no claims, and an expired claim frees itself.
 
 ## Source
 
@@ -16,7 +16,7 @@ Several coding-agent sessions may explain notes at once. The backend lends each 
 
 ## How it works
 
-1. `Claims::claim` and `Claims::renew` in [[Claims]] call `period`.
+[[Claims]] keeps a map from (repository id, note path) to (agent id, deadline). `period` turns `CLAIM_MINUTES` into a `Duration`. `claim` and `renew` use it to set a new deadline. `expire` removes entries whose deadline has passed.
 
 ## Items
 
@@ -30,6 +30,11 @@ Several coding-agent sessions may explain notes at once. The backend lends each 
 ## Used by
 
 - [[Claims]] — from `claim`, `renew`
+
+## Gotchas
+
+- The period is one value for all claims. Renewing pushes every claim of that agent in that repository to a full period from now.
+- Claims are not saved. After a restart every note looks free.
 
 ## See also
 

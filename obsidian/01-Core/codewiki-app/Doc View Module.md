@@ -49,7 +49,7 @@ The page is its own view, `DocPage`, drawn cached, so a ripple or hover in the w
 - `pub fn stat_tile(stat: &Stat, id: ElementId, cx: &App) -> Div` — TradingAgent's metric tile: a label, a large figure that counts up when the tile appears, and a note under it. `id` names the tile.
 - `draw_table` — A whole table in one card: for a short table, or one inside a card.
 
-And 24 more items.
+And 28 more items.
 
 ## Depends on
 

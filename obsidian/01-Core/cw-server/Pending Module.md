@@ -8,9 +8,7 @@ tags: [core, cw-server, module]
 
 ## What it does
 
-Counting reads every proposal of every registered repository, and one on a network share or on a disk that sleeps can take seconds. The app asks for the status every 5 s and takes an answer slower than 3 s for a lost backend, so the status waits for a count at most `WAIT`. A count that takes longer goes on in the background. One count runs at a time: a question asked meanwhile joins the count that runs.
-
-An answer gives only the repositories counted while it waited. A count made before the question may be older than what the app has loaded since, and the app would take the difference for news; a repository left out of an answer is only compared at the next one.
+The app polls `GET /v1/status` every 5 seconds and treats an answer slower than 3 seconds as a lost backend. Counting proposals reads every registered repository, and a network share or a sleeping disk can take seconds. This module counts in the background and lets the status wait only `WAIT` (one second) for the result. A slow count keeps going. One count runs at a time, and a new question joins it.
 
 ## Source
 
@@ -18,12 +16,9 @@ An answer gives only the repositories counted while it waited. A count made befo
 
 ## How it works
 
-What the functions of this module call:
+`ProposalCounts::get` calls `start`. If a count runs, `start` returns it and a watch channel. If none runs, it creates a `Count`, stores it in the slot and runs the counting closure on a blocking thread. That closure reports each repository through a callback, which saves the number with the time it was found. `get` waits for the count to end or for `wait` to pass, then calls `fresh`.
 
-1. `ProposalCounts::get` calls `ProposalCounts::start`, then `fresh`, then `lock`. `ProposalCounts::start` calls `lock`.
-2. `End::drop` calls `lock`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`End` is held by the counting thread. Its `Drop` clears the slot and signals the end, also after a panic, so the next question starts a new count.
 
 ## Items
 
@@ -40,6 +35,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[Api Module]] — from `backend_status`, `pending_proposals`
 - [[Inner]] — from `Inner`
+
+## Gotchas
+
+- An answer holds only repositories counted after the question was asked. An older count could be older than what the app loaded since, and the app would show the difference as news. A repository missing from an answer is simply compared at the next one.
+- A repository whose folder is gone or whose vault cannot be read gives `None` and is left out.
+- A question that joins a running count starts no count of its own, so its closure never runs.
+- What a count found before a panic is still shown.
 
 ## See also
 

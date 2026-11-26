@@ -8,7 +8,7 @@ tags: [core, cw-telemetry, module]
 
 ## What it does
 
-The logs follow rules of their own (no token, key, query, prompt, LLM answer or note text), but they do name folders, and a folder names its repository and often the user. So every absolute path in a message, an exception or a breadcrumb becomes `PATH`. The host name, the user, and the query string, headers, cookies and body of a request are dropped. A loaded program is named by its file name alone.
+Removes private data from an error report before it leaves the machine. The logs follow their own rules: no token, key, query, prompt, LLM answer or note text. But they do name folders, and a folder names its repository and often the user. So every absolute path in a message, an exception or a breadcrumb is replaced by `PATH`. The host name, the user, and the query string, headers, cookies and body of a request are dropped. A loaded program is named by its file name alone.
 
 ## Source
 
@@ -16,10 +16,9 @@ The logs follow rules of their own (no token, key, query, prompt, LLM answer or 
 
 ## How it works
 
-1. `start` in [[cw-telemetry]] calls `event`. `event` calls `scrub_option`, then `scrub_string`, then `file_name`. `scrub_option` calls `scrub_string`. `scrub_string` calls `paths`.
-2. `start` in [[cw-telemetry]] calls `breadcrumb`. `breadcrumb` calls `scrub_option`.
+`event` clears the server name and user. It strips the request's query, cookies, body, headers and environment, and cuts the query and fragment from its URL. It then runs `scrub_string` over the message, log entry, culprit, exception values and breadcrumb messages. Debug image names are cut to the file name. At last it tags the event with the program name. `breadcrumb` scrubs one breadcrumb message.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`paths` scans the text and, at each position, asks `path_at` whether an absolute Windows path starts there. Three forms count: a drive (`C:\` or `D:/`), a share (`\\server\`) and the verbatim prefix (`\\?\`). The path runs until a quote, colon, pipe, angle bracket or space. Past a space, `continued` looks at the next three words. If one of them holds the path's separator, the path goes on. That is how `C:\Users\Software Tester\AppData` stays whole. Trailing sentence punctuation stays outside the path. If nothing matches, `paths` returns the input without copying.
 
 ## Items
 
@@ -39,6 +38,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[cw-telemetry]] — from `start`
+
+## Gotchas
+
+- Only Windows-style absolute paths are found. A Unix path such as `/home/me/x` is not replaced.
+- A path that follows a letter, digit or underscore is not taken as a path start. This keeps text such as `abC:\` from matching.
+- A space inside a path is only followed when a separator shows up within three words. A path with a long space-filled name can be cut short, leaving the tail.
+- Scrubbing is a text rule, not a guarantee. Keep secrets out of log messages in the first place.
 
 ## See also
 

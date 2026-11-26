@@ -6,15 +6,17 @@ tags: [core, cw-wiki]
 
 > `Scanned` struct defined in `cw_wiki::rustscan` with 7 methods.
 
+## What it does
+
+The result of scanning one Rust file with [[Rustscan Module]]. It holds a masked copy of the source where comments and string contents are spaces, the string literals, the test functions, and the byte ranges that exist only in test builds. The security rules, the contract finder and the test map use it to search code safely and to ignore test code.
+
 ## Source
 
 - `crates/cw-wiki/src/rustscan.rs` — definition of `Scanned`
 
 ## How it works
 
-1. `scan_source` in [[Contracts Module]] and `scan_source` in [[Security Module]], and 1 more, call `new`. `new` calls `mask`, then `find_tests` (both in [[Rustscan Module]]).
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`new` masks the source, builds a table of line starts, and finds tests. Queries then work on byte offsets of the masked code. `find` returns offsets where a word occurs as a whole identifier or path, so `env` does not match `environment`. Words that start or end with a symbol are cut only on the identifier side. `matching` and `statement_end` walk brackets to find where a block or statement ends. `line_of` is a binary search over line starts. `in_test` checks whether an offset lies inside a test region. `literal_at` finds a literal by its opening quote.
 
 ## Items
 
@@ -41,6 +43,13 @@ Members:
 - [[Security Module]] — from `bound_to_format`, `call_args`, `command_injection`, `env_set_var`
 - [[Contracts Module]] — from `attribute_routes`, `call_open`, `first_literal`, `fn_body`
 - [[Testmap Module]] — from `gather`
+
+## Gotchas
+
+- All offsets are byte offsets into the masked code, and they equal offsets into the original source.
+- `find` never matches inside comments or strings, because they are blanked. Look in `literals` for string contents.
+- `statement_end` stops at the first unbalanced closing bracket, so it also ends at the end of the enclosing block.
+- Fields `line_starts` and `test_regions` are private. Use `line_of` and `in_test`.
 
 ## See also
 

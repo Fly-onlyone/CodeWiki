@@ -20,10 +20,13 @@ The levels are read from `codewiki.json` itself, so they follow any change to th
 
 ## How it works
 
-1. `apply` and `init` in [[Themes Module]] call `standardize`. `standardize` calls `standard_colors`, then `hex`, then `editor_colors`. `standard_colors` calls `to_oklch`, then `brand_hues`, then `from_oklch`, then `nudge_texts`, then `ratio` in [[Contrast Module]]. `editor_colors` calls `hex`.
-2. `glyph_tint` in [[Themes Module]] calls `readable_on`. `readable_on` calls `to_oklch`, then `ratio` in [[Contrast Module]], then `from_oklch`. `to_oklch` calls `to_linear`. `from_oklch` calls `max_chroma`, then `linear_from_oklch`, then `to_gamma`.
+At first use the module reads the bundled `codewiki.json` set into a `Reference`: for each color key and each mode (light, dark), the mean OKLCH lightness, chroma, hue and alpha. OKLCH is a color space where lightness is even to the eye, so levels can be compared fairly.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`standardize` then handles one theme. A bundled name, or a theme whose colors cannot be parsed, comes back unchanged. For any other theme, `standard_colors` goes through the table of 59 color keys. Each key has a role. Neutrals (surfaces, borders, plain text) take the theme's primary hue. Primary, secondary and tertiary keys take those brand hues. Own keys (status, palette) keep their own hue. On-fill keys are white or the page background, whichever has more contrast on the fill.
+
+`brand_hues` finds the three hues. The primary is the first chromatic color among primary background, link, ring and info. The secondary is the link when it sits far enough from the primary, else a spare palette hue near 40 degrees away, else that aim itself. The tertiary is the theme's own sidebar primary if far enough, else the best spare hue, else the farthest of four fixed aims.
+
+`nudge_texts` then moves text and icon lightness step by step (0.005) away from the page until the contrast holds on every surface it is drawn on: AA for text, 3:1 for icons. `readable_on` does the same for one color, and is also used by the theme glyph tint. Link hover, link active and tab text copy their leader's final color. Finally `editor_colors` sets the editor part of the highlight section from the new colors; code syntax colors stay as the author made them.
 
 ## Items
 
@@ -59,6 +62,15 @@ And 15 more items.
 ## Used by
 
 - [[Themes Module]] — from `apply`, `glyph_tint`, `init`
+
+## Gotchas
+
+- Only themes not in the bundled name list are changed. Adding a theme file to the bundle means it is drawn as written.
+- A hue is read only from a color with chroma of at least 0.03. A grayer color counts as having no hue, and a theme with no hue at all stays gray.
+- Colors are rounded to 8 bits inside `from_oklch`, so contrast is checked on exactly the color that is written out.
+- Neutrals are held to 0.8 of the sRGB edge, accents and status colors to 0.95, so no channel is pinned on a surface.
+- The levels follow `codewiki.json`. Changing a bundled theme changes how every user theme is redrawn.
+- The OKLab matrices are Bjorn Ottosson's. Do not retune them by eye.
 
 ## See also
 

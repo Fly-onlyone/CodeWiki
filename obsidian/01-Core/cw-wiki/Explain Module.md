@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Both are built from facts alone. The walk-through follows resolved calls, in the order they stand in the source, and so says nothing it cannot know: no condition, no loop, no reason. A writer that reads the bodies adds those.
+Rules write each note from facts. Two parts of a note need more than a doc comment. One is a short numbered walk-through of what happens when the code is used. The other is the list of items with one bullet each. This module builds both from the call graph and the symbol table, with no guessing. It cannot know conditions, loops or reasons. A coding agent adds those later.
 
 ## Source
 
@@ -16,10 +16,11 @@ Both are built from facts alone. The walk-through follows resolved calls, in the
 
 ## How it works
 
-1. `RenderCtx::render_crate` and `RenderCtx::render_module` in [[RenderCtx]], and 1 more, call `walk`.
-2. `RenderCtx::render_crate` and `RenderCtx::render_module` in [[RenderCtx]], and 1 more, call `items`. `items` calls `first_sentence` in [[Doctext Module]], then `lower_first` in [[Render Module]], then `item_text` in [[Doctext Module]], then `Language::from_path` in [[Language]], then `label`, then `facts`. `label` calls `is_line_ref` in [[Lint Module]]. `facts` calls `return_type`, then `Language::from_path` in [[Language]].
+`walk` picks the entry points of one note: its functions and methods that a program starts at, or that other notes call. Test code and low-confidence calls are ignored. Entry points are sorted: program starts first, then those called from the most notes, then source order. At most 5 become steps; the rest are named as "more entry points". If nothing calls in, the note's own non-private functions that call something become the steps and the text says so.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Each step lists up to 6 calls in source order. Up to 2 callees that belong to the same note are described too, each only once in the whole walk. `Walk::text` turns this into numbered sentences with links to other notes, and adds a line that conditions and loops are not shown.
+
+`items` lists the children of a note's subject, one bullet each. Public items come first, then non-private, then private ones that `walk` names. Source order breaks ties; at most 20 are shown and the rest are counted. A bullet starts with the signature (or the name if it is over 100 characters or contains a backtick). With a doc comment, the bullet holds `first_sentence`/`item_text` of it. Without one, `facts` states: visibility, kind, return type and up to 4 users.
 
 ## Items
 
@@ -59,6 +60,13 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[RenderCtx]] — from `render_crate`, `render_module`, `render_type`
+
+## Gotchas
+
+- No resolved incoming call does not mean unused. A call through a value of unknown type is not followed.
+- `return_type` returns nothing for unit results, types over 60 characters, and languages other than Rust, Python, TypeScript and JavaScript.
+- A signature that looks like a file and line (checked by `is_line_ref`) is replaced by the name, because the linter would refuse it.
+- Constants cut their signature at the equals sign so the value is not printed.
 
 ## See also
 

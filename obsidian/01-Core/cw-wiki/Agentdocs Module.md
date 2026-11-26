@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Agent instruction files are loaded into every session, so the briefing is short: where the wiki is, which notes to read for which area, and which files need care. It lives between two marker comments; everything outside the markers belongs to the repository's authors and is never changed.
+AI agents read `CLAUDE.md` and `AGENTS.md` at the start of every session. This module writes a short briefing into both files. The briefing says where the wiki is, which notes to read for which area, and which files change most. The text sits between two marker comments. Everything outside the markers belongs to the repository authors and is never touched.
 
 ## Source
 
@@ -16,9 +16,13 @@ Agent instruction files are loaded into every session, so the briefing is short:
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `apply`. `apply` calls `render`, then `Error::io` in [[Error]], then `merge`. `render` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `load`, then `hotspots` (both in [[Gitintel Module]]).
+`apply` is the entry point. It calls `render` once to build the briefing, then loops over `TARGETS` (`CLAUDE.md` and `AGENTS.md`).
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`render` loads the vault metadata and picks the area notes: flow, pattern, operations and decision notes, plus crate notes (a concept note named like its folder). It parses each note and keeps only those with a summary. Rows are sorted so flows come first, then crates, patterns, decisions, the rest. The table shows at most 14 rows; a line says how many more exist. It then asks [[Gitintel Module]] for the top 5 hotspots and lists them with commit and line counts.
+
+`merge` puts the briefing between `START` and `END`. If both markers exist in order, only the text between them is replaced. If not, the block is appended. An empty file gets just the block.
+
+A file is written only when the merged text differs from the old text. `apply` returns the names of the files it changed. A missing file counts as empty and is created.
 
 ## Items
 
@@ -45,6 +49,13 @@ And 2 more private items with no comment.
 
 - [[cw-wiki]] — from `apply_writes_both_files_and_preserves_the_authors_text`, `briefing_routes_agents_to_the_wiki`
 - [[codewiki]] — from `run`
+
+## Gotchas
+
+- Pipes in summaries are replaced with slashes, since a pipe would break the Markdown table cell.
+- If the markers are in the wrong order (END before START), `merge` does not replace anything. It appends a new block and keeps the old text.
+- Running `apply` twice with the same briefing changes nothing, so it is safe to call on every sync.
+- A note with an empty summary never appears in the table.
 
 ## See also
 

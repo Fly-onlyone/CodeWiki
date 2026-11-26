@@ -8,7 +8,9 @@ tags: [core, codewiki-app]
 
 ## What it does
 
-A native viewer for the vault and the live index. All data comes from the backend over HTTP; this binary links none of the engine crates. The one thing it does outside the backend is update its own installation (`cw-update`).
+This is the Windows desktop app of CodeWiki. It shows the wiki notes and the live index of a repository in a native window, built on GPUI (a Rust UI toolkit) and gpui-kit. It lives in the tray, so closing the window hides it and the app keeps running.
+
+All data comes from the backend over HTTP through `cw-client`. The app links none of the engine crates, only `cw-core` for paths and names. The one job it does by itself is to update its own installation, through `cw-update`. The crate root file holds `AppView`, the one big view that owns the pages, the tabs, the tray and the backend connection.
 
 ## Source
 
@@ -17,11 +19,17 @@ A native viewer for the vault and the live index. All data comes from the backen
 
 ## How it works
 
-Builds a binary.
+`main` runs these steps before any window opens:
 
-1. The program starts at `main`. `main` calls `read` in [[Prefs Module]], then `level_named` in [[Logs Module]], then `init` in [[cw-telemetry]], then `acquire` in [[Instance Module]], then `launch` in [[Startup Module]], then `hold` in [[Instance Module]], and 13 more.
+1. It reads the log level from the prefs (or the `CODEWIKI_LOG` variable) and starts logging and error reports.
+2. It makes a channel for events that come from outside GPUI: a second launch, the tray, a notification, Ctrl+C.
+3. `instance::acquire` decides whether this launch is the main app. A second launch hands its request over to the running one and returns at once with no window.
+4. `win32::on_console_stop` sends `Event::Quit` on Ctrl+C, so an IDE's Stop button quits like the tray does.
+5. Inside the GPUI run: `gpui_kit::init`, motion, backdrop, fonts, themes, then `zoom::init`. The key bindings are set, including the zoom keys. The window opens with a Mica backdrop.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`AppView::listen` is the one task that takes events from the channel. It hides or shows the window with the Win32 calls between two GPUI updates, then calls `handle_event`. Closing the window sends `Event::Hide` when a tray icon exists; without a tray, closing ends the app unless there are unsaved edits.
+
+On quit, `on_app_quit` releases the single-instance lock, flushes error reports, and asks the backend to stop on a background task. That happens only when this app started it: `stops_backend_on_quit` is false for a backend named by `CODEWIKI_URL` and while an update installs.
 
 ## Items
 
@@ -111,6 +119,16 @@ And 25 more items.
 
 - [[Review View Module]] — from `empty_review`
 - [[Settings View Module]] — from `new`
+
+## Gotchas
+
+- `zoom::init` must come after `themes::init`, so the theme is still at 100% when zoom takes its sizes as the base.
+- Hiding and showing the window call back into GPUI. They run only in `listen`, never inside an update. The close handler therefore sends `Event::Hide` and does not hide the window itself.
+- A release build has no console. Logs and panics go to the app log file, so look there.
+- The window's minimum size and first bounds are in screen pixels and do not change with zoom.
+- Ctrl+Shift+= and the keypad plus arrive as "+", so zoom in has two bindings.
+- A launch with the tray option never shows its window until something asks for it; `placed` stops the app from showing a window GPUI has not yet positioned.
+- The backend is asked to stop with a short timeout, because GPUI waits only 200 ms for the quit hook.
 
 ## See also
 

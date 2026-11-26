@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-This is the keyless path: every sentence is derived from structural facts and doc comments. An LLM writer may later replace the prose, but the structure produced here is the contract the linter enforces.
+Turns each planned note into Markdown, with no model involved. Every sentence comes from structural facts (symbols, edges, manifests) and from doc comments in the code. The result is the factual skeleton of a note: source, items, dependencies. Agents later add the explanation sections on top. The note layout produced here is the contract the vault linter enforces. The module holds the small text helpers; the main work is in [[RenderCtx]].
 
 ## Source
 
@@ -16,13 +16,9 @@ This is the keyless path: every sentence is derived from structural facts and do
 
 ## How it works
 
-1. `items` in [[Explain Module]] and `RenderCtx::render_crate` in [[RenderCtx]], and 2 more, call `lower_first`.
-2. `RenderCtx::render` in [[RenderCtx]] calls `Doc::new`. `Doc::new` calls `front`.
-3. `RenderCtx::render_home` and `RenderCtx::render_index` in [[RenderCtx]] call `front`.
-4. `RenderCtx::link` in [[RenderCtx]] calls `zone_label`.
-5. `RenderCtx::summary` in [[RenderCtx]] calls `top_children`.
+`RenderCtx::render` makes a `Doc` from the note's front matter, title and one-line summary. It then picks a renderer by the note's subject: crate, module, type, crate flow, startup flow, integration, pattern or operations. Each renderer adds named sections to the `Doc`. A section with an empty body is dropped. `Doc::finish` joins them through the vault's own note layout, so agent-written sections and rule-written ones share one format. Map notes (`_index`) and the home note are built by hand and skip `Doc`.
 
-6 more entry points: `join_and`, `count`, `language_name`, `unit_noun`, `external_noun`, `build_role`.
+The helpers are small. `join_and` writes lists with an Oxford comma. `count` pluralises. `zone_label` turns `01-Core` into `Core`. `language_name`, `unit_noun` and `external_noun` choose words such as crate or package. `build_role` names a build file. `lower_first` lowercases the first letter of a summary so it fits after a dash in a bullet.
 
 ## Items
 
@@ -58,6 +54,12 @@ And 2 more private items with no comment.
 
 - [[RenderCtx]] — from `RenderCtx`, `composition`, `dep_bullets`, `link`
 - [[Explain Module]] — from `items`
+
+## Gotchas
+
+- `lower_first` keeps the capital for code, acronyms, CamelCase words, one-letter words and the names in `PROPER_NOUNS`. A new product name must be added to that list, or it will be lowered mid-list.
+- `zone_label` only strips a two-digit prefix. `cw-core` stays as it is.
+- `Doc::section` keeps empty sections until `finish`, which drops them. Do not rely on a heading being there.
 
 ## See also
 

@@ -6,15 +6,21 @@ tags: [core, cw-parse, module]
 
 > Walk a repository and produce every fact the index needs.
 
+## What it does
+
+This module walks a whole repository and produces every structural fact the index stores: files, crates, symbols, edges between them, and the outside packages each file uses. `scan_repo` is the entry point. Anything that needs to know what is in the code, such as a reindex or a wiki sync, starts here. The result is a `RepoFacts` value that the [[Index]] writes to the database.
+
 ## Source
 
 - `crates/cw-parse/src/scan.rs` — module `cw_parse::scan`
 
 ## How it works
 
-1. `reindex` in [[Service Module]] calls `scan_repo`. `scan_repo` calls `list_files`, then `Error::io` in [[Error]], then `parse_manifest` in [[Workspace Module]], then `Language::from_path` in [[Language]], then `sha256_hex` in [[Hash Module]], then `python_module` in [[Lang Module]], and 10 more. `list_files` calls `Error::external` in [[Error]], then `relative`.
+`list_files` walks the folder with the `ignore` crate. It honors `.gitignore` and a `.codewikiignore` file, skips `.git`, `target`, `node_modules` and a few more, and skips the top-level vault folder. The result is sorted.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`scan_repo` first reads every `Cargo.toml` through `parse_manifest` in [[Workspace Module]]. A broken manifest is skipped, not fatal. Then for each file it records a path, hash, byte count and line count. It parses the file by language: Rust through `parse_rust`, and Python, TypeScript or JavaScript and Java through their own parsers. Each parser's symbols are added to the list.
+
+When all files are parsed, `link_imports` ([[Lang Module]]) sorts out Python and Java imports. Then a [[Resolver]] is built from all symbols and files, and `resolve` returns the edges and outside uses. Symbols are sorted by qualified name at the end.
 
 ## Items
 
@@ -46,6 +52,15 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Service Module]] — from `reindex`
 - [[Units Module]] — from `discover`
 - [[Index]] — from `replace_facts`
+
+## Gotchas
+
+- A file above 1.5 MB, or one that is not valid UTF-8, is recorded but not parsed. Large files get an empty hash and zero lines.
+- When two symbols share a qualified name (overloads, `#[cfg]` twins, inline and file modules), only the first is kept.
+- Rust files get their module symbol from the scanner, with the file's `//!` doc as its text. The other languages' parsers add their own.
+- A file with syntax errors still gives facts, and is listed in `files_with_errors`.
+- A read error on one file stops the whole scan, because the error is returned, not skipped.
+- JavaScript is parsed with the TSX grammar.
 
 ## See also
 

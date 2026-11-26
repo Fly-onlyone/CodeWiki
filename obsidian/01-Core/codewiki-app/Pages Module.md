@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Each turns what the backend sent into a `Doc`. The pages of the settings are in `settings_pages.rs`.
+These are the report pages of the app: decisions, dead code, code health, documentation drift, tests, coverage, security, refactoring, ownership, change coupling, workspace and API contracts. The backend sends plain JSON. Each `*_page` function here turns that JSON into a [[Doc]], a small page model that the app draws. The pages for settings live in a different file, `settings_pages.rs`. No page does any I/O: JSON in, `Doc` out, which is why they are easy to test.
 
 ## Source
 
@@ -16,17 +16,13 @@ Each turns what the backend sent into a `Doc`. The pages of the settings are in 
 
 ## How it works
 
-What the functions of this module call:
+Every page follows one shape. It reads the JSON with three small helpers (`list` for arrays, `strings` for string arrays, `string` for text), builds a `Doc` with a title and a lead sentence, then pushes blocks: stat tiles, tables, cards or lists. When there is nothing to show, it pushes an empty-state block with a hint and returns early.
 
-1. `decisions_page` calls `Doc::new` in [[Doc]], then `code` in [[Doc Module]], then `string`, then `text` in [[Doc Module]], then `strings`, then `file` in [[Doc Module]], and 1 more.
-2. `dead_code_page` calls `Doc::new` in [[Doc]], then `Table::new`, then `Column::new`, then `Column::numeric` (all in [[Doc Module]]), then `string`, then `Cell::chip` in [[Doc Module]], and 4 more.
-3. `health_page` calls `Doc::new` in [[Doc]], then `Table::new`, then `Column::new` (both in [[Doc Module]]), then `list`, then `file` in [[Doc Module]], then `string`, and 1 more.
-4. `drift_page` calls `Doc::new` in [[Doc]], then `number`, then `list`, then `Stat::new`, then `Table::new`, then `Column::new` (all in [[Doc Module]]), and 6 more.
-5. `tests_page` calls `list`, then `strings`, then `Doc::new` in [[Doc]], then `number`, then `Stat::new`, then `Table::new` (both in [[Doc Module]]), and 8 more.
+Some pages sort first: `health_page` drops files with no findings and puts the lowest score first; `security_page` orders error, warning, then the rest; `coverage_page` shows the least covered files. Scores map to a tone: 0 to 4 is error, 5 to 7 is warning, the rest is success.
 
-7 more entry points: `coverage_page`, `security_page`, `refactor_page`, `ownership_page`, `coupling_page`, `workspace_page`, and 1 more.
+`ownership_page` and `coupling_page` both read the commit history through `history_files`. Ownership counts files led per author and lists files with a bus factor of 1, meaning only one person has worked on them. Coupling lists each pair of files that change together once, and ranks pairs by strength.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Numbers come out through `number`, which prints a dash for a missing value instead of failing.
 
 ## Items
 
@@ -59,6 +55,14 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `run_command`
+
+## Gotchas
+
+- A missing or mistyped key never fails. The helpers return an empty string or list, so a backend field rename shows up as a blank cell, not an error.
+- Lists are capped: file lists at 60 or 80, solo files at 40, coupling pairs at 80, matched contract calls at 200. A long report is silently cut.
+- Coupling pairs are stored on both files. The page keeps only the direction where the path sorts first, so each pair appears once.
+- The dead code page does not hide anything: entries marked possible stay in the table with a neutral tone. Only likely gets a warning tone.
+- Tests check pages through `words()`, `tables()` and `actions()` on the `Doc`, so a changed label breaks a test on purpose.
 
 ## See also
 

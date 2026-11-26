@@ -8,9 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-This is the only module of the workspace with `unsafe` code: keep every such call here, behind a safe function that says what it needs.
+GPUI, the UI toolkit, cannot do a few things Windows needs: hide a window to the tray, keep the tray icon alive on Alt+F4, read the mouse wheel setting, let a second launch take the foreground, and catch Ctrl+C from an IDE's Stop button. This module does them with raw Win32 calls.
 
-`show` and `hide` make Windows call back into GPUI before they return (it tells the window that it is shown or hidden, and may ask it to draw). Call them only from where GPUI is not in the middle of something: the app's event task, between two updates, never inside one.
+It is the only module of the workspace allowed to use `unsafe`. Each call sits behind a safe function, and each has a SAFETY comment that says what it needs.
 
 ## Source
 
@@ -18,13 +18,13 @@ This is the only module of the workspace with `unsafe` code: keep every such cal
 
 ## How it works
 
-1. `AppView::listen` and `AppView::new` in [[codewiki-app]], and 1 more, call `hwnd`.
-2. `AppView::listen` in [[codewiki-app]] calls `hide`.
-3. `AppView::listen` in [[codewiki-app]] calls `show`.
-4. `AppView::listen` and `AppView::window_on_screen` in [[codewiki-app]] call `is_visible`.
-5. `AppView::window_on_screen` in [[codewiki-app]] calls `is_minimized`.
+`hwnd` turns a GPUI `Window` into an `Hwnd`, a small wrapper that only this function can make. Every other window call takes an `Hwnd`, which is how the safe functions know the window is real. `hide`, `show`, `is_visible` and `is_minimized` call `ShowWindow`, `IsWindowVisible` and `IsIconic`.
 
-5 more entry points: `keep_open`, `small_icon_size`, `wheel_scroll_lines`, `allow_foreground`, `on_console_stop`.
+`keep_open` swaps the window procedure of the tray icon's hidden window for `tray_procedure`. That procedure answers `WM_CLOSE` with 0 and does nothing, and passes every other message to the old procedure, which `keep_open` saved in `TRAY_PROCEDURE`.
+
+`on_console_stop` stores a callback in `CONSOLE_STOP` and registers `console_handler`. On Ctrl+C or Ctrl+Break the handler calls the callback and reports the event as handled. Other events (console close, logoff, shutdown) go on to Windows.
+
+`small_icon_size`, `wheel_scroll_lines` and `allow_foreground` read a system setting or pass a process id by value. The first two fall back to 16 and 3 when the call fails.
 
 ## Items
 
@@ -55,6 +55,16 @@ This is the only module of the workspace with `unsafe` code: keep every such cal
 - [[Backdrop Module]] — from `render`
 - [[Instance Module]] — from `hand_over`
 - [[Tray Module]] — from `new`
+
+## Gotchas
+
+- `show` and `hide` make Windows call back into GPUI before they return. Call them from the app's event task between updates, never inside a GPUI update.
+- `show` does not bring the window to the front. GPUI's `activate_window` does that.
+- Call `keep_open` once, on the thread that made the tray icon, before that thread handles another message. The saved old procedure must be stored before any message reaches the new one.
+- Without `keep_open`, Alt+F4 on the tray window destroys it and the icon vanishes while the app keeps running.
+- `on_console_stop`: the first call wins; later calls do nothing. The callback runs on a thread Windows makes, so hand the request over and return. Release builds have no console, so it never fires there.
+- Without it, Ctrl+C ends the process at once (exit code 0xc000013a), skips the quit hook, and leaves the backend running with its file locked.
+- `allow_foreground` can fail. Then the window only flashes in the taskbar.
 
 ## See also
 

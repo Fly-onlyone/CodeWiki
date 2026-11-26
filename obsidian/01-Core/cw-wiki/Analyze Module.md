@@ -6,15 +6,27 @@ tags: [core, cw-wiki, module]
 
 > Graph metrics for a scanned repository.
 
+## What it does
+
+After a repository is scanned, this module turns the symbol edges into numbers per symbol: how central it is, whether it sits in a loop, which cluster it belongs to, and where to draw it. Those numbers feed health scores, dead-code checks, refactoring hints and the graph view in the app.
+
 ## Source
 
 - `crates/cw-wiki/src/analyze.rs` — module `cw_wiki::analyze`
 
 ## How it works
 
-1. `reindex` in [[Service Module]] calls `analyze`. `analyze` calls `dependency_graph`, then `pagerank`, then `betweenness`, then `strongly_connected_components` (all in [[Metrics Module]]), then `louvain` in [[Community Module]], then `force_layout` in [[Layout Module]], and 1 more. `dependency_graph` calls `Graph::from_edges` in [[Graph]].
+`dependency_graph` builds a directed graph whose nodes are every symbol's qualified name. Only edges of kind Calls, References and Implements count as dependencies (`DEPENDENCY_KINDS`).
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`analyze` then runs these steps on that graph:
+
+- `pagerank` with damping 0.85, up to 100 rounds.
+- `betweenness`, sampled from 256 source nodes.
+- `strongly_connected_components`, to find dependency loops.
+- `louvain` community detection on the undirected copy.
+- `force_layout` on the undirected copy, giving x and y.
+
+Each result array is indexed by node position. The function zips them into one `NodeMetrics` per node and returns the list. `metrics_map` turns that list into a lookup by name.
 
 ## Items
 
@@ -42,6 +54,12 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Refactor Module]] — from `load`
 - [[Service Module]] — from `reindex`
 - [[RenderCtx]] — from `new`
+
+## Gotchas
+
+- Betweenness is sampled (256 pivots), so on large graphs it is an estimate, not exact.
+- Community and layout use the undirected graph. Pagerank, betweenness and loops use the directed one.
+- Symbols with no dependency edges are still nodes, so they get metrics and a layout position.
 
 ## See also
 

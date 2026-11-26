@@ -6,15 +6,19 @@ tags: [core, codewiki-app, module]
 
 > Text logic for the note editor: wikilink completion and line endings.
 
+## What it does
+
+The app lets the user edit a note's Markdown. This module holds the pure text logic behind that editor, with no window code, so tests can run it directly. It does two jobs: it helps the author type a wikilink (`[[Note Name]]`) by offering matching note names, and it keeps a note's original line endings when the edited text is saved.
+
 ## Source
 
 - `crates/codewiki-app/src/editor.rs` — module `codewiki_app::editor`
 
 ## How it works
 
-1. `AppView::edit_view` in [[codewiki-app]] calls `wikilink_query`.
-2. `AppView::edit_view` in [[codewiki-app]] calls `completions`.
-3. `AppView::save_edit` in [[codewiki-app]] calls `restore_line_endings`.
+While the user types, `edit_view` calls `wikilink_query` with the text and the cursor byte offset. If the cursor sits inside an open `[[` on the current line, the function returns what has been typed after it, such as `Par`. Then `completions` filters the list of note names: names that start with the query come first, then names that contain it, each group in the order given, cut to the limit.
+
+On save, `save_edit` calls `restore_line_endings`. The editor works with `\n`. If the original text held `\r\n`, the edited text is turned back to `\r\n`, so a save changes only the lines the author touched.
 
 ## Items
 
@@ -25,6 +29,14 @@ tags: [core, codewiki-app, module]
 ## Used by
 
 - [[codewiki-app]] — from `edit_view`, `save_edit`
+
+## Gotchas
+
+- `cursor` is a byte offset. A cursor inside a multi-byte character is not a valid position and gives `None`.
+- `wikilink_query` looks only at the current line. A closed link, a `|` alias part or a line break before the cursor ends the query.
+- Map notes (names that start with `_`, such as `_index`) are offered only when the query itself starts with an underscore.
+- Matching ignores case, but the names are returned as given.
+- `restore_line_endings` decides by whether the original contains any `\r\n`. A file with mixed endings comes back with `\r\n` everywhere.
 
 ## See also
 

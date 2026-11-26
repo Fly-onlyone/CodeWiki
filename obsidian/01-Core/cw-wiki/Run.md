@@ -25,9 +25,9 @@ run.finish(index)?;
 
 ## How it works
 
-1. `embed_repo` in [[Embed Job Module]] and `embed_documents_with` in [[Semantic Module]] call `plan`. `plan` calls `text_of` in [[Semantic Module]], then `sha256_hex` in [[Hash Module]].
+`plan` asks the index for the stored vector hashes of the kinds. For each document it hashes the embedder name plus the document text. If the stored hash differs, the document is added to the pending list. Vectors of documents that no longer exist are pruned. For each kind, `WAITING` is set to 1 when any of its documents is pending. When a kind has vectors from another embedder and work is pending, the key that names the embedder is set to a marker meaning mixed. This way a run cut short is never taken as current for either embedder.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`next` returns the texts of the next batch, sized by the embedder. `store` checks that the number of vectors equals the batch size, writes them as rows, and moves the cursor. `finish` does nothing until every document is done. Then it records the embedder name and clears `WAITING` for each kind.
 
 ## Items
 
@@ -57,6 +57,13 @@ Members:
 
 - [[Semantic Module]] — from `embed_documents_with`, `set_inline_budget`
 - [[Embed Job Module]] — from `embed_repo`
+
+## Gotchas
+
+- `store` must get the vectors of exactly the texts `next` returned, in order. A wrong count is an invalid error and nothing is stored.
+- The hash includes the embedder name, so a new embedder re-embeds everything, while the same one embeds only new or changed documents.
+- Skipping `finish` leaves the kind marked as waiting. This is the intended sign for a stopped run, and `behind` then reports it.
+- `plan` writes to the index (prune and meta), before any embedding happens.
 
 ## See also
 

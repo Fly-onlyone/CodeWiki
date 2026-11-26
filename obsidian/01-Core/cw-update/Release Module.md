@@ -6,17 +6,25 @@ tags: [core, cw-update, module]
 
 > Asking GitHub for the latest release.
 
+## What it does
+
+Asks GitHub for the latest release of the CodeWiki repository and says whether it is newer than the running program. The answer is a `Check`: a newer [[Release]], up to date, or unavailable with a reason. It also holds the shared HTTP agent and User-Agent string that [[Download Module]] reuses.
+
 ## Source
 
 - `crates/cw-update/src/release.rs` — module `cw_update::release`
 
 ## How it works
 
-1. `check` in [[Update Module]] and `a_newer_release_is_found_and_downloaded_through_a_redirect` in [[Wire Tests Module]], and 4 more, call `check`. `check` calls `agent`, then `user_agent`, then `from_repository`, then `parse`.
-2. `get` in [[Download Module]] calls `agent`.
-3. `get` in [[Download Module]] calls `user_agent`.
+`check` parses the current version, then sends `GET /repos/<repository>/releases/latest` to `api_base`. The base is GitHub's API in production and a local stand-in in tests.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- 404 means the repository has no release yet: `UpToDate`.
+- 403 or 429 means a rate limit: `Unavailable`.
+- Any other failure, such as no network, is `Unavailable` with the error text.
+
+On success `from_repository` wraps `parse`. `parse` reads the JSON. It returns `UpToDate` for a draft, a pre-release, a pre-release tag, or a version not above the current one. It strips a leading `v` from the tag. It then looks for two assets named `CodeWiki-<version>-windows-x64.zip` and the same name plus `.sha256`. Both must exist, or the result is `Unavailable`.
+
+`from_repository` then checks the file addresses, see Gotchas.
 
 ## Items
 
@@ -41,6 +49,14 @@ And 2 more private items with no comment.
 - [[Update Module]] — from `check`, `from_check`
 - [[codewiki-app]] — from `show_check`
 - [[Download Module]] — from `get`
+
+## Gotchas
+
+- With real GitHub as `api_base`, both file addresses must start with this repository's release download address (compared in lower case). Otherwise the release is `Unavailable`. The reason: the package is run before it is installed, and its checksum comes from the same answer, so the address is what proves whose package it is. A stand-in on another `api_base` is exempt.
+- `agent` turns `https_only` on for every https address, so a redirect to plain http fails.
+- The agent sets no total time limit, since a download may take minutes. It limits only connect (15 seconds) and each read (30 seconds).
+- A pre-release is never offered, even if the answer marks it as a full release. The check looks at the tag too.
+- An unreadable current version gives `Unavailable`, not a panic.
 
 ## See also
 

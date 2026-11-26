@@ -6,15 +6,21 @@ tags: [core, cw-wiki]
 
 > `RenderCtx` struct defined in `cw_wiki::render` with 20 methods.
 
+## What it does
+
+Holds everything needed to write the rule-made part of every planned note: the repository lookup tables ([[Repo]]), the [[Plan Module]] result, the note registry and the repository name. It also precomputes a one-line summary for every note, and which notes depend on which. The generator builds one `RenderCtx` per run and calls `render` for each planned note.
+
 ## Source
 
 - `crates/cw-wiki/src/render.rs` — definition of `RenderCtx`
 
 ## How it works
 
-1. `generate_with` in [[Generate Module]] calls `new`. `new` calls `name`, then `summary`. `summary` calls `first_sentence`, then `ensure_period`, then `clean_inline` (all in [[Doctext Module]]), then `language_name`, then `unit_noun`, then `count` (all in [[Render Module]]), and 5 more.
+`new` walks all dependency edges. When both ends have an owner note and the owners differ, it records the link in two maps: `depends_on` (from owner to owner, with symbol names) and `used_by` (the reverse). It then calls `summary` for every planned note and stores the results, so `render` can print a summary without work.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`link` turns a note id into a wikilink. It returns `None` unless the note is planned in this run (or adopted). The registry may still hold notes from older runs that are about to be deleted, and linking to those would leave dead links. Map notes get a link with a label from `zone_label`.
+
+`render` builds a `Doc` and calls the renderer for the note's subject. Crate, module and type notes share one shape: What it does from the doc comment, Source, How it works from the explain walk, Items, Depends on, Used by, See also. Flow notes carry a Mermaid diagram: a flowchart for crate dependencies, a sequence diagram for startup messages. Integration notes list who imports the package and what build files ask of it. Pattern notes show a code skeleton in the language of the trait. The operations note lists commands read from build files, with `unit_commands` covering Python, TypeScript, JavaScript and Java. `render_index` and `render_home` write the maps and the reading path by hand.
 
 ## Items
 
@@ -49,6 +55,13 @@ And 11 more private items with no comment.
 
 - [[Explain Module]] — from `callers_sentence`, `facts`, `items`, `text`
 - [[Generate Module]] — from `generate_with`
+
+## Gotchas
+
+- Summaries are computed in `new`, before any note is rendered. A summary that needs a link would see only the plan, not rendered text.
+- `dep_bullets` shows at most 8 notes and 4 symbol names each. Linked notes that are not planned are skipped without a trace.
+- Startup flow notes warn that calls through trait objects, macros or untyped values may be missing. The diagram only follows resolved calls.
+- The operations note assumes standard Cargo commands. Other languages get commands only when a manifest was read.
 
 ## See also
 

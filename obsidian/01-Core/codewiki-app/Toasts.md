@@ -6,21 +6,19 @@ tags: [core, codewiki-app]
 
 > The toasts on screen, the ones that are leaving, and the notices sent to Windows.
 
+## What it does
+
+`Toasts` is the store behind the app's notifications. It holds the toasts on screen, the ones that were just removed and are fading out, the notices handed to Windows, and the notices waiting for their turn. It holds state only; the app draws it. See [[Toasts Module]] for the notice type and the rules.
+
 ## Source
 
 - `crates/codewiki-app/src/toasts.rs` — definition of `Toasts`
 
 ## How it works
 
-What the functions of this type call:
+`push` adds a toast and trims the stack to three, sending the oldest to `leave`. `expire` removes by sequence number and `dismiss` by key; both go through `leave`, which keeps the fading list no longer than the shown limit.
 
-1. `push` calls `leave`. `leave` calls `push`.
-2. `expire` calls `leave`.
-3. `dismiss` calls `leave`.
-4. `sent` calls `push`.
-5. `offer` calls `push`, then `sent`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+For Windows, `offer` decides whether a notice is shown now or waits. It then calls `sent` to remember the notice, so `route` can answer a click on it. A notice marked as repeating waits when one with its key was shown less than a minute ago. `take_due` and `next_due` let the app wake at the right time. `live` says whether a key is still before the user, as a toast, a recent Windows notification, or one waiting. The review code uses it so a repeated notice can add up what came since the first.
 
 ## Items
 
@@ -50,6 +48,12 @@ Members:
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `dismiss_toast`, `handle_event`, `notify_user`
+
+## Gotchas
+
+- `push` also cancels a waiting Windows notice with the same key. Otherwise it would be shown later and replace the newer toast.
+- Window state of the key is forgotten after the gap: `offer` drops old entries each time it runs.
+- `leaving` holds copies for the fade-out only. Never treat them as still shown.
 
 ## See also
 

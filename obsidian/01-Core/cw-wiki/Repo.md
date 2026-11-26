@@ -6,15 +6,19 @@ tags: [core, cw-wiki]
 
 > Lookup tables over the scanned facts.
 
+## What it does
+
+A read-only index over one scan of the repository. The scan gives flat lists of symbols and edges. `Repo` turns them into maps so planning and rendering can ask quick questions: who are the children of a symbol, which calls does it make, which unit holds it, how important is it, which types implement a trait. It also holds the repository's units (crates or packages) and what its build files say about outside packages.
+
 ## Source
 
 - `crates/cw-wiki/src/plan.rs` — definition of `Repo`
 
 ## How it works
 
-1. `generate_with` in [[Generate Module]] calls `at`. `at` calls `build`, then `discover` in [[Units Module]], then `Packages::read` in [[Manifests Module]].
+`Repo::new` builds the tables from facts alone. `Repo::at` also reads manifests from the checked-out folder, so it can name non-Rust units and read package descriptions. Both go through `build`, which loops once over symbols (by name, children by parent) and once over edges (outgoing, incoming, and implementors for `Implements` edges). Rank comes from the page rank in the metrics.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Queries are plain lookups. `calls_from` keeps only call edges, orders them by call site and keeps each callee once. `unit_of` finds the unit by symbol, or by Rust path when the symbol is unknown. `top_modules` lists the modules right below a unit's root; for units with no root it finds modules not nested in another module of the unit. `descendants` and `subtree_rank` add up everything nested below a symbol. `is_test` is true for test paths and for test files outside Rust.
 
 ## Items
 
@@ -55,6 +59,13 @@ Members:
 - [[Manifests Module]] — from `declared`, `describe`
 - [[Generate Module]] — from `generate_with`
 - [[Render Module]] — from `top_children`
+
+## Gotchas
+
+- `Repo::new` names non-Rust units from layout only. Use `Repo::at` when manifests matter.
+- `rank_of` returns 0 for an unknown symbol, not an error.
+- `module_count` skips `__init__` files, because a Python package's `__init__` is the package, not one of its modules.
+- `children` is built in fact order, not sorted by name, despite the field doc. Callers that need an order sort themselves.
 
 ## See also
 

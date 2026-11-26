@@ -8,9 +8,7 @@ tags: [core, cw-vault, module]
 
 ## What it does
 
-A proposal stores the full proposed text plus a unified diff for reading. Nothing in the vault changes until a human approves it, and approval only applies when the note is still the version the proposal was written against.
-
-Two things propose. A sync does when the code under a note changed. A coding agent does when it explained a note its owner had edited: its text and pictures wait here instead of replacing the owner's words.
+The review queue for notes a person edited. CodeWiki never overwrites such a note. When new text is ready, a proposal stores it beside the note, with a diff to read. Nothing in the vault changes until a person approves. Two sources propose: a sync, when the code under a note changed, and a coding agent, when it explained a note whose owner had edited it. Both kinds are stored as files and shown in the app.
 
 ## Source
 
@@ -18,15 +16,11 @@ Two things propose. A sync does when the code under a note changed. A coding age
 
 ## How it works
 
-1. `run` in [[codewiki]] and `list_proposals` in [[Api Module]], and 3 more, call `list`. `list` calls `proposals_dir`, then `Error::io` in [[Error]], then `read_json`. `proposals_dir` calls `VaultMeta::dir` in [[VaultMeta]]. `read_json` calls `Error::io`, then `Error::external` (both in [[Error]]).
-2. `get_proposal` in [[Api Module]] and `approve` in [[Explanations Module]] call `proposed_text`. `proposed_text` calls `check_id`, then `proposals_dir`, then `Error::io` in [[Error]]. `check_id` calls `Error::invalid` in [[Error]].
-3. `get_proposal` in [[Api Module]] and `approve` in [[Explanations Module]] call `pictures_text`. `pictures_text` calls `check_id`, then `proposals_dir`, then `Error::io` in [[Error]].
-4. `run` in [[codewiki]] and `approve` in [[Explanations Module]] call `approve`. `approve` calls `get`, then `Error::invalid`, then `Error::io` (both in [[Error]]), then `body_hash` in [[Manifest Module]], then `write_json`, then `proposed_text`. `write_json` calls `proposals_dir`, then `Error::external`, then `Error::io` (both in [[Error]]).
-5. `run` in [[codewiki]] and `reject` in [[Explanations Module]] call `reject`. `reject` calls `get`, then `Error::invalid` in [[Error]], then `write_json`.
+Each proposal lives in a `proposals` folder under the metadata folder, as several files with one id: a `.json` record ([[Proposal Module]] holds the `Proposal` type), the proposed full text as `.md`, a unified `.patch`, and for an agent with pictures an `.openui` file.
 
-5 more entry points: `create`, `create_agent`, `pending_count`, `get`, `patch_text`.
+`create` queues a sync's proposal. `create_agent` queues an agent's, naming it by a hash of the proposed text and pictures, so the same offer twice is one proposal. Both go through `create_as`, which first deletes an older pending proposal of the same note and the same kind, then writes the files. The record stores `base_hash`, the hash of the note as it was.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`approve` re-reads the note. If its hash is not the `base_hash` any more, the proposal becomes `Superseded` and an error says a new proposal is needed. Otherwise it writes the proposed text and marks the proposal `Approved`. `reject` marks it `Rejected`. The caller records the input hash on the note entry so the same change is not proposed again. `pending_count` reads only the status of each record.
 
 ## Items
 
@@ -71,6 +65,14 @@ And 3 more items.
 - [[Briefing Module]] — from `session_start`
 - [[Generate Module]] — from `generate_with`
 - [[Query Module]] — from `status`
+
+## Gotchas
+
+- A sync proposal and an agent proposal for the same note live side by side. Their ids differ, and a new one replaces only a pending proposal of its own kind.
+- Only pending proposals can be approved or rejected. Any other state is an error.
+- `check_id` allows only letters, digits, dash and underscore. Ids come from API callers, so one must never name a path outside the folder.
+- A new note has an empty `base_hash`. Approval then expects that the file does not exist yet.
+- `approve` writes the text but does not update the note's manifest entry. The caller, for example `approve` in [[Explanations Module]], does that.
 
 ## See also
 

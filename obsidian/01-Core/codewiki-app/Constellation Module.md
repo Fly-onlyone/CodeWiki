@@ -22,15 +22,15 @@ No UI types, so all of it is unit-tested.
 
 ## How it works
 
-1. `Shell::new` in [[Backdrop Module]] calls `Constellation::new`. `Constellation::new` calls `Constellation::from_seed`. `Constellation::from_seed` calls `Rng::new`, then `distance`, then `add_link`.
-2. `Sky::new` in [[Backdrop Module]] calls `Pulse::brightness`.
-3. `Sky::new` in [[Backdrop Module]] calls `Pulse::flash`.
-4. `Shell::new` in [[Backdrop Module]] calls `Traffic::new`. `Traffic::new` calls `Rng::new`.
-5. `Sky::new` in [[Backdrop Module]] calls `segment_distance`.
+`Constellation::new` calls `from_seed` with a fixed `SEED`. A `Rng` (SplitMix64) gives the numbers.
 
-1 more entry point: `lit`.
+1. Layout: a grid of 7 by 6 nodes. Each node moves off its cell's middle by up to 38 percent of the cell. Each takes one of three clusters, whose centres sit in set places of the window.
+2. Links: inside a cluster the nodes form a tree around a hub. About 30 percent of nodes get one more link, to their second nearest neighbour, which closes a loop. `add_link` skips a link between a node and itself and a link that exists. One bridge joins each pair of clusters where they come closest. `distance` measures as on a window 1.6 times wider than tall.
+3. Drift: `Node::place` gives where a node is at a phase of the drift, a small wander of 1.2 percent of the window's shorter side.
+4. Light: `Traffic` holds the pulses. `advance` is called each frame with the clock and a `busy` flag. A pulse runs a link, then may go on along another link from the node it reaches, until its hops are used up. Quiet, a pulse starts every 3.5 seconds on average, with at most 4 at once and 3 hops. Busy (a wiki is being written), every 0.35 seconds, at most 18 at once and 6 hops.
+5. Drawing support: `Pulse::brightness` and `Pulse::flash` give the glow along a link and at its end node. `segment_distance` and `lit` give the pointer's light on links and nodes.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The shell in [[Backdrop Module]] builds the sky and the traffic, and draws them.
 
 ## Items
 
@@ -60,6 +60,14 @@ And 9 more items.
 ## Used by
 
 - [[Backdrop Module]] — from `Shell`, `drift`, `new`
+
+## Gotchas
+
+- The sky never changes, and nothing is asked of the backend. Changing `SEED` or the grid redraws every user's sky.
+- Positions are shares of the window, so the layout stretches with it. The `ASPECT` only affects which node counts as nearest.
+- A pulse takes between 0.7 and 2.6 seconds for a link, whatever its length (`run_time` clamps it).
+- The module has no UI types, so tests check it without a window: the sky is the same each time, every node has a link, and the whole sky is one graph.
+- The nodes stay put when the backdrop stands still. The motion setting, an inactive window and software drawing all stop the drift and pulses in [[Backdrop Module]], not here.
 
 ## See also
 

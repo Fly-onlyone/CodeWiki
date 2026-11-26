@@ -16,13 +16,15 @@ A page function turns backend data into a `Doc`: a title, and blocks such as tab
 
 ## How it works
 
-1. `home_page` and `offline_page` in [[Live Module]], and 16 more, call `text`.
-2. `file_page` and `offline_page` in [[Live Module]], and 14 more, call `code`.
-3. `file_page` and `hotspots_page` in [[Live Module]], and 13 more, call `Column::new`.
-4. `file_page` and `hotspots_page` in [[Live Module]], and 11 more, call `Cell::text`. `Cell::text` calls `text`.
-5. `file_page` and `hotspots_page` in [[Live Module]], and 13 more, call `Table::new`.
+A page function builds a [[Doc]] from backend data with these pieces.
 
-12 more entry points: `strong`, `file`, `Stat::new`, `Column::numeric`, `Cell::chip`, `Press::new`, and 6 more.
+- Text is a [[Span]] (`text`, `strong`, `code`) or a link span (`file`, `symbol`, `note`) that carries an [[Action]]. A `Line` is a list of spans. `rich` turns backend text into a line: every second part between backticks becomes code.
+- Tables are built from `Column::new` or `Column::numeric` and `Table::row`, with one `Cell` per column. A cell is a line, a chip with a tone, or a share bar.
+- `Stat` is a headline number with an optional hint and a tone. `Row` is a pressable row with an icon, a detail and an optional aside button. `Choice` and `Press` feed choice groups and button rows.
+- `SecretState` says whether a secret setting is empty, being replaced, saved (with its last characters) or unreadable. `text` of it gives the line the page shows in place of the input.
+- [[Block]] is the part of a page that holds all of these.
+
+The doc view in [[Doc View Module]] draws the result.
 
 ## Items
 
@@ -66,6 +68,13 @@ And 2 more items.
 - [[Doc]] — from `tables`, `text`, `words`
 - [[Settings View Module]] — from `OpenMenu`, `lists_themes`
 - [[Block]] — from `Block`
+
+## Gotchas
+
+- `Table::row` checks the cell count against the column count only with a debug assertion. A release build draws a ragged row without a warning.
+- `rich` has no escape for a backtick. A text with an odd number of backticks turns its tail into code.
+- `symbol` labels a link with the last part of the qualified name only, so two symbols with the same last part look alike. The link target keeps the full name.
+- `plain` and `Cell::plain` exist only in tests.
 
 ## See also
 

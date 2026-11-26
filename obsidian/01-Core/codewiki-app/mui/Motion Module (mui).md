@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Holds how things move in the app: the spring presets, entrances, stagger delays, the press timings and a few fixed holds. The springs are TradingAgent's Framer Motion presets. Framer and GPUI both describe a spring by stiffness, damping and mass, so the numbers carry over unchanged.
+Holds how things move in the app: the spring presets, entrances, stagger delays, the press timings, and how long a few short messages stay on screen. The springs are TradingAgent's Framer Motion presets. Framer and GPUI both describe a spring by stiffness, damping and mass, so the numbers carry over unchanged.
 
 GPUI cannot scale an element, so entrances keep Framer's fade and travel and drop its scale. Set `CODEWIKI_MOTION_SCALE` to a number of 1 or more to stretch every motion. A window capture can then catch an animation half way.
 
@@ -20,11 +20,13 @@ GPUI cannot scale an element, so entrances keep Framer's fade and travel and dro
 
 `scale` reads the environment variable once and keeps it. `parse_scale` accepts only finite numbers of at least 1, so motion is never sped up and bad text means 1. `scaled` stretches a duration by it, and `Spring::config` and `Spring::policy` apply it to springs (see [[Spring]]). Controls call `scaled` for every transition they build.
 
-`Enter` describes an entrance: a start offset, a spring and a delay. `Enter::PAGE`, `DIALOG` and `MENU` are fixed ones, and `Enter::card` and `Enter::row` add a stagger from `stagger_delay`, which stops growing after `STAGGER_CAP` (12) items. `EnterExt::enter` runs two animations: a hold for the delay, then the spring. `Enter::at` turns progress into offset and opacity. Opacity is clamped, but the offset follows an overshoot.
+`Enter` describes an entrance: a start offset, a spring and a delay. `Enter::PAGE`, `DIALOG`, `MENU` and `TOAST` are fixed ones. `Enter::card` rises from below and `Enter::row` slides in from the left. Both add a stagger from `stagger_delay`, which stops growing after `STAGGER_CAP` (12) items. `EnterExt::enter` runs two animations: a hold for the delay, then the spring. It runs again whenever the element's id changes. `Enter::at` turns progress into offset and opacity. Opacity is clamped, but the offset follows an overshoot.
 
 `drawer` gives a side pane's openness from 0 to 1: ease-out over the entering duration, sharp over the leaving duration. `count_up` shows a figure such as `62.5%` part way up from zero, keeping decimals and the text after the number.
 
 `PRESS_IN` (50 ms) and `PRESS_OUT` (250 ms) are not MUI motions. They set how fast a pressed look arrives and how slowly it leaves, which [[Base Module]] uses. `BOUNCY` is also the selected row bar's spring in [[Interaction Module]].
+
+Three holds are times, not motions. `NOTE_HOLD` (2.5 s) keeps the word "Saved" beside a setting. `LEVEL_HOLD` (1.5 s) keeps the zoom level in the title bar. `TOAST_HOLD` (6 s) keeps a toast on screen.
 
 ## Items
 
@@ -77,7 +79,7 @@ And 6 more items.
 - A spring may overshoot past 1. The entrance offset follows it but opacity does not, and `count_up` clamps so a figure never exceeds its target.
 - Under reduced motion an entrance is simply there.
 - `count_up` returns text that does not start with a digit unchanged.
-- `NOTE_HOLD` and `LEVEL_HOLD` are the app's own, not from MUI or TradingAgent.
+- `NOTE_HOLD` and `LEVEL_HOLD` are the app's own, not from MUI or TradingAgent. `TOAST_HOLD` is the 6 seconds of MUI's Snackbar docs example.
 
 ## See also
 

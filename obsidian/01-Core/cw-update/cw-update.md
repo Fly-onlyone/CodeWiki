@@ -8,9 +8,7 @@ tags: [core, cw-update]
 
 ## What it does
 
-The desktop app asks GitHub for the latest release (`check`). When the user accepts, `install` downloads the package into the installation's `.update` folder, verifies it against the release's `.sha256` file, unpacks it, checks that the new `codewiki.exe` starts, stops the backend and swaps the files (`swap`). Windows lets a running program be renamed but not replaced, so every file that is replaced is first renamed to `<name>.old`; programs still running (the app, an agent's MCP bridge) keep running from that file. `recover_and_clean`, run when the app starts, finishes the job: it undoes a swap that was interrupted and deletes the `.old` files.
-
-Only a copy installed by `install.ps1` updates itself (`installed_dir`).
+Lets an installed CodeWiki update itself. The desktop app asks GitHub for the latest release. If the user accepts, this crate downloads the package, verifies it, unpacks it, checks that the new program starts, stops the backend and swaps the files in. Only a copy set up by `install.ps1` updates itself; a development build or an unpacked package does not.
 
 ## Source
 
@@ -19,14 +17,18 @@ Only a copy installed by `install.ps1` updates itself (`installed_dir`).
 
 ## How it works
 
-Builds a library.
+`installed_dir` finds the installation: the folder of the running program, if `is_installation` says it holds `uninstall.ps1` and no `install.ps1`. `api_base` gives the API address, which an environment variable can override for tests.
 
-1. `AppView::install_update` and `AppView::start_updates` in [[codewiki-app]], and 2 more, call `installed_dir`. `installed_dir` calls `is_installation`.
-2. `check` in [[Update Module]] calls `api_base`.
-3. `AppView::install_update` in [[codewiki-app]] calls `install`. `install` calls `download` in [[Download Module]], then `stage`, then `program_version` (both in [[Stage Module]]), then `swap` in [[Swap Module]], then `record_version` in [[Apps Entry Module]].
-4. `AppView::install_update` in [[codewiki-app]] calls `relaunch`.
+`install` runs the whole update inside the `.update` folder:
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+1. `download` in [[Download Module]] fetches and verifies the zip.
+2. `stage` in [[Stage Module]] unpacks it and checks its version.
+3. If the installed `codewiki.exe` already has this version or a newer one (another app copy updated first), it returns `AlreadyCurrent`.
+4. It calls the `stop_backend` function the caller passed in.
+5. `swap` in [[Swap Module]] replaces the files.
+6. `record_version` in [[Apps Entry Module]] updates the version shown in Windows Settings.
+
+A failure up to and including the swap leaves the installation as it was, and the message says "nothing was changed". The one exception is a swap that could not be undone. `relaunch` then starts the new app. Checking for a release is done by `check` in [[Release Module]].
 
 ## Items
 
@@ -69,6 +71,14 @@ Defined at the crate root:
 - [[Release Module]] — from `check`, `from_repository`
 - [[Update Module]] — from `check`
 - [[Stage Module]] — from `stage`
+
+## Gotchas
+
+- Folder `.update` lives inside the installation on purpose, so every move is a rename on one volume.
+- A failed Apps-entry update is only logged. It does not undo a working update.
+- `relaunch` starts the new app with the installation folder as working directory. The app treats a working folder that is a repository as the one to open, so the old app's folder must not be passed on.
+- `install` takes the backend stop as a closure, so this crate does not know how the backend runs.
+- `PROGRAMS` lists the three programs a package must hold. A package missing one is rejected before any file is replaced.
 
 ## See also
 

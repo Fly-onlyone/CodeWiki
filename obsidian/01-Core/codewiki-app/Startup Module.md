@@ -22,15 +22,15 @@ The command line is `codewiki-app [--tray] [<folder> [<view>]]`. Flags may stand
 
 ## How it works
 
-1. `AppView::listen` and `AppView::new` in [[codewiki-app]], and 3 more, call `launch`. `launch` calls `parse_args`.
-2. `Request::new` in [[Instance Module]] calls `named_repo`. `named_repo` calls `looks_like_repo`.
-3. `AppView::open_startup_view` and `AppView::settings_frame` in [[codewiki-app]] call `open_last`. `open_last` calls `read` in [[Prefs Module]].
-4. `AppView::run_action` in [[codewiki-app]] calls `set_open_last`. `set_open_last` calls `write` in [[Prefs Module]].
-5. `AppView::select_repo` in [[codewiki-app]] calls `remember`. `remember` calls `write` in [[Prefs Module]], then `touched`, then `recent`.
+`launch` parses the command line once (kept in a `OnceLock`). `parse_args` marks `--tray`, drops unknown `--` flags with a warning, and takes the first two other arguments as the folder and the view.
 
-2 more entry points: `recent`, `keep_recent`.
+`repo` chooses the folder with `choose`, in this order: the argument if not empty; the working folder if `looks_like_repo` says yes; the repository saved as last, if its folder still exists. `looks_like_repo` accepts a `.git` entry (folder or file) or a CodeWiki vault with its manifest folder.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`remember` runs when a repository is opened: it saves the path as last and moves it to the front of the recent list (`touched`), capped at 50 entries. `keep_recent` removes folders that are no longer registered, and writes only if something changed. The lists live as one setting through [[Prefs Module]], one folder per line.
+
+`named_repo` is used for a second launch. It makes the folder a full path against that launch's working folder, so the running app, which has its own working folder, can read it. See [[Instance Module]].
+
+`open_last` and `set_open_last` store whether to start on the wiki map instead of Home.
 
 ## Items
 
@@ -64,6 +64,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[codewiki-app]] — from `listen`, `main`, `new`, `open_startup_view`
 - [[Instance Module]] — from `acquire`, `new`
+
+## Gotchas
+
+- An unknown flag is never taken as a folder. Otherwise the backend would index something like `--foo`.
+- The working folder is ignored unless it looks like a repository. A Start menu shortcut once pointed at the user's profile, and opening it would have indexed everything in it.
+- An argument is used as given, even if it does not exist. Only the last-opened path is checked for existence.
+- Open the last repository is off until the user turns it on, and Home still shows when that repository has no wiki.
+- `--tray` starts with no window; Windows autostart passes only that flag.
 
 ## See also
 

@@ -30,13 +30,18 @@ The shapes stand still when the window is inactive and under reduced motion, so 
 
 ## How it works
 
-1. `main` in [[codewiki-app]] calls `init`. `init` calls `read` in [[Prefs Module]].
-2. `AppView::margin_width` and `AppView::settings_frame` in [[codewiki-app]] call `shown`.
-3. `AppView::run_action` in [[codewiki-app]] calls `set_shown`. `set_shown` calls `write` in [[Prefs Module]].
-4. `AppView::tell_backdrop` in [[codewiki-app]] calls `set_writing`. `set_writing` calls `writing`.
-5. `main` in [[codewiki-app]] calls `Shell::new`. `Shell::new` calls `draws_on_processor`, then `Constellation::new`, then `Traffic::new` (both in [[Constellation Module]]), then `debug_backdrop` in [[Glass Module]].
+Setup: `main` calls `init`, which reads the "backdrop" setting from [[Prefs Module]] into a global `Shown`. Only the value "off" turns it off. `set_shown` writes the setting and the global. `main` builds the `Shell`, which makes the sky and its traffic from [[Constellation Module]].
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Each frame, `Shell` takes a step of at most `MAX_STEP` seconds (`step`), moves the clock, and draws:
+
+1. Four `Blob`s, each a stack of 48 faint discs (`RINGS`). `ring_radius` and `ring_alpha` make their sum reach the shape's share of `STRENGTH` at the middle and nothing at the rim.
+2. The sky, only in the two `Margins` the app sets beside the reading column. Links, nodes, pulses and the pointer's light are painted there.
+3. The app and the generated page, each as a cached view, on top.
+4. The title bar, redrawn in every frame by the shell itself.
+
+`set_writing` tells the shell whether a wiki is being written. While it is, pulses come often. The shell hears of a change only when the value changes.
+
+The drift stops when the window is inactive, under reduced motion, and when `draws_on_processor` says Direct3D runs on the processor. That check goes by the software flag, by Microsoft's vendor ID, or by the name "Microsoft Basic Render".
 
 ## Items
 
@@ -77,6 +82,16 @@ And 25 more items.
 
 - [[codewiki-app]] — from `AppView`, `main`, `margin_width`, `run_action`
 - [[Glass Module]] — from `matched_backdrop`
+
+## Gotchas
+
+- The title bar must stay out of the cached app view. GPUI keeps the hit areas of a cached view but clears the window control areas each frame, so the buttons and the drag area died in every frame where only the shapes moved.
+- `STRENGTH` is asserted at most 0.3 at compile time. `glass` widens what it expects behind the chrome by this amount, and a stronger backdrop would force the chrome nearly opaque.
+- 48 rings is deliberate. With 18 the steps showed as faint rings.
+- The sky's alphas and widths were chosen by eye on 2026-11-24. The margins carry no text, so no contrast limit applies to them.
+- Ctrl+wheel is taken by the shell before anything under the pointer, for zoom. The title bar is drawn at 100 percent whatever the zoom.
+- With software drawing, an idle window once kept both cores of a clean-Windows test machine busy, which is why the drift stands still there.
+- With the backdrop off, the page is as dense as its column and plain Mica is behind the glass.
 
 ## See also
 

@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Each is a `Doc`, so a test reads it without a window.
-
-A setting the backend keeps can be out of the user's hands here for one of three reasons, and its control then says which: an environment variable of the backend sets it; the backend runs on another machine; or the backend cannot save a key at all.
+This module builds the content of each Settings page as a [[Doc]]: Appearance, Semantic search, Backend, Repositories, Updates, Keyboard and Diagnostics. It mixes two sources: what the app itself knows (theme, zoom, autostart) and what the backend reports about its own settings. Because a page is plain data, tests read it without opening a window. The drawing and the clicks are handled in [[Settings View Module]].
 
 ## Source
 
@@ -18,10 +16,11 @@ A setting the backend keeps can be out of the user's hands here for one of three
 
 ## How it works
 
-1. `AppView::settings_frame` in [[codewiki-app]] calls `page`. `page` calls `Doc::new` in [[Doc]], then `appearance`, then `search`, then `backend`, then `repositories`, then `updates`, and 2 more. `appearance` calls `card`, then `for_theme` in [[Icons Module]], then `text`, then `code` (both in [[Doc Module]]), then `zoom_card`, then `startup`. `search` calls `without_settings`, then `provider`, then `server_rows`, then `in_use`, then `text`, then `Press::new` (both in [[Doc Module]]), and 5 more.
-2. `AppView::probe_embed_models` in [[codewiki-app]] calls `server_label`.
+`page` picks a builder for the category. The caller fills a `Model`, a bundle of everything the pages read: the theme list, backend settings once they arrive, news beside each field, the embedding job, the kept-folder list and more. Each builder returns blocks: cards, switches, selects, text fields and secret fields.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Fields that belong to the backend go through `field` or `secret`. Both call `lock`, which says why a setting cannot be changed here. There are three reasons: the backend is on another machine; the backend takes its settings from its environment only; or an environment variable sets that value. A locked control shows the reason. `secret` adds a fourth: a backend that cannot save keys safely says to set the variable instead. A secret shows as typing, saved with a hint, unreadable, or empty.
+
+The search page picks a provider, then `server_rows` shows its address, key, model and how to start the server. `job` reports the running or last embedding job. While settings are not yet read, `without_settings` shows a loading line or the read error.
 
 ## Items
 
@@ -63,6 +62,13 @@ And 17 more items.
 
 - [[Settings View Module]] — from `State`, `job_ended`, `read_agents_off`, `test_line`
 - [[codewiki-app]] — from `probe_embed_models`, `settings_frame`, `take_embed_job`
+
+## Gotchas
+
+- A page that needs backend settings shows only a loading line or an error until they arrive.
+- Start with Windows is locked for a copy not installed, since a build run from `target` would leave Windows a program the next build replaces.
+- The kept-folder list never checks whether a folder exists while drawing, because a folder on an offline share can answer slowly. The check happens when the list is read.
+- Secrets are never shown again once saved; only a hint is.
 
 ## See also
 

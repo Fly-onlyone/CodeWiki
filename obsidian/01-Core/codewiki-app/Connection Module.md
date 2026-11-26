@@ -16,9 +16,15 @@ Nothing here touches GPUI or the network. After each status poll `main.rs` hands
 
 ## How it works
 
-1. `State::new` in [[Settings View Module]] and `Supervisor::default` in [[Supervisor]] call `Backoff::new`.
-2. `AppView::embed_step` in [[codewiki-app]] calls `embed_step`.
-3. `AppView::probe_embed_models` in [[codewiki-app]] calls `embed_came_up`.
+The state lives in [[Supervisor]]. After each status poll the app calls `polled` with `Answered`, `Silent` or `NotAsked`. `SILENT_POLLS` (2) silent polls in a row make the backend lost, and the supervisor records a `Loss` with a due time.
+
+The app asks `due`. It returns an `Attempt` and the current sequence number when the wait is over. The first attempt of a loss on this machine is `Full`, which may start a backend. Later ones are `ProbeOnly`, which only look for one that answers. A named remote backend is never started.
+
+The attempt runs in its own task. Its result comes back through `failed`, which schedules the next try after `Backoff` (5 seconds, doubling to 30), or through `succeeded`, which clears the loss and says what was lost.
+
+`Sequence` guards against old results. `restart` (the user switched backends or pressed "Try again") and `retry_now` bump the number, and a result with an older number is dropped.
+
+Separately, `embed_step` and `embed_came_up` decide about the embedding server: retry only on its settings page, with a local backend, while the window is on screen and the last answer was "not reachable". A minimized window waits one second and looks again.
 
 ## Items
 
@@ -45,6 +51,15 @@ Nothing here touches GPUI or the network. After each status poll `main.rs` hands
 - [[codewiki-app]] — from `embed_step`, `load_embed_models`, `probe_embed_models`, `reach`
 - [[Settings View Module]] — from `State`, `new`
 - [[Doc View Module]] — from `show`
+
+## Gotchas
+
+- Nothing here uses GPUI, the clock or the network directly. Callers pass `Instant` values in, so tests need no waiting.
+- A late result of an overtaken attempt must be checked with `is_current` before use. `failed` returns false and `succeeded` returns `None` for such results.
+- A poll that answers while a loss is open makes the attempt due now. This covers a remote backend that comes back at the same address and token.
+- `lose` is for a backend that is gone without a poll saying so, as after a failed update. On a loss already open it only lets the next attempt start a local backend again.
+- `retry_now` returns false for the offline page after startup. That page's "Try again" is a new connect through `restart`.
+- `Backoff::new` caps the first wait at the cap, so a first wait above the cap is never used.
 
 ## See also
 

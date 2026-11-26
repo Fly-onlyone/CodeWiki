@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Every detector here is written from first principles against CodeWiki's own index. Findings state how sure they are, because name resolution runs without a compiler.
+This module finds three kinds of trouble: code nothing uses, notes that no longer match the code, and files that are too big or too tangled. It reads CodeWiki's own index, not a compiler, so names are matched without full type information. Each dead-code finding therefore says how sure it is. The results feed the app, the API and the CI check.
 
 ## Source
 
@@ -16,11 +16,11 @@ Every detector here is written from first principles against CodeWiki's own inde
 
 ## How it works
 
-1. `run` in [[codewiki]] and `file_health` in [[Api Module]], and 2 more, call `file_health`. `file_health` calls `dead_code`, then `parameter_count`.
-2. `run` in [[codewiki]] and `dead_code` in [[Api Module]], and 1 more, call `dead_code`. `dead_code` calls `is_test_symbol`, then `Language::from_path` in [[Language]].
-3. `run` in [[codewiki]] and `doc_drift` in [[Api Module]], and 1 more, call `doc_drift`. `doc_drift` calls `VaultMeta::load` in [[VaultMeta]], then `state` in [[Lifecycle Module]], then `Note::parse` in [[Note Module]], then `looks_like_path`.
+`dead_code` marks a symbol as referenced when it has an incoming call, reference or implement edge. A type is alive when any of its methods is used. It skips modules, impls, macros, tests, `main`, public methods of traits or of types that implement a trait, and anything public in a library crate (that is API). What remains is `Likely` only when the symbol is Rust, private and has no attribute that could register it. Otherwise it is `Possible`, with the reason in words: an attribute like a route macro may wire it up, or the language is dynamic. Likely findings come first, then longer ones.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`doc_drift` goes through every note. It reports a cited source file that is gone, a source that changed since a hand-edited note was reviewed, a wikilink that matches no note, and a backticked path that is not in the repository. It also reports documentation coverage: the share of source files that some note cites, and the 20 largest uncited files.
+
+`file_health` starts each source file at 10 and subtracts penalties. Detectors: long file (600 or 1200 lines), long function (80 or 160), large type (25 methods), high fan-out (15 files), mutual dependency, many parameters (7), undocumented API, wide API (30 public items), and dead code. The lowest score is 1. Files are sorted worst first. `parameter_count` ignores the receiver and nested commas.
 
 ## Items
 
@@ -60,6 +60,14 @@ And 7 more private items with no comment.
 - [[Refactor Module]] — from `extract_types`, `move_functions`, `split_files`
 - [[codewiki]] — from `run`
 - [[Ci Module]] — from `check`
+
+## Gotchas
+
+- Only Rust symbols can be `Likely` dead. Other languages are `Possible`, because reflection and decorators are invisible to the index.
+- A module and the file that declares it with `mod` do not count as a mutual dependency.
+- Generated notes that nobody edited are not checked for dead paths. They copy source comments, where paths are often examples, and the next sync rewrites them.
+- A source change counts as drift only for hand-edited notes. Generated notes are rewritten on sync.
+- A backticked path is only checked when its first folder exists in the repository or vault, which avoids flagging paths of other projects.
 
 ## See also
 

@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-An app without a package is known to Windows by the id it gives its process (`APP_IDENTITY` in `main.rs`). The header of its notifications shows what the user's registry holds for that id, under `Software\Classes\AppUserModelId\<id>`: `DisplayName`, and `IconUri`, an image file named by its full path. GPUI writes the name alone, at its first notification, so the header had no icon. This module writes the app's logo to `notification-icon.png` in the data folder, and both values, just before the app's first Windows notification. Each is written only when it is missing or different. `uninstall.ps1` removes the key and the file.
-
-The values are those of Microsoft's "Send a local app notification from other types of unpackaged apps" and of the Windows App SDK, which registers an unpackaged app the same way (`RegisterAssets` in `dev/AppNotifications/AppNotificationUtility.cpp`). `IconBackgroundColor` is optional, and the SDK leaves it out too.
+A Windows notification shows a name and an icon in its header. For an app without a package, Windows takes both from the registry, under a key named by the app's id. GPUI writes the name only, so the header had no icon. This module fills that gap: it saves the app's logo as a PNG in the data folder and writes the name and the icon path to the registry key. It runs just before the app's first Windows notification.
 
 ## Source
 
@@ -18,9 +16,9 @@ The values are those of Microsoft's "Send a local app notification from other ty
 
 ## How it works
 
-1. `AppView::show_system_notification` in [[codewiki-app]] calls `register`. `register` calls `write_icon`, then `data_dir` in [[Paths Module]], then `update`, then `wanted`. `update` calls `stale`, then `read`.
+`AppView::show_system_notification` calls `register` once per process. `register` first calls `write_icon`, which writes `notification-icon.png` to the data folder unless the file already holds the same bytes. It then opens `Software\Classes\AppUserModelId\<id>` under the current user and calls `update`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`update` asks `stale` which of the two wanted values (`DisplayName` and `IconUri`) the key lacks or holds differently, and writes only those. `read` reports both the text and the registry type, because the type counts too. `register` returns what it wrote, an empty list when all was in place, so a second run changes nothing.
 
 ## Items
 
@@ -40,6 +38,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[codewiki-app]] — from `show_system_notification`
+
+## Gotchas
+
+- `DisplayName` must be a plain string (`REG_SZ`), as GPUI writes it. `IconUri` is an expandable string (`REG_EXPAND_SZ`), as Microsoft's example writes it. A value of the wrong type counts as stale and is rewritten, so the two writers do not take turns.
+- `IconUri` needs the icon's full path, so `write_icon` makes the path absolute. If the data folder moves, the value is stale and is written again.
+- A failure only loses the icon. The caller logs a warning and the notification still shows.
+- The registration happens at the first notification, not at start. The same id decides which taskbar button the window belongs to, so a run that never notifies keeps the button Windows gave it.
+- `uninstall.ps1` removes the key and the icon file. Keep that script in step if the key path changes.
 
 ## See also
 

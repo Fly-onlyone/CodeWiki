@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-Name resolution runs without a compiler, so every edge carries its confidence and consumers weight by it.
+A three-level grade on every edge of the code graph. CodeWiki resolves names without a compiler, so a call or reference may point at the wrong target. Each edge records how sure the [[Resolver]] was, and queries and risk scores weight edges by it.
 
 ## Source
 
@@ -16,7 +16,13 @@ Name resolution runs without a compiler, so every edge carries its confidence an
 
 ## How it works
 
-1. `edge_from_row` in [[Store Module]] calls `parse`.
+The levels:
+
+- `High`: resolved through an explicit path or import. Weight 1.0.
+- `Medium`: matched by bare name, with one candidate in scope. Weight 0.6.
+- `Low`: matched by bare name, with several candidates. Weight 0.25.
+
+`weight` gives that number. The type derives ordering, so `High > Low`. `as_str` and `parse` convert to and from the text stored in the index; [[Store Module]] calls `parse` when it reads an edge row.
 
 ## Items
 
@@ -33,6 +39,11 @@ Members:
 - [[Resolver]] — from `by_bare_name`, `resolve`
 - [[Model Module]] — from `Edge`
 - [[Store Module]] — from `edge_from_row`
+
+## Gotchas
+
+- `parse` turns any unknown text into `Low`, the safest reading. A typo in stored data never raises confidence.
+- The weights are plain numbers in `weight`; changing them changes every ranking built from edges.
 
 ## See also
 

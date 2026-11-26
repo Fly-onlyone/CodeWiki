@@ -18,7 +18,13 @@ A field that hides what is typed is the same field over an input that is masked 
 
 ## How it works
 
-1. `AppView::palette_view` and `AppView::toolbar` in [[codewiki-app]], and 2 more, call `TextField::new`.
+The caller makes an `InputState` entity that holds the text and the cursor, and passes it to `TextField::new` with an id. An optional start icon, a disabled flag and a helper line (text and `Tone`) are added by builder calls.
+
+`render` finds out whether the field has focus, the pointer is over it, and whether the helper is an error. It then picks the outline color. Disabled uses the foreground at the disabled opacity. Focus or an error uses the accent color: primary, or the error color for an error. A hover uses primary at the app's outline-hover opacity. Rest is the foreground at 23%. The color eases over `duration::SHORTER` with the ease-out curve.
+
+MUI widens the outline to two pixels on focus. Here the border stays 1 px and a second pixel is drawn as an inner shadow whose color fades in. The text does not move.
+
+The field is 40 px high, with 14 px side padding, a 20 px icon and 8 px gap. Inside it, gpui-kit's `Input` has its own appearance turned off. A disabled field gets the sidebar color at 50% as fill and no hover tracking. The helper is a caption line below, truncated, in the tone's color.
 
 ## Items
 
@@ -47,6 +53,15 @@ And 4 more private items with no comment.
 - [[Doc View Module]] — from `choices_row`, `draw`, `row`, `secret_control`
 - [[codewiki-app]] — from `palette_view`, `toolbar`
 - [[Select Module]] — from `render`
+
+## Gotchas
+
+- An error helper colors the outline even when the field is not focused. It overrides hover and rest, though not disabled.
+- The field keeps no text. Read and write the value through the `InputState` entity.
+- A password field is the same widget with a masked `InputState`.
+- Focus is read from the input's focus handle, so a disabled field never counts as focused.
+- `HEIGHT` is public because a select uses it to line up in a row with a text field.
+- The helper line is truncated to one line. A long error message is cut off.
 
 ## See also
 

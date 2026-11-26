@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Turns the per-file facts into graph edges. Resolution is heuristic, so each edge records how it was matched; see `cw_core::Confidence`.
+This module is name resolution without a compiler. It takes the per-file facts and produces the graph edges, and it lists the outside packages each file uses. The work is done by the [[Resolver]]. Because the matching is heuristic, each edge records how sure the match was, as a confidence level.
 
 ## Source
 
@@ -16,11 +16,9 @@ Turns the per-file facts into graph edges. Resolution is heuristic, so each edge
 
 ## How it works
 
-1. `Resolver::resolve` in [[Resolver]] calls `leaves`.
-2. `Resolver::by_bare_name` in [[Resolver]] calls `home_module`.
-3. `Resolver::by_bare_name` in [[Resolver]] calls `visible_from`. `visible_from` calls `home_module`, then `is_separate_target`, then `within`.
+`Resolved` is the result: a list of edges and a list of `ExternalUse` rows. An `ExternalUse` says that a file uses a package outside the repository, and which names it takes from it. `leaves` trims that list so a module is left out when a name inside it is listed, for example `de` beside `de::Visitor`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The rest are helpers for Rust visibility. `home_module` gives the module a symbol lives in, and for a method it skips the type too. `within` tests nesting. `visible_from` decides whether code in a module can name a symbol: private items only inside their module, `pub(crate)` items only inside their crate. `is_separate_target` marks files under `tests`, `benches` or `examples` outside `src`, which behave as crates of their own.
 
 ## Items
 
@@ -48,6 +46,13 @@ And 1 more private item with no comment.
 - [[Scan Module]] — from `RepoFacts`
 - [[Index]] — from `external_uses`
 - [[RenderCtx]] — from `render_integration`
+
+## Gotchas
+
+- `COMMON_METHODS` lists 64 standard library names such as `len`, `get` and `push`. A call on an unknown receiver with one of these names is almost never a repository method, so only a private method of the caller's own module can match.
+- `TOOLCHAIN_CRATES` keeps `std`, `core`, `alloc`, `proc_macro` and `test` out of the outside-package report.
+- `MAX_REEXPORT_DEPTH` is 6. A chain of re-exports longer than that is not followed, and the name stays unresolved.
+- `ExternalUse` names are in name order and use the language's own style: `extract::Path` for Rust, `adapters.HTTPAdapter` for Python and Java.
 
 ## See also
 

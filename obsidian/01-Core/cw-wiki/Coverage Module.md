@@ -8,9 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A report is parsed, its paths are matched to indexed files, and the result is cached in the index. Reporting then ranks the gaps: an uncovered file matters more when it changes often (hotspot) or much depends on it (rank).
-
-Both formats are read by small parsers written against their public descriptions: the `geninfo` tracefile format (`SF`, `DA`, `LF`, `LH`, `end_of_record`) and the Cobertura `coverage-04.dtd` element layout (`sources/source`, `class@filename`, `line@number@hits`).
+Test tools write coverage reports that say which lines ran. This module reads two common formats, LCOV and Cobertura XML. It matches the report's file names to the files in the index and caches the result. Then it ranks the files worth testing first: an uncovered file counts more when it changes often or many other files depend on it.
 
 ## Source
 
@@ -18,13 +16,15 @@ Both formats are read by small parsers written against their public descriptions
 
 ## How it works
 
-1. `run` in [[codewiki]] and `coverage` in [[Api Module]], and 1 more, call `import`. `import` calls `Error::not_found`, then `Error::io` (both in [[Error]]), then `import_text`.
-2. `run` in [[codewiki]] and `import_coverage` in [[Api Module]] call `save`. `save` calls `Error::external` in [[Error]].
-3. `run` in [[codewiki]] and `coverage` in [[Api Module]] call `load`.
-4. `run` in [[codewiki]] and `coverage` in [[Api Module]], and 1 more, call `report`. `report` calls `load`, then `hotspots` (both in [[Gitintel Module]]), then `is_test_path` in [[Rustscan Module]].
-5. `import_coverage` in [[Api Module]] calls `import_text`. `import_text` calls `parse`, then `normalize`, then `resolve`, then `percent`, then `uncovered_runs`. `parse` calls `parse_cobertura`, then `parse_lcov`.
+`import` finds the report: the path given, or the first existing file in `DEFAULT_REPORTS` under the repository root. It reads the text and calls `import_text`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`parse` tells the format from the first character: `<` means Cobertura, anything else LCOV. Both parsers produce a map of file name to line hit counts. LCOV records for the same file add up. In Cobertura, a line is keyed by number, so lines listed under both a class and its methods count once.
+
+Reports name files in many ways, so `resolve` matches them to indexed paths. It tries the exact path, then the indexed path that is the longest suffix of the report path. A report path shorter than the indexed one matches only when exactly one file ends with it. Cobertura source directories are tried as prefixes. Entries that match nothing are counted in `unmatched`.
+
+Per file, `import_text` counts found and hit lines, a percent, and the runs of uncovered lines (`uncovered_runs`). `save` stores the result as JSON in the index under `META_KEY`; `load` reads it back.
+
+`report` ranks gaps. A file's score is its uncovered share, times a size factor that saturates at 50 uncovered lines, times a weight from its hotspot score and its summed pagerank. It also lists source files with functions that the report never mentions.
 
 ## Items
 
@@ -66,6 +66,15 @@ And 6 more items.
 - [[cw-wiki]] — from `imports_cobertura_with_the_same_numbers`, `imports_lcov_and_ranks_gaps_by_what_depends_on_them`, `missing_and_malformed_reports_are_errors`
 - [[Api Module]] — from `coverage`, `import_coverage`
 - [[codewiki]] — from `run`
+
+## Gotchas
+
+- Windows paths and `//?/` prefixes are normalised to forward slashes before matching.
+- A file with no lines and no `LF` total is dropped, so it never appears in the report.
+- A file with zero instrumented lines counts as 100 percent.
+- Negative or fractional LCOV hit counts are rounded: anything above zero means the line ran.
+- If the cached JSON cannot be read back, `load` returns nothing instead of an error.
+- An import that finds no `SF:` record or no `<coverage>` element is an error, not an empty report.
 
 ## See also
 

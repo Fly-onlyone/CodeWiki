@@ -8,7 +8,7 @@ tags: [core, cw-embed, module]
 
 ## What it does
 
-Each server lists its models in its own shape. The parsers below read the shapes the servers' documentation gives; `arrange` puts the models that embed first and drops the ones known not to.
+This module asks an embedding server which models it offers, so the Settings page can show a pick list instead of making the user type a name. Each server answers in its own shape, so there is one parser for each. A model that is known not to embed text (a chat model) is dropped, and the ones that embed come first. The same list also lets [[OpenAiEmbedder]] check that a server really serves the chosen model.
 
 ## Source
 
@@ -16,10 +16,7 @@ Each server lists its models in its own shape. The parsers below read the shapes
 
 ## How it works
 
-1. `list_models_in` in [[cw-embed]] calls `list_models`. `list_models` calls `list_ollama`, then `arrange`, then `Error::invalid` in [[Error]], then `listed_by`. `list_ollama` calls `fetch`, then `parse_ollama_tags`, then `post_json` in [[cw-embed]], then `ollama_embeds`, then `unknown`.
-2. `OpenAiEmbedder::check_listed` in [[OpenAiEmbedder]] calls `listed_by`. `listed_by` calls `server_root` in [[cw-embed]], then `fetch`, then `arrange`. `fetch` calls `get_json`, then `refused` (both in [[cw-embed]]).
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`list_models` reads the chosen provider from the settings lookup. `local` and `none` have no list and give `None`. Ollama has its own path: `list_ollama` fetches the tag list, then asks `/api/show` for each model to learn whether it embeds. Every other server goes through `listed_by`, which picks the URL and parser for its [[Server]]: OpenAI at `/models`, LM Studio at `/api/v0/models`, and Lemonade, llama.cpp and mistral.rs at `/v1/models`. `fetch` makes the GET with a 10 second timeout and turns an HTTP refusal into an error that names the server. `arrange` then removes models marked as not embedding and sorts known embedders before unknown ones, each group by id.
 
 ## Items
 
@@ -51,6 +48,14 @@ And 1 more private item with no comment.
 
 - [[cw-embed]] — from `a_server_lists_with_its_token_and_path`, `a_server_that_does_not_answer_is_an_error_naming_it`, `an_ollama_model_whose_details_fail_is_still_listed`, `list_models_in`
 - [[OpenAiEmbedder]] — from `check_listed`
+
+## Gotchas
+
+- `embedding` is a three-way value. `Some(false)` is removed; `None` (the server does not say) is kept but sorted last. llama.cpp and mistral.rs say nothing, so all their models are unknown.
+- OpenAI is judged by the id containing "embed". A model with another name would be hidden.
+- Ollama is asked once per model, so a server with many models makes many calls. One that fails to answer only leaves that model unknown.
+- Parsers follow each server's documentation. A server that changes its format gives an empty list, not an error.
+- The 10 second limit exists because a person is watching the page.
 
 ## See also
 

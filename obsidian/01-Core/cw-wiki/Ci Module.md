@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-`check` gathers what the other analyses report (dead code, file health, documentation drift, stale decisions, security patterns) into one list a CI system can gate on or annotate a pull request with.
+A CI system needs one list of problems it can fail a build on or show on a pull request. This module collects the results of the other analyses into that list and prints it as plain text, SARIF (for code-scanning services) or JUnit XML (for test dashboards).
 
 ## Source
 
@@ -16,13 +16,17 @@ tags: [core, cw-wiki, module]
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `check`. `check` calls `dead_code`, then `file_health`, then `doc_drift` (all in [[Health Module]]), then `list` in [[Decisions Module]], then `scan` in [[Security Module]].
-2. `run` in [[codewiki]] calls `fails`.
-3. `run` in [[codewiki]] calls `to_text`.
-4. `run` in [[codewiki]] calls `to_sarif`.
-5. `run` in [[codewiki]] calls `to_junit`. `to_junit` calls `xml_escape`.
+`check` runs each analysis and maps every result to a `CheckFinding` with a rule id, level, message, file and line:
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- Dead code: only symbols whose certainty is `Likely`, as warnings.
+- File health: each finding becomes `health/<detector>`; a penalty of 2 or more is a warning, less is a note. Dead-code findings are skipped here since they are reported per symbol.
+- Doc drift: missing source and dead path are warnings, a changed source is a note, a broken link is an error.
+- Stale decisions: warnings.
+- Security scan results are copied with their own rule and level.
+
+The list is sorted by file, line, rule, then message, so output is stable between runs.
+
+`fails` is true when any finding is at or above the threshold [[Level]]. `to_text` prints one line per finding and a summary count. `to_sarif` writes SARIF 2.1.0 with all rules listed. `to_junit` writes one test case per rule in `RULES`; a case fails when a finding of that rule reaches the threshold.
 
 ## Items
 
@@ -49,6 +53,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[codewiki]] — from `run`
 - [[cw-wiki]] — from `check_reports_security_findings_as_rules`
+
+## Gotchas
+
+- `RULES` must list every rule id that `check` can emit. JUnit and SARIF only show rules from that table.
+- Line 0 means the finding is about the whole file; SARIF then omits the region.
+- A rule with findings below the threshold still passes in JUnit.
+- Doc-drift files are reported under the vault folder path, not the repo source path.
+- `xml_escape` replaces control characters with spaces because XML 1.0 cannot hold them.
 
 ## See also
 

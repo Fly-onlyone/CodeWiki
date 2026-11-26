@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Qualified names use `::` between segments in every language, so one resolver serves all of them: `pkg::util::shout` for Python's `pkg.util.shout`, `com::acme::Label` for Java's `com.acme.Label`, and `src::util::text::shout` for a TypeScript export of `src/util/text.ts`.
+This module holds what the [[Python Module]], [[Typescript Module]] and [[Java Module]] extractors share. That is the fact collector [[Sink]], small text helpers, the rules that map a file path to a module name, and the step that sorts imports into repository code, outside packages and a language's own library. Names use `::` between segments in every language, so one resolver serves all of them. Python's `pkg.util.shout` becomes `pkg::util::shout`.
 
 ## Source
 
@@ -16,13 +16,11 @@ Qualified names use `::` between segments in every language, so one resolver ser
 
 ## How it works
 
-1. `Extractor::qualify` in [[Java Module]] and `Extractor::import_from` in [[Python Module]], and 3 more, call `split_qualified`.
-2. `Extractor::children` and `Extractor::enum_constant` in [[Java Module]], and 38 more, call `named`.
-3. `Extractor::field` and `Extractor::member_names` in [[Java Module]], and 5 more, call `field_all`.
-4. `Extractor::import` and `parse_java` in [[Java Module]], and 5 more, call `dotted`.
-5. `Extractor::field` and `Extractor::signature` in [[Java Module]], and 7 more, call `collapse`.
+The helpers are small. `named` and `field_all` list tree-sitter children. `dotted` and `split_qualified` cut names into segments. `collapse` squeezes a declaration into one line, drops a trailing `{`, `:`, `;` or `=`, and cuts it to 300 characters. `block_doc` reads a doc comment that starts with `/**`. `dedent` strips shared indent. `marker_name` reads a decorator name after `@`.
 
-11 more entry points: `marker_name`, `block_doc`, `dedent`, `starts_uppercase`, `is_generic_param`, `python_module`, and 5 more.
+Path rules: `python_module` starts the name at the outermost folder that has an `__init__.py`. `ts_module` is the path without the extension. `java_default_package` uses the directory. `resolve_ts_import` follows a relative TypeScript import by trying the path, then each extension, then an `index` file. `.js` in the import is matched to `.ts` on disk.
+
+`link_imports` runs after all files are parsed. For each Python or Java import it checks the repository's modules first. If none matches, a Python import in the standard library list or a Java import under `java`, `javax`, `jdk` or `sun` is dropped. Anything else becomes an external import that names the package.
 
 ## Items
 
@@ -63,6 +61,14 @@ And 9 more items.
 - [[Python Module]] — from `bindings`, `block`, `class`, `collect_roots`
 - [[Sink]] — from `inherits`, `type_ref`
 - [[Scan Module]] — from `scan_repo`
+
+## Gotchas
+
+- The Python standard library list and the Node built-in list are fixed arrays. A module missing from them is treated as an outside package.
+- A Java external package keeps at most two segments, so `org.junit.Test` belongs to `org.junit`.
+- A TypeScript spec starting with `@/`, `~`, `#` or a path is treated as an alias and gives no package, because its target is unknown.
+- A Python script outside any package also finds sibling modules, since its own folder is on the import path.
+- `link_imports` also adds a module declaration for Python packages, so the resolver can find a module under its parent.
 
 ## See also
 

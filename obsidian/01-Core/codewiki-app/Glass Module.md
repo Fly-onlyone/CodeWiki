@@ -8,15 +8,11 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The window sits on the Windows Mica backdrop and every surface is the theme's color at less than full opacity. gpui-kit cannot blur inside a window, so the backdrop is the only source of the glass look.
+The app window sits on the Windows Mica backdrop (the blurred wallpaper), and every surface in it is the theme's color at less than full opacity. This module decides how see-through each surface is. Glass is the look this gives.
 
-Two kinds of surface exist. The *pane* carries the page: long text that must stay readable whatever is behind the window. The *chrome* is everything around it — title bar, sidebar, toolbar, tabs, details — and shows more of the backdrop.
+There are three kinds of surface. The pane carries the page text and must stay readable. The chrome is the frame around it: title bar, sidebar, toolbar, tabs and details. The margin is the empty side of a page beside its reading column. It holds no text, so it can be the clearest.
 
-How opaque each must be is worked out from the theme, not fixed: a surface is as clear as it can be while its text keeps the contrast `contrast` asks for. A theme with weak contrast therefore gets denser glass.
-
-A third kind is the *margin*: the empty sides of a page beside its reading column. It carries no text, so it can be clearer than the chrome, and the backdrop's sky shows through it. Soft fades join it to the column.
-
-The chrome, the page and the borders are all tinted a little toward the theme's primary color, so that every theme has a mood of its own. The tint is faint: the theme's three brand colors carry its hues, and surfaces that are as colored as they are would drown them.
+The levels are not fixed. Each surface is made as clear as it can be while its text keeps the contrast that [[Contrast Module]] asks for, so a theme with weak text gets denser glass. Surfaces and borders are also tinted a little toward the theme's primary color, to give every theme a mood.
 
 ## Source
 
@@ -24,15 +20,11 @@ The chrome, the page and the borders are all tinted a little toward the theme's 
 
 ## How it works
 
-1. `AppView::details` and `AppView::sidebar` in [[codewiki-app]], and 8 more, call `tinted_border`.
-2. `AppView::body` and `AppView::palette_view` in [[codewiki-app]], and 4 more, call `hairline`. `hairline` calls `px` in [[Zoom Module]].
-3. `nudge_texts` in [[Standard Module]] calls `matched_backdrop`. `matched_backdrop` calls `over` in [[Contrast Module]].
-4. `AppView::render` and `title_bar` in [[codewiki-app]] call `Levels::for_window`. `Levels::for_window` calls `Levels::compute`, then `rgb`, then `tint`. `Levels::compute` calls `fit_alpha` in [[Contrast Module]], then `matched_backdrop`.
-5. `style` in [[Reading Module]] calls `tint`.
+Once per frame, `Levels::for_window` reads the active theme and whether Windows is in dark mode. It tints the background toward the primary color for the pane and the chrome, and passes both to `Levels::compute` with the three text colors (foreground, muted, link).
 
-5 more entry points: `tinted`, `tinted_pane`, `margin_width`, `reading_surface`, `debug_backdrop`.
+`Levels::compute` asks `contrast::fit_alpha` for the lowest opacity that keeps every text readable. The pane is checked against any backdrop, black or white. The chrome depends on the match between theme and system mode. When both are dark or both light, the backdrop is known to be near the theme's side, so `matched_backdrop` gives a narrow range and a low floor (0.62) is enough. When they differ, the floor is 0.86 against any backdrop. The chrome is then capped at the pane's opacity. The margin takes 0.35 on a match, else the chrome's value.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`reading_surface` lays out the result: a margin strip, a fade, the column, a fade, a margin strip. `margin_width` gives the strip width from the page gutter, or `None` when there is no room.
 
 ## Items
 
@@ -72,6 +64,14 @@ And 3 more items.
 - [[Backdrop Module]] — from `new`
 - [[Reading Module]] — from `style`
 - [[Standard Module]] — from `nudge_texts`
+
+## Gotchas
+
+- Chrome is never denser than the pane, by design. A test checks it for both modes.
+- When the system mode and the theme mode differ, the margin copies the chrome. The source says a dark page on clear light glass looks like a hole.
+- A window capture cannot see Mica. Set `CODEWIKI_BACKDROP=#RRGGBB` and `debug_backdrop` returns a solid color to paint under everything, so a capture shows what each surface lets through.
+- Margin and fade sizes are design units. Draw them through the zoom `px`, not raw pixels. `hairline` is the exception: it stays one screen pixel at every zoom.
+- A test requires every bundled theme to reach the clearest glass on a matching system. A new theme with weak text would get denser glass and look like another app.
 
 ## See also
 

@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-`codewiki.json` is CodeWiki's own family: four hues, each dark and light, with the bundled fonts and a tighter radius. Dracula, Nord, Gruvbox and Rosé Pine were written for CodeWiki from the palettes their authors publish; every file carries the palette author's name and URL. Their backgrounds, surfaces, borders and fills are the published values. A color drawn as text or as an icon keeps its published hue and is as much lighter as it takes to be read on the app's glass.
-
-User themes dropped into `%APPDATA%\CodeWiki\themes` are loaded as well, and redrawn on the CodeWiki set's levels (`standard.rs`).
+This module owns the color themes: it loads the bundled ones, loads the user's own, applies the chosen one, and remembers the choice. The bundled set is CodeWiki's own family (four hues, each dark and light, with bundled fonts and a tighter radius) plus Dracula, Nord, Gruvbox and Rosé Pine, written from their authors' published palettes. Every file names the palette author. User themes dropped in the `themes` folder of the app's data folder load too, and [[Standard Module]] redraws them on the CodeWiki set's levels. It also defines `Brand`, the primary, secondary and tertiary colors that the rest of the UI asks for.
 
 ## Source
 
@@ -18,15 +16,13 @@ User themes dropped into `%APPDATA%\CodeWiki\themes` are loaded as well, and red
 
 ## How it works
 
-1. `Shell::shapes` and `Shell::sky` in [[Backdrop Module]], and 1 more, call `Brand::of`.
-2. `subheader` in [[List Module]] and `frame` in [[Reading Module]], and 1 more, call `brand`. `brand` calls `Brand::of`.
-3. `theme_menu_item` in [[codewiki-app]] and `choice_tint` in [[Doc View Module]] call `glyph_tint`. `glyph_tint` calls `to_hsla`, then `readable_on` in [[Standard Module]], then `to_rgb`.
-4. `AppView::open_theme_menu` and `AppView::palette_matches` in [[codewiki-app]], and 4 more, call `entries`.
-5. `main` in [[codewiki-app]] calls `init`. `init` calls `Baseline::capture`, then `user_theme_dir`, then `catalog`, then `swatches`, then `standardize` in [[Standard Module]], then `resolve`, and 3 more. `user_theme_dir` calls `dir` in [[Prefs Module]].
+`init` runs at start. It first captures a `Baseline` of fonts, radius and shadow before any theme is applied. Then it loads the bundled JSON files and every JSON file in the user folder into the kit's registry; a broken file is skipped with a message. It builds the `Catalog` of themes on offer (the kit's two own themes are hidden), sorted dark first, then light, with bundled themes before the user's own. Each entry carries four swatches for the menu, taken from the standardized theme. Finally `resolve` picks the theme from the saved setting and `apply` applies it.
 
-1 more entry point: `select`.
+`apply` standardizes the config, restores the baseline, applies the config and rebases zoom so sizes are those at 100% before scaling. `select` applies by name and saves the choice through [[Prefs Module]].
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`Brand::of` maps primary to the theme's primary, secondary to its link color, and tertiary to its sidebar primary. The kit draws nothing in the third, so the app uses it for what should stand apart.
+
+`glyph_tint` lightens or darkens a theme's menu icon, in its own hue, until it has 3:1 contrast on the popover surface.
 
 ## Items
 
@@ -73,6 +69,14 @@ And 3 more items.
 - [[Reading Module]] — from `frame`, `style`
 - [[Standard Module]] — from `REFERENCE`, `from_json`
 - [[Doc View Module]] — from `choice_tint`
+
+## Gotchas
+
+- Without the baseline reset, a theme that names no fonts or radius would inherit those of the previously active theme.
+- The baseline must be captured before zoom starts, or it would hold scaled sizes.
+- A saved theme that no longer exists falls back to the default of its mode, judged only by whether its name ends with Light, and the setting is rewritten.
+- Names matter: the bundled list decides which themes skip standardizing. A user theme with the same name as a bundled one is treated as bundled.
+- Theme files are embedded in the program at build time; editing them needs a rebuild.
 
 ## See also
 

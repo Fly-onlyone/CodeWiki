@@ -8,11 +8,7 @@ tags: [core, cw-illustrate]
 
 ## What it does
 
-The pictures of a note: which components exist, what a picture may hold, and the file that keeps a note's pictures.
-
-A picture explains what a note says: what happens, from a cause to its result, in plain words. It is written by a coding agent, as an OpenUI Lang program, and the app draws it natively; nothing is fetched or executed. Rules draw none: they know counts and calls, not what a thing is for.
-
-This crate is the single definition of the components, so the check a submission must pass, the file the backend keeps and the app's renderer cannot drift apart.
+`cw-illustrate` is the one place that defines what a picture in a CodeWiki note may be. A coding agent writes a picture as a short OpenUI Lang program with four components: Picture, Flow, Step and Callout. The app draws it natively; nothing is fetched or run. This crate holds the component list, the size limits, the check a submission must pass, and the file format that stores a note's pictures. Because the backend check and the app renderer share it, they cannot drift apart.
 
 ## Source
 
@@ -21,17 +17,14 @@ This crate is the single definition of the components, so the check a submission
 
 ## How it works
 
-Builds a library.
+`library` declares the four components and their properties. `check` parses a source and evaluates it against that library. `review` is the gate used on submission. It returns one line per fault, and an empty list means the picture may be kept. It tests, in turn:
 
-1. `get_proposal` in [[Api Module]] and `pictures_of` in [[Explanations Module]], and 2 more, call `parse_pictures`.
-2. `AppView::open_note_as` in [[codewiki-app]] and `submit` in [[Explanations Module]] call `review`. `review` calls `check`, then `element`, then `sized`, then `text`.
-3. `submit` in [[Explanations Module]] and `keep_placed_pictures` in [[Generate Module]] call `serialize_pictures`.
-4. `brief` in [[Explanations Module]] calls `library`. `library` calls `Library::new` in [[Library]].
-5. `AppView::open_note_as` in [[codewiki-app]] calls `check`. `check` calls `evaluate` in [[Eval Module]], then `parse` in [[Parser Module]], then `library`.
+1. Size of the source, no backticks, no double square brackets, and no line starting with the section marker.
+2. Parse and component errors from the parser.
+3. The root must be a Picture, holding only Flow and Callout, with at most one Flow and two Callouts.
+4. A Flow has 2 to 7 Steps, and every title, text and tone is within its limit.
 
-1 more entry point: `limits`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`limits` prints the same numbers in words; the brief given to writing agents uses it. `quote` turns text into a safe string literal. `parse_pictures` and `serialize_pictures` read and write the per-note file, described in [[Picture]].
 
 ## Items
 
@@ -80,6 +73,14 @@ And 3 more items.
 - [[codewiki-app]] — from `open_note_as`
 - [[Api Module]] — from `get_proposal`
 - [[Query Module]] — from `read_note_as`
+
+## Gotchas
+
+- The limits are constants, and the words in `limits` and the checks in `review` both come from them. Change a constant and the briefs change at once.
+- The checks count characters for text and bytes for the whole source.
+- Backticks and double square brackets are refused because the app shows text as written, so a link would appear with its brackets.
+- Old components such as Card, Stat, BarChart and Table are gone and fail as unknown components.
+- Callouts accept an empty tone, which means info.
 
 ## See also
 

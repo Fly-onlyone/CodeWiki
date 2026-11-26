@@ -6,13 +6,21 @@ tags: [core, codewiki-app]
 
 > Watches the backend and decides when, and how, to try it again.
 
+## What it does
+
+`Supervisor` decides when the app should try to reach its backend again after losing it, and whether the try may start a backend. It touches no window and no network: the app feeds it what each status poll found, asks if an attempt is due, runs that attempt itself, and reports the result back. That keeps the rules testable.
+
 ## Source
 
 - `crates/codewiki-app/src/connection.rs` — definition of `Supervisor`
 
 ## How it works
 
-1. `AppView::new` in [[codewiki-app]] calls `default`. `default` calls `Backoff::new` in [[Connection Module]].
+After each poll the app calls `polled`. Two silent polls in a row (`SILENT_POLLS`) make the backend lost mid-session, and the first attempt is due at once. A local backend gets one full attempt (`Attempt::Full`, which may start a backend); every later one only looks (`Attempt::ProbeOnly`). A remote backend is only looked for, never started.
+
+`due` hands out the next attempt with its sequence number, and no other becomes due until `failed` or `succeeded` is called with that number. A failure schedules the next try after a doubling wait, 5 seconds up to 30 (`Backoff`). A success clears the loss and resets the waits.
+
+The sequence number guards against old results. `restart` (the user switched backend or pressed Try again) bumps it, so earlier attempts are dropped when they return. `retry_now` does the same for a mid-session loss and makes the next attempt immediate. `offline` is for a failed first connect: the offline page shows and attempts only look. `lose` covers a backend that vanished with no poll, such as after a failed update.
 
 ## Items
 
@@ -41,6 +49,13 @@ Members:
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `connect`, `new`, `palette_matches`
+
+## Gotchas
+
+- A single silent poll never counts: a busy machine can miss one.
+- `failed` and `succeeded` ignore a result whose number is no longer current, and a found backend is dropped then.
+- While a loss is open, an answered poll makes the next attempt due now. A remote backend that comes back needs no wait.
+- `retry_now` returns false for a startup loss; the offline page's Try again is a new connect through `restart`.
 
 ## See also
 

@@ -8,7 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Sizes are MUI's (`Alert/Alert.js`, `Chip/Chip.js`, `LinearProgress/LinearProgress.js`, `Tooltip/Tooltip.js`); colors and corners are TradingAgent's (`components.ts`).
+This module holds the small pieces the app uses to tell the user something: a tinted `alert` box with an icon, a `chip` label, color `dots`, a `tooltip`, and two progress bars. They are plain functions that return GPUI elements, so a page can drop one in without a component of its own.
+
+The sizes copy Material UI (MUI). The colors and corners follow the TradingAgent theme. Every size goes through the zoom module's `px`, so the pieces follow the app zoom.
 
 ## Source
 
@@ -16,15 +18,15 @@ Sizes are MUI's (`Alert/Alert.js`, `Chip/Chip.js`, `LinearProgress/LinearProgres
 
 ## How it works
 
-1. `AppView::page_view` and `AppView::reconnect_banner` in [[codewiki-app]], and 4 more, call `alert`. `alert` calls `alert_titled`.
-2. `AppView::graph_view` and `AppView::review_queue` in [[codewiki-app]], and 3 more, call `chip`. `chip` calls `px` in [[Zoom Module]].
-3. `AppView::body` in [[codewiki-app]] and `draw` in [[Doc View Module]] call `linear_progress`. `linear_progress` calls `px` in [[Zoom Module]], then `scaled` in [[Motion Module (mui)]], then `indeterminate`. `indeterminate` calls `easing` in [[Tokens Module]].
-4. `render` in [[Illustration Module]] calls `alert_titled`. `alert_titled` calls `px` in [[Zoom Module]].
-5. `draw` in [[Doc View Module]] calls `alert_action`. `alert_action` calls `px` in [[Zoom Module]].
+[[Tone]] says what kind of news a piece is: neutral, tertiary, success, info, warning or error. `Tone::color` reads the matching theme color, and `Tone::icon` picks the alert icon.
 
-3 more entry points: `dots`, `tooltip`, `progress`.
+`alert_titled` builds a row: a 22 px icon in the tone color, then a column with an optional medium-weight title and the message. The box is the tone at 15% opacity with the theme's corner. `alert` is the same without a title. `alert_action` is a slot at the end of the row for one small button.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`chip` is 24 px high. Outlined chips use the tone at 70% for the border; a neutral one uses the foreground at 23%. A filled chip uses the tone at 15% instead of a border. The corner is the theme radius minus 2, at least 4.
+
+`progress` draws a determinate bar filled to a share between 0 and 1. `linear_progress` is the indeterminate one: `indeterminate` gives the left and right edge of two bars for a point in a 2.1 s pass, using MUI's two keyframe curves, and the second bar starts 1.15 s later. An animation repeats it.
+
+`tooltip` returns a builder to pass to GPUI's tooltip method.
 
 ## Items
 
@@ -64,6 +66,15 @@ And 7 more items.
 - [[Doc View Module]] — from `draw`, `draw_cell`
 - [[Illustration Module]] — from `render`
 - [[Button Module]] — from `render`
+
+## Gotchas
+
+- With reduced motion on, `linear_progress` shows a still bar, a quarter to three quarters of the track. It does not animate.
+- The pass length goes through `scaled`, so the motion setting changes the animation speed.
+- `indeterminate` edges can lie outside 0 to 1 (a bar starts off the left edge). `linear_progress` clamps them and skips a bar whose right edge is not past its left edge.
+- `chip` takes the label color from the tone, except for `Neutral`, which uses the plain foreground.
+- `Info`, `Neutral` and `Tertiary` alerts share the same info icon.
+- `dots` gives each sample a thin ring, so a color equal to the surface still shows.
 
 ## See also
 

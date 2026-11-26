@@ -6,18 +6,19 @@ tags: [core, cw-embed]
 
 > `Embedder` trait defined in `cw_embed` with 5 methods.
 
+## What it does
+
+`Embedder` is the one interface that turns text into number vectors for semantic search. The rest of CodeWiki holds a `dyn Embedder` and does not care whether the vectors come from the built-in hashing code, Ollama, or an OpenAI-style server. Two texts with close vectors mean similar things, so a search question can find notes and symbols by meaning.
+
 ## Source
 
 - `crates/cw-embed/src/lib.rs` — definition of `Embedder`
 
 ## How it works
 
-What the functions of this type call:
+An implementor gives `name` and `embed`. The other methods have defaults. `embed_query` embeds one text and takes the first vector; it returns an error if none comes back. A model that wants a different prefix for queries overrides it ([[OllamaEmbedder]] and [[OpenAiEmbedder]] do). `batch_size` returns the crate's batch constant of 64; callers such as the embed job loop over documents in chunks of that size so they can report progress and stop between calls. `probe` embeds the word "ping" and returns the vector length, which the Settings page uses for its Test button.
 
-1. `embed_query` calls `embed`, then `Error::invalid` in [[Error]], then `name`.
-2. `probe` calls `embed`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The implementors are [[LocalEmbedder]], [[OllamaEmbedder]] and [[OpenAiEmbedder]], plus test doubles.
 
 ## Items
 
@@ -49,6 +50,12 @@ Implemented by [[LocalEmbedder]], [[OllamaEmbedder]], [[OpenAiEmbedder]], `Faili
 - [[LocalEmbedder]] — from `LocalEmbedder`
 - [[OllamaEmbedder]] — from `OllamaEmbedder`
 - [[OpenAiEmbedder]] — from `OpenAiEmbedder`
+
+## Gotchas
+
+- `name` is stored with each vector. Vectors from different names are never compared, so a changed name, including a model change or a prefix rule, makes everything embed again.
+- The trait is `Send + Sync`, so an implementor must be safe to share between threads. The HTTP embedders keep their warm-up flag in an atomic for this reason.
+- Every vector from one `embed` call must have the same length, and `embed` must return one per text, in order.
 
 ## See also
 

@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-It is read from the vault's manifest and one `git` call, never from the index: a session start must not wait on a scan or a backend.
+When a coding agent starts a session in a repository, this module builds the short plain-text briefing it is given. The briefing says whether a wiki exists, whether it is stale, how many proposals and unexplained notes wait, and which CodeWiki tools to call first. It reads only the vault manifest and one git call, never the index, so a session start never waits on a scan or a backend.
 
 ## Source
 
@@ -16,11 +16,18 @@ It is read from the vault's manifest and one `git` call, never from the index: a
 
 ## How it works
 
-1. `session_start_hook` in [[codewiki]] calls `vault_root`.
-2. `session_start_hook` in [[codewiki]] calls `explain_for`.
-3. `session_start_hook` in [[codewiki]] calls `session_start`. `session_start` calls `VaultMeta::load` in [[VaultMeta]], then `head_commit`, then `vault_is_behind` (both in [[Git Module]]), then `short`, then `list` in [[Proposal Module]], then `waiting_counts` in [[Explanations Module]], and 1 more.
+`vault_root` walks up from the start folder to find the nearest folder that holds a vault, so a session opened in a subfolder still finds the wiki.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`session_start` then builds the text:
+
+- If the vault has no notes or no home note, it says no wiki exists and points to the `sync_wiki` tool.
+- Otherwise it states the note count and the home note.
+- It compares the manifest's last indexed commit with git HEAD (`head_commit`, `vault_is_behind`). The text says: no HEAD, up to date, or stale with both short commit ids.
+- It counts pending proposals.
+- It adds a line about waiting notes when any wait, using `waiting_counts`.
+- It ends with a pointer to `get_overview` and `get_context`.
+
+The waiting-notes line ends with a sentence chosen by `explain`. `explain_for` returns an order (`ClaudeCode` or `Codex`) only when auto explaining is on, the session source is `startup`, `resume` or `clear`, and the session is neither in plan mode nor in a linked worktree. In every other case it returns `Facts`, a sentence that only states what waits.
 
 ## Items
 
@@ -48,6 +55,14 @@ And 1 more private item with no comment.
 
 - [[cw-wiki]] — from `a_folder_without_git_is_not_called_stale`, `reports_a_missing_wiki_then_its_state`, `the_line_about_waiting_notes_goes_when_none_waits`, `the_waiting_line_orders_a_batch_for_each_host`
 - [[codewiki]] — from `session_start_hook`
+
+## Gotchas
+
+- The order to write notes is deliberately opt-in. Without it an agent might spend the user's usage allowance on notes at every session start.
+- Sessions with source `compact` or `fork` get facts only, never an order.
+- Linked worktrees never get the order, so parallel sessions do not all write notes at once.
+- The commit is shortened to 10 characters, and a missing manifest commit shows as unknown.
+- `HOME_NOTE` is fixed as `_HOME.md`; a vault without that file counts as having no wiki.
 
 ## See also
 

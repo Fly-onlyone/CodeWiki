@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-No UI here; `review_view.rs` draws the page and runs the requests.
-
-A sync proposes a change to a note someone edited by hand, and a coding agent proposes its explanation of such a note. Each waits for a decision, one at a time or several at once.
+This module is the state and rules behind the review queue, with no UI. A proposal is a suggested change to a note that waits for a person to approve or reject it. Two things make proposals: a sync, when the code under a hand-edited note changed, and a coding agent that explained such a note. The module keeps the list of pending proposals (`Item`), which ones are selected (`Selection`), which proposal opens next after a decision, and what the user is told. The page itself is drawn in [[Review View Module]].
 
 ## Source
 
@@ -18,13 +16,17 @@ A sync proposes a change to a note someone edited by hand, and a coding agent pr
 
 ## How it works
 
-1. `AppView::take_notes` in [[codewiki-app]] calls `pending`.
-2. `AppView::review_queue` in [[codewiki-app]] calls `Click::with_keys`.
-3. `AppView::decide_review` in [[codewiki-app]] calls `after_decision`. `after_decision` calls `next_after`.
-4. `AppView::review_clash` in [[codewiki-app]] calls `clash_warning`.
-5. `AppView::review_details` in [[codewiki-app]] calls `counts`.
+`pending` reads the backend's proposal list and keeps only items with status pending. A proposal with no kind counts as a sync.
 
-11 more entry points: `decided_notices`, `rise_key`, `rise_notice`, `targets`, `written`, `forget_written`, and 5 more.
+Selection works like a file list. A plain click selects one row and opens it. Ctrl toggles a row. Shift selects the range from the last clicked row (`Click::with_keys` lets Shift win over Ctrl). The header checkbox shows all, none or some (`Selection::header`).
+
+The buttons act on `targets`: the selection if it holds anything, else the open proposal. After a decision, `after_decision` picks what to show. The open proposal stays if it still waits. Otherwise `next_after` takes the next undecided one, then the nearest one before it, then the first of the queue.
+
+`decided_notices` turns the results into toasts: one success notice for what went through, one warning that lists each failure with its reason. `clash_warning` warns when a sync proposal and an agent proposal for the same note are both selected.
+
+An approval changes note text on disk. `written` lists the notes written, `forget_written` removes their old pages from tab history, and `to_reload` marks other tabs to reload, so nobody edits an old copy and saves it over the approved text.
+
+Counts from the status poll feed `news`, `loaded` and `take_counts`. A rise is news and gets a toast (`rise_notice`).
 
 ## Items
 
@@ -65,6 +67,14 @@ And 6 more items.
 - [[Instance Module]] — from `listen`
 - [[Base Module]] — from `new`
 - [[Startup Module]] — from `touched`
+
+## Gotchas
+
+- Approving a sync and an agent proposal for one note writes only one. The other no longer fits, so the clash warning appears.
+- The app's own work is not news. While its own sync or note load runs (`own_work`), a rise in the open repository is ignored, and `loaded` resets the baseline.
+- A status answer may leave a repository out on slow storage. `take_counts` keeps the old count for it rather than replace it with a guess.
+- A selection of only the open proposal, or of the one still loading, counts as that proposal.
+- Notice keys are fixed (decided, failed, and one per repository), so a new notice replaces the last of its kind. Rise notices are throttled because the poll repeats every few seconds.
 
 ## See also
 

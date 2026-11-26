@@ -8,11 +8,15 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Numbers copied from Material UI or TradingAgent stay in `mui/`, beside the component they belong to, with their source. What is here has no source to copy: how wide the category list is, how a row of a setting is divided, how much room the entry button takes. They are in one place so that they can be tuned by eye and changed together.
+This file holds the sizes of the Settings page that are chosen by eye. Sizes copied from Material UI or TradingAgent live in the `mui` folder beside their component, with their source noted. The numbers here have no source: the width of the category list, how a setting's row is split, the room around the entry button. Keeping them in one place means they can be tuned together.
 
 ## Source
 
 - `crates/codewiki-app/src/settings_layout.rs` — module `codewiki_app::settings_layout`
+
+## How it works
+
+The file is only constants, all in logical pixels. The page frame (`AppView::settings_frame`) uses the list width, header height and pane padding, and caps the page at the pane measure. Each setting row (`row` in [[Doc View Module]]) is a label column, a gap and a control column, from the label width, row gap and control width. The row spacing separates rows inside one card. The entry padding spaces the Settings button at the foot of the sidebar and of Home.
 
 ## Items
 
@@ -31,6 +35,11 @@ Numbers copied from Material UI or TradingAgent stay in `mui/`, beside the compo
 
 - [[codewiki-app]] — from `settings_entry`, `settings_frame`
 - [[Doc View Module]] — from `row`
+
+## Gotchas
+
+- Label width, row gap and control width add up to 624, which fits in the 760 measure with room for the page padding. Change one and check the others.
+- A value that has a source in MUI belongs in `mui`, not here.
 
 ## See also
 

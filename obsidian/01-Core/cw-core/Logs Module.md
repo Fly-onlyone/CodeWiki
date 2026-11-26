@@ -8,9 +8,7 @@ tags: [core, cw-core, module]
 
 ## What it does
 
-The desktop app has no console, and the backend it starts has none either, so what they report would otherwise be lost. Each program appends to its own file. A file that grows past `LIMIT` is moved aside to `<name>.old.log`, replacing the one before, so a program never keeps more than two.
-
-`init` sends a program's `log` records to its file and to standard error, so that a program run from a terminal or an IDE shows them there as well. `CODEWIKI_LOG_DIR` moves the folder (a development run puts it in the repository); `CODEWIKI_LOG` sets the level.
+Gives every CodeWiki program a log file. The desktop app and the backend it starts have no console, so without files their reports would be lost. Each program appends to `<log dir>/<name>.log`. Past 1 MB (`LIMIT`) the file is moved to `<name>.old.log`, replacing the older one, so at most two files per program exist. A program run from a terminal also sees the lines on standard error.
 
 ## Source
 
@@ -18,13 +16,15 @@ The desktop app has no console, and the backend it starts has none either, so wh
 
 ## How it works
 
-1. `AppView::connect` and `AppView::open_logs` in [[codewiki-app]], and 2 more, call `dir`. `dir` calls `dir_from`. `dir_from` calls `data_dir` in [[Paths Module]].
-2. `AppView::connect` in [[codewiki-app]] and `Backend::start_in` in [[Backend]] call `path`. `path` calls `dir`.
-3. `main` and `AppView::run_settings_action` in [[codewiki-app]] call `level_named`.
-4. `AppView::settings_frame` in [[codewiki-app]] calls `level_name`.
-5. `AppView::settings_frame` in [[codewiki-app]] calls `level_in_env`. `level_in_env` calls `level_named`.
+`init` (or `init_with`) builds a `Logger`, sets its level from `CODEWIKI_LOG` or the default given, and installs it as the process logger. It also wraps the panic hook so every panic is logged first, then passed on. A start line with the version, arguments and pid is logged. `init_with` lets [[cw-telemetry]] wrap the file logger inside one that also sends records to Sentry.
 
-4 more entry points: `current_level`, `set_level`, `init_with`, `init_console`.
+`init_console` installs a logger that prints only to standard error, for a command run in a terminal. The `codewiki` program uses it for all commands but `serve`.
+
+`dir` is `CODEWIKI_LOG_DIR` (made absolute, so a program started elsewhere finds it) or `<data dir>/logs` from [[Paths Module]]. `path(name)` adds the file name.
+
+The level lives in an atomic cell, so `set_level` can change it while the program runs and also sets the `log` crate's maximum level. The app's settings use `level_named` and `level_name` for the spelling: off, error, warn, info, debug, trace.
+
+Every line is `timestamp level target: message`, with a UTC timestamp in milliseconds written by `timestamp`.
 
 ## Items
 
@@ -66,6 +66,14 @@ And 8 more items.
 - [[cw-embed]] — from `answer`
 - [[cw-server]] — from `stand_in`
 - [[Backend]] — from `start_in`
+
+## Gotchas
+
+- `rotate` needs the file closed in this process: Windows will not move an open file. The logger closes and reopens its file before rotating. If another process holds the file, the move fails and the next try waits for another megabyte of growth, instead of retrying on every line.
+- Only one logger can be installed. A second `init` returns `None` and changes nothing.
+- `init` returns `None` also when the folder is not writable. Records then go to standard error only.
+- `CODEWIKI_LOG` wins over a default level a program chooses, and an unknown value is ignored.
+- A release test script finds the start line by the words `started with`. Keep that text.
 
 ## See also
 

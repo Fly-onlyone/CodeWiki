@@ -8,7 +8,7 @@ tags: [core, openui-lang, module]
 
 ## What it does
 
-Follows the token rules of the reference implementation (`@openuidev/lang-core`, MIT): newlines are significant, `//` and `#` start line comments, PascalCase words are component names, `$name` is a state variable, `@Name` is a function call, and unknown characters are skipped.
+The lexer turns OpenUI Lang source text into a flat list of `Token` values. OpenUI Lang is the small language a model uses to describe a user interface. The [[Parser Module]] reads this list instead of raw text. The token rules copy the reference implementation: newlines count as tokens, `//` and `#` start line comments, PascalCase words are component names, `$name` is a state variable, `@Name` is a function call. Characters it does not know are skipped.
 
 ## Source
 
@@ -16,9 +16,13 @@ Follows the token rules of the reference implementation (`@openuidev/lang-core`,
 
 ## How it works
 
-1. `parse` in [[Parser Module]] calls `tokenize`. `tokenize` calls `unescape_json`, then `is_word`, then `is_word_start`.
+`tokenize` walks the characters once. Single characters map straight to a token. `=`, `!`, `>` and `<` look one character ahead to choose between `Equals` and `EqEq`, and so on. A single `&` or `|` is accepted as `And` or `Or`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Words are read next. `true`, `false` and `null` become keyword tokens. A word that starts with an uppercase letter becomes `Type`, anything else becomes `Ident`.
+
+Strings in double quotes are decoded by `unescape_json`, which handles the JSON escapes and surrogate pairs. Strings in single quotes support only `\n`, `\t` and a quoted character.
+
+A `-` is part of a number only when a digit follows and the previous token is not a value. Otherwise it is `Minus`. The list always ends with `Eof`.
 
 ## Items
 
@@ -31,6 +35,15 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[Parser Module]] — from `ExprParser`, `cur`, `eat`, `infix_prec`
+
+## Gotchas
+
+- A string with a malformed escape keeps its raw text; it is not an error.
+- An unterminated string runs to the end of the input. This lets streamed, half-finished text still tokenize.
+- `a -5` is `a`, `Minus`, `5`: the minus is subtraction because it follows a value. `[-1]` gives the number `-1`.
+- `1.` gives a number and then a `Dot`: a decimal point needs a digit after it.
+- Unknown characters, such as emoji, vanish without any message.
+- Only ASCII letters and digits make up a word.
 
 ## See also
 

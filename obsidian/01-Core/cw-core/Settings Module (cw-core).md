@@ -8,7 +8,7 @@ tags: [core, cw-core, module]
 
 ## What it does
 
-They live in `settings.json` in the data directory, which only the backend writes. Every setting also has an environment variable, and the variable wins: a setup made with variables (Docker, CI, a test) behaves the same whatever the file says. `Resolved` holds the outcome for each setting and says where it came from. API keys are stored encrypted (`secret.rs`).
+Defines the user's settings for the backend and how they are stored. The settings choose which embedder serves semantic search and hold the addresses and API keys of the embedding servers (OpenAI, Ollama, LM Studio, llama.cpp, Lemonade, mistral.rs). They live in `settings.json` in the data directory. Only the backend writes that file. Each setting also has an environment variable that overrides the file, so a Docker or CI setup behaves the same whatever is saved.
 
 ## Source
 
@@ -16,15 +16,13 @@ They live in `settings.json` in the data directory, which only the backend write
 
 ## How it works
 
-1. `resolved` in [[Settings Module (cw-server)]] and `Resolved::load` in [[Resolved]] call `load`. `load` calls `read`. `read` calls `file`.
-2. `run` in [[Serve Module]] calls `key`.
-3. `change` in [[Settings Module (cw-server)]] calls `key_at`.
-4. `change` in [[Settings Module (cw-server)]] calls `update`. `update` calls `file`, then `read`, then `Error::io`, then `Error::external` (both in [[Error]]).
-5. `run` in [[Serve Module]] calls `drop_retired`. `drop_retired` calls `read`, then `update`.
+Each setting is a [[Key]] constant: its variable name, its place (`section.field`) in the file, whether it is a secret, and its default. `ALL` lists the 12 in page order. `key` finds one by variable name, `key_at` by section and field.
 
-1 more entry point: `retire_builtin`.
+`load` reads the file into [[Settings]], and gives an empty one when the file is missing or damaged, so a bad file never stops the backend. `update` is the only writer: it reads, runs a change function, removes retired sections, stamps the version and writes through a temporary file and a rename. If the change fails, nothing is written. If the existing file cannot be parsed, it is first moved to `settings.broken.json`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+[[Resolved]] combines the environment, the file and the defaults.
+
+Two cleanups run at server start. `drop_retired` removes the old `llm`, `anthropic` and `cliproxy` sections, which hold encrypted keys that no program uses. `retire_builtin` moves a user of the removed built-in embedder to `local`, clears the model name and the device entry, and deletes the downloaded built-in models.
 
 ## Items
 
@@ -64,6 +62,14 @@ And 17 more items.
 - [[Resolved]] — from `Resolved`, `from_env`, `from_parts`, `load`
 - [[Settings]] — from `clear`, `field`, `put`, `secret`
 - [[Serve Module]] — from `run`
+
+## Gotchas
+
+- Unknown parts of the file are kept as they are, so an older program does not erase what a newer one wrote.
+- `delete_models` removes only folders with a `manifest.json`, plus `.partial`. Other files in `models` stay, since a data folder may be shared.
+- Retired environment variables are listed in `RETIRED_VARIABLES`. A program that finds one set says so in its log.
+- mistral.rs has a URL setting but no key setting. Its server needs none by default.
+- The default ports of LM Studio and mistral.rs are the same, so the two collide if both run on one machine.
 
 ## See also
 

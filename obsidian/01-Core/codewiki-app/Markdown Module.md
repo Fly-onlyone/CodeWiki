@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-No UI types, so it is unit-tested.
+A vault note is Obsidian Markdown: it has frontmatter, `[[wikilinks]]` and Mermaid blocks. The note viewer cannot show those as they are. This module rewrites a note's text into plain Markdown the viewer can draw, and makes the small link scheme the viewer uses to move between notes and open diagrams. It has no UI types, so unit tests cover it.
 
 ## Source
 
@@ -16,10 +16,14 @@ No UI types, so it is unit-tested.
 
 ## How it works
 
-1. `AppView::follow_link` in [[codewiki-app]] calls `decode`.
-2. `AppView::page_content` in [[codewiki-app]] calls `figure_index`.
-3. `AppView::edit_view` and `AppView::prepare_page` in [[codewiki-app]] call `prepare_note_with`. `prepare_note_with` calls `link_line`. `link_line` calls `encode`.
-4. `AppView::details` in [[codewiki-app]] calls `outline`.
+`prepare_note_with` walks the note line by line, and builds new text.
+
+- Frontmatter is cut off. Its `tags:` line becomes a row of inline code right under the `# ` title.
+- Each Mermaid block goes to a callback that decides what to show: a linked image (`Diagram::Image`), a line saying `*Drawing diagram…*`, or the block as code. The image link points at `codewiki-diagram://<index>` and is wrapped in a link to `codewiki://diagram/<index>`, so a click opens the enlarged viewer.
+- `link_line` turns `[[Target|Label]]` in prose into an ordinary link to `codewiki://note/<encoded target>`. The part after `#` is dropped, and a trailing `/` on the label is trimmed.
+- Under each `## ` heading named in `figures`, it puts a code block in the language `codewiki-figure` that holds the picture's number. The viewer replaces it with the drawn picture, read back by `figure_index`.
+
+`follow_link` calls `decode` to read the note name from a clicked link. `outline` lists the `##` headings for the outline pane.
 
 ## Items
 
@@ -44,6 +48,16 @@ No UI types, so it is unit-tested.
 ## Used by
 
 - [[codewiki-app]] — from `details`, `edit_view`, `follow_link`, `page_content`
+
+## Gotchas
+
+- Wikilinks inside inline code or fenced blocks are left alone, so `[[not a link]]` in backticks stays as text.
+- A `## ` line inside a code block is code. It does not get a picture and is not in the outline.
+- A heading that appears twice gets its picture only once, under the first.
+- A heading in `figures` that the note lacks gets no picture.
+- `decode` only reads `%XX` escapes. Text from `encode` round-trips, and a bad escape is kept as it is.
+- A Mermaid block must close with a line that starts with three backticks. An unclosed block swallows the rest of the note.
+- A leading byte order mark is removed before frontmatter is read.
 
 ## See also
 

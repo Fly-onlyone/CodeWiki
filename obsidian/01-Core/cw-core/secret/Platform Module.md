@@ -6,16 +6,19 @@ tags: [core, cw-core, module]
 
 > Module `cw_core::secret::platform` defining 7 items, including `unprotect`, `protect`, and `blob`.
 
+## What it does
+
+This private module does the real encryption for [[Secret Module]]. Two versions exist, chosen at compile time. On Windows it calls the Data Protection API (`CryptProtectData` and `CryptUnprotectData`), which ties a secret to the signed-in user on that machine. On other systems it only returns an error, because no store exists there.
+
 ## Source
 
 - `crates/cw-core/src/secret.rs` — module `cw_core::secret::platform`
 
 ## How it works
 
-1. `protect` in [[Secret Module]] calls `protect`. `protect` calls `blob`, then `failed`, then `take`, then `unavailable`. `blob` calls `Error::invalid` in [[Error]]. `failed` calls `Error::external` in [[Error]].
-2. `unprotect` in [[Secret Module]] calls `unprotect`. `unprotect` calls `blob`, then `failed`, then `take`, then `unavailable`. `unavailable` calls `Error::invalid` in [[Error]].
+`protect` wraps the input and a fixed `ENTROPY` value in system blobs with `blob`, calls the system, and passes the result to `take`. `take` copies the returned bytes into a `Vec` and frees the system memory with `LocalFree`. `unprotect` does the same in reverse. If the system call returns 0, `failed` builds an error from the last OS error. On other systems both functions return the error from `unavailable`, which tells the user to set the environment variable instead.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The flags forbid any window, so a call never blocks on a dialog.
 
 ## Items
 
@@ -35,6 +38,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[Secret Module]] — from `protect`, `unprotect`
+
+## Gotchas
+
+- `ENTROPY` is not a key. The user's account protects the secret; the entropy only stops another program of the same user from decrypting it by accident. Changing the value makes every stored secret unreadable.
+- A secret saved by another user or on another machine fails in `unprotect` with a clear message.
+- `blob` casts a read-only pointer to mutable because the API wants it; the calls only read it. Inputs over 4 GiB are refused.
+- The Windows code is `unsafe`; each block has a SAFETY comment that must stay true if the code changes.
 
 ## See also
 

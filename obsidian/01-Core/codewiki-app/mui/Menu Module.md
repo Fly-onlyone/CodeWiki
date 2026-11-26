@@ -20,10 +20,15 @@ Three things MUI does are left out. Its `Grow` entrance scales the paper, which 
 
 ## How it works
 
-1. `AppView::theme_menu_view` in [[codewiki-app]] and `menu` in [[Select Module]] call `Menu::new`.
-2. `AppView::settings_menu_view` and `theme_menu_item` in [[codewiki-app]] call `MenuItem::new`.
-3. `AppView::theme_menu_view` and `AppView::settings_menu_view` in [[codewiki-app]] call `MenuSection::new`.
-4. `AppView::settings_menu_view` in [[codewiki-app]] calls `MenuSection::plain`.
+The owner keeps the state and rebuilds a `Menu` each frame. It passes the `anchor` bounds, a focus handle, sections of `MenuItem`s, the highlighted row, and the callbacks `on_select`, `on_highlight` and `on_close`.
+
+`AnchorBounds::track` wraps the control that opens the menu. After each paint it stores the control's bounds and calls `moved` when they change, so the menu has an anchor from the first frame.
+
+On render, each section becomes an optional subheading and a list of `ListItemButton` rows from [[List Module]]. The highlighted row is found by counting rows through every section. A keyed `Scroll` state scrolls the highlighted row into view, but only when the highlight changed.
+
+Keys: `step` moves the highlight with Down, Up, Home and End, and wraps at the ends. Enter or Space call `on_select` with the highlighted row. Escape calls `on_close`. A key with a modifier is ignored.
+
+The layout: a full-window `scrim` takes the click that closes the menu. Inside it an `anchored` element hangs the paper under the anchor (4 px gap), lines up its left edge (`Align::Start`) or right edge (`Align::End`), and keeps 16 px from the window edge. The whole thing is `deferred` so it draws on top. The paper has elevation 8 from [[Surfaces Module]] and a fade-and-drop entrance.
 
 ## Items
 
@@ -59,6 +64,16 @@ And 1 more private item with no comment.
 - [[Doc View Module]] — from `select_control`
 - [[Select Module]] — from `menu`
 - [[Suggest Module]] — from `Suggestions`
+
+## Gotchas
+
+- The owner must give the focus handle focus when the menu opens, or the keys do nothing.
+- The owner must close the menu when the handle loses focus. This is how Tab closes it, as in MUI.
+- A menu being closed is drawn with `open(false)` and a falling `shown` value. In that state it takes no clicks or keys.
+- Highlight indexes count rows through all sections, not within one. Headings do not count.
+- `highlighted` is clamped to the last row, so a stale index is safe. An empty menu always gives 0.
+- The width is a fixed 300 unless set, since rows truncate rather than size the menu.
+- Typing a letter does not jump to a row, and subheadings do not stick.
 
 ## See also
 

@@ -8,7 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The card is TradingAgent's (`components.ts`, `MuiCard`): tinted glass with a thin primary border, corners four pixels rounder than a button's, a soft shadow and a line of accent color along its top edge. TradingAgent blurs what is behind a card; GPUI cannot, so the card is kept dense enough to read on whatever is behind it.
+This module holds the surfaces the app's content sits on, and the one function that sets text. A `card` groups content on the page. A `paper` is a raised surface for things that float, such as a menu, a dialog or a toast. A `divider` is a 1 px line. `text` sets a string in one of MUI's typography styles.
+
+The card follows TradingAgent's look: tinted glass with a thin primary border, rounder corners than a button, a soft shadow and a hairline of accent color along the top. TradingAgent blurs what is behind a card. GPUI cannot blur, so the card fill is dense enough to read on any backdrop.
 
 ## Source
 
@@ -16,15 +18,11 @@ The card is TradingAgent's (`components.ts`, `MuiCard`): tinted glass with a thi
 
 ## How it works
 
-1. `AppView::diagram_viewer_view` and `AppView::palette_view` in [[codewiki-app]], and 3 more, call `paper`. `paper` calls `tinted_border` in [[Glass Module]], then `elevation` in [[Tokens Module]].
-2. `AppView::details` and `AppView::diagram_viewer_view` in [[codewiki-app]], and 16 more, call `text`. `text` calls `px` in [[Zoom Module]].
-3. `code_block` and `draw` in [[Doc View Module]], and 4 more, call `card`. `card` calls `tinted_border` in [[Glass Module]], then `card_fill`, then `card_shadow`, then `hairline` in [[Glass Module]]. `card_shadow` calls `px` in [[Zoom Module]].
-4. `draw_strip` in [[Doc View Module]] calls `card_piece`. `card_piece` calls `tinted_border` in [[Glass Module]], then `card_fill`, then `hairline` in [[Glass Module]].
-5. `draw` and `empty` in [[Doc View Module]], and 1 more, call `card_content`. `card_content` calls `px` in [[Zoom Module]].
+`card` is a column with the large radius, a tinted border from the [[Glass Module]], and a fill from `card_fill`. The fill is the theme's secondary color run through the glass `pane` level, which makes it as dense as the reading pane so text keeps its contrast. A faint primary tint lies over the fill, and a hairline runs along the top inside the corners. `card_content` is the padded column to put inside (16 px padding).
 
-1 more entry point: `divider`.
+`card_piece` is for a card drawn as several stacked elements, such as a long table built row by row. `Piece::Top` has the top border, the rounded top and the hairline. `Middle` has side borders only. `Bottom` has the bottom border and the rounded bottom. Stacked, they read as one card.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`paper` is opaque, uses the popover colors, and takes its shadow from `tokens::elevation`. `text` reads the size, line height, weight and uppercase flag from the variant spec, all through the zoom module's `px`.
 
 ## Items
 
@@ -54,6 +52,15 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Autocomplete Module]] — from `render`
 - [[Menu Module]] — from `render`
 - [[Snackbar Module]] — from `snackbar`
+
+## Gotchas
+
+- `card_piece` has no shadow on purpose. A shadow on each piece would show a seam at every joint.
+- The hairline in `card` and the top piece is inset by the corner radius. GPUI clips to rectangles, so a full-width line would stick out past the rounded corners.
+- Without a glass levels global, `card_fill` falls back to opaque.
+- `paper` is made for dialogs. A toast sets its own corner radius on top of it.
+- `text` upper-cases the string itself when the variant asks for it, so the original casing is lost in the element.
+- The shadow is drawn from `card_shadow` on every call; it is not cached.
 
 ## See also
 

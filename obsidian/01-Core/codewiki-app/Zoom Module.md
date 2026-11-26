@@ -23,15 +23,15 @@ The title bar stays as it is, as a browser's does: it is built at 100% (`unscale
 
 ## How it works
 
-1. `AppView::body` and `AppView::details` in [[codewiki-app]], and 70 more, call `px`. `px` calls `factor`.
-2. `title_bar` in [[codewiki-app]] and `zoom_card` in [[Settings Pages Module]] call `label`.
-3. `AppView::run_command` and `main` in [[codewiki-app]], and 1 more, call `step_by`. `step_by` calls `set`, then `step`, then `percent`.
-4. `DocPage::new` and `DocPage::render` in [[Doc View Module]] call `factor`.
-5. `Restore::drop` in [[codewiki-app]] calls `set_factor`.
+The zoom factor lives in a thread-local, set by `set_factor`. `px(n)` multiplies a design size by it. `init` reads the saved level through [[Prefs Module]], falling back to `DEFAULT`; `parse` accepts only values listed in `LEVELS`.
 
-11 more entry points: `unscaled`, `notches`, `init`, `percent`, `set`, `reset`, and 5 more.
+`set` snaps the level to `LEVELS`, stores it as a global, updates the factor, calls `sync_theme`, saves it, starts the title bar chip, and calls `refresh_windows` so cached views redraw. `step_by` and `reset` go through `set`. `step` finds the neighbour level; a value between levels moves to the nearer one in the direction asked, and the ends hold.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Wheel input: `notches` converts a scroll delta into notches, using the Windows lines-per-notch setting for line deltas and 50 pixels per notch for touchpads. `Wheel::feed` adds parts of notches and returns whole steps. A pause over 400 ms or a turn the other way resets the sum.
+
+Theme: `Sizes` holds the font, mono font and two radii. `rebased` keeps a base at 100%. If the theme still holds what zoom last wrote, the base stays. If something else changed the theme, its sizes become the new base. `sync_theme` runs every frame and writes only when needed.
+
+`show_indicator` sets a sequence number, and a timer hides the chip only if no later change came.
 
 ## Items
 
@@ -73,6 +73,16 @@ And 12 more items.
 - [[Backdrop Module]] — from `Shell`, `new`, `render`
 - [[Glass Module]] — from `hairline`, `reading_surface`
 - [[Illustration Module]] — from `flow`, `step`
+
+## Gotchas
+
+- The factor is thread-local: only the main thread draws, and each test sees 1.0 on its own thread.
+- Use this module's `px`, not GPUI's, for app sizes. GPUI's `px` is allowed only here (`clippy::disallowed_methods` is lifted for this file).
+- Call `init` after `themes::init`, so the theme is still at 100% when taken as the base. After applying a theme, call `rebase_theme`.
+- `sync_theme` must run per frame: gpui-kit can write the theme file's sizes back after zoom scaled them.
+- `unscaled` restores the factor even when the builder panics (a drop guard does it).
+- A wheel set to one screen per notch reports `u32::MAX` lines; `notches` still gives 1. Scrolling turned off gives 0 and zooms nothing.
+- The title bar is built unscaled and laid out in `FixedRem`. Rems resolve at layout and paint time, not when the element is built, so the fixed rem must wrap layout and paint.
 
 ## See also
 

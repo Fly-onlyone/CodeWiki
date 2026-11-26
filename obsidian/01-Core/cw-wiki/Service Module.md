@@ -6,21 +6,23 @@ tags: [core, cw-wiki, module]
 
 > High-level operations shared by the CLI, the server and the MCP tools.
 
+## What it does
+
+The entry points for the main jobs of CodeWiki: open the index of a repository, rebuild it from the code, load the notes into search, and bring index and vault up to date in one call. The CLI, the server and the MCP tools all go through here, so they behave the same. The index is a cache. The code and the vault in the repository are the truth.
+
 ## Source
 
 - `crates/cw-wiki/src/service.rs` — module `cw_wiki::service`
 
 ## How it works
 
-1. `Repo::index` in [[Api Module]] and `open` in [[Workspace Module (cw-server)]] call `open_index_in`. `open_index_in` calls `built`, then `Index::open` in [[Index]], then `index_path_in` in [[Paths Module]]. `built` calls `reindex`, then `index_notes`.
-2. `run` in [[codewiki]] and `reindex_repo` in [[Api Module]] call `reindex`. `reindex` calls `scan_repo` in [[Scan Module]], then `analyze` in [[Analyze Module]], then `refresh` in [[Semantic Module]], then `head_commit` in [[Git Module]], then `save`, then `mine` (both in [[Gitintel Module]]).
-3. `run` in [[codewiki]] calls `open_index`. `open_index` calls `built`, then `Index::open` in [[Index]], then `index_path` in [[Paths Module]].
-4. `after_update` and `embed_repo` in [[Embed Job Module]], and 1 more, call `open_existing_index_in`. `open_existing_index_in` calls `index_path_in` in [[Paths Module]], then `Index::open` in [[Index]].
-5. `approve_proposal` and `decide_proposals` in [[Api Module]], and 2 more, call `index_notes`. `index_notes` calls `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `refresh` in [[Semantic Module]].
+`open_index` and `open_index_in` open the index file for a repository. They then call `built`, which checks the `built` meta key. If it is missing, the index has never been filled, so `built` runs `reindex` and, when a vault folder exists, `index_notes`. Without this, a new data folder or a schema change would leave an empty index, and every query would answer as if the repository had nothing in it.
 
-3 more entry points: `update`, `update_in`, `is_stale`.
+`reindex` scans the repository, computes graph metrics, and replaces facts and metrics in the index. It also writes search documents for symbols and files, refreshes their vectors, records the head commit, and saves mined git data. It does not touch notes.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`index_notes` reads every note listed in the vault metadata and replaces the note documents. A note file that cannot be read is skipped.
+
+`update` (or `update_in` with an explicit data folder) is the full run: open, reindex, generate the vault notes, then index them. It logs a summary of written, proposed, removed and kept notes. `is_stale` compares the commit the vault was made at with the current head.
 
 ## Items
 
@@ -58,6 +60,13 @@ And 1 more private item with no comment.
 - [[codewiki]] — from `run`
 - [[cw-server]] — from `waits`
 - [[Workspace Module (cw-server)]] — from `open`
+
+## Gotchas
+
+- `open_existing_index_in` never builds anything. It returns `None` when the index is missing or was never built. Background jobs such as embedding use it, so they cannot start a repository scan by accident.
+- `reindex` does not index notes and `index_notes` does not scan code. After changing both you need both calls, or `update`.
+- The `built` key is set at the start of a reindex, so a scan that fails later may still leave the index marked as built.
+- Vector refresh runs inside `reindex` and `index_notes`, and a slow model can make them take minutes unless an inline budget is set.
 
 ## See also
 

@@ -18,8 +18,11 @@ MUI swaps the icon at once and does not ease the tint; here the tint eases over 
 
 ## How it works
 
-1. `AppView::review_queue` in [[codewiki-app]] calls `Check::of`.
-2. `AppView::review_queue` in [[codewiki-app]] calls `Checkbox::new`.
+`Checkbox` is a builder that you give an id, a `Check` state, an optional `edge_start` and an `on_click` handler. It does not hold the checked value; the owner decides what a click changes and passes the new state back on the next render.
+
+`Look::of` picks the colors. The icon is the muted text color when unchecked, the primary color when checked or indeterminate, and the foreground at the disabled opacity when disabled. The hover tint is always the primary color at the app's own hover opacity.
+
+On render, `Base::new` tracks hover and focus. The hover tint fades with a transition of `duration::SHORTEST` and the ease-in-out curve, scaled by the motion setting. The area is a round `div` of `SIZE` (38) with the icon (20) in the middle. A focused box gets the focus ring. The `Ink` ripple is centered and as large as the round area. `Check::icon` picks the blank, checked or indeterminate glyph.
 
 ## Items
 
@@ -46,6 +49,14 @@ MUI swaps the icon at once and does not ease the tint; here the tint eases over 
 
 - [[codewiki-app]] — from `review_queue`
 - [[Review Module]] — from `header`
+
+## Gotchas
+
+- All sizes go through the zoom module's `px`, not GPUI's, so the checkbox follows the app zoom.
+- `Look::of` has a `disabled` flag, but `render` always passes false: the checkbox cannot be shown disabled today.
+- The tint eases here, while MUI changes it at once. This is on purpose, to match the app's other controls.
+- Use `edge_start` when the box, not its round area, must line up with the text above it. It pulls the control left by 3 pixels.
+- A checkbox with no `on_click` still shows hover and focus, but does nothing.
 
 ## See also
 

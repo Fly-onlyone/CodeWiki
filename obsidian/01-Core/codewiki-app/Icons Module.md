@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The app draws Material Icons, as Material UI apps do. Each is an SVG file in `icons/`, built from the path data of `@mui/icons-material`, and is embedded in the binary here.
-
-Every icon the app draws is a constant here. gpui-kit's own components draw a few Lucide icons of their own; those come from the kit's assets.
+This module holds every icon the app draws, and serves them to GPUI. The icons are Material Icons: SVG files built from the path data of `@mui/icons-material`, compiled into the program. Each one is a named constant of type [[Glyph]]. The module also holds the app logo, and maps themes and palette commands to icons. It also decides which icons are drawn in a theme color.
 
 ## Source
 
@@ -18,9 +16,9 @@ Every icon the app draws is a constant here. gpui-kit's own components draw a fe
 
 ## How it works
 
-1. `theme_menu_item` in [[codewiki-app]] and `appearance` in [[Settings Pages Module]] call `for_theme`.
-2. `AppView::sidebar` and `AppView::tab_bar` in [[codewiki-app]], and 4 more, call `tint`. `tint` calls `hue`.
-3. `AppView::palette_view` in [[codewiki-app]] calls `for_command`.
+The `app_icons!` macro turns each line into a `Glyph` constant and adds the SVG bytes to one `EMBEDDED` list. `AppAssets` is the asset source the app registers at startup. Its `load` method first answers the logo path, then looks the path up in `EMBEDDED`, and otherwise passes the request to gpui-kit's own `Assets` (the kit draws a few Lucide icons itself). `list` merges both sources and drops duplicates.
+
+Three small functions choose icons. `for_theme` maps a theme name to its icon, and a light theme shares its dark twin's icon (it strips the " Light" suffix). An unknown theme gets the palette icon. `for_command` gives the icon for each palette entry. `hue` says which theme color an icon wears in the sidebar and toolbar, and `tint` turns that hue into a color in the active theme; icons like back and close stay neutral.
 
 ## Items
 
@@ -50,6 +48,14 @@ Every icon the app draws is a constant here. gpui-kit's own components draw a fe
 - [[Reading Module]] — from `heading_hue`
 - [[Settings Pages Module]] — from `appearance`
 - [[Win32 Module]] — from `tray_procedure`
+
+## Gotchas
+
+- `for_command` matches every `Command` with no fallback arm. A new palette command will not compile until it gets an icon.
+- An icon missing from `hue` has no color. Add an arm if a new icon should follow the theme.
+- `LOGO_BYTES` is also what the Windows notification header shows. [[Identity Module]] writes it to disk, so a change to the logo file changes both.
+- Tests require each SVG to start with `<svg`, use a 24 unit view box and have a path. A file from another icon set may fail them.
+- `list` must not return a path twice. A test checks it.
 
 ## See also
 

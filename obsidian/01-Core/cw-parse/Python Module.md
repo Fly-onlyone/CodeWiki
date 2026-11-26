@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Written against the node kinds and field names published in the grammar's own `node-types.json` (tree-sitter-python 0.25). No query files are used.
+This module reads one Python file and turns it into a [[ParsedFile]]: the module, its classes, functions and methods, and which names each one calls, uses, imports or extends. It is the Python front end of the scanner and works on the tree-sitter syntax tree, using the node names in the grammar's `node-types.json`. No query files are used.
 
 ## Source
 
@@ -16,9 +16,11 @@ Written against the node kinds and field names published in the grammar's own `n
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `parse_python`. `parse_python` calls `Error::external`, then `Error::invalid` (both in [[Error]]), then `Sink::new` in [[Sink]], then `has_main_guard`, then `bindings`. `has_main_guard` calls `named` in [[Lang Module]], then `text`. `bindings` calls `named` in [[Lang Module]], then `pattern_names`.
+`parse_python` gets the file path, the module name (such as `pkg::util`), whether the file is a package (`__init__.py`) and the text. It first collects the "roots": names bound by imports and top-level definitions. Only a dotted call that starts at a root is treated as a path. It then records the module symbol with its docstring and finds the names bound in the file with `bindings`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+It then walks the tree. A `def` becomes a function, or a method when it sits inside a class. A `class` becomes a class, and its plain base names are recorded as inheritance. Decorators become attributes. For a method, the first parameter (usually `self`) is remembered, so `self.name()` is a call on the enclosing class.
+
+`call` sorts calls into three cases. A bare name is a plain call. A dotted call whose start is a root is a path. Anything else is a method call on a receiver of unknown type. Imports are stored as written, with relative ones made absolute. [[Scan Module]] and [[Lang Module]] sort out later which of them name repository code.
 
 ## Items
 
@@ -44,6 +46,15 @@ And 4 more private items with no comment.
 
 - [[Scan Module]] — from `scan_repo`
 - [[Units Module]] — from `discover`
+
+## Gotchas
+
+- A name bound locally (assignment, loop variable, `as`, parameter) hides a module-level symbol of the same name. Uses of it are not recorded as references.
+- A top-level `if __name__ == "__main__":` adds the attribute `__main__` to the module symbol. Other code uses it to tell scripts from libraries.
+- A name starting with one underscore is private, as is anything nested inside a function. Names like `__init__` are public.
+- Only plain names count as base classes. `metaclass=Meta` and `Generic[T]` give no inheritance.
+- `import a.b.c` records two imports: the name `a` it binds, and the path `a.b.c` it loads.
+- A name rebound at module level, like `handler = wrap(handler)`, stays a function.
 
 ## See also
 

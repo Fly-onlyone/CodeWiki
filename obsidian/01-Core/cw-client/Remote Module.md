@@ -8,7 +8,7 @@ tags: [core, cw-client, module]
 
 ## What it does
 
-Its address and token are in `remote.json` in the data directory. Only clients write that file: the backend keeps its own settings in another one, so neither can overwrite the other's change. The token is stored encrypted for the current user (`cw_core::secret`).
+Lets a user point the app at a backend in Docker or on another machine, without setting environment variables. The address, a use flag and an encrypted token are saved in `remote.json` in the data directory. Only clients write that file. The backend keeps its settings in another file, so neither side overwrites the other. Tokens are encrypted for the current user through [[Secret Module]].
 
 ## Source
 
@@ -16,15 +16,13 @@ Its address and token are in `remote.json` in the data directory. Only clients w
 
 ## How it works
 
-1. `saved_remote` in [[cw-client]] and `Backend::named` in [[Backend]] call `saved_in`. `saved_in` calls `read`. `read` calls `file`.
-2. `check_remote_in` in [[cw-client]] and `Backend::named` in [[Backend]] call `token_in`. `token_in` calls `read`, then `unprotect` in [[Secret Module]].
-3. `check_remote_in` in [[cw-client]] calls `normalized`.
-4. `save_remote` in [[cw-client]] calls `save_in`. `save_in` calls `normalized`, then `protect`, then `hint` (both in [[Secret Module]]), then `read`, then `write`. `write` calls `file`.
-5. `use_local` in [[cw-client]] calls `set_in_use_in`. `set_in_use_in` calls `read`, then `write`.
+`save_in` checks the address with `normalized` (must start with http:// or https://, trailing slash removed). With a new token, it encrypts it with `protect` and stores a short `hint` (the last characters) beside it. With `None`, it reuses the saved token, but only when the saved address is the same. Then it writes `{url, use: true, token}`.
 
-1 more entry point: `forget_in`.
+`write` saves to `remote.json.tmp` and renames it over the old file, so a reader never sees half a file.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`saved_in` returns the address, the use flag and the hint, never the token. `token_in` decrypts it on demand. `set_in_use_in` flips the `use` flag, keeping address and token, so a user can go back to the local backend and return later. `forget_in` deletes the file and treats a missing file as success.
+
+[[Backend]] calls `saved_in` and `token_in` when it chooses a backend.
 
 ## Items
 
@@ -49,6 +47,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[cw-client]] — from `check_remote_in`, `forget_remote`, `save_remote`, `saved_remote`
 - [[Settings Pages Module]] — from `Model`
 - [[Backend]] — from `named`
+
+## Gotchas
+
+- A token belongs to one address. Saving a different address without a token fails with "enter the token of the backend"; a token is never sent to another backend.
+- A token is encrypted for one Windows user on one machine. Another user or machine gets "the saved token cannot be read ... enter it again". Where encryption is unavailable, saving fails and the message suggests `CODEWIKI_URL` and `CODEWIKI_TOKEN`.
+- `CODEWIKI_URL` wins over this file.
+- `set_in_use_in(false)` with nothing saved succeeds, because nothing saved already means local. `set_in_use_in(true)` with nothing saved fails.
+- A missing or broken `remote.json` reads as nothing saved, not as an error.
 
 ## See also
 

@@ -18,7 +18,13 @@ In MUI an invisible input covers the whole switch, so a click anywhere on it tog
 
 ## How it works
 
-1. `draw` in [[Doc View Module]] calls `Switch::new`.
+The owner holds the value. A `Switch` gets an id, `on`, `disabled` and an `on_change` callback; a click calls it with the opposite of the current value.
+
+`Look::of` picks three colors. The thumb is primary when on, a grey when off, and a lightened or darkened primary when on and disabled. The track is primary at 50% when on, the text color at 38% (light) or 30% (dark) when off, and much fainter when disabled. The ink, used for the hover halo and ripple, is primary when on and the "active" grey when off.
+
+`render` runs four transitions of `duration::SHORTEST`: the thumb progress from 0 to 1, the thumb color, the track color and the halo. The knob is a 38 px round area placed `halo_left(progress)` pixels from the left, up to 20 px. Inside it the 20 px thumb has a small shadow. The track sits under it, 34 by 14, inset 12 px.
+
+The knob is wired through `Base::attach` for hover, focus ring, ripple and keyboard. The track has its own click handler and a pointer cursor.
 
 ## Items
 
@@ -57,6 +63,15 @@ And 6 more private items with no comment.
 ## Used by
 
 - [[Doc View Module]] — from `draw`
+
+## Gotchas
+
+- The knob is `occlude`d so a click on it does not also reach the track and toggle twice.
+- MUI covers the whole switch with an invisible input. Here the knob is the control and the track is a second click target.
+- A disabled switch gives the track no click handler and no pointer cursor.
+- An off thumb is grey in every theme and has no hue. Only the on state follows the primary color.
+- The switch is 58 by 38. The track starts 12 px inside the left edge. Use `INSET` to pull a row left so the track lines up with the text above, as MUI's form label does.
+- The switch does not remember its value. If the owner ignores `on_change`, the thumb slides back.
 
 ## See also
 

@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-The vault holds curated concept notes only; file and symbol detail is answered live from the index by the functions here.
+Serves the read side of the wiki to the app and to coding agents. The vault holds only curated concept notes, so questions about a file or a symbol cannot be answered from notes. These functions answer them live from the index and the vault metadata: note lists, one note's text, repository status, symbol detail, file context, dependency paths, and a note-based answer to a question. None of them calls a model.
 
 ## Source
 
@@ -16,15 +16,13 @@ The vault holds curated concept notes only; file and symbol detail is answered l
 
 ## How it works
 
-1. `repo_status` in [[Api Module]] and `summarize` in [[Workspace Module (cw-server)]] call `status`. `status` calls `VaultMeta::load` in [[VaultMeta]], then `head_commit` in [[Git Module]], then `list` in [[Proposal Module]], then `vault_is_behind` in [[Git Module]].
-2. `brief` and `row` in [[Explanations Module]] call `title_of`.
-3. `list_notes` in [[Api Module]] calls `list_notes`. `list_notes` calls `VaultMeta::load` in [[VaultMeta]], then `info`. `info` calls `title_of`, then `state` in [[Lifecycle Module]].
-4. `brief` and `submit` in [[Explanations Module]] call `find_entry`. `find_entry` calls `title_of`, then `Error::not_found` in [[Error]], then `check_vault_path`. `check_vault_path` calls `Error::invalid` in [[Error]].
-5. `read_note` in [[Api Module]] calls `read_note_as`. `read_note_as` calls `VaultMeta::load` in [[VaultMeta]], then `find_entry`, then `Error::io` in [[Error]], then `agent_view`, then `info`, then `illustration_path` in [[Generate Module]], and 1 more.
+`list_notes` loads the vault metadata and turns each entry into a `NoteInfo` through `info`. That gives the note's lifecycle state and where its explanation stands: `Waiting` if rules wrote it and no agent has, `Explained`, or `Behind` if a source file changed after the agent wrote. Notes that agents do not explain (maps, adopted notes) get `None`.
 
-6 more entry points: `write_note`, `overview`, `symbol_detail`, `context`, `dependency_path`, `answer`.
+`read_note_as` finds the entry with `find_entry`, which matches a vault path or a note name without case. Every path is checked by `check_vault_path` first. With `View::Whole` it returns the text and the note's pictures. With `View::Agent` it runs `agent_view`, which cuts the rule-made `How it works` walk-through from module, crate and type notes and returns no pictures. The cut is skipped when an agent wrote that section.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`symbol_detail` finds a symbol by qualified or bare name, collects `depends_on` and `used_by` from dependency edges (including those of its methods), and lists the notes that cite its file. `context` returns file detail (imports, importers) when the target is an indexed path, else symbol detail. `dependency_path` builds a graph of dependency edges and returns the shortest chain. `answer` searches notes and symbols and joins the summaries of the best 3 notes.
+
+`status` counts files, symbols, edges, notes and pending proposals, and compares the vault commit with the head commit.
 
 ## Items
 
@@ -68,6 +66,14 @@ And 9 more items.
 - [[Explanations Module]] — from `brief`, `row`, `submit`
 - [[cw-wiki]] — from `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_is_woven_into_the_note_and_recorded`
 - [[Workspace Module (cw-server)]] — from `summarize`
+
+## Gotchas
+
+- `write_note` leaves the manifest alone on purpose. The changed hash is what marks the note as human-edited, so CodeWiki stops overwriting it.
+- `check_vault_path` rejects `..`, hidden segments, backslashes, colons, absolute paths and anything not ending in `.md`. A bad path gives an invalid error, an unknown one a not-found error.
+- `agent_view` ignores `## ` lines inside code fences. Flow notes are never cut.
+- `dependency_path` returns an empty list, not an error, when a symbol is not in the graph or no path exists.
+- `answer` returns a fixed hint text when no note has a summary.
 
 ## See also
 

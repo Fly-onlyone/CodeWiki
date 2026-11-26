@@ -8,7 +8,7 @@ tags: [core, cw-graph, module]
 
 ## What it does
 
-Implements the Louvain method (Blondel et al., "Fast unfolding of communities in large networks", 2008) from the paper. Nodes are visited in index order and ties go to the lowest community id, so results are stable.
+This module groups the nodes of the code graph into communities: sets of files or symbols that link to each other more than to the rest. CodeWiki uses the groups to show which parts of a repository belong together. It uses the Louvain method, which picks groups that raise a score called modularity. Nodes are visited in index order and ties go to the lowest community id, so the same graph always gives the same groups.
 
 ## Source
 
@@ -16,9 +16,12 @@ Implements the Louvain method (Blondel et al., "Fast unfolding of communities in
 
 ## How it works
 
-1. `analyze` in [[Analyze Module]] calls `louvain`. `louvain` calls `local_moving`, then `renumber`.
+`louvain` takes a symmetric weighted adjacency list, as made by `Graph::undirected` in [[Graph]]. It repeats two steps.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+1. `local_moving` starts with each node alone. It sweeps the nodes in order and moves each one to the neighbouring community with the best modularity gain, until a sweep moves nothing or 100 sweeps are done.
+2. If something moved, `renumber` gives the communities ids from 0, and the graph is collapsed to one node per community. Weight inside a community becomes a self loop, so node strength stays the same at the next level.
+
+It stops when nothing moves or one community is left. The final ids come from `renumber`, so they count up in order of each community's lowest node. [[Analyze Module]] calls it.
 
 ## Items
 
@@ -30,6 +33,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[Analyze Module]] — from `analyze`
+
+## Gotchas
+
+- The input must be symmetric. A directed list gives wrong gains.
+- A move must beat the best gain by more than 1e-12, so tiny float differences cannot cause flipping.
+- A graph with no weight at all returns every node alone.
+- Isolated nodes stay in their own community.
+- `MAX_SWEEPS` is a safety cap; real graphs stop long before it.
 
 ## See also
 

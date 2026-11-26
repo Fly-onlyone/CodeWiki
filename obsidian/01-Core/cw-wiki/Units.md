@@ -6,17 +6,17 @@ tags: [core, cw-wiki]
 
 > Every unit of a repository and the lookup from code to unit.
 
+## What it does
+
+The list of all [[Unit]]s of a repository, plus two lookup tables that map code to a unit. Given a symbol, the planner and the renderer use it to say which crate or package the symbol belongs to.
+
 ## Source
 
 - `crates/cw-wiki/src/units.rs` — definition of `Units`
 
 ## How it works
 
-What the functions of this type call:
-
-1. `index_of` calls `Language::from_path` in [[Language]], then `rust_index`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+For a Rust symbol, `index_of` takes the first segment of its qualified name (the crate name) and looks it up with `rust_index`. For code in any other language it looks up the symbol's source file in a file map instead. `by_name` finds a unit by its stable key. `all_rust` is true when no unit is in another language. The renderer uses that to choose the words crate or package.
 
 ## Items
 
@@ -41,6 +41,12 @@ Members:
 - [[Repo]] — from `Repo`, `build`, `top_modules`, `unit_index`
 - [[Plan Module]] — from `plan`
 - [[Units Module]] — from `discover`
+
+## Gotchas
+
+- A symbol in a file that belongs to no unit gives `None`.
+- `all_rust` is also true for an empty list.
+- The two lookup maps are private and filled only by `discover`.
 
 ## See also
 

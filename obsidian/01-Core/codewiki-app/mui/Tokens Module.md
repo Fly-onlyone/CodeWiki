@@ -18,11 +18,13 @@ MUI paths are relative to `@mui/material`; TradingAgent paths to its `frontend/s
 
 ## How it works
 
-1. `table_row` in [[Doc View Module]] and `Base::new` in [[Base Module]], and 12 more, call `easing`.
-2. `Button::render` and `IconButton::render` in [[Button Module]], and 3 more, call `states`.
-3. `paper` in [[Surfaces Module]] and `Switch::render` in [[Switch Module]] call `elevation`. `elevation` calls `elevation_between`. `elevation_between` calls `black`, then `px` in [[Zoom Module]].
+The module is a table of constants plus a few small functions that turn them into GPUI values.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- `duration` and `curve` (see [[Duration Module]] and [[Curve Module]]) hold MUI's transition times and easing control points. `easing` turns four control points into a function from time share to progress share.
+- `states` returns the hover, selected, focus, activated and disabled opacities. A dark theme tints more strongly than a light one.
+- `elevation` returns the three box shadows (umbra, penumbra, ambient) for a level from 0 to 24. `elevation_between` blends two levels by a progress value, for a surface that rises or settles. The blur is clamped to zero because a spring can overshoot. Sizes go through the zoom module's `px`.
+- `Variant` lists MUI's thirteen text styles, and `Variant::spec` gives the size, weight, line height and capitals flag of each. These are TradingAgent's values, which override MUI's.
+- `SPACING` is one step, 8 px, of MUI's spacing scale.
 
 ## Items
 
@@ -59,6 +61,15 @@ Submodules: [[Curve Module]], [[Duration Module]].
 - [[Feedback Module]] — from `indeterminate`
 - [[Interaction Module]] — from `LIGHT_RATIO`
 - [[List Module]] — from `render`
+
+## Gotchas
+
+- Where MUI and TradingAgent differ, TradingAgent wins. For example, the button style is not in capitals and is semibold.
+- Levels above 24 draw as 24, so a bad level is safe.
+- The `ELEVATION` table has `rustfmt::skip`, so reformatting does not scramble the 25 rows.
+- Elevation is a function of zoom. Do not cache the shadow list across a zoom change.
+- `Overline` is the only variant with uppercase set; `text` in [[Surfaces Module]] applies it.
+- A comment on each constant names its MUI source file. Keep it when you change a value, so the next reader can check it.
 
 ## See also
 

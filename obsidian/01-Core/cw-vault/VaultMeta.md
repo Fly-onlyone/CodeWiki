@@ -6,16 +6,17 @@ tags: [core, cw-vault]
 
 > Everything under `.codewiki/`, loaded.
 
+## What it does
+
+The loaded state of a vault's metadata folder: the manifest plus a map of every [[NoteEntry]] by note id. Almost every part of CodeWiki that touches notes loads it first, edits it in memory, and saves it back.
+
 ## Source
 
 - `crates/cw-vault/src/manifest.rs` — definition of `VaultMeta`
 
 ## How it works
 
-1. `run` in [[codewiki]] and `render` in [[Agentdocs Module]], and 18 more, call `load`. `load` calls `dir`, then `Error::external` in [[Error]], then `Manifest::default` in [[Manifest Module]], then `Error::io` in [[Error]].
-2. `proposals_dir` in [[Proposal Module]] calls `dir`.
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`load` reads `manifest.json` and `notes.jsonl` from the metadata folder. A missing file gives the default, so a new vault starts empty. A broken file or line is an error. `save` creates the folder, writes the manifest, writes the entries sorted by id, and writes `registry.json`, derived from the entries by `registry` so the two cannot disagree. `by_path` and `notes_for_source` search the entries. `notes_for_source` returns the notes that cite a given source file, which is how a code change finds the notes it affects. `dir` gives the metadata folder path and is also used for the proposals folder.
 
 ## Items
 
@@ -50,6 +51,13 @@ Members:
 - [[Service Module]] — from `index_notes`, `is_stale`
 - [[codewiki]] — from `run`
 - [[cw-server]] — from `repo_with_proposals`
+
+## Gotchas
+
+- The whole set of entries is held in memory, and `save` rewrites all three files each time. Two writers at once can overwrite each other.
+- `by_path` and `notes_for_source` scan every entry. They are linear in the number of notes.
+- `registry` can fail if two entries clash in name, and then `save` fails too.
+- Entries are written sorted, which keeps git diffs small and stable.
 
 ## See also
 

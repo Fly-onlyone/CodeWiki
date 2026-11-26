@@ -8,9 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The work itself is in `cw-update`.
+This module decides when the app looks for a new release, and what the Version row of the settings page says about it. The download and install work is in [[cw-update]]. Here the app only keeps the state of the update, the user's on/off choice for the daily check, and the time of the last answer from GitHub.
 
-An installed app looks once a day unless the user turned that off: when it starts, and, since it stays in the tray for weeks, every hour it looks whether the day is over. The check's time is kept only when GitHub gave an answer, so a check without network is tried again within the hour.
+An installed app checks once a day unless the user turned it off. It checks at start, and because the app stays in the tray for weeks, it also asks every hour whether the day is over.
 
 ## Source
 
@@ -18,13 +18,13 @@ An installed app looks once a day unless the user turned that off: when it start
 
 ## How it works
 
-1. `AppView::show_check` in [[codewiki-app]] calls `State::from_check`.
-2. `AppView::start_updates` and `AppView::settings_frame` in [[codewiki-app]] call `auto_check`. `auto_check` calls `read` in [[Prefs Module]].
-3. `AppView::run_action` in [[codewiki-app]] calls `set_auto_check`. `set_auto_check` calls `write` in [[Prefs Module]].
-4. `AppView::start_updates` in [[codewiki-app]] calls `due`. `due` calls `due_after`, then `read` in [[Prefs Module]], then `now`.
-5. `AppView::check_for_update` and `AppView::start_updates` in [[codewiki-app]] call `check`. `check` calls `check` in [[Release Module]], then `api_base` in [[cw-update]], then `write` in [[Prefs Module]], then `now`.
+`State` is the one enum the settings page reads: not installed (a development build), idle, checking, up to date, a release available, unavailable with a reason, installing, or installed and waiting for a restart. `State::describe` turns each into the text of the Version row. `State::can_check` says whether a new check may start, and `State::installing` tells the app to start no new work while the backend is stopped.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`due` reads the stored time of the last answer through [[Prefs Module]] and passes it to `due_after`. `due_after` is true when no check ever ran, when a full day has passed, or when the stored time lies in the future.
+
+`check` is blocking. It asks GitHub through `cw_update::check` with the current version. If the answer is anything but `Unavailable`, it stores the time. `State::from_check` turns the answer into a `State`.
+
+`auto_check` and `set_auto_check` read and write the on/off setting. Only the value "off" turns the check off; a missing value means on.
 
 ## Items
 
@@ -52,6 +52,13 @@ And 1 more private item with no comment.
 
 - [[codewiki-app]] — from `AppView`, `backend_to_stop`, `check_for_update`, `home_doc`
 - [[Settings Pages Module]] — from `Model`, `updates`
+
+## Gotchas
+
+- The time is saved only when GitHub answered. A check with no network leaves the old time, so the next hourly look tries again.
+- A stored time in the future (the clock was set back) counts as due. Otherwise the check would wait until the clock caught up.
+- `check` blocks. Call it off the UI thread.
+- The setting names `update_check` and `update_checked` are stored in prefs; renaming them resets every user's choice.
 
 ## See also
 

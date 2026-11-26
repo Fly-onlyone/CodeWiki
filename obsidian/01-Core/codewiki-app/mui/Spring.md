@@ -18,7 +18,7 @@ A spring described the way Framer Motion does it: stiffness, damping and mass. T
 
 `new` and `mass` build a spring in const context. `response` is the time of one undamped swing, and `damping_ratio` says whether it overshoots (below 1 it does). `slowed` makes the same motion slower by a factor: stiffness divides by the factor squared and damping by the factor, so the damping ratio stays and only the speed changes.
 
-`config` applies the global motion scale through `slowed` and returns a GPUI `SpringConfig`. `animation` samples that config from rest at 0 to rest at 1 into an `Animation`, for entrances. `policy` makes a gpui-kit spring from the response time (scaled) and damping ratio, with an epsilon for when it counts as arrived. Controls use `policy` for springs that chase a changing target, such as a row's hover or the selected bar.
+`config` applies the global motion scale through `slowed` and returns a GPUI `SpringConfig`. `animation` samples that config from rest at 0 to rest at 1 into an `Animation`, for entrances and for a figure that counts up. `policy` makes a gpui-kit spring from the response time (scaled) and damping ratio, with an epsilon for when it counts as arrived. Controls use `policy` for springs that chase a changing target, such as a row's hover, the selected bar or the tab bar's place.
 
 ## Items
 
@@ -51,9 +51,9 @@ Members:
 
 ## Gotchas
 
-- `policy` takes an epsilon in the unit of the value it follows. Use a small one (0.001) for 0..1 values and a larger one for pixels.
+- `policy` takes an epsilon in the unit of the value it follows. The row bar's 0-to-1 progress uses 0.001, a row's or a button's hover uses 0.01, and the tab bar's place and width in pixels use 0.1.
 - All three outputs honor the motion scale. A spring made by hand from `SpringConfig` would not.
-- `BOUNCY` has damping ratio under 0.7, so it visibly overshoots. Code that uses its value as a length or height must clamp, as the row bar does.
+- Every preset has a damping ratio below 1, so each overshoots a little. `BOUNCY`, under 0.7, does so visibly. Code that uses a spring's value as a size must clamp it, as the row bar's height and the tab bar's width do.
 
 ## See also
 

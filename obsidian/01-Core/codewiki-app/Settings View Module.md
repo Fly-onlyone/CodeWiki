@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The page fills the window, as Home does: the categories at the left, the page of the chosen one at the right. A category's page is a `Doc` (`settings_pages.rs`), drawn here with `doc_view::column`, in this view and not in the cached page view: its text inputs and the list of a select take their events through this view, as the search box and the theme menu do.
-
-A change takes effect when it is made. A switch, a select or a choice acts on its click; a field that is typed is saved on Enter or when the focus leaves it, and says "Saved" or why not beside itself. The one exception is the backend on another machine, whose address and token go together and are checked before they are used.
+This is the live Settings page: categories on the left, the chosen category's page on the right. The page content is a `Doc` built by [[Settings Pages Module]]. This module draws it and runs what the user does. It is drawn here, not in the cached page view, because text inputs and the open list of a select need their events to come through this view. A change takes effect at once. A switch, a select or a choice acts on its click. A typed field saves on Enter or when focus leaves it, and shows Saved or the reason it failed. The one exception is a backend on another machine: its address and token are checked together before use.
 
 ## Source
 
@@ -18,15 +16,13 @@ A change takes effect when it is made. A switch, a select or a choice acts on it
 
 ## How it works
 
-1. `AppView::new` in [[codewiki-app]] calls `State::new`. `State::new` calls `remove` in [[Prefs Module]], then `Backoff::new` in [[Connection Module]], then `read_agents_off`, then `load` in [[Auto Explain Module]], then `data_dir` in [[Paths Module]].
-2. `AppView::take_settings` in [[codewiki-app]] calls `shown_value`.
-3. `AppView::test_embedder` in [[codewiki-app]] calls `test_line`.
-4. `AppView::refresh_agents_off` in [[codewiki-app]] calls `read_agents_off`. `read_agents_off` calls `data_dir` in [[Paths Module]], then `load`, then `unreadable`, then `file` (all in [[Agents Off Module]]).
-5. `AppView::settings_menu_view` in [[codewiki-app]] calls `lists_themes`.
+`State` holds what the page remembers between frames: one text input per `FieldId` (created once, living as long as the app), what the backend last said each field holds, news beside each field, the open select menu, the embedding job and models, and the kept-folders list.
 
-4 more entry points: `change`, `changes_the_embedder`, `job_in`, `job_ended`.
+`open_settings` shows the page, resets connect news, re-reads the kept-folder list and auto-explain switch, fills the remote address field, and loads the backend settings. On the Search category it also loads the embedding job and models. Moving between categories does not add history, so Back leaves Settings in one step.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+A saved change is a `PUT /v1/settings` with a small body from `change` (section, field, value). `changes_the_embedder` tells whether the change touches the embedder, so the old job reading may be out of date. While an embedding job runs, the app asks again every second (`JOB_PAUSE`). `job_ended` notices when it stops, and the settings are read again. `test_line` turns a provider test answer into one line. `shown_value` shows a saved or environment value in a field; a default is left to the placeholder.
+
+The list of folders kept from coding agents is read by the app from the data folder, not through the backend (`read_agents_off`).
 
 ## Items
 
@@ -57,6 +53,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `commit_settings_field`, `load_embed_job`, `main`
+
+## Gotchas
+
+- Unsaved edits can keep the old page open: `open_settings` checks that the page really changed before it sets state.
+- Questions to the embedding server are numbered (`Sequence`). Leaving the page, a new embedder, another backend and a hidden window each take a number, so a late answer or retry from before is dropped.
+- The folder existence check runs once per read, never during drawing, because a folder on an offline share can answer slowly.
+- Secret inputs are masked, and a saved secret is never shown again.
+- `State::new` removes an old preference (model hint) left from a removed offer.
 
 ## See also
 

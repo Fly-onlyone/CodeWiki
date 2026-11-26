@@ -6,17 +6,27 @@ tags: [core, cw-client]
 
 > `Backend` struct defined in `cw_client` with 26 methods.
 
+## What it does
+
+`Backend` is the handle a client holds to talk to the CodeWiki backend over HTTP. It knows the backend's address, its bearer token and how the client came to it (`Origin`: named by `CODEWIKI_URL`, saved in the app's settings, or local). The app and the MCP bridge in [[codewiki-mcp]] both use it, so neither keeps an index of its own.
+
 ## Source
 
 - `crates/cw-client/src/lib.rs` — definition of `Backend`
 
 ## How it works
 
-1. `AppView::restart_backend` and `reach` in [[codewiki-app]], and 1 more, call `connect`. `connect` calls `data_dir` in [[Paths Module]], then `named`, then `running_in`, then `is_older` in [[cw-client]], then `stop`, then `start`. `named` calls `new`, then `saved_in`, then `token_in` (both in [[Remote Module]]), then `health_version` in [[cw-client]]. `running_in` calls `read_backend_file`, then `health_version` (both in [[cw-client]]), then `new`.
-2. `reach` in [[codewiki-app]] calls `find`. `find` calls `find_in`, then `data_dir` in [[Paths Module]]. `find_in` calls `named`, then `running_in`.
-3. `check_remote_in` in [[cw-client]] calls `new`. `new` calls `agent` in [[cw-client]].
+`connect` picks a backend in a fixed order.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+1. `named` first. `CODEWIKI_URL` wins, and needs `CODEWIKI_TOKEN`. Otherwise a backend saved in settings is used when marked in use, after its token is read ([[Remote Module]]) and `/v1/health` answers.
+2. Else `running_in` reads `backend.json` in the data directory and checks health. If that backend reports an older version than this program (`is_older`), `stop` replaces it. A newer or unreadable version is kept.
+3. Else `start` spawns `codewiki serve` and waits up to 30 seconds for `backend.json` to name a backend that answers.
+
+`find` is the same lookup but never starts anything and returns `Ok(None)` when nothing runs.
+
+Starts are guarded by a process-wide `STARTS` lock. Only one start runs at a time. A second caller waits for the one started last, as long as that process runs and has never been named in `backend.json`. If it ends without answering, one new start replaces it, even when two callers wait.
+
+Requests go through `get`, `put`, `post` and `delete`. Each adds the `Authorization` bearer header, and a client that called `with_client` also sends the client header. An error answer becomes the backend's own `error` text, or `backend returned <status>`. `repo_id` registers a path, and when that fails on a remote backend it matches known repositories by id or folder name.
 
 ## Items
 
@@ -61,6 +71,17 @@ And 6 more items.
 - [[codewiki-mcp]] — from `Bridge`, `call`, `connected`, `get_visible`
 - [[cw-client]] — from `check_remote_in`, `health_version`
 - [[Review View Module]] — from `decide`
+
+## Gotchas
+
+- A named backend that fails is an error. `connect` never falls back to a local backend, because that would show other wikis or none.
+- `stop` refuses nothing for remote origins, so callers check `is_remote` first: a named backend is not the client's to stop.
+- `shutdown` limits connecting to 100 ms. The app asks as it quits and GPUI waits only 200 ms; a refused Windows connection otherwise takes about 2 seconds.
+- `stop` waits up to 30 seconds, because the backend finishes running requests first.
+- `hold_starts(true)` makes `start` fail while an update replaces the programs.
+- The spawned backend gets no console window on Windows. A console made it wait 147 s to serve in a clean-Windows test.
+- Requests time out after 600 seconds, since generation on a large repository can take minutes. `status` uses 3 seconds.
+- `decide_proposals` turns a 404 or 405 with no error body into a message to update the backend.
 
 ## See also
 

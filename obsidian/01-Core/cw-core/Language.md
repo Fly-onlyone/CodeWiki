@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-Languages without their own variant are indexed at file level as `Other`; see `Language::has_symbol_support` for the ones whose symbols are extracted.
+Names the source language of an indexed file. It decides which parser runs, how a file is described in notes, and which health checks apply. Rust, Python, TypeScript, JavaScript and Java get symbols and edges. Markdown, TOML, JSON and YAML are recorded as files only. Everything else is `Other`.
 
 ## Source
 
@@ -16,8 +16,9 @@ Languages without their own variant are indexed at file level as `Other`; see `L
 
 ## How it works
 
-1. `link_imports` and `modules_of` in [[Lang Module]], and 19 more, call `from_path`. `from_path` calls `as_str`.
-2. `Index::files` in [[Index]] calls `parse`.
+`from_path` looks only at the extension, lower-cased: for example `rs`, `py` and `pyi`, `ts` `tsx` `mts` `cts`, `js` `jsx` `mjs` `cjs`, `java`, `md`, `toml`, `json`, `yml` and `yaml`. No extension, or an unknown one, gives `Other`.
+
+`as_str` and `parse` convert to and from the lowercase text stored in the index, where [[Index]] calls `parse`. `has_symbol_support` is true for the five code languages; callers use it to decide whether symbol-level work makes sense.
 
 ## Items
 
@@ -40,6 +41,12 @@ Members:
 - [[Render Module]] — from `external_noun`, `language_name`, `unit_noun`
 - [[Units Module]] — from `discover`, `of`
 - [[Resolver]] — from `by_bare_name`, `resolve`
+
+## Gotchas
+
+- Detection ignores content and file names. A `Makefile` or a shebang script is `Other`.
+- `parse` maps any unknown text to `Other` instead of failing. A language added to the enum but not to `parse` silently reads back as `Other`.
+- Adding a variant means updating `from_path`, `as_str`, `parse` and `has_symbol_support` together.
 
 ## See also
 

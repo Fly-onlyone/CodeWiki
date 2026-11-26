@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Written against the node kinds and field names published in the grammar's own `node-types.json` (tree-sitter-java 0.23). No query files are used.
+This module reads one Java file and turns it into facts: the package, classes, interfaces, enums, records, methods and constants, plus which names each one calls, uses or extends. It is the Java front end of the scanner. It works on the syntax tree from tree-sitter, using the node kinds in the grammar's published `node-types.json`. No query files are used.
 
 ## Source
 
@@ -16,9 +16,11 @@ Written against the node kinds and field names published in the grammar's own `n
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `parse_java`. `parse_java` calls `Error::external`, then `Error::invalid` (both in [[Error]]), then `named`, then `dotted`, then `java_default_package` (all in [[Lang Module]]), then `Sink::new` in [[Sink]].
+`parse_java` builds the tree and reads the `package` line. The package becomes the module name, with `::` between parts. A file with no package is named by its directory (`java_default_package`). It records the module as a symbol, then walks the top-level nodes. An import goes to `Extractor::import`; anything else goes to `type_decl`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`type_decl` makes a symbol for the type, with its signature, Javadoc and annotations. It collects the member names of the body first. Then it records `extends` and `implements` types as inheritance, and walks the body through `members`. Methods, constructors, constants and enum constants each get a symbol. Plain fields give no symbol and only add the types and values they mention.
+
+`walk` records what code mentions. `invocation` decides what a call looks like: a bare call is a member of an enclosing type or a static import; `this.x()` carries the class as `self_type`; `Type.x()` is a path; any other receiver is a method call of unknown type. Every fact goes into a [[Sink]]. Imports are stored as written. [[Scan Module]] decides later which ones are repository code.
 
 ## Items
 
@@ -40,6 +42,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[Scan Module]] — from `scan_repo`
+
+## Gotchas
+
+- Only capitalized names count as value references. Java keeps methods and variables apart, so a lowercase name in an expression is a variable, and recording it would invent links.
+- Visibility is mapped to the Rust-like scale. `protected` and package-private both become `Crate`. Members of an interface are `Public` unless marked.
+- Plain instance fields make no symbol. Only `static final` fields and interface constants do.
+- Inherited methods are not followed. A bare call finds only members of an enclosing type or a static import.
+- A call on an unknown receiver, `super` included, is recorded by method name only, so the resolver may guess.
 
 ## See also
 

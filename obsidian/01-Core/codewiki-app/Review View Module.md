@@ -18,8 +18,13 @@ The status poll counts what waits in every repository; a count that rises is new
 
 ## How it works
 
-1. `AppView::decide_review` and `AppView::show_review` in [[codewiki-app]] call `empty_review`. `empty_review` calls `review_empty_page` in [[Live Module]].
-2. `AppView::decide_review` in [[codewiki-app]] calls `decide`.
+Showing: `show_review` selects the first proposal alone and calls `show_proposal`. That sends a quiet GET for the proposal (no progress bar) and remembers it as wanted. When the answer arrives, it is dropped if another proposal was asked for since, or the repository changed. With `Show::InPlace` it is also dropped if the user left the page. Otherwise the page becomes the proposal's page.
+
+Clicking: `click_review_row` updates the selection and opens the row in place when a plain click chose a new proposal.
+
+Deciding: `decide_review` takes the ids from `review_targets` and runs `decide` off the UI thread. `decide` posts to the proposal's own approve or reject route for one id, and calls `Backend::decide_proposals` for several. When results return: notices are shown, pages of written notes are forgotten in every tab (`forget_written_notes`), the notes reload, and `after_decision` picks the next proposal.
+
+Counts: `take_proposal_counts` compares the new status counts with the old, tells the user about rises, and reloads the open repository's queue quietly. `review_queue_grew` opens the first proposal when the empty review page was shown and proposals arrive.
 
 ## Items
 
@@ -39,6 +44,14 @@ The status poll counts what waits in every repository; a count that rises is new
 ## Used by
 
 - [[codewiki-app]] — from `decide_review`, `review_queue`, `review_queue_width`, `show_proposal`
+
+## Gotchas
+
+- The single-id route exists on every backend. The many-id call is refused by an older backend with an error that says so, so one proposal never depends on the newer call.
+- `decide` blocks. Never call it on the UI thread.
+- The Approve and Reject buttons wrap onto two lines in a narrow window. Without that, Reject ran under the details pane where no click reached it (found at 1024x768 in the clean-Windows test).
+- A proposal that fails to load sets an error, and the error is cleared again once a later proposal loads.
+- With nothing waiting, the queue is not drawn at all and its width is zero.
 
 ## See also
 

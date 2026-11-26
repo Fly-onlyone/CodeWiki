@@ -8,11 +8,17 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-`createTransitions.js`, `duration`.
+These are MUI's seven standard transition times, copied from its transitions file. Components use a name such as `SHORTEST` instead of a raw number, so all controls animate at the same pace and the app matches MUI's feel.
 
 ## Source
 
 - `crates/codewiki-app/src/mui/tokens.rs` — module `codewiki_app::mui::tokens::duration`
+
+## How it works
+
+Each constant is a `Duration`. A component builds a transition from one of them and an easing curve from [[Curve Module]]. The values are 150, 200, 250, 300 and 375 ms for `SHORTEST`, `SHORTER`, `SHORT`, `STANDARD` and `COMPLEX`. `ENTERING_SCREEN` is 225 ms and `LEAVING_SCREEN` is 195 ms, for the drawer.
+
+Small state changes use the short ones: checkbox, switch, icon buttons and list rows use `SHORTEST`; text fields, selects and table rows use `SHORTER`. A folder opening in a list uses `STANDARD`.
 
 ## Items
 
@@ -34,6 +40,12 @@ tags: [core, codewiki-app, module]
 - [[Select Module]] — from `render`
 - [[Switch Module]] — from `render`
 - [[Tabs Module]] — from `render`
+
+## Gotchas
+
+- Wrap a duration in `motion::scaled` before use. The scale follows the user's motion setting, and a raw constant ignores it.
+- Leaving is faster than entering, on purpose: 195 against 225 ms. MUI does the same.
+- `SHORT` and `COMPLEX` have no user in the app today.
 
 ## See also
 

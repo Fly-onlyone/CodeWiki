@@ -6,18 +6,19 @@ tags: [core, cw-core, module]
 
 > Locations of per-user data.
 
+## What it does
+
+Says where CodeWiki keeps per-user files and which file holds a repository's index. Every program (app, backend, MCP bridge, command line) calls `data_dir`, so they all find the same settings, logs, `backend.json` and indexes.
+
 ## Source
 
 - `crates/cw-core/src/paths.rs` — module `cw_core::paths`
 
 ## How it works
 
-1. `agents` and `run` in [[codewiki]], and 24 more, call `data_dir`. `data_dir` calls `data_dir_from`.
-2. `add` in [[Repos Module]] calls `repo_id`. `repo_id` calls `sha256_hex` in [[Hash Module]].
-3. `open_index` in [[Service Module]] calls `index_path`. `index_path` calls `index_path_in`, then `data_dir`.
-4. `open_existing_index_in` and `open_index_in` in [[Service Module]] call `index_path_in`. `index_path_in` calls `repo_id`.
+`data_dir` picks the first that exists: `CODEWIKI_DATA_DIR` (used in Docker), then `%LOCALAPPDATA%` plus the app folder, then `$XDG_DATA_HOME` or `~/.local/share` plus a lower-case folder, and as a last resort `.codewiki-data` in the working folder. Empty variables count as unset.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`repo_id` names a repository from its folder name plus the first 8 hex characters of a SHA-256 ([[Hash Module]]) of its full path. The path is made canonical, lower-cased and given forward slashes first, so `C:\Code\My Repo` and `c:/code/my repo/` give the same id. Characters other than letters, digits, dash and underscore in the name become dashes. `index_path` is `<data dir>/index/<repo id>.db`.
 
 ## Items
 
@@ -45,6 +46,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Settings View Module]] — from `new`, `read_agents_off`
 - [[Backend]] — from `connect`, `find`
 - [[cw-telemetry]] — from `consent_path`
+
+## Gotchas
+
+- A development build uses `CodeWiki-Dev` or `codewiki-dev` folders. Without this, a run from the sources would use, and on Quit stop, an installed CodeWiki's backend and share its index and settings.
+- `repo_id` is path-based. Moving a repository gives a new id and a new index.
+- Case is folded, so two paths that differ only in case share an id, even on a case-sensitive disk.
+- If `canonicalize` fails (the folder is gone), the path as given is used.
 
 ## See also
 

@@ -28,7 +28,11 @@ assert!(matches!(document.root, Some(Node::Element { .. })));
 
 ## How it works
 
-Builds a library.
+A caller follows four steps. It builds a `Library` of allowed components. It calls `parse` on the model's text to get a `Program`. It calls `evaluate` with the program and the library to get a `Document`. It renders `Document.root`, which is a `Node` tree.
+
+`evaluate` starts at the `root` statement, or at the library's root component if there is none. It follows references, computes expressions and checks each component against the library. Problems go into `Document.errors` with codes from the specification. A bad component becomes `Null` and the rest still renders. `is_valid` is true when there is a root and no error-level problem.
+
+The crate root only re-exports types from the [[Parser Module]], the [[Lexer Module]] and the eval module.
 
 ## Items
 
@@ -41,6 +45,12 @@ Modules:
 ## Depends on
 
 - [[Parser Module]] — uses `Expr`, `parse`
+
+## Gotchas
+
+- Only warnings do not stop rendering. Any error-level code makes `is_valid` false even when part of the tree renders.
+- The language is static here: queries, mutations and actions are reported as warnings and produce nothing.
+- Partial input is normal. Check `Document.incomplete` to know that the text was auto-closed.
 
 ## See also
 

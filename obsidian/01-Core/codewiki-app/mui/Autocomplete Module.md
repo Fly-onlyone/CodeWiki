@@ -20,9 +20,9 @@ The sizes follow MUI's `Autocomplete.js`: a paper as wide as the field, at most 
 
 ## How it works
 
-`render` walks the groups in order. A group with no choices is skipped. Each group gets a heading from `subheader` in [[List Module]], then one ListItemButton for each choice, numbered across all groups. The number given to `highlighted` draws that row as if the pointer were on it: it takes the row's hover fill, shift and icon growth, so the key-driven row looks the same as a hovered one. Real hover and press use the shared strengths from [[Interaction Module]], including the press fill and recoil.
+`render` walks the groups in order. A group with no choices is skipped. Each group gets a heading from `subheader` in [[List Module]], then one ListItemButton for each choice, numbered across all groups. A choice with a `secondary` line gets a taller two-line row. The number given to `highlighted` draws that row as if the pointer were on it: it takes the row's hover fill, shift and icon growth, so the key-driven row looks the same as a hovered one. Real hover and press use the shared strengths from [[Interaction Module]], including the press fill and recoil.
 
-The rows sit in a scrolling column. A `Scroll` kept per list remembers which row it last brought into view, and scrolls only when the highlighted row changes, so the arrow keys can move the highlight past the visible part.
+The rows sit in a scrolling column. A `Scroll` kept per list remembers which row it last brought into view, and scrolls only when the highlighted row changes, so the arrow keys can move the highlight past the visible part. The scroll handle counts the headings among the column's children, so `render` keeps a second count that includes them.
 
 The column sits on a paper from [[Surfaces Module]] with the width of `anchor`, the field's bounds. `anchored` hangs it 4 pixels under the field's bottom left corner and keeps it 16 pixels inside the window. `deferred` draws it above the page, and it fades and drops in with the menu entrance from [[Motion Module (mui)]].
 

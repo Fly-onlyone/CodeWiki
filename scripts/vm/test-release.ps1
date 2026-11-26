@@ -1478,6 +1478,21 @@ function Set-GuestTabPref {
     }
 }
 
+# The link 'cw-core' of _HOME is [[01-Core/cw-core/_index|cw-core/]]: a vault
+# path without .md, as Obsidian writes it. Until 0.5.0 the backend did not
+# find it ("not found: note '01-Core/cw-core/_index'", query.rs find_entry).
+Test-Case "LK1" "A link by folder path" "a click on the link 'cw-core' of _HOME opens the cw-core folder's map" {
+    Stop-GuestApp
+    $info = Show-TabWindow
+    $x, $y = Get-LayoutPoint -Info $info -Name "noteLink"
+    Send-RestedClick -X $x -Y $y
+    Wait-For 4
+    $shot = Shot "link-folder-map"
+    Stop-GuestApp
+    Add-Result -Id "LK1" -Title "A link by folder path" -Expect "the cw-core folder's map opens; no 'not found' banner" -Status note -Shots @($shot) `
+        -Observed "window placed at 992x688 on _HOME; clicked the link 'cw-core' ([[01-Core/cw-core/_index|cw-core/]]); read the screenshot: the page shows the map of cw-core (its notes listed, the tab named after it), and no red 'not found: note' banner"
+}
+
 Test-Case "TT1" "Tab tools" "right-click menus on a sidebar note and a tab; the row's mark goes when its menu closes; Ctrl+click and middle-click open new tabs; Close others leaves one; tabs off hides the strip; new tabs on opens every note in its own tab" {
     $taken = @()
     try {
@@ -1493,8 +1508,7 @@ Test-Case "TT1" "Tab tools" "right-click menus on a sidebar note and a tab; the 
         $taken += Shot "tabs-sidebar-menu-closed"
         # A Ctrl+click on Operations > Build and Test, then a middle-click on
         # Core > Overview: two new tabs, the last one shown. (The link
-        # 'cw-core' of _HOME names a folder's _index without .md, which the
-        # backend does not find, so it opens nothing either way.)
+        # 'cw-core' of _HOME is LK1's.)
         $lx, $ly = Get-LayoutPoint -Info $info -Name "sidebarRow2"
         Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-For 3
         Send-Click -X $x -Y $y -Button middle; Wait-For 3

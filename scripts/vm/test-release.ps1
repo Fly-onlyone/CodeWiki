@@ -1391,6 +1391,128 @@ Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and lin
         -Observed "window placed at 992x688; pointer rested 1.2 s on: the title bar (rest), a sidebar row, the Home icon, 'Open in Obsidian', the first tab and the link 'cw-core' of _HOME; the row held down: $pressed; read the screenshots: the row fills and shifts right with its icon grown, the Home icon grows and brightens, the outlined button tints, the tab tints, the link gets a solid underline; the pressed row fills darker; in the last the row of the note opened by the press has a glowing bar at its left edge"
 }
 
+# ---------------------------------------------------------------- TB1, CH1 and WT1, a narrow window (0.5.0)
+# In a window about 1000 px wide, or at 125% zoom, the toolbar ran past the
+# window's right edge, the search hint was cut ("Searcl"), the Code health
+# Score column wrapped its head over the file path, and the title bar named
+# the last repository on Home. The window is placed as in HV1, at 992x688,
+# which fits both checkpoints' screens.
+function Set-GuestZoom {
+    param([string]$Percent)
+    if ($Percent -eq "100") {
+        Invoke-GuestScript -Script "Remove-Item `"`$env:APPDATA\CodeWiki\zoom.txt`" -ErrorAction SilentlyContinue" | Out-Null
+    } else {
+        Invoke-GuestScript -Script "New-Item -ItemType Directory -Force `"`$env:APPDATA\CodeWiki`" | Out-Null; Set-Content `"`$env:APPDATA\CodeWiki\zoom.txt`" '$Percent' -NoNewline" | Out-Null
+    }
+}
+function Show-NarrowWindow {
+    param([string[]]$Arguments, [string]$Name)
+    Start-GuestApp -Arguments $Arguments
+    Wait-For 12
+    $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
+    if (-not $info) { throw "the app has no window" }
+    Wait-For 3
+    Shot $Name
+}
+
+Test-Case "TB1" "The toolbar in a narrow window" "at 100% and 125% zoom every toolbar control is inside the window, and the search field keeps its magnifier" {
+    $taken = @()
+    try {
+        foreach ($zoom in "100", "125") {
+            Stop-GuestApp
+            Set-GuestZoom $zoom
+            $taken += Show-NarrowWindow -Arguments $guestRepo, "_HOME" -Name "toolbar-narrow-$zoom"
+        }
+    } finally {
+        Stop-GuestApp
+        Set-GuestZoom "100"
+    }
+    Add-Result -Id "TB1" -Title "The toolbar in a narrow window" -Expect "every toolbar control inside the window at 100% and 125%; labels give way to icons first" -Status note -Shots $taken `
+        -Observed "window placed at 992x688 on _HOME, at 100% and at 125% zoom (zoom.txt); read the screenshots: the toolbar ends before the details pane with Sync, Review and To explain visible; at 125% Agent view, Edit, Ctrl+K and Sync are icons, Review and To explain show their icon and count; the search field shows its magnifier and a whole hint or none, never a cut one"
+}
+
+Test-Case "CH1" "Code health in a narrow window" "the Score column's head stays on one line and its label does not overlap the file path" {
+    Stop-GuestApp
+    $shot = Show-NarrowWindow -Arguments $guestRepo, "health:" -Name "health-narrow"
+    Stop-GuestApp
+    Add-Result -Id "CH1" -Title "Code health in a narrow window" -Expect "the Score head on one line; each score's bar and number clear of the path" -Status note -Shots @($shot) `
+        -Observed "window placed at 992x688 on health:; read the screenshot: the table's head reads 'Score' on one line, and every row's bar and number end before the next column's file path"
+}
+
+Test-Case "WT1" "The window title on Home" "a note of the repository shows 'CodeWiki — cw-core' in the title bar, Home shows 'CodeWiki' alone" {
+    Stop-GuestApp
+    $noteShot = Show-NarrowWindow -Arguments $guestRepo, "_HOME" -Name "title-note"
+    Stop-GuestApp
+    # Not $home: PowerShell's $HOME is read-only, whatever the case.
+    $homeShot = Show-NarrowWindow -Arguments $guestRepo, "home:" -Name "title-home"
+    Stop-GuestApp
+    Add-Result -Id "WT1" -Title "The window title on Home" -Expect "the note's title bar names cw-core; Home's names no repository" -Status note -Shots @($noteShot, $homeShot) `
+        -Observed "started on _HOME, then on home: with cw-core open behind it; the title is drawn by the app (Windows keeps 'CodeWiki' as the window text either way), so it is read off the screenshots: the first title bar reads 'CodeWiki — cw-core', the second 'CodeWiki'"
+}
+
+# ---------------------------------------------------------------- AC1, how many notes a session explains (0.5.0)
+# Settings > Repositories > Auto explaining > "Notes per session" writes
+# auto-explain-count.txt in the data folder: a number or "all"; missing
+# means 20. The session-start hook orders one note-writer per 20 notes, all
+# at once (briefing.rs, launch_order). The hook is run here as Claude Code
+# runs it, with the host's JSON on stdin, so it needs no login.
+Test-Case "AC1" "Notes per session" "the dropdown shows the saved count; the hook orders one note-writer per 20 notes of min(count, waiting), 20 when no count is saved" {
+    $readWaiting = @'
+$id = Get-RepoId 'cw-core'
+$waiting = (Invoke-Backend GET "/v1/repos/$id/explanations?all=true" | ConvertFrom-Json).waiting
+"waiting=$([int]$waiting.behind + [int]$waiting.unexplained)"
+'@
+    if (-not (Get-GuestBackendState | Where-Object { $_.Health -eq 200 })) { Start-GuestBackendOutside | Out-Null }
+    $counted = Invoke-GuestBackendScript -Script $readWaiting
+    if ($counted.Output -notmatch "waiting=(\d+)") { throw "could not count the waiting notes: $($counted.Output)" }
+    $waiting = [int]$Matches[1]
+    if ($waiting -eq 0) { throw "no note of cw-core waits, so no count can be judged" }
+    $switchBefore = (Invoke-GuestScript -Script "if (Test-Path `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`") { (Get-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" -Raw).Trim() } else { '(none)' }").Output.Trim()
+    $shot = $null
+    try {
+        # The dropdown is hidden while the switch is off.
+        Invoke-GuestScript -Script "New-Item -ItemType Directory -Force `"`$env:LOCALAPPDATA\CodeWiki`" | Out-Null; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" '50' -NoNewline" | Out-Null
+        Stop-GuestApp
+        Start-GuestApp -Arguments $guestRepo, "settings:repositories"
+        Wait-For 12
+        $shot = Shot "notes-per-session"
+        Stop-GuestApp
+        $run = Invoke-GuestScript -TimeoutSec 300 -Script (@'
+Set-Location '{{REPO}}'
+$file = "$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt"
+foreach ($count in '5', '50', 'all', 'none') {
+    if ($count -eq 'none') { Remove-Item $file -ErrorAction SilentlyContinue } else { Set-Content $file $count -NoNewline }
+    $text = (('{"source":"startup"}' | & '{{EXE}}' hook session-start) -join ' ') -replace '\s+', ' '
+    $order = if ($text -match 'The user turned on auto explaining: (.*?) Do not write') { $Matches[1] } else { '(no order)' }
+    "order ${count}: $order"
+}
+Remove-Item $file -ErrorAction SilentlyContinue
+'@).Replace("{{REPO}}", $guestRepo).Replace("{{EXE}}", "$guestTarget\codewiki.exe")
+    } finally {
+        Invoke-GuestScript -Script "Remove-Item `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" -ErrorAction SilentlyContinue" | Out-Null
+        if ($switchBefore -eq "(none)") {
+            Invoke-GuestScript -Script "Remove-Item `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" -ErrorAction SilentlyContinue" | Out-Null
+        } else {
+            Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" '$switchBefore' -NoNewline" | Out-Null
+        }
+    }
+    # What briefing.rs says for n notes: one agent up to 20, else one per 20.
+    $expected = { param([int]$n)
+        $agents = [math]::Ceiling($n / 20)
+        if ($agents -le 1) { "agent in the background to explain up to $n waiting notes" } else { "launch $agents ``codewiki:note-writer`` agents" }
+    }
+    $checks = foreach ($case in @(@("5", 5), @("50", 50), @("all", $waiting), @("none", 20))) {
+        $name, $limit = $case
+        $want = & $expected ([math]::Min([int]$limit, $waiting))
+        $line = @($run.Output -split "`n" | Where-Object { $_ -like "order ${name}: *" })[0]
+        [pscustomobject]@{ Name = $name; Want = $want; Ok = [bool]($line -and $line.Contains($want)) }
+    }
+    $failed = @($checks | Where-Object { -not $_.Ok })
+    Add-Result -Id "AC1" -Title "Notes per session" -Expect "the dropdown reads 50; orders for 5, 50, all and no file match one note-writer per 20 notes of min(count, $waiting waiting)" `
+        -Status $(if ($failed.Count -eq 0) { "pass" } else { "fail" }) -Shots @($shot) -Output $run.Output `
+        -Observed "$waiting notes of cw-core wait; expected in the order: $(($checks | ForEach-Object { "$($_.Name) -> '$($_.Want)' $(if ($_.Ok) { 'found' } else { 'MISSING' })" }) -join '; '); the switch is back to '$switchBefore' and the count file is gone; read the screenshot: Settings > Repositories shows the switch on and 'Notes per session' set to 50 under it"
+}
+
 # ---------------------------------------------------------------- RC1, NW1 and RC2, the backend lost and found
 # The app asks its backend for its status every five seconds. Two silent
 # polls mean it is lost: a banner says so, and the app starts a new backend
@@ -2708,7 +2830,9 @@ $waiting = (Invoke-Backend GET "/v1/repos/$id/explanations?all=true" | ConvertFr
         # The counts come from the backend: have one running.
         if (-not (Get-GuestBackendState | Where-Object { $_.Health -eq 200 })) { Start-GuestBackendOutside | Out-Null }
         $before = Invoke-GuestBackendScript -Script $count
-        Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline" | Out-Null
+        # Since 0.5.0 the order carries "Notes per session"; five keeps the
+        # live session short.
+        Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" '5' -NoNewline" | Out-Null
         try {
             $run = Invoke-GuestScript -TimeoutSec 1800 -Script (@'
 Set-Location '{{REPO}}'
@@ -2721,7 +2845,7 @@ $submits = 0
 foreach ($line in Get-Content $out) {
     try { $event = $line | ConvertFrom-Json } catch { continue }
     if ($event.type -eq "system" -and $event.subtype -eq "hook_response") {
-        "briefing: $(Cut "$($event.output)" 900)"
+        "briefing: $(Cut "$($event.output)" 1600)"
     } elseif ($event.type -eq "assistant") {
         foreach ($part in $event.message.content) {
             if ($part.type -ne "tool_use") { continue }
@@ -2738,17 +2862,20 @@ Remove-Item $out -Force
 $global:LASTEXITCODE = 0
 '@).Replace("{{REPO}}", $guestRepo)
         } finally {
-            Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'off' -NoNewline" | Out-Null
+            Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'off' -NoNewline; Remove-Item `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" -ErrorAction SilentlyContinue" | Out-Null
         }
         $after = Invoke-GuestBackendScript -Script $count
         $explained = { param($text) if ($text -match "explained by claude-code: (\d+)") { [int]$Matches[1] } else { -1 } }
         $gained = if ((& $explained $before.Output) -ge 0 -and (& $explained $after.Output) -ge 0) { (& $explained $after.Output) - (& $explained $before.Output) } else { 0 }
         $ordered = $run.Output -match "(?m)^briefing: .*note-writer"
+        # The count: five, or fewer when fewer wait.
+        $countOrdered = if ($run.Output -match "(?m)^briefing: .*explain up to (\d+) waiting notes") { [int]$Matches[1] } else { -1 }
+        $countOk = $countOrdered -ge 1 -and $countOrdered -le 5
         $launched = $run.Output -match "(?m)^agent launched: codewiki:note-writer"
         $answer = if ($run.Output -match "(?m)^answer: (.+)$") { $Matches[1].Trim() } else { "" }
         Add-Result -Id "AE1" -Title "Auto explaining in a live session" -Expect "the briefing orders codewiki:note-writer; the session launches it; more notes explained by claude-code afterwards" `
-            -Status $(if ($ordered -and $launched -and $gained -gt 0) { "pass" } else { "fail" }) -Output ($before.Output + "`n" + $run.Output + "`n" + $after.Output) `
-            -Observed "the briefing orders the agent: $ordered; the session launched codewiki:note-writer: $launched; notes explained by claude-code before $(& $explained $before.Output), after $(& $explained $after.Output); $(($run.Output -split "`n" | Where-Object { $_ -match 'submit_note calls seen' }) -join ''); Claude's answer: '$answer'; the switch is off again"
+            -Status $(if ($ordered -and $countOk -and $launched -and $gained -gt 0) { "pass" } else { "fail" }) -Output ($before.Output + "`n" + $run.Output + "`n" + $after.Output) `
+            -Observed "the briefing orders the agent: $ordered, for up to $countOrdered notes with 'Notes per session' at 5 (1 to 5 expected); the session launched codewiki:note-writer: $launched; notes explained by claude-code before $(& $explained $before.Output), after $(& $explained $after.Output); $(($run.Output -split "`n" | Where-Object { $_ -match 'submit_note calls seen' }) -join ''); Claude's answer: '$answer'; the switch is off again"
     }
 
     Test-Case "CC7" "Remove the plugin as README says" "the plugin and the marketplace are gone" {

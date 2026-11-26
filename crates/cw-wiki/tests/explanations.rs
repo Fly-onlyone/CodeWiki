@@ -614,6 +614,27 @@ fn a_submission_against_an_older_note_or_older_facts_is_turned_back() {
 }
 
 #[test]
+fn a_sync_that_changes_no_fact_still_lets_the_note_be_written() {
+    let dir = repo();
+    let root = dir.path();
+    // A function's body: no fact of the note changes.
+    let pricing =
+        read(root, "crates/engine/src/pricing.rs").replace("{ Price(0) }", "{ Price(0u64) }");
+    write(root, "crates/engine/src/pricing.rs", &pricing);
+    assert!(explanations::brief(root, PRICE).unwrap().sync_first);
+
+    let report = sync(root);
+    assert!(
+        report.written.is_empty() && report.merged.is_empty(),
+        "{report:?}"
+    );
+    // The sync read the file as it is now, so the brief does not stop.
+    assert!(!explanations::brief(root, PRICE).unwrap().sync_first);
+    let sent = submission(root, PRICE, &[("Gotchas", GOTCHA)]);
+    assert!(matches!(submit(root, PRICE, &sent), Outcome::Saved { .. }));
+}
+
+#[test]
 fn pictures_follow_the_sections_that_are_sent() {
     let dir = repo();
     let root = dir.path();

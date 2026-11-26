@@ -98,7 +98,11 @@ Status as of 2026-11-26. "Verified" means covered by automated tests or by a liv
 
   The Defender exceptions for CodeWiki held in the final main pass. In the first pass and in the servers pass the prevalence rule still refused `codewiki-mcp.exe`, and there also `codewiki.exe` (Known issues). The run set those rules to audit and every case passed.
 
-  Report on the development machine: `report/vm-test-2026-11-26-0.5.0`, with its `-final`, `-servers` and `-lk1` folders, and `report/tab-tools-2026-11-26` (the tab tools checked on the host) |
+  CI published `v0.5.0` on 2026-11-26 with four files: the zip, the setup program and a `.sha256` for each. Then the guest checked the published release:
+  - R1: the zip downloaded in the guest matched its `.sha256` and the package the run installed.
+  - U2: an installed 0.4.0 was offered 0.5.0 by the real GitHub, installed it from the palette, and came back as 0.5.0 in 75 s. Nothing was left over, and the Apps entry moved to 0.5.0.
+
+  Report on the development machine: `report/vm-test-2026-11-26-0.5.0`, with its `-final`, `-servers`, `-lk1` and `-published` folders, and `report/tab-tools-2026-11-26` (the tab tools checked on the host) |
 | M11 Release run of 0.4.0 | Verified in a clean VM | Run on 2026-11-25 and 2026-11-26 in the Tiny 11 guest (Windows 11 build 26300, 3072 MB) in seven passes:
   - the main pass with the host's RTX 4070, `-Hardened -Plugin`: 112 cases;
   - two reruns without `-Hardened`, of the cases Defender's prevalence rule had blocked in the main pass (Known issues), and the same cases again hardened with ASR exceptions for CodeWiki (2026-11-26), where all passed;

@@ -250,7 +250,12 @@ What the first runs taught, and the scripts now assume:
 - Cases added for 0.5.0:
   - TB1, CH1 and WT1 place the window at 992x688, as HV1 does. TB1 photographs the toolbar at 100% and 125% zoom (`zoom.txt`). CH1 photographs the Score column of Code health. WT1 photographs the title bar on a note and on Home. The app draws its title itself, and Windows keeps "CodeWiki" as the window text, so WT1 is read off the screenshots.
   - AC1 covers "Notes per session". It photographs the dropdown set to 50. It runs the session-start hook as Claude Code does: `'{"source":"startup"}' | codewiki hook session-start` in the repository. It does this for `auto-explain-count.txt` set to 5, 50 and `all`, and with no file. Each order must match one note-writer per 20 notes of min(count, waiting); the waiting count comes from the backend. No login is needed.
-- Changed for 0.5.0: AE1 sets `auto-explain-count.txt` to 5 and expects "explain up to N waiting notes", with N from 1 to 5.
+  - LK1 clicks the link 'cw-core' of `_HOME` (`noteLink`). That link is `[[01-Core/cw-core/_index|cw-core/]]`, a vault path without `.md`; until 0.5.0 it opened "not found".
+  - TT1 covers the tab tools: right-click menus on a sidebar note and on a tab, Ctrl+click and middle-click, Close others, `tabs.txt` off and `new_tab.txt` on, and the Tabs card. It is read off its screenshots. `sidebarRow2` (124, 560) is Operations > Build and Test at 992x688.
+- Changed for 0.5.0:
+  - AE1 sets `auto-explain-count.txt` to 5 and expects "explain up to N waiting notes", with N from 1 to 5.
+  - Settings → Appearance has a Tabs card between Zoom and Startup, so LR1's "Open the last repository" switch sits about 270 px lower.
+  - A focus ring shows only while the keyboard was the last input; a mouse move hides it. G4 sends keys only.
 
 ## Releasing
 

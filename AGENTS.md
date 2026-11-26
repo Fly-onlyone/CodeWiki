@@ -247,6 +247,10 @@ What the first runs taught, and the scripts now assume:
   - DV1 turns the background graph off, because with a graphics card it drifts and the before/after comparison never matched.
   - N1 clicks Ctrl+K about 500 px from the client area's right edge.
   - Click positions on repository pages are in `$layout`, in the app's pixels from the client area; a negative X counts from the right edge.
+- Cases added for 0.5.0:
+  - TB1, CH1 and WT1 place the window at 992x688, as HV1 does. TB1 photographs the toolbar at 100% and 125% zoom (`zoom.txt`). CH1 photographs the Score column of Code health. WT1 photographs the title bar on a note and on Home. The app draws its title itself, and Windows keeps "CodeWiki" as the window text, so WT1 is read off the screenshots.
+  - AC1 covers "Notes per session". It photographs the dropdown set to 50. It runs the session-start hook as Claude Code does: `'{"source":"startup"}' | codewiki hook session-start` in the repository. It does this for `auto-explain-count.txt` set to 5, 50 and `all`, and with no file. Each order must match one note-writer per 20 notes of min(count, waiting); the waiting count comes from the backend. No login is needed.
+- Changed for 0.5.0: AE1 sets `auto-explain-count.txt` to 5 and expects "explain up to N waiting notes", with N from 1 to 5.
 
 ## Releasing
 

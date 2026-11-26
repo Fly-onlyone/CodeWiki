@@ -30,14 +30,14 @@ The request is what the user asked, in words: a note, a folder, the notes that w
 | the changed files (`changed`) | Notes about the files changed in this session, or the uncommitted files that `git status` lists. Pass them as `files`. At most 3 unless a number is given. |
 | a folder, written with a `/` at the end | The waiting notes in that folder of the wiki. Pass it as `folder`. |
 | any other name | That one note, by name or by path. Skip the list and get its brief. |
-| a number | The most notes to write. Never more than 20 in one run. |
+| a number, or `all` | The most notes to write, or every waiting note. |
 
-**Starting without being asked.** After finishing a code change, write the notes about the changed files, at most 3, and tell the user in one line that the notes were written. When the session briefing says auto explaining is on, then after you finish the user's first request, explain up to 20 waiting notes with this skill: call `list_waiting_notes` with `limit: 20` and `claim: true`, not the default of 5. Then tell the user in one line how many you wrote. Otherwise a count of waiting notes is not a request: writing many notes spends the user's usage allowance, so it needs their request.
+**Starting without being asked.** After finishing a code change, write the notes about the changed files, at most 3, and tell the user in one line that the notes were written. When the session briefing says auto explaining is on, then after you finish the user's first request, explain as many waiting notes as the briefing says with this skill: call `list_waiting_notes` with `limit: 20` and `claim: true`, not the default of 5, and list again until that many are written or no note waits. Then tell the user in one line how many you wrote. Otherwise a count of waiting notes is not a request: writing many notes spends the user's usage allowance, so it needs their request.
 
 ## Procedure
 
 1. Call `sync_wiki` once. A note explained against old facts is refused.
-2. Call `list_waiting_notes` with the `folder`, `files` and `limit` of the request, and `claim` set to `true`. The notes listed are kept for you for 30 minutes and other agents get other notes; submitting a note frees it. Skip this for a single named note.
+2. Call `list_waiting_notes` with the `folder` and `files` of the request, `limit` set to the number of notes still to write, and `claim` set to `true`. The notes listed are kept for you for 30 minutes and other agents get other notes; submitting a note frees it. Skip this for a single named note.
 3. For each note, in the order listed:
    1. Call `get_note_brief`. If it starts with `STOP`, call `sync_wiki` and get the brief again.
    2. Read every file the brief lists, whole. Read further files when the answer is not in them: a caller, a type, a test. Keep the paths of those further files.
@@ -49,7 +49,7 @@ The request is what the user asked, in words: a note, a folder, the notes that w
       - `Call get_note_brief again`: the note changed. Get the brief again and write from it.
       - `Call sync_wiki`: sync, get the brief again, write from it.
       - `Not written ... Proposal`: the owner edited this note, so the text waits for their review. Count it as proposed and go on. Never approve a proposal.
-4. Stop at the number asked for, or when no note waits.
+4. `list_waiting_notes` lists at most 20 notes at a time. When the number asked for is larger, or `all`, go back to step 2 for the next notes. Never write a note again that you skipped in this run. Stop at the number asked for, or when the list comes back empty.
 5. End with one line: how many notes were written, how many proposed, how many skipped and why, and how many still wait.
 
 ## The sections

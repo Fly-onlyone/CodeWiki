@@ -19,6 +19,7 @@ use std::rc::Rc;
 
 use cw_client::{Backend, Origin};
 use cw_core::agents_off::{self, Added, Removed};
+use cw_core::auto_explain::{self, Count};
 use gpui_kit::component::input::{InputEvent, InputState};
 use gpui_kit::component::scroll::ScrollableElement as _;
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
@@ -103,6 +104,8 @@ pub struct State {
     agents_note: Option<String>,
     /// Whether coding agents explain waiting notes at the start of a session.
     auto_explain: bool,
+    /// How many notes they explain, kept while the switch is off.
+    auto_explain_count: Count,
     menu: Option<OpenMenu>,
     /// Holds the focus while the list of a select is open.
     menu_focus: FocusHandle,
@@ -154,7 +157,8 @@ impl State {
             connect: None,
             agents_off: read_agents_off(),
             agents_note: None,
-            auto_explain: cw_core::auto_explain::load(&cw_core::paths::data_dir()),
+            auto_explain: auto_explain::load(&cw_core::paths::data_dir()),
+            auto_explain_count: auto_explain::load_count(&cw_core::paths::data_dir()),
             menu: None,
             menu_focus,
         };
@@ -286,8 +290,8 @@ impl AppView {
         self.settings.last = category;
         self.settings.connect = None;
         self.reload_agents_off();
-        // The switch is a file another program may change.
-        self.settings.auto_explain = cw_core::auto_explain::load(&cw_core::paths::data_dir());
+        // The switch and the count are files another program may change.
+        self.reload_auto_explain();
         // The address of the saved backend, to see and to change.
         let saved = cw_client::saved_remote().map(|remote| remote.url);
         self.settings
@@ -316,7 +320,7 @@ impl AppView {
         }
         if category == Category::Repositories {
             self.reload_agents_off();
-            self.settings.auto_explain = cw_core::auto_explain::load(&cw_core::paths::data_dir());
+            self.reload_auto_explain();
         }
         self.settings.last = category;
         self.page = Page::Settings(category);
@@ -929,16 +933,33 @@ impl AppView {
                 cx.open_with_system(&dir);
             }
             Action::AutoExplain(on) => {
-                match cw_core::auto_explain::save(&cw_core::paths::data_dir(), *on) {
+                match auto_explain::save(&cw_core::paths::data_dir(), *on) {
                     Ok(()) => {
                         log::info!("auto explaining is now {}", if *on { "on" } else { "off" });
                         self.settings.auto_explain = *on;
-                        self.auto_explain_on = *on;
+                        self.auto_explain = on.then_some(self.settings.auto_explain_count);
                     }
                     Err(error) => {
                         log::warn!("auto explaining could not be saved: {error}");
                         self.settings.error =
                             Some("Could not save the auto explaining switch.".into());
+                    }
+                }
+                cx.notify();
+            }
+            Action::AutoExplainCount(count) => {
+                match auto_explain::save_count(&cw_core::paths::data_dir(), *count) {
+                    Ok(()) => {
+                        log::info!("auto explaining now explains {count:?} notes");
+                        self.settings.auto_explain_count = *count;
+                        if self.settings.auto_explain {
+                            self.auto_explain = Some(*count);
+                        }
+                    }
+                    Err(error) => {
+                        log::warn!("the count of notes to explain could not be saved: {error}");
+                        self.settings.error =
+                            Some("Could not save how many notes to explain.".into());
                     }
                 }
                 cx.notify();
@@ -960,6 +981,13 @@ impl AppView {
             _ => return false,
         }
         true
+    }
+
+    /// Read the auto explaining switch and its count again.
+    fn reload_auto_explain(&mut self) {
+        let data = cw_core::paths::data_dir();
+        self.settings.auto_explain = auto_explain::load(&data);
+        self.settings.auto_explain_count = auto_explain::load_count(&data);
     }
 
     /// Read the list of folders kept from coding agents again.
@@ -1249,6 +1277,7 @@ impl AppView {
                     open_last: crate::startup::open_last(),
                     backdrop: crate::backdrop::shown(cx),
                     auto_explain: self.settings.auto_explain,
+                    auto_explain_count: self.settings.auto_explain_count,
                     log_level: level,
                     log_level_locked: cw_core::logs::level_in_env().is_some(),
                     logs_dir: &logs_dir,

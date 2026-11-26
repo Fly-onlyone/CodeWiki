@@ -5,6 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
+use cw_core::auto_explain::Count;
 use cw_core::{MANIFEST_DIR, Result, VAULT_DIR};
 use cw_vault::{VaultMeta, proposal};
 
@@ -38,18 +39,22 @@ pub enum Host {
 pub enum Explain {
     /// A fact only.
     Facts,
-    /// Launch the plugin agent in the background.
-    ClaudeCode,
-    /// Use the `write-notes` skill after the first request.
-    Codex,
+    /// Launch the plugin agent in the background, one for each batch of
+    /// notes, as many notes as the count says.
+    ClaudeCode(Count),
+    /// Use the `write-notes` skill after the first request, as many notes as
+    /// the count says.
+    Codex(Count),
 }
 
 /// Whether the waiting-notes line orders a batch: only when auto explaining is
 /// on, the session starts fresh (`startup`, `resume`, `clear`), it is not in
-/// plan mode and not in a linked worktree.
+/// plan mode and not in a linked worktree. `count` is how many notes the user
+/// chose (`cw_core::auto_explain::load_count`).
 pub fn explain_for(
     host: Host,
     auto_on: bool,
+    count: Count,
     source: Option<&str>,
     plan: bool,
     worktree: bool,
@@ -59,24 +64,60 @@ pub fn explain_for(
         return Explain::Facts;
     }
     match host {
-        Host::ClaudeCode => Explain::ClaudeCode,
-        Host::Codex => Explain::Codex,
+        Host::ClaudeCode => Explain::ClaudeCode(count),
+        Host::Codex => Explain::Codex(count),
     }
 }
 
-fn explain_sentence(explain: Explain) -> String {
-    let max = crate::explanations::MAX_LIMIT;
+/// How many plugin agents explain `notes` notes, and what each is told: an
+/// agent is lent at most one queue's worth, [`MAX_LIMIT`] notes, so a larger
+/// count takes several agents, all launched at once.
+///
+/// [`MAX_LIMIT`]: crate::explanations::MAX_LIMIT
+fn launch_order(notes: usize) -> String {
+    let batch = crate::explanations::MAX_LIMIT;
+    let agents = notes.div_ceil(batch);
+    if agents <= 1 {
+        return format!(
+            "launch the `codewiki:note-writer` agent in the background to explain up to {notes} waiting notes, stale first, tell the user in one line that it is writing wiki notes"
+        );
+    }
+    let (full, rest) = (notes / batch, notes % batch);
+    let share = if rest == 0 {
+        format!("tell each to explain {batch} waiting notes")
+    } else if full == 1 {
+        format!("tell one to explain {batch} waiting notes and the other to explain {rest}")
+    } else {
+        format!(
+            "tell {full} of them to explain {batch} waiting notes each and the last to explain {rest}"
+        )
+    };
+    format!(
+        "launch {agents} `codewiki:note-writer` agents in the background at once, in one message, and {share}, stale first; tell the user in one line that {agents} agents are writing wiki notes"
+    )
+}
+
+/// The order or the fact that ends the line about the `waiting` notes.
+fn explain_sentence(explain: Explain, waiting: usize) -> String {
     match explain {
         Explain::Facts => {
             "This line says what waits; write notes when the user asks, or for files you changed."
                 .to_string()
         }
-        Explain::ClaudeCode => format!(
-            "The user turned on auto explaining: when the user sends their first message, unless you are in plan mode, launch the `codewiki:note-writer` agent in the background to explain up to {max} waiting notes, stale first, tell the user in one line that it is writing wiki notes, then go on with their request. Do not write these notes yourself."
+        Explain::ClaudeCode(count) => format!(
+            "The user turned on auto explaining: when the user sends their first message, unless you are in plan mode, {}, then go on with their request. Do not write these notes yourself.",
+            launch_order(count.of(waiting))
         ),
-        Explain::Codex => format!(
-            "The user turned on auto explaining: after you finish the user's first request, unless you are in plan mode, explain up to {max} waiting notes, stale first, with the `write-notes` skill, and tell the user in one line how many you wrote."
-        ),
+        Explain::Codex(count) => {
+            let batch = crate::explanations::MAX_LIMIT;
+            let notes = match count {
+                Count::All => "every waiting note".to_string(),
+                Count::Notes(_) => format!("up to {} waiting notes", count.of(waiting)),
+            };
+            format!(
+                "The user turned on auto explaining: after you finish the user's first request, unless you are in plan mode, explain {notes}, stale first, with the `write-notes` skill, listing {batch} at a time, and tell the user in one line how many you wrote."
+            )
+        }
     }
 }
 
@@ -88,8 +129,8 @@ fn explain_sentence(explain: Explain) -> String {
 /// The lines state facts; an agent host adds them to the session as context.
 /// The line about waiting notes is a fact too, and says so: an agent that
 /// took it as an order would spend its user's allowance on notes at the
-/// start of every session. It becomes an order for a bounded batch only when
-/// the user turned auto explaining on (`cw_core::auto_explain`), the session
+/// start of every session. It becomes an order for the batch the user chose
+/// only when the user turned auto explaining on (`cw_core::auto_explain`), the session
 /// starts fresh (startup, resume, clear), is not in plan mode and is not in a
 /// linked worktree; `explain` says which, see [`explain_for`].
 pub fn session_start(root: &Path, explain: Explain) -> Result<String> {
@@ -139,7 +180,7 @@ pub fn session_start(root: &Path, explain: Explain) -> Result<String> {
             waiting.total(),
             waiting.behind,
             waiting.unexplained,
-            explain_sentence(explain)
+            explain_sentence(explain, waiting.total())
         ));
     }
     out.push_str(
@@ -153,17 +194,18 @@ mod tests {
     use super::*;
 
     const START: Option<&str> = Some("startup");
+    const FIFTY: Count = Count::Notes(50);
 
     #[test]
     fn fresh_sessions_get_the_order_of_their_host() {
         for source in ["startup", "resume", "clear"] {
             assert_eq!(
-                explain_for(Host::ClaudeCode, true, Some(source), false, false),
-                Explain::ClaudeCode
+                explain_for(Host::ClaudeCode, true, FIFTY, Some(source), false, false),
+                Explain::ClaudeCode(FIFTY)
             );
             assert_eq!(
-                explain_for(Host::Codex, true, Some(source), false, false),
-                Explain::Codex
+                explain_for(Host::Codex, true, Count::All, Some(source), false, false),
+                Explain::Codex(Count::All)
             );
         }
     }
@@ -172,22 +214,77 @@ mod tests {
     fn everything_else_gets_the_facts() {
         for source in [Some("compact"), Some("fork"), Some("other"), None] {
             assert_eq!(
-                explain_for(Host::ClaudeCode, true, source, false, false),
+                explain_for(Host::ClaudeCode, true, FIFTY, source, false, false),
                 Explain::Facts,
                 "{source:?}"
             );
         }
         assert_eq!(
-            explain_for(Host::Codex, true, START, true, false),
+            explain_for(Host::Codex, true, FIFTY, START, true, false),
             Explain::Facts
         );
         assert_eq!(
-            explain_for(Host::Codex, true, START, false, true),
+            explain_for(Host::Codex, true, FIFTY, START, false, true),
             Explain::Facts
         );
         assert_eq!(
-            explain_for(Host::ClaudeCode, false, START, false, false),
+            explain_for(Host::ClaudeCode, false, FIFTY, START, false, false),
             Explain::Facts
         );
+    }
+
+    #[test]
+    fn a_batch_that_fits_one_agent_launches_one() {
+        let text = explain_sentence(Explain::ClaudeCode(Count::Notes(20)), 7);
+        assert!(
+            text.contains("launch the `codewiki:note-writer` agent in the background to explain up to 7 waiting notes"),
+            "{text}"
+        );
+        let text = explain_sentence(Explain::ClaudeCode(Count::Notes(20)), 218);
+        assert!(text.contains("up to 20 waiting notes"), "{text}");
+        assert!(text.contains("plan mode") && text.contains("Do not write these notes yourself."));
+    }
+
+    #[test]
+    fn a_larger_batch_launches_one_agent_for_each_twenty() {
+        let text = explain_sentence(Explain::ClaudeCode(FIFTY), 218);
+        assert!(
+            text.contains("launch 3 `codewiki:note-writer` agents in the background at once, in one message, and tell 2 of them to explain 20 waiting notes each and the last to explain 10"),
+            "{text}"
+        );
+        let text = explain_sentence(Explain::ClaudeCode(Count::All), 218);
+        assert!(
+            text.contains("launch 11 `codewiki:note-writer` agents")
+                && text.contains(
+                    "tell 10 of them to explain 20 waiting notes each and the last to explain 18"
+                ),
+            "{text}"
+        );
+        let text = explain_sentence(Explain::ClaudeCode(Count::Notes(100)), 218);
+        assert!(
+            text.contains("launch 5 `codewiki:note-writer` agents")
+                && text.contains("tell each to explain 20 waiting notes"),
+            "{text}"
+        );
+        let text = explain_sentence(Explain::ClaudeCode(Count::All), 30);
+        assert!(
+            text.contains("launch 2 `codewiki:note-writer` agents")
+                && text
+                    .contains("tell one to explain 20 waiting notes and the other to explain 10"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn codex_explains_the_count_itself_in_batches() {
+        let text = explain_sentence(Explain::Codex(FIFTY), 218);
+        assert!(
+            text.contains("explain up to 50 waiting notes")
+                && text.contains("listing 20 at a time"),
+            "{text}"
+        );
+        let text = explain_sentence(Explain::Codex(Count::All), 218);
+        assert!(text.contains("explain every waiting note"), "{text}");
+        assert!(!text.contains("note-writer"), "{text}");
     }
 }

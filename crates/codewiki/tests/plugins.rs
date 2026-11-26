@@ -393,7 +393,15 @@ fn write_notes_skill_follows_the_tools_and_the_limits(plugin: &str, model: &str)
         "{plugin}"
     );
     assert!(skill.contains(&format!("{DEFAULT_LIMIT} unless a number is given")));
-    assert!(skill.contains(&format!("Never more than {MAX_LIMIT} in one run")));
+    // A run may ask for more than one queue lists, or for every note: the
+    // skill lists again in batches of the queue's size.
+    assert!(skill.contains("a number, or `all`"), "{plugin}");
+    assert!(
+        skill.contains(&format!(
+            "`list_waiting_notes` lists at most {MAX_LIMIT} notes at a time"
+        )),
+        "{plugin}"
+    );
     // It sends the agent to the reference beside it, which exists.
     assert!(skill.contains("`pictures.md`"));
     assert!(
@@ -498,6 +506,8 @@ fn note_writer_agent_claims_and_names_its_model() {
     assert!(agent.contains("codewiki:write-notes"));
     assert!(agent.contains("`claim: true`"));
     assert!(agent.contains("`model: claude-code`"));
+    // Several agents run at once for a large batch; each lists once.
+    assert!(agent.contains("List once."));
     // The briefing names the agent as the plugin namespaces it.
     let briefing = read("crates/cw-wiki/src/briefing.rs");
     assert!(briefing.contains("`codewiki:note-writer`"));

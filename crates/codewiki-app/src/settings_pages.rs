@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use cw_client::Origin;
+use cw_core::auto_explain::{self, Count};
 use cw_telemetry::Reporting;
 use serde_json::Value;
 
@@ -99,6 +100,8 @@ pub struct Model<'a> {
     pub backdrop: bool,
     /// Whether coding agents explain waiting notes at the start of a session.
     pub auto_explain: bool,
+    /// How many notes they explain in a session.
+    pub auto_explain_count: Count,
     /// The level of the app's log, by its name, and whether `CODEWIKI_LOG`
     /// fixes it.
     pub log_level: &'a str,
@@ -889,18 +892,55 @@ fn repositories(model: &Model) -> Vec<Block> {
     blocks
 }
 
-/// The switch that lets coding agents explain waiting notes on their own.
+/// The switch that lets coding agents explain waiting notes on their own,
+/// and, while it is on, how many.
 fn auto_explain_card(model: &Model) -> Block {
-    card(
-        "Auto explaining",
-        vec![Block::Switch {
-            label: "Explain waiting notes at the start of a session".into(),
-            help: Some("A coding agent with the CodeWiki plugin explains up to 20 waiting notes in the background when a session starts. Folders kept from coding agents are left out.".into()),
-            on: model.auto_explain,
-            action: Action::AutoExplain(!model.auto_explain),
+    let mut body = vec![Block::Switch {
+        label: "Explain waiting notes at the start of a session".into(),
+        help: Some("Coding agents with the CodeWiki plugin explain waiting notes in the background when a session starts, one agent for each 20 notes. Folders kept from coding agents are left out.".into()),
+        on: model.auto_explain,
+        action: Action::AutoExplain(!model.auto_explain),
+        locked: None,
+    }];
+    if model.auto_explain {
+        body.push(Block::Select {
+            label: "Notes per session".into(),
+            help: None,
+            options: count_choices(model.auto_explain_count),
             locked: None,
-        }],
-    )
+            note: None,
+        });
+    }
+    card("Auto explaining", body)
+}
+
+/// The counts to choose from, with `current` selected. A count the file holds
+/// that is not one of the presets is offered too, in its place by size.
+fn count_choices(current: Count) -> Vec<Choice> {
+    let mut counts = auto_explain::PRESETS.to_vec();
+    if !counts.contains(&current) {
+        let at = counts
+            .iter()
+            .position(|count| match (count, current) {
+                (Count::Notes(n), Count::Notes(m)) => *n > m,
+                _ => true,
+            })
+            .unwrap_or(counts.len());
+        counts.insert(at, current);
+    }
+    counts
+        .into_iter()
+        .map(|count| Choice {
+            label: match count {
+                Count::All => "Unlimited".into(),
+                Count::Notes(n) if count == auto_explain::DEFAULT => format!("{n} (default)"),
+                Count::Notes(n) => n.to_string(),
+            },
+            action: Action::AutoExplainCount(count),
+            selected: count == current,
+            icon: None,
+        })
+        .collect()
 }
 
 /// The folders kept from coding agents, with what takes one off the list or
@@ -1162,6 +1202,7 @@ mod tests {
         open_last: bool,
         backdrop: bool,
         auto_explain: bool,
+        auto_explain_count: Count,
         log_level_locked: bool,
         error_reports: Reporting,
         error_reports_on: bool,
@@ -1192,6 +1233,7 @@ mod tests {
                 open_last: false,
                 backdrop: true,
                 auto_explain: true,
+                auto_explain_count: auto_explain::DEFAULT,
                 log_level_locked: false,
                 error_reports: Reporting::Switch,
                 error_reports_on: false,
@@ -1228,6 +1270,7 @@ mod tests {
                     open_last: self.open_last,
                     backdrop: self.backdrop,
                     auto_explain: self.auto_explain,
+                    auto_explain_count: self.auto_explain_count,
                     log_level: "info",
                     log_level_locked: self.log_level_locked,
                     logs_dir: "C:/data/logs",
@@ -1346,7 +1389,11 @@ mod tests {
             words.contains("Explain waiting notes at the start of a session: on"),
             "{words}"
         );
-        assert!(words.contains("explains up to 20 waiting notes in the background"));
+        assert!(
+            words.contains("explain waiting notes in the background when a session starts, one agent for each 20 notes"),
+            "{words}"
+        );
+        assert!(!words.contains("up to 20"), "{words}");
         assert!(on.actions().contains(&Action::AutoExplain(false)));
 
         fixture.auto_explain = false;
@@ -1356,6 +1403,67 @@ mod tests {
                 .contains("Explain waiting notes at the start of a session: off")
         );
         assert!(off.actions().contains(&Action::AutoExplain(true)));
+    }
+
+    #[test]
+    fn the_count_of_notes_shows_only_while_auto_explaining_is_on() {
+        let mut fixture = Fixture::new();
+        let on = fixture.page(Category::Repositories);
+        assert!(
+            on.words().contains(
+                "Notes per session: 20 (default) (5 / 10 / 20 (default) / 50 / 100 / Unlimited)"
+            ),
+            "{}",
+            on.words()
+        );
+        for count in auto_explain::PRESETS {
+            assert!(
+                on.actions().contains(&Action::AutoExplainCount(count)),
+                "{count:?}"
+            );
+        }
+
+        fixture.auto_explain_count = Count::All;
+        let all = fixture.page(Category::Repositories);
+        assert!(
+            all.words().contains("Notes per session: Unlimited ("),
+            "{}",
+            all.words()
+        );
+
+        // The count is kept while the switch is off, but not offered.
+        fixture.auto_explain = false;
+        let off = fixture.page(Category::Repositories);
+        assert!(
+            !off.words().contains("Notes per session"),
+            "{}",
+            off.words()
+        );
+        assert!(
+            !off.actions()
+                .iter()
+                .any(|action| matches!(action, Action::AutoExplainCount(_)))
+        );
+    }
+
+    #[test]
+    fn a_count_from_the_file_that_is_no_preset_is_offered_in_its_place() {
+        let labels = |current| {
+            count_choices(current)
+                .into_iter()
+                .map(|choice| (choice.label, choice.selected))
+                .collect::<Vec<_>>()
+        };
+        let choices = labels(Count::Notes(37));
+        assert_eq!(choices.len(), 7);
+        assert_eq!(choices[3], ("37".to_string(), true));
+        assert_eq!(choices[4].0, "50");
+        assert_eq!(choices.iter().filter(|(_, selected)| *selected).count(), 1);
+        let choices = labels(Count::Notes(500));
+        assert_eq!(choices[5], ("500".to_string(), true));
+        assert_eq!(choices[6].0, "Unlimited");
+        let choices = labels(Count::Notes(1));
+        assert_eq!(choices[0], ("1".to_string(), true));
     }
 
     #[test]
@@ -2006,6 +2114,8 @@ mod tests {
         fixture.agents_off = Ok(Vec::new());
         // The card stands even where no repository is registered.
         fixture.repos.clear();
+        // Auto explaining off, so its card offers the switch alone.
+        fixture.auto_explain = false;
         let doc = fixture.page(Category::Repositories);
         let words = doc.words();
         assert!(words.contains("Kept from coding agents"), "{words}");
@@ -2013,7 +2123,7 @@ mod tests {
         assert!(words.contains("Add folder…"), "{words}");
         assert_eq!(
             doc.actions(),
-            [Action::AutoExplain(false), Action::PickAgentsFolder]
+            [Action::AutoExplain(true), Action::PickAgentsFolder]
         );
     }
 

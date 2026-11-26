@@ -6,6 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
+use cw_core::auto_explain::Count;
 use serde_json::Value;
 
 use crate::doc::{
@@ -536,24 +537,27 @@ pub fn waiting_count(queue: Option<&Value>) -> u64 {
 
 /// The notes that wait for a coding agent to explain them, from the queue of
 /// `GET /explanations?all=true`, in the backend's order: those behind the
-/// code first. `None` while the queue is being read. `auto_on` says whether
-/// agents explain some of them by themselves at the start of a session.
-pub fn waiting_page(queue: Option<&Value>, auto_on: bool) -> Doc {
+/// code first. `None` while the queue is being read. `auto` says how many of
+/// them agents explain by themselves at the start of a session, or `None`
+/// while auto explaining is off.
+pub fn waiting_page(queue: Option<&Value>, auto: Option<Count>) -> Doc {
     let mut doc = Doc::new("Waiting notes").lead(
         "These notes wait for a coding agent to explain what they are for and how they work.",
     );
-    // 20 is `MAX_LIMIT` of `cw-wiki/src/explanations.rs`: the most notes an
-    // agent is lent at once.
     doc.push(Block::Alert {
         tone: Tone::Info,
-        text: if auto_on {
-            "Auto explaining is on: a coding agent with the CodeWiki plugin explains up to 20 of \
-             these at the start of a session. Run /codewiki:write-notes to explain more."
-        } else {
-            "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain these \
-             notes."
-        }
-        .into(),
+        text: match auto {
+            Some(Count::All) => "Auto explaining is on: coding agents with the CodeWiki plugin \
+                 explain all of these at the start of a session."
+                .to_string(),
+            Some(Count::Notes(n)) => format!(
+                "Auto explaining is on: coding agents with the CodeWiki plugin explain up to {n} \
+                 of these at the start of a session. Run /codewiki:write-notes to explain more."
+            ),
+            None => "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain \
+                 these notes."
+                .to_string(),
+        },
         button: Some((
             "Settings".into(),
             Action::Settings(Some(Category::Repositories)),
@@ -1590,8 +1594,8 @@ mod tests {
 
     #[test]
     fn the_waiting_page_says_whether_agents_explain_by_themselves() {
-        let alert = |auto_on: bool| {
-            waiting_page(Some(&queue()), auto_on)
+        let alert = |auto: Option<Count>| {
+            waiting_page(Some(&queue()), auto)
                 .blocks
                 .into_iter()
                 .find_map(|block| match block {
@@ -1605,17 +1609,25 @@ mod tests {
             Action::Settings(Some(Category::Repositories)),
         ));
         assert_eq!(
-            alert(true),
+            alert(Some(Count::Notes(50))),
             (
-                "Auto explaining is on: a coding agent with the CodeWiki plugin explains up to \
-                 20 of these at the start of a session. Run /codewiki:write-notes to explain \
-                 more."
+                "Auto explaining is on: coding agents with the CodeWiki plugin explain up to 50 \
+                 of these at the start of a session. Run /codewiki:write-notes to explain more."
                     .to_string(),
                 settings.clone()
             )
         );
         assert_eq!(
-            alert(false),
+            alert(Some(Count::All)),
+            (
+                "Auto explaining is on: coding agents with the CodeWiki plugin explain all of \
+                 these at the start of a session."
+                    .to_string(),
+                settings.clone()
+            )
+        );
+        assert_eq!(
+            alert(None),
             (
                 "Auto explaining is off. Run /codewiki:write-notes in Claude Code to explain \
                  these notes."
@@ -1627,7 +1639,7 @@ mod tests {
 
     #[test]
     fn the_waiting_page_lists_the_notes_in_the_backends_order() {
-        let page = waiting_page(Some(&queue()), true);
+        let page = waiting_page(Some(&queue()), Some(Count::Notes(20)));
         assert_eq!(page.title, "Waiting notes");
         assert_eq!(
             page.lead.as_deref(),
@@ -1675,7 +1687,7 @@ mod tests {
                 "notes": [], "matching": 0,
                 "waiting": { "behind": 0, "unexplained": 0 }
             })),
-            false,
+            None,
         );
         assert!(
             page.blocks
@@ -1689,7 +1701,7 @@ mod tests {
 
     #[test]
     fn the_waiting_page_shows_that_it_is_reading() {
-        let page = waiting_page(None, true);
+        let page = waiting_page(None, Some(Count::All));
         assert_eq!(page.title, "Waiting notes");
         assert!(
             page.blocks

@@ -5044,14 +5044,25 @@ fn stops_backend_on_quit(remote: bool, installing: bool) -> bool {
     !remote && !installing
 }
 
+/// The text of the title bar: the app's name, and the open repository's
+/// while a page of it is shown. Home lists every repository and belongs to
+/// none, so there the name alone.
+fn window_title(repo: Option<&str>, home: bool) -> String {
+    match repo {
+        Some(name) if !home => format!("{} — {name}", cw_core::APP_NAME),
+        _ => cw_core::APP_NAME.to_string(),
+    }
+}
+
 /// The window's title bar. The shell draws it, not the app's view: the
 /// buttons of a title bar that is part of a cached view stop answering (see
 /// `backdrop`).
 fn title_bar(app: &Entity<AppView>, window: &mut Window, cx: &mut App) -> AnyElement {
-    let title = match &app.read(cx).repo {
-        Some(repo) => format!("{} — {}", cw_core::APP_NAME, repo.name),
-        None => cw_core::APP_NAME.to_string(),
-    };
+    let view = app.read(cx);
+    let title = window_title(
+        view.repo.as_ref().map(|repo| repo.name.as_str()),
+        matches!(view.page, Page::Home),
+    );
     let levels = glass::Levels::for_window(window, cx);
     // The zoom level, for a moment after it changes. Only shown: the bar
     // drags the window, so a click on it would never arrive.
@@ -5383,7 +5394,9 @@ mod tests {
 
     use gpui_kit::{Bounds, DEFAULT_WINDOW_SIZE, Keystroke, point, px, size};
 
-    use super::{Repo, first_bounds, min_window_size, parse_repos, stops_backend_on_quit, zoom};
+    use super::{
+        Repo, first_bounds, min_window_size, parse_repos, stops_backend_on_quit, window_title, zoom,
+    };
 
     #[test]
     fn the_window_keeps_its_measures_at_every_zoom() {
@@ -5456,5 +5469,18 @@ mod tests {
         assert!(!stops_backend_on_quit(true, false));
         // An update has stopped it, and may have started the next one.
         assert!(!stops_backend_on_quit(false, true));
+    }
+
+    #[test]
+    fn the_title_names_the_repository_except_on_home() {
+        // "CodeWiki", or "CodeWiki Dev" in a debug build.
+        let app = cw_core::APP_NAME;
+        assert_eq!(
+            window_title(Some("cw-core"), false),
+            format!("{app} — cw-core")
+        );
+        // Home belongs to no repository, though one stays open behind it.
+        assert_eq!(window_title(Some("cw-core"), true), app);
+        assert_eq!(window_title(None, false), app);
     }
 }

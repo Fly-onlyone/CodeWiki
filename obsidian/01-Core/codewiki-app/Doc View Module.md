@@ -64,7 +64,7 @@ And 28 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `diagram_viewer_view`, `new`, `open_settings_menu`
+- [[codewiki-app]] — from `AppView`, `body`, `diagram_viewer_view`, `new`
 - [[Backdrop Module]] — from `Shell`, `new`, `render`, `set`
 
 ## Gotchas

@@ -37,6 +37,7 @@ Declared as `pub enum Action`.
 - [[MotionPref]] — uses `MotionPref`
 - [[Category]] — uses `Category`
 - [[FieldId]] — uses `FieldId`
+- [[Count]] — uses `Count`
 
 ## Used by
 

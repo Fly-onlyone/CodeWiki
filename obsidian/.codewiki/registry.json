@@ -190,6 +190,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_core::auto_explain::Count",
+    "path": "01-Core/cw-core/Count.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_wiki::explanations::Counts",
     "path": "01-Core/cw-wiki/Counts.md",
     "kind": "concept"
@@ -1177,11 +1182,6 @@
   {
     "id": "mod:cw_index::vectors",
     "path": "01-Core/cw-index/Vectors Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_core::model::Visibility",
-    "path": "01-Core/cw-core/Visibility.md",
     "kind": "concept"
   },
   {

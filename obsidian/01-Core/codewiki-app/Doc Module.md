@@ -62,7 +62,7 @@ And 2 more items.
 ## Used by
 
 - [[Live Module]] — from `file_page`, `file_row`, `hit_target`, `home_page`
-- [[Settings Pages Module]] — from `agents_card`, `appearance`, `backend`, `diagnostics`
+- [[Settings Pages Module]] — from `agents_card`, `appearance`, `backend`, `count_choices`
 - [[Doc View Module]] — from `SelectRequest`, `choice_tint`, `choices_row`, `draw_cell`
 - [[Pages Module]] — from `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
 - [[Doc]] — from `tables`, `text`, `words`

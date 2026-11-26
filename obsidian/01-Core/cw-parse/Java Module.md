@@ -36,7 +36,7 @@ This module reads one Java file and turns it into facts: the package, classes, i
 - [[Sink]] — uses `Sink`, `between`, `inherits`, `module_symbol`
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
-- [[Visibility]] — uses `Visibility`
+- [[Model Module]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

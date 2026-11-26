@@ -77,8 +77,8 @@ And 22 more items.
 
 - [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_against_an_older_note_or_older_facts_is_turned_back`
 - [[Api Module]] — from `approve_proposal`, `decide_proposals`, `list_explanations`, `read_explanation`
+- [[Briefing Module]] — from `explain_sentence`, `launch_order`, `session_start`
 - [[codewiki]] — from `batch_and_claim_texts_follow_the_backend`, `write_notes_skill_follows_the_tools_and_the_limits`
-- [[Briefing Module]] — from `explain_sentence`, `session_start`
 
 ## Gotchas
 

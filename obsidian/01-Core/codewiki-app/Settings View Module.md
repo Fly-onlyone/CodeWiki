@@ -46,9 +46,9 @@ The list of folders kept from coding agents is read by the app from the data fol
 - [[Settings Pages Module]] — uses `KeptFolder`, `Tested`, `job_runs`
 - [[Agents Off Module]] — uses `file`, `load`, `unreadable`
 - [[codewiki-app]] — uses `AppView`, `settings_field_event`
+- [[Auto Explain Module]] — uses `load`, `load_count`
 - [[Doc Module]] — uses `Choice`
 - [[Prefs Module]] — uses `remove`
-- [[Settings Module]] — uses `Note`
 
 ## Used by
 

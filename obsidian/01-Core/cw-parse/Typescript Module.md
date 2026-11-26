@@ -37,7 +37,7 @@ And 4 more private items with no comment.
 - [[Lang Module]] — uses `block_doc`, `collapse`, `dotted`, `field_all`
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
-- [[Visibility]] — uses `Visibility`
+- [[Model Module]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

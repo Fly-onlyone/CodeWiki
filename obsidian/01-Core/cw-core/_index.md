@@ -11,6 +11,7 @@ tags: [moc, core, cw-core]
 - [[Agents Off Module]] — the list of folders closed to coding agents.
 - [[Auto Explain Module]] — the switch for auto explaining.
 - [[Confidence]] — how sure the resolver is that an edge is real.
+- [[Count]] — how many waiting notes a session explains.
 - [[cw-core]] — shared identifiers, hashing, configuration and error types for CodeWiki.
 - [[Error]] — `Error` enum defined in `cw_core::error` with 4 methods.
 - [[Error Module]] — one error type shared by the engine crates.
@@ -26,7 +27,6 @@ tags: [moc, core, cw-core]
 - [[Settings Module (cw-core)]] — settings the backend keeps for its user: which embedder serves semantic search, and the keys and addresses it needs.
 - [[Symbol]] — A named code entity.
 - [[SymbolKind]] — `SymbolKind` enum defined in `cw_core::model` with 3 methods.
-- [[Visibility]] — `Visibility` enum defined in `cw_core::model` with 2 methods.
 
 ## Folders
 

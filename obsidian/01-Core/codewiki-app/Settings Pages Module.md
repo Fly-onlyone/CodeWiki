@@ -45,18 +45,18 @@ The search page picks a provider, then `server_rows` shows its address, key, mod
 - `fn repositories(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn updates(model: &Model) -> Vec<Block>` — the version, what the last check found, and whether the app checks by itself.
 
-And 17 more items.
+And 18 more items.
 
 ## Depends on
 
 - [[Doc Module]] — uses `Choice`, `chip`, `code`, `new`
 - [[Zoom Module]] — uses `DEFAULT`, `LEVELS`, `label`
 - [[Update Module]] — uses `State`, `describe`
+- [[Auto Explain Module]] — uses `DEFAULT`, `PRESETS`
 - [[Doc]] — uses `Doc`, `new`
 - [[MotionPref]] — uses `ALL`, `MotionPref`
 - [[cw-client]] — uses `Origin`
 - [[cw-telemetry]] — uses `DSN_ENV`
-- [[Icons Module]] — uses `for_theme`
 
 ## Used by
 

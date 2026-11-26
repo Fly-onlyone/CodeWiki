@@ -15,7 +15,7 @@ tags: [core, codewiki]
 
 Builds a binary.
 
-1. The program starts at `main`. `main` calls `session_start_hook`, then `sentry_test`, then `agents`, then `init` in [[cw-telemetry]], then `init_console` in [[Logs Module]], then `run`. `session_start_hook` calls `vault_root` in [[Briefing Module]], then `data_dir` in [[Paths Module]], then `load`, then `blocking` (both in [[Agents Off Module]]), then `load` in [[Auto Explain Module]], then `hook_input`, and 3 more. `sentry_test` calls `init`, then `sending` (both in [[cw-telemetry]]), then `data_dir` in [[Paths Module]], then `send_test_report` in [[cw-telemetry]].
+1. The program starts at `main`. `main` calls `session_start_hook`, then `sentry_test`, then `agents`, then `init` in [[cw-telemetry]], then `init_console` in [[Logs Module]], then `run`. `session_start_hook` calls `vault_root` in [[Briefing Module]], then `data_dir` in [[Paths Module]], then `load`, then `blocking` (both in [[Agents Off Module]]), then `load` in [[Auto Explain Module]], then `hook_input`, and 4 more. `sentry_test` calls `init`, then `sending` (both in [[cw-telemetry]]), then `data_dir` in [[Paths Module]], then `send_test_report` in [[cw-telemetry]].
 
 Calls are listed in the order of the source; a condition or a loop around a call is not shown.
 

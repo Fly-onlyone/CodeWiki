@@ -29,7 +29,7 @@ Every enum has `as_str` and `parse` for the text stored in the index. They seria
 - [[Language]] — source language of a file.
 - `pub struct FileRecord` — one indexed source file. `path` is repo-relative with forward slashes.
 - [[SymbolKind]] — enum
-- [[Visibility]] — enum
+- `pub enum Visibility` — public enum; used by `Extractor::member_visibility`, `Extractor::visibility`, `Modifiers::visibility`, `Symbol` and 1 more.
 - [[Symbol]] — A named code entity.
 - `pub enum EdgeKind` — public enum; used by `DEPENDENCY_KINDS`, `Edge`, `Graph::from_edges`, `Resolver::resolve`.
 - [[Confidence]] — how sure the resolver is that an edge is real.
@@ -45,12 +45,12 @@ Every enum has `as_str` and `parse` for the text stored in the index. They seria
 
 - [[Index]] — from `edges`, `edges_from`, `edges_to`, `files`
 - [[Repo]] — from `Repo`, `build`, `calls_from`
+- [[Store Module]] — from `edge_from_row`, `symbol_from_row`
 - [[Scan Module]] — from `RepoFacts`, `scan_repo`
+- [[Typescript Module]] — from `member_visibility`, `visibility`
 - [[Query Module]] — from `context`, `related`
-- [[Store Module]] — from `edge_from_row`
-- [[Resolve Module]] — from `Resolved`
-- [[Api Module]] — from `list_files`
-- [[Analyze Module]] — from `DEPENDENCY_KINDS`
+- [[Java Module]] — from `visibility`
+- [[Python Module]] — from `visibility`
 
 ## Gotchas
 

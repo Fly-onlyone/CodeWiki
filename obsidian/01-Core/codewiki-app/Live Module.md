@@ -38,7 +38,7 @@ Search hits go through `hit_groups`, which sorts them under Notes, Symbols and F
 - `pub fn review_empty_page() -> Doc` — the review page when no proposal waits.
 - `pub fn sync_page(report: &Value) -> Doc` — what a sync did.
 - `pub fn waiting_count(queue: Option<&Value>) -> u64` — how many notes wait for a coding agent, from the queue of `GET /explanations?all=true`: those behind the code and those never explained. 0 until the queue has been read.
-- `pub fn waiting_page(queue: Option<&Value>, auto_on: bool) -> Doc` — the notes that wait for a coding agent to explain them, from the queue of `GET /explanations?all=true`, in the backend's order: those behind the code first. `None` while the queue is being read. `auto_on` says whether agents explain some of them by themselves at the start of a session.
+- `pub fn waiting_page(queue: Option<&Value>, auto: Option<Count>) -> Doc` — the notes that wait for a coding agent to explain them, from the queue of `GET /explanations?all=true`, in the backend's order: those behind the code first. `None` while the queue is being read. `auto` says how many of them agents explain by themselves at the start of a session, or `None` while auto explaining is off.
 - `pub fn agent_view_line(left_out: &[String]) -> String` — the line above a note in the agent view: what the view is, and what it leaves out of the note.
 - `pub fn explanation_lines(explanation: &str, by: &str, behind: &[String]) -> Vec<String>` — what the details pane says about a note's explanation, a line for each string: who wrote it, and why it may be behind. `explanation` is the backend's word for where it stands. Nothing for a note no agent explains.
 - `pub fn message_page(message: &str) -> Doc` — A page that only says something, such as that there is no wiki yet.
@@ -56,6 +56,7 @@ And 15 more items.
 - [[Agents Off Module]] — uses `blocking`, `covering`, `normalize`
 - [[Action]] — uses `Action`
 - [[Glyph]] — uses `Glyph`
+- [[Count]] — uses `Count`
 
 ## Used by
 

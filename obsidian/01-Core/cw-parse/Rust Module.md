@@ -42,9 +42,9 @@ And 2 more private items with no comment.
 
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
+- [[Model Module]] — uses `Visibility`
 - [[Symbol]] — uses `Symbol`
 - [[SymbolKind]] — uses `SymbolKind`
-- [[Visibility]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 - [[UseImport]] — uses `UseImport`
 

@@ -36,10 +36,10 @@ The waiting-notes line ends with a sentence chosen by `explain`. `explain_for` r
 - `fn short(commit: &str) -> &str` — private function, returns `&str`; called by `session_start`.
 - `pub enum Host` — the agent host a briefing is for.
 - `pub enum Explain` — what the line about waiting notes asks of the agent.
-- `explain_for` — whether the waiting-notes line orders a batch: only when auto explaining is on, the session starts fresh (`startup`, `resume`, `clear`), it is not in plan mode and not in a linked worktree.
-- `pub fn session_start(root: &Path, explain: Explain) -> Result<String>` — Plain-text briefing for an agent starting work in the repository at `root`: whether a wiki exists, where its home note is, whether it is behind `HEAD`, how many proposals wait for review, how many notes wait for an explanation, and which tools read it. The lines state facts; an agent host adds them to the session as context. The line about waiting notes is a fact too, and says so: an agent that took it as an order would spend its user's allowance on notes at the start of every session. It becomes an order for a bounded batch only when the user turned auto explaining on (`cw_core::auto_explain`), the session starts fresh (startup, resume, clear), is not in plan mode and is not in a linked worktree; `explain` says which, see `explain_for`.
-
-And 1 more private item with no comment.
+- `explain_for` — whether the waiting-notes line orders a batch: only when auto explaining is on, the session starts fresh (`startup`, `resume`, `clear`), it is not in plan mode and not in a linked worktree. `count` is how many notes the user chose (`cw_core::auto_explain::load_count`).
+- `fn launch_order(notes: usize) -> String` — how many plugin agents explain `notes` notes, and what each is told: an agent is lent at most one queue's worth, `MAX_LIMIT` notes, so a larger count takes several agents, all launched at once. `MAX_LIMIT`: crate::explanations::MAX_LIMIT.
+- `fn explain_sentence(explain: Explain, waiting: usize) -> String` — the order or the fact that ends the line about the `waiting` notes.
+- `pub fn session_start(root: &Path, explain: Explain) -> Result<String>` — Plain-text briefing for an agent starting work in the repository at `root`: whether a wiki exists, where its home note is, whether it is behind `HEAD`, how many proposals wait for review, how many notes wait for an explanation, and which tools read it. The lines state facts; an agent host adds them to the session as context. The line about waiting notes is a fact too, and says so: an agent that took it as an order would spend its user's allowance on notes at the start of every session. It becomes an order for the batch the user chose only when the user turned auto explaining on (`cw_core::auto_explain`), the session starts fresh (startup, resume, clear), is not in plan mode and is not in a linked worktree; `explain` says which, see `explain_for`.
 
 ## Depends on
 
@@ -48,6 +48,7 @@ And 1 more private item with no comment.
 - [[Git Module]] — uses `head_commit`, `vault_is_behind`
 - [[Error Module]] — uses `Result`
 - [[Proposal Module]] — uses `list`
+- [[Count]] — uses `Count`
 - [[VaultMeta]] — uses `load`
 - [[Counts]] — uses `total`
 

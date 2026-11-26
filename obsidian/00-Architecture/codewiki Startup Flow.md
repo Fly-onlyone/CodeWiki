@@ -30,13 +30,13 @@ sequenceDiagram
     p0->>p5: load()
     p0->>p5: blocking()
     p0->>p6: load()
+    p0->>p6: load_count()
     p0->>p3: explain_for()
     p0->>p7: is_linked_worktree()
     p0->>p3: session_start()
     p0->>p1: sending()
     p0->>p1: send_test_report()
     p0->>p5: unreadable()
-    p0->>p5: file()
 ```
 
 `main` first parses the command line with clap. Then it picks one of four paths, in this order.

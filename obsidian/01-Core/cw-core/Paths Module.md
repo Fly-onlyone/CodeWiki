@@ -38,7 +38,7 @@ Says where CodeWiki keeps per-user files and which file holds a repository's ind
 
 ## Used by
 
-- [[codewiki-app]] — from `keep_agents_out`, `let_agents_in`, `open_settings`, `read_auto_explain`
+- [[codewiki-app]] — from `keep_agents_out`, `let_agents_in`, `read_auto_explain`, `reload_auto_explain`
 - [[cw-client]] — from `check_remote`, `forget_remote`, `save_remote`, `saved_remote`
 - [[codewiki]] — from `agents`, `run`, `sentry_test`, `session_start_hook`
 - [[Service Module]] — from `open_existing_index_in`, `open_index`, `open_index_in`, `update`

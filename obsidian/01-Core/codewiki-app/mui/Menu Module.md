@@ -60,7 +60,7 @@ And 1 more private item with no comment.
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `settings_menu_view`, `theme_menu_item`, `theme_menu_view`
+- [[codewiki-app]] — from `AppView`, `body`, `settings_menu_view`, `theme_menu_item`
 - [[Doc View Module]] — from `select_control`
 - [[Select Module]] — from `menu`
 - [[Suggest Module]] — from `Suggestions`

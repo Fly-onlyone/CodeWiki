@@ -239,10 +239,12 @@ fn check_vault_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// The note with the vault path or the name `path_or_name`.
+/// The note with the vault path or the name `path_or_name`. A vault path may
+/// leave out `.md`, as a link does (`[[01-Core/engine/_index|engine/]]`).
 pub(crate) fn find_entry<'a>(meta: &'a VaultMeta, path_or_name: &str) -> Result<&'a NoteEntry> {
     let entry = meta
         .by_path(path_or_name)
+        .or_else(|| meta.by_path(&format!("{}.md", path_or_name.trim_end_matches(".md"))))
         .or_else(|| {
             let wanted = path_or_name.trim_end_matches(".md").to_lowercase();
             meta.notes

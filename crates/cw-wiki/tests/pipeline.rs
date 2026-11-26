@@ -96,6 +96,24 @@ fn first_run_writes_a_linked_vault() {
 }
 
 #[test]
+fn a_link_by_folder_path_opens_its_note() {
+    let dir = fixture();
+    run(dir.path());
+    // The home note links a folder's map as `[[01-Core/engine/_index|engine/]]`:
+    // a vault path without `.md`, as Obsidian writes it. Opening it said
+    // "not found: note '01-Core/engine/_index'".
+    let map = cw_wiki::query::read_note(dir.path(), "01-Core/engine/_index").unwrap();
+    assert_eq!(map.info.path, "01-Core/engine/_index.md");
+    // The whole path and a bare name still open their notes.
+    let whole = cw_wiki::query::read_note(dir.path(), "01-Core/engine/_index.md").unwrap();
+    assert_eq!(whole.info.path, "01-Core/engine/_index.md");
+    let named = cw_wiki::query::read_note(dir.path(), "OrderBook").unwrap();
+    assert_eq!(named.info.path, "01-Core/engine/OrderBook.md");
+    // A path to no note is still not found.
+    assert!(cw_wiki::query::read_note(dir.path(), "01-Core/engine/Nothing").is_err());
+}
+
+#[test]
 fn second_run_changes_nothing() {
     let dir = fixture();
     let first = run(dir.path());

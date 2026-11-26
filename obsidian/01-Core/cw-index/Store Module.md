@@ -6,13 +6,21 @@ tags: [core, cw-index, module]
 
 > Reads and writes of structural facts.
 
+## What it does
+
+This module is the core of the index database. It defines the [[Index]] struct that wraps one SQLite connection, and it reads and writes the structural facts of a repository: files, symbols, edges, crates, external uses and graph metrics. It also holds `NodeMetrics`, the per-node scores (PageRank, betweenness, strongly connected component, community, and layout x and y) that the graph views use. The other `cw-index` modules add their own methods to `Index`.
+
 ## Source
 
 - `crates/cw-index/src/store.rs` — module `cw_index::store`
 
 ## How it works
 
-1. `Index::documents` and `Index::replace_documents` in [[cw-index]], and 19 more, call `db`. `db` calls `Error::external` in [[Error]].
+`db` is a small helper. Given a context string such as "writing facts", it returns a closure that turns a `rusqlite::Error` into a CodeWiki `Error` carrying that context. Every query in the crate uses it.
+
+`symbol_from_row` and `edge_from_row` turn a database row back into a `Symbol` or an `Edge`. Text columns like kind and confidence are parsed back into enums. The `attrs` column is a comma-joined string and is split again on read.
+
+Writes follow one pattern: open a transaction, delete the old rows, insert the new ones, commit. A failure in the middle leaves the old data in place.
 
 ## Items
 
@@ -40,6 +48,13 @@ And 3 more private items with no comment.
 - [[Vectors Module]] — from `delete`, `upsert`
 - [[Analyze Module]] — from `analyze`, `metrics_map`
 - [[Generate Module]] — from `generate`, `generate_with`
+
+## Gotchas
+
+- `SYMBOL_COLUMNS` and the column order of the `symbols` table must match `symbol_from_row` by position. Change one, change all.
+- Symbol attributes are joined with commas. An attribute that contains a comma would be split in two on read.
+- Metrics store `x` and `y` as f64 in SQLite and read them back as f32, so tiny rounding is possible.
+- `db` takes a `&'static str`, so a context message cannot be built at run time.
 
 ## See also
 

@@ -6,14 +6,21 @@ tags: [core, cw-update, module]
 
 > Unpacking a verified package and checking that its programs start.
 
+## What it does
+
+Takes the verified zip from [[Download Module]], unpacks it into a staging folder, and proves the result is usable before anything is swapped in. It checks that every program is present and that the new `codewiki.exe` starts and reports the expected version.
+
 ## Source
 
 - `crates/cw-update/src/stage.rs` — module `cw_update::stage`
 
 ## How it works
 
-1. `install` in [[cw-update]] calls `stage`. `stage` calls `program_version`.
-2. `install` in [[cw-update]] calls `program_version`. `program_version` calls `parse_version_line`.
+`stage` empties the target folder if it exists, creates it, and extracts the zip. It then checks that each name in `PROGRAMS` is a file there. Next it calls `program_version` on the new `codewiki.exe` and compares the result to the version of the release. Any mismatch is an error.
+
+`program_version` runs `<exe> --version` with no input, captures standard output, and polls `try_wait` every 50 ms. If the program is still running after `VERSION_TIMEOUT` (20 seconds), it is killed and an error returns. A non-zero exit is an error. `parse_version_line` takes the second word of the line, as in `codewiki 0.2.0`, and parses it as a version.
+
+`install` in [[cw-update]] also calls `program_version` directly.
 
 ## Items
 
@@ -29,6 +36,13 @@ tags: [core, cw-update, module]
 ## Used by
 
 - [[cw-update]] — from `install`
+
+## Gotchas
+
+- On Windows the child starts with the no-window flag. Without it the desktop app would flash a terminal window.
+- The 20-second limit is deliberate: a virus scan of a program never run before can delay the first start by seconds.
+- A failed stage leaves the unpacked files in place. The test shows a zip without programs still leaves its `LICENSE` in the folder. The next `stage` call empties the folder first.
+- Running the new program is a real check on the machine, but it executes downloaded code. That is why [[Release Module]] checks where the package comes from and [[Download Module]] checks its hash first.
 
 ## See also
 

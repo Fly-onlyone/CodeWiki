@@ -6,16 +6,17 @@ tags: [core, cw-graph, module]
 
 > Centrality and connectivity metrics.
 
+## What it does
+
+This module answers questions about the shape of the dependency [[Graph]]. Which nodes matter most (`pagerank`)? Which nodes sit on many routes between others (`betweenness`)? Which nodes form a cycle (`strongly_connected_components`)? What is the shortest chain from one node to another (`shortest_path`)? The analysis and the dependency-path query use the answers.
+
 ## Source
 
 - `crates/cw-graph/src/metrics.rs` — module `cw_graph::metrics`
 
 ## How it works
 
-1. `analyze` in [[Analyze Module]] and `break_cycles` in [[Refactor Module]] call `strongly_connected_components`.
-2. `analyze` in [[Analyze Module]] calls `pagerank`.
-3. `analyze` in [[Analyze Module]] calls `betweenness`.
-4. `dependency_path` in [[Query Module]] calls `shortest_path`.
+`pagerank` repeats power iteration until the total change falls under a tolerance. An edge `a -> b` means a depends on b, so rank flows to what is depended on most. Rank held by nodes with no outgoing edges is spread evenly. Scores sum to 1. `strongly_connected_components` is Tarjan's algorithm with its own stack, not recursion, so a deep graph cannot overflow the call stack. A component with more than one node is a cycle. `betweenness` is Brandes' method on edge counts only, ignoring weights. `shortest_path` is a breadth-first search that counts edges and returns the node numbers from start to end, or `None`.
 
 ## Items
 
@@ -33,6 +34,13 @@ tags: [core, cw-graph, module]
 - [[Analyze Module]] — from `analyze`
 - [[Query Module]] — from `dependency_path`
 - [[Refactor Module]] — from `break_cycles`
+
+## Gotchas
+
+- For a graph larger than `max_pivots` nodes, `betweenness` runs from evenly spaced start nodes and scales the result. It is an estimate, kept cheap for repositories of 50 thousand nodes.
+- `betweenness` and `shortest_path` ignore edge weights; `pagerank` uses them.
+- Component ids and results are plain numbers by node index, not names. Map them with `Graph::id` and `nodes`.
+- `shortest_path` returns `None` for a node number out of range as well as for no route.
 
 ## See also
 

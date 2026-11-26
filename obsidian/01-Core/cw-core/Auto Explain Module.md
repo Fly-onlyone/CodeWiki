@@ -8,7 +8,7 @@ tags: [core, cw-core, module]
 
 ## What it does
 
-When it is on, coding agents explain the waiting wiki notes on their own at the start of a session. One small text file in the data directory holds the switch. `codewiki hook session-start` and the desktop app read it; the app changes it. It is on by default. A file that cannot be read or understood means off, so a broken file never spends anyone's allowance.
+A one-word switch that says whether coding agents should explain waiting wiki notes by themselves at session start. The setting lives in `auto-explain.txt` in the data directory. The session-start hook in [[codewiki]] and the desktop app read it. Only the app writes it. It is on by default.
 
 ## Source
 
@@ -16,10 +16,11 @@ When it is on, coding agents explain the waiting wiki notes on their own at the 
 
 ## How it works
 
-1. `session_start_hook` in [[codewiki]] and `read_auto_explain` in [[codewiki-app]], and 3 more, call `load`. `load` calls `file`.
-2. `AppView::run_settings_action` in [[codewiki-app]] calls `save`. `save` calls `file`, then `Error::io` in [[Error]].
+`load` returns a bool. A missing file means on. Otherwise the trimmed text must equal `on`, ignoring case. Anything else (empty, `yes`, `true`, a folder in place of the file, an unreadable file) means off.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`save` creates the data directory if needed, writes `on` or `off` to a temporary file, then renames it over the real one, so a reader never sees a half-written file.
+
+In the hook, a result of on lets `hook_input` read the host's JSON from stdin and choose whether the briefing orders the agent to explain notes. With off, stdin is not even read.
 
 ## Items
 
@@ -38,6 +39,12 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[codewiki-app]] — from `open_settings`, `read_auto_explain`, `run_settings_action`, `show_settings_category`
 - [[codewiki]] — from `session_start_hook`
 - [[Settings View Module]] — from `new`
+
+## Gotchas
+
+- Fail closed. A damaged file turns the feature off, so a broken file never spends anyone's usage allowance. Only a missing file means on.
+- Only the exact words `on` and `off` count. `true` or `1` written by hand mean off.
+- `save` returns an error for I/O failures, but `load` has no error case at all.
 
 ## See also
 

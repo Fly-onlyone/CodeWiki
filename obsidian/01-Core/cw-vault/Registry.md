@@ -8,7 +8,7 @@ tags: [core, cw-vault]
 
 ## What it does
 
-Map notes (`_index`, `_HOME`) are keyed by path instead, because every folder has one.
+The table of all note names in a vault. It answers one question: which note does this link target mean? Ordinary notes are keyed by file stem, compared in lower case. Map notes (`_index` and `_HOME`) are keyed by their path instead, since every folder has an `_index`. The linter and the generator both use it, so a link that does not resolve here is reported as an error.
 
 ## Source
 
@@ -16,7 +16,16 @@ Map notes (`_index`, `_HOME`) are keyed by path instead, because every folder ha
 
 ## How it works
 
-1. `generate_with` in [[Generate Module]] and `VaultMeta::registry` in [[VaultMeta]] call `new`.
+`insert` adds an entry. A second ordinary note with the same lower-case stem and another path is an error. `reserve` picks a free name for a new title: the plain title, then the title with the folder's last segment in parentheses, then the title with a counter (2, 3, and so on). It records the choice at once, so later calls see it.
+
+`resolve` takes a link target and the path of the note that holds the link:
+
+- A target with a slash is read as a vault path.
+- `_index` means the map of the note's own folder. From a map note it means the parent folder's map.
+- `_HOME` means the root map.
+- Anything else is looked up by name, ignoring case.
+
+`entries` lists named notes first, then maps, each in path order. `VaultMeta::registry` in [[VaultMeta]] builds the registry from the note entries.
 
 ## Items
 
@@ -48,6 +57,13 @@ Members:
 - [[Lint Module]] — from `link_resolution_rate`, `lint`
 - [[Generate Module]] — from `Links`, `generate_with`
 - [[VaultMeta]] — from `registry`, `save`
+
+## Gotchas
+
+- A bare `_index` link in a note outside any folder resolves to nothing.
+- Lookups ignore case, but the stored path keeps its case.
+- `reserve` changes the registry even if the caller later drops the note.
+- The registry is saved as `registry.json`, but it is rebuilt from the note entries on every save. Editing the file by hand has no lasting effect.
 
 ## See also
 

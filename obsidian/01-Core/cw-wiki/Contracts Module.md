@@ -8,12 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Both sides are found lexically in Rust source (`crate::rustscan`), with no type information:
-
-- **Provided**: axum `.route("/path", get(h).post(h2))` calls, with the prefix of a literal `.nest("/v1", …)` in the same file applied, and attribute macros in the actix and rocket style (`#[get("/path")]`).
-- **Consumed**: string literals and `format!` templates that look like a URL path, such as `/v1/repos/{id}/notes` or `{url}/v1/health`, other than the literals that define a provided route.
-
-Test code is skipped on both sides. Path parameters (`{id}`, `:id`, `<id>`, `{}` and any interpolation) are normalised to `{}` before two paths are compared, and a parameter on either side matches any one segment: a consumer that interpolates the last segment is taken to call every route of that shape. The rules favour silence over recall.
+When several services talk over HTTP, a renamed route can silently break a caller. This module finds, in Rust source, the routes a repository serves and the URL paths it calls. Across repositories it matches the two sides, so you can see calls nobody answers and routes nobody calls. It reads text only, with no type information, and it prefers to stay silent over guessing.
 
 ## Source
 
@@ -21,10 +16,13 @@ Test code is skipped on both sides. Path parameters (`{id}`, `:id`, `<id>`, `{}`
 
 ## How it works
 
-1. `run` in [[codewiki]] and `repo_contracts` in [[Workspace Module (cw-server)]] call `scan`. `scan` calls `is_test_path` in [[Rustscan Module]], then `scan_source`. `scan_source` calls `is_test_path` in [[Rustscan Module]], then `Scanned::new` in [[Scanned]], then `router_routes`, then `attribute_routes`, then `nests`, then `prefix_at`, and 2 more.
-2. `workspace_contracts` in [[Workspace Module (cw-server)]] calls `match_workspace`. `match_workspace` calls `normalize`, then `same_shape`. `normalize` calls `is_parameter`.
+`scan_source` handles one file. It skips test paths, then builds a `Scanned` view of the code (comments and strings separated).
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Provided side: `router_routes` finds `.route("/p", get(h).post(h2))` and `.route_service` calls and reads the method names with `route_methods`. A route with no method name is `ANY`. `attribute_routes` finds `#[get("/p")]` style attributes. `nests` finds `.nest("/v1", target)` calls whose target is an inline router, a `let` binding or a function in the same file. `prefix_at` stacks the prefixes of the innermost enclosing nests onto each route.
+
+Consumed side: every string literal that is not the path of a provided route, not in test code, and not the argument of a text method like `starts_with` goes to `url_path`. That keeps rooted paths, `http(s)://host/path` URLs and templates like `{base_url}/v1/health`.
+
+`scan` runs this over every indexed Rust file. `match_workspace` takes several repositories. It normalises every path with `normalize` (parameters become `{}`) and compares with `same_shape`: same segment count, and each segment equal or a parameter on either side. The result has matched links, unprovided calls and unconsumed routes.
 
 ## Items
 
@@ -65,6 +63,15 @@ And 15 more items.
 - [[Workspace Module (cw-server)]] — from `WorkspaceContractsView`, `repo_contracts`, `workspace_contracts`
 - [[codewiki]] — from `run`
 - [[Api Module]] — from `repo_contracts`
+
+## Gotchas
+
+- Only Rust is scanned. A client written in another language is invisible.
+- A path built at run time is not seen, only literals and `format!` templates.
+- A parameter segment on either side matches any segment, so one interpolated call can match many routes. Treat "matched" as likely, not proven.
+- `url_path` rejects filesystem roots (`/usr`), paths ending in file extensions, bare API roots (`/v1`), and one-letter paths (`/c`) to avoid false calls.
+- Nesting is applied only within the same file. A router nested from another file loses its prefix.
+- Provided paths with a query string are cut at the `?`.
 
 ## See also
 

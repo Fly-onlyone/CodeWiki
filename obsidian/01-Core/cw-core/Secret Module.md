@@ -8,7 +8,7 @@ tags: [core, cw-core, module]
 
 ## What it does
 
-On Windows a secret is encrypted with the Data Protection API for the user who runs the program, so the file is of no use to another account or on another machine. The stored form is the encrypted bytes as hexadecimal text. Other systems have no such store: there a secret cannot be saved and comes from an environment variable only.
+Stores secrets, such as API keys and a remote backend's token, in settings files without writing them in plain text. On Windows a secret is encrypted with the Data Protection API for the signed-in user, and the file holds the encrypted bytes as hex text. Another account or computer cannot read it. Other systems have no such store, so there a secret comes from an environment variable only.
 
 ## Source
 
@@ -16,12 +16,11 @@ On Windows a secret is encrypted with the Data Protection API for the user who r
 
 ## How it works
 
-1. `save_in` in [[Remote Module]] and `Settings::set` in [[Settings]] call `protect`. `protect` calls `Error::invalid` in [[Error]], then `protect` in [[Platform Module]].
-2. `token_in` in [[Remote Module]] and `Resolved::saved_secret` in [[Resolved]] call `unprotect`. `unprotect` calls `Error::invalid` in [[Error]], then `unprotect` in [[Platform Module]].
-3. `save_in` in [[Remote Module]] and `Settings::set` in [[Settings]] call `hint`.
-4. `apply` and `describe` in [[Settings Module (cw-server)]] call `available`.
+`protect` rejects an empty secret, encrypts the rest through the platform submodule, and returns hex. `unprotect` reverses it: it decodes the hex, rejects empty data, decrypts, and requires valid UTF-8. Any failure becomes an error with a plain message. `available` tells callers whether saving can work at all (true only on Windows), so settings screens can say so.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`hint` returns the last 4 characters of a secret so the owner can tell which key is saved. Secrets shorter than 12 characters give an empty hint. [[Remote Module]] and [[Settings]] store the hint next to the encrypted value.
+
+On Windows the call also mixes in a fixed text (`CodeWiki settings v1`) so another program run by the same user does not decrypt a CodeWiki secret by accident. It is not a key. The user account is the protection.
 
 ## Items
 
@@ -46,6 +45,13 @@ Submodules: [[Platform Module]].
 - [[Settings Module (cw-server)]] — from `apply`, `describe`
 - [[Resolved]] — from `saved_secret`
 - [[Settings]] — from `set`
+
+## Gotchas
+
+- A stored secret cannot be moved. Copy the settings file to another user or machine and `unprotect` fails; the user must enter the secret again.
+- On non-Windows systems `protect` cannot save. Use environment variables.
+- Never log a plain secret. Only the hint is meant to be shown.
+- The Windows code uses `unsafe` calls and frees the system buffer with `LocalFree` after copying.
 
 ## See also
 

@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Churn, ownership, bus factor and co-change are mined from `git log`. They are combined with the dependency graph into a risk score that an agent or a reviewer can read before changing code.
+History tells which files are risky to touch. This module mines `git log` for churn, authors, bus factor (how few people know a file) and files that usually change together. It combines them with the dependency graph into a risk score for one file or a whole change. Agents and reviewers read the score before editing.
 
 ## Source
 
@@ -16,15 +16,20 @@ Churn, ownership, bus factor and co-change are mined from `git log`. They are co
 
 ## How it works
 
-1. `run` in [[codewiki]] and `change_risk` in [[Api Module]], and 8 more, call `load`.
-2. `run` in [[codewiki]] and `hotspots` in [[Api Module]], and 4 more, call `hotspots`.
-3. `Facts::load` in [[Refactor Module]] and `gather` in [[Testmap Module]] call `dependents_by_file`.
-4. `run` in [[codewiki]] and `file_risk` in [[Api Module]] call `file_risk`. `file_risk` calls `blast_radius`, then `level`.
-5. `run` in [[codewiki]] and `change_risk` in [[Api Module]], and 1 more, call `working_tree_changes`.
+`mine` runs `git log --no-merges --numstat -M` over the last 3000 commits and parses it. Per file it counts commits, lines changed, last change time and commits per author. Rename notation is resolved so history follows the new path. Binary files count as one changed line.
 
-4 more entry points: `change_risk`, `mine`, `save`, `blast_radius`.
+`analyze` then derives:
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- Owners, sorted by commit count. The bus factor is the smallest number of top authors whose commits exceed half.
+- Partners: pairs of files in the same commit. Commits touching fewer than 2 or more than 30 files are ignored (bulk edits). A pair needs at least 3 co-changes. Strength is together count divided by the commits of the rarer file. At most 8 partners are kept per file.
+
+`save` stores the result as JSON in the index, and `load` reads it back (empty if absent or unreadable).
+
+`hotspots` scores each file as commits times the log of its line count, scaled so the top file is 100.
+
+`dependents_by_file` builds reverse dependencies between files from import edges and call, reference and implement edges. `blast_radius` walks them breadth first: direct dependents, then those reached through more hops.
+
+`file_risk` adds points to a 0 to 100 score: up to 40 for reach, up to 35 for churn against the busiest file, 15 for a single author with at least 5 commits, 10 for a partner with strength 0.6 or more. Levels: low to 34, medium to 64, high above. `change_risk` takes the riskiest file, adds a breadth term and up to 15 points for partners missing from the change.
 
 ## Items
 
@@ -67,6 +72,13 @@ And 8 more items.
 - [[Agentdocs Module]] — from `render`
 - [[Coverage Module]] — from `report`
 - [[Refactor Module]] — from `load`
+
+## Gotchas
+
+- Only the last 3000 commits are read, so old history does not count.
+- Outside a git repository `mine` returns empty data, and every file then reads as having no history.
+- `working_tree_changes` includes untracked files and reads the new name of a rename.
+- Missing partners need strength 0.5 or more, a stricter test than the 0.6 used for the score.
 
 ## See also
 

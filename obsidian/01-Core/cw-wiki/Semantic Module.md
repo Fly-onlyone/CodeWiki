@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Full-text search finds the words typed. Vectors also find documents that use other forms of those words, or (with a neural embedder) other words for the same idea. Results of both are merged by rank, so neither side's score scale matters.
+Adds meaning-based search on top of full-text search. An embedder turns a document into a vector of numbers. A query is turned into a vector too, and the closest document vectors are found. This finds documents that use other forms of the typed words, or, with a neural model, other words for the same idea. The module keeps the vectors in the index up to date, and merges vector hits with full-text hits when a user searches. It is used by the server, the CLI and the index jobs.
 
 ## Source
 
@@ -16,13 +16,13 @@ Full-text search finds the words typed. Vectors also find documents that use oth
 
 ## How it works
 
-1. `run` in [[codewiki]] and `serve` in [[cw-server]], and 2 more, call `configure`.
-2. `Slot::configure` and `Slot::get` in [[Slot]] call `built`.
-3. `run` in [[Serve Module]] calls `embedder`.
-4. `Run::plan` in [[Run]] calls `text_of`.
-5. `after_update` and `embed_repo` in [[Embed Job Module]], and 1 more, call `behind`.
+A process-wide [[Slot]] holds the embedder. Programs call `configure` at start, and the backend calls it again when settings change, so no restart is needed. `embedder` returns the current one, or `None` when semantic search is off.
 
-4 more entry points: `set_inline_budget`, `refresh`, `search_with`, `search`.
+Updating vectors is done by [[Run]]. `embed_documents_with` plans a run, embeds batch by batch, stores each batch, and asks `on_batch` whether to go on. `refresh` does this with the process embedder inside a time budget set by `set_inline_budget`. The run stops after the batch in which the budget ran out. The rest waits, and `behind` reports that.
+
+Two meta keys per document kind record the state. `MADE_BY` names the embedder that made the stored vectors. `WAITING` is set to 1 when documents still need a vector.
+
+`search_with` runs full-text search and, if there is an embedder, `nearest`. `nearest` only looks at kinds whose vectors the current embedder made. Both lists are merged with reciprocal rank fusion: each hit scores 1 divided by 60 plus its rank, and scores add up when a hit is in both lists. So the two score scales never need to match. Vector hits below 0.18 similarity are dropped. A hit with no snippet gets the opening of its document.
 
 ## Items
 
@@ -70,6 +70,14 @@ And 6 more items.
 - [[codewiki]] — from `run`
 - [[cw-wiki]] — from `no_model_server`
 - [[Serve Module]] — from `run`
+
+## Gotchas
+
+- A bad embedder setting turns semantic search off with one warning. It does not fail index updates. A failing embedder in `refresh` is logged and full-text search keeps working.
+- Vectors from an earlier embedder are never compared with a query from another. During a switch, the key holds the marker for mixed vectors, so neither embedder counts as current until the run is done. A run cut short stays "behind".
+- An index written before the embedder name was recorded counts as current.
+- The inline budget is time, not a count. At least one batch is always embedded, even with a zero budget.
+- A program that never sets a budget embeds everything where it stands.
 
 ## See also
 

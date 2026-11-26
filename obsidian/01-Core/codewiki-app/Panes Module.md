@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The sidebar and the details pane can each be hidden to leave the page more room. The choice is remembered between runs, one setting per pane.
+The app has two side panes: the sidebar (the vault's notes, on the left) and the details pane (what is known about the page, on the right). Either can be hidden to give the page more room. This module remembers each choice between runs, one setting per pane, stored through [[Prefs Module]].
 
 ## Source
 
@@ -16,10 +16,7 @@ The sidebar and the details pane can each be hidden to leave the page more room.
 
 ## How it works
 
-1. `AppView::new` in [[codewiki-app]] calls `load`. `load` calls `is_open`, then `read` in [[Prefs Module]].
-2. `AppView::toggle_pane` in [[codewiki-app]] calls `store`. `store` calls `write` in [[Prefs Module]].
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`store` writes the word shown or hidden to the setting named after the pane (sidebar or details). `load` reads that setting back through `is_open`. The app calls `load` once at start (`AppView::new`) and `store` each time the user toggles a pane (`AppView::toggle_pane`).
 
 ## Items
 
@@ -38,6 +35,11 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `new`, `toggle_pane`
+
+## Gotchas
+
+- Shown is the default. Only the exact word hidden (surrounding whitespace is trimmed) hides a pane. A missing file, an empty file, or text like off, false, 0 or Hidden with a capital H leaves it shown.
+- A failed write is ignored by [[Prefs Module]], so a pane can reappear after a restart without any error.
 
 ## See also
 

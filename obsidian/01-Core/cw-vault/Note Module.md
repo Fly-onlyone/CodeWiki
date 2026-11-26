@@ -6,18 +6,19 @@ tags: [core, cw-vault, module]
 
 > Parsing of a note's structure: frontmatter, title, summary, sections, links.
 
+## What it does
+
+Understands the shape of a wiki note. It reads a note's text into parts: frontmatter and tags, title, one-line summary, sections, links and word count. It also defines [[NoteKind]], which says which sections each kind of note has and which of them an agent writes. The linter, the explanation weaver and the health checks all rely on it.
+
 ## Source
 
 - `crates/cw-vault/src/note.rs` — module `cw_vault::note`
 
 ## How it works
 
-1. `link_resolution_rate` and `lint` in [[Lint Module]], and 8 more, call `Note::parse`. `Note::parse` calls `parse_tags`, then `push_line`, then `extract_links`, then `count_words`.
-2. `extract` and `weave` in [[Explanation Module]], and 4 more, call `split`.
-3. `weave` in [[Explanation Module]] and `Doc::finish` in [[Render Module]] call `join`.
-4. `lint` in [[Lint Module]] calls `extract_links`.
+`Note::parse` walks the lines in four stages: before the title, expecting a summary, inside the summary, and the body. Frontmatter between `---` fences is read first and its tags go through `parse_tags`, which accepts `tags: [a, b]` or a block list. The `> ` lines under the title form the summary. Each `## ` heading starts a [[Section]]. Fenced code blocks are tracked, so their language is recorded and a heading inside them starts nothing. Links come from `extract_links`, and `count_words` counts prose only.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`split` and `join` are the exact way to cut a note into its head and sections and to put it together again. `join` is the one definition of a note's layout: a blank line, the heading, a blank line, the body. `weave` in [[Explanation Module]] uses both to replace the agent's sections and keep the rule-made ones.
 
 ## Items
 
@@ -46,6 +47,15 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Explanations Module]] — from `brief`, `submit`
 - [[Agentdocs Module]] — from `render`
 - [[Health Module]] — from `doc_drift`
+
+## Gotchas
+
+- `join` leaves out a section with an empty body. A round trip through `split` and `join` keeps a note identical only if it has no empty sections.
+- `extract_links` skips inline code spans, so a link in backticks is not a link. It accepts an alias and a heading part, and keeps only the target. A link with `!` before it is marked as an embed.
+- Words in fenced code and frontmatter are not counted, so the length limits in [[Lint Module]] measure prose only.
+- `Note::parse` and `split` both strip a byte order mark and read CRLF line endings the same as LF.
+- `fact_fences` is true only for the `How it works` section of flow and operations notes. A diagram there is a rule-made fact, not agent text.
+- `agent_sections` is empty for home, index, glossary and decision notes. No agent explains those.
 
 ## See also
 

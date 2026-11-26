@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A Cargo package is a unit. Code in other languages has no manifest the scanner understands, so its units are derived here from the layout: a Python top-level package, a JavaScript or TypeScript package directory, a Java build module. Every unit has the same shape, so planning and rendering treat them alike.
+Finds the top-level parts of a repository, called units. Each unit gets its own folder under `01-Core` in the vault. A Cargo package is a unit. For Python, JavaScript, TypeScript and Java the scanner has no manifest it understands, so this module derives units from the layout and the build files. Every unit has the same shape ([[Unit]]), so the planner and the renderer treat Rust and other languages alike.
 
 ## Source
 
@@ -16,10 +16,13 @@ A Cargo package is a unit. Code in other languages has no manifest the scanner u
 
 ## How it works
 
-1. `Repo::is_test` in [[Repo]] and `RenderCtx::unit_commands` in [[RenderCtx]] call `is_test_file`.
-2. `Repo::at` and `Repo::new` in [[Repo]] call `discover`. `discover` calls `join`, then `Family::of`, then `nearest_with`, then `parent_dir`, then `is_test_file`, then `parse_package_json`, and 3 more. `nearest_with` calls `ancestors`, then `join`.
+`discover` builds a [[Units]] value in three steps.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+1. Each crate from the scan becomes a Rust unit. Its entry is `main` when the crate has a binary.
+2. Every non-Rust source file is put into a group by language family. Python files group by their top-level package, and a lone top-level module goes into a shared group. JavaScript and TypeScript files group by the nearest folder up the tree that holds a `package.json`, or by their top folder if there is none. Java files group by the nearest folder with `pom.xml` or a Gradle file, or by the first part of their package name.
+3. Each group becomes a unit if it holds at least one real symbol outside test files. The unit's root module is the common prefix of its module names. Its manifests are found next to the group. A `package.json` supplies the name, description, scripts and entries: `main`, `bin` and the file named in the `start` script. `resolve_js_entry` maps a built path such as `dist/x.js` back to a source file under `src`.
+
+`is_test_file` recognises non-Rust tests by folder names (`tests`, `__tests__`, `spec`, `e2e`) and by file patterns such as `test_*.py`, `*.test.ts` and `*Test.java`. `slug` makes a name safe as a folder and a tag.
 
 ## Items
 
@@ -58,6 +61,13 @@ And 3 more private items with no comment.
 - [[Manifests Module]] — from `asked_in`
 - [[RenderCtx]] — from `unit_commands`
 - [[Unit]] — from `Unit`
+
+## Gotchas
+
+- A unit never mixes language families. A repository with Python and TypeScript gets separate units.
+- Configuration files or test suites alone do not make a unit.
+- Unit names and folder slugs are kept unique separately, because a unit's key may equal its folder name.
+- Manifests are read through a callback. When it returns nothing (as with `Repo::new`), the unit is still found but its manifest text is empty.
 
 ## See also
 

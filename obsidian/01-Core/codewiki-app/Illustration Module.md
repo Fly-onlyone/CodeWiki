@@ -8,9 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Turns an evaluated OpenUI Lang tree into GPUI elements, drawn with the `mui` components. Every component of the CodeWiki library (`cw_illustrate::library`) has a branch here; a component this renderer does not know is drawn as its name, never dropped silently.
-
-A picture explains what the text beside it says: a `Flow` is a row of numbered boxes joined by arrows, read from a cause to its result, and a `Callout` is a marked key point.
+A note can carry pictures: a flow of boxes and arrows, or a marked callout. A picture is stored as a small program in OpenUI Lang (see [[openui-lang]]). This module draws the evaluated tree of such a program as native GPUI elements, using the app's `mui` components. It is how a picture reaches the screen in the note view.
 
 ## Source
 
@@ -18,9 +16,9 @@ A picture explains what the text beside it says: a `Flow` is a row of numbered b
 
 ## How it works
 
-1. `AppView::page_content` in [[codewiki-app]] calls `render`. `render` calls `list_of`, then `flow`, then `step`, then `alert_titled` in [[Feedback Module]], then `tone_of`, then `text_of`, and 1 more. `flow` calls `list_of`, then `px` in [[Zoom Module]], then `step`, then `text_of`, then `text` in [[Surfaces Module]], then `rows`. `step` calls `card` in [[Surfaces Module]], then `px` in [[Zoom Module]], then `text` in [[Surfaces Module]], then `text_of`.
+`AppView::page_content` calls `render` with the root node of a picture. `render` matches the component name. A `Picture` becomes a column of its children, drawn by calling `render` again. A `Flow` goes to `flow`. A `Step` outside a flow draws its box alone. A `Callout` becomes an alert with a tone and an optional title, through `alert_titled`. Any other name is drawn as `[Name]` in muted text, so an unknown component is visible, not dropped.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`flow` collects its steps and lets `rows` split them into rows of at most three, spread evenly, so four steps are two rows of two. Each box is made by `step`: a card with a numbered disc, the title, and a muted sentence. Every box has room for an arrow after it, and all but the last show one, so boxes of all rows line up. The arrow after the last box of a row says the flow goes on in the next row. A row also wraps by itself in a narrow pane.
 
 ## Items
 
@@ -51,6 +49,14 @@ And 2 more private items with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `page_content`
+
+## Gotchas
+
+- `render` matches on component names. A component added to `cw_illustrate::library` needs a branch here, and a test fails until it has one.
+- The tone `danger` maps to the app's `Error` tone. A missing or unknown tone is information.
+- A row of three boxes, with their arrow rooms, must fit the note's reading column. A test checks this against the column width. Raise `STEP_MIN` or `ROW_STEPS` and it fails.
+- Empty or whitespace-only text is treated as absent, so a blank step text draws no line.
+- Sizes go through the zoom `px`, so pictures scale with the app's zoom.
 
 ## See also
 

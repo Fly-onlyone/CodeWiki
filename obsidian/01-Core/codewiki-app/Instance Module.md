@@ -8,18 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The app stays in the tray when its window closes, so starting it again must not start a second one: the launch hands what it was asked to open to the app that is running, which shows its window, and ends.
+The app keeps running in the tray when its window closes. So a second launch, for example a click on a shortcut or a folder passed on the command line, must not start a second app. This module makes sure only one app runs for each installed program file. A later launch passes its request (a folder and a view) to the running app and ends. The running app shows its window.
 
-"The same app" is the same program file. An installed copy and a build from the sources are two apps, each with its window; otherwise a build under test would hand over to the installed version. `CODEWIKI_INSTANCE=new` starts a separate app whatever is running, for tests and for checks that must not bring another window to the front.
-
-Two files in the settings folder, both named after the program file:
-
-- `instance-<key>.lock` is held locked by the running app for as long as it lives. Windows drops the lock when the process ends, however it ends.
-- `instance-<key>.txt` says where that app listens: `port=`, `token=` and `pid=`, one per line. It is a second file because a locked file cannot be read by another process.
-
-A launch that finds the lock taken sends one line of JSON to `127.0.0.1:<port>` and waits for `ok`. The token keeps a program that merely found the port from driving the app; it guards against nothing that can read the user's settings folder.
-
-The app never refuses to start. A launch that can neither take the lock nor reach the running app (it is just starting, or just ending) tries again for a few seconds and then runs by itself.
+"The same app" means the same program file. An installed copy and a development build are two apps. Set `CODEWIKI_INSTANCE=new` to start a separate app whatever runs, for tests.
 
 ## Source
 
@@ -27,11 +18,13 @@ The app never refuses to start. A launch that can neither take the lock nor reac
 
 ## How it works
 
-1. `main` in [[codewiki-app]] calls `acquire`. `acquire` calls `dir` in [[Prefs Module]], then `Request::new`, then `acquire_in`, then `key`. `Request::new` calls `named_repo` in [[Startup Module]]. `acquire_in` calls `listen`, then `hand_over`.
-2. `main` in [[codewiki-app]] calls `hold`.
-3. `AppView::install_update` and `main` in [[codewiki-app]] call `release`.
+`main` calls `acquire` before any GPUI code. `acquire` builds a `Request` from the launch arguments and a key from the program path, then calls `acquire_in`. That function opens `instance-<key>.lock` in the settings folder and tries to lock it.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+If the lock is free, this process is the running app. `listen` binds a TCP port on 127.0.0.1, creates a random token, writes port, token and process id to `instance-<key>.txt` (written to a draft file and renamed, so nobody reads half of it), and starts a thread. For each connection the thread reads one line, and checks the token. It passes the request to `deliver`, and answers `ok` or `no`. `main` keeps the result with `hold`.
+
+If the lock is taken, `hand_over` reads the info file, connects, and sends one JSON line. It also lets the running app take the foreground window. On `ok`, `acquire` returns `HandedOver` and `main` exits.
+
+When neither works, `acquire_in` sleeps and retries until a timeout. Then it returns `Separate`. `release` removes the info file and wakes the listener thread so it frees the port. It runs on quit and before an update starts the new version.
 
 ## Items
 
@@ -70,6 +63,15 @@ And 7 more items.
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `Event`, `install_update`, `main`
+
+## Gotchas
+
+- The app never refuses to start. Any failure (no settings folder, lock error, no listener) gives `Separate`: a second app, not an error.
+- The lock file is held for the life of the process. Windows drops it when the process ends, even in a crash. The info file is separate because another process cannot read a locked file.
+- The token only stops a program that found the port by chance. It does not protect against anything that can read the user's settings folder.
+- `PROTOCOL` is the version of the line. An app of another version answers `no`, and the launch then runs by itself.
+- The key is built from the program path with FNV-1a, ignoring case, and must match in every process. Do not switch to a hasher with a random seed.
+- A launch that arrives while the running app is starting or ending may wait a few seconds before it gives up and runs alone.
 
 ## See also
 

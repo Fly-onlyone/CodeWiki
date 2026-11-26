@@ -8,7 +8,7 @@ tags: [core, openui-lang, module]
 
 ## What it does
 
-A program is a list of `identifier = expression` statements separated by newlines. Newlines inside brackets, and before a ternary `?` or `:`, do not end a statement. Expressions use a Pratt parser with the precedence of the reference implementation.
+The parser turns OpenUI Lang text into a `Program`: a list of `identifier = expression` statements, each holding an `Expr` tree. It is built to accept streamed or half-written model output, so it never fails. The evaluator then resolves the `Program`. Newlines end a statement, except inside brackets and before a ternary `?` or `:`. Expressions use a Pratt parser (each operator has a binding strength) with the precedence of the reference implementation.
 
 ## Source
 
@@ -16,10 +16,11 @@ A program is a list of `identifier = expression` statements separated by newline
 
 ## How it works
 
-1. `Node::display` in [[Node]] calls `format_number`.
-2. `check` in [[cw-illustrate]] calls `parse`. `parse` calls `auto_close`, then `tokenize` in [[Lexer Module]], then `split`.
+`parse` runs three steps. `auto_close` appends the missing quote and closing brackets for unfinished input and reports that it did so; the result is stored as `incomplete`. `tokenize` from the [[Lexer Module]] makes tokens. `split` cuts the tokens into statements and keeps a newline inside brackets or a ternary.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+For each statement, `ExprParser::expr` parses with a minimum precedence. `prefix` reads literals, arrays, objects, calls, references and unary operators. `infix` reads binary operators, the ternary, `.field` and `[index]`. Precedence rises from ternary through or, and, equality, comparison, add and multiply to unary and member access.
+
+A PascalCase word followed by `(` is a component call. `@Name(` is a function call. Without parentheses both are plain references.
 
 ## Items
 
@@ -44,6 +45,15 @@ And 10 more private items with no comment.
 - [[openui-lang]] — from `json`, `main`
 - [[cw-illustrate]] — from `check`
 - [[Node]] — from `display`
+
+## Gotchas
+
+- A line that is not `name = expr` is dropped without any error.
+- A later statement with the same name wins; `Program::get` searches from the end.
+- Nesting deeper than 200 gives `Null` and stops that expression, so hostile input cannot overflow the stack.
+- A token that cannot start an expression is consumed as `Null`, so loops always advance.
+- `format_number` prints whole numbers without `.0`, but only below 1e15.
+- Left-hand names may be PascalCase or `$state` names, not only lowercase ones.
 
 ## See also
 

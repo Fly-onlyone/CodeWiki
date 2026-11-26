@@ -22,15 +22,20 @@ A note its owner edited is never written: what the agent sends for it is filed a
 
 ## How it works
 
-1. `session_start` in [[Briefing Module]] calls `waiting_counts`. `waiting_counts` calls `VaultMeta::load` in [[VaultMeta]], then `count`, then `all_waiting`. `all_waiting` calls `waits`.
-2. `list_explanations` in [[Api Module]] calls `queue`. `queue` calls `fits_all`. `fits_all` calls `VaultMeta::load` in [[VaultMeta]], then `all_waiting`, then `count`, then `tidy`, then `row`.
-3. `list_explanations` in [[Api Module]] calls `every`. `every` calls `fits_all`.
-4. `read_explanation` in [[Api Module]] calls `brief`. `brief` calls `VaultMeta::load` in [[VaultMeta]], then `find_entry` in [[Query Module]], then `not_explainable`, then `note_text`, then `Error::not_found` in [[Error]], then `split` in [[Note Module]], and 8 more. `not_explainable` calls `Error::invalid` in [[Error]]. `note_text` calls `Error::io` in [[Error]].
-5. `write_explanation` in [[Api Module]] calls `submit`. `submit` calls `VaultMeta::load` in [[VaultMeta]], then `find_entry` in [[Query Module]], then `not_explainable`, then `note_text`, then `body_hash` in [[Manifest Module]], then `changed_since_sync`, and 17 more. `changed_since_sync` calls `file_hash` in [[Generate Module]].
+A note waits when its kind can be explained, nobody has edited it, and either no agent explained it (`Unexplained`) or an explained note has reasons it may be behind (`Behind`). `all_waiting` lists them, behind first, then by path. `queue` filters by folder and source files, drops notes that another agent holds, and cuts to the limit (clamped to 1 through `MAX_LIMIT`).
 
-3 more entry points: `approve`, `reject`, `decide_all`.
+`brief` returns the note text, the agent's sections, the files to read, the limits, and a `base`. The `base` is the body hash of the note as it is now.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`submit` goes through gates in order:
+
+- The note file must exist.
+- `base` must equal the hash of the current text, else `Changed`.
+- No source file may have changed since the last sync, else `SyncFirst`.
+- Each section must be one the agent owns, sent once, non-empty, at most the word limit, with no `#` or `##` heading, and no code block in sections where code is a fact.
+- The woven note must pass the strict linter. A fault the note already had is ignored, so the agent is not blamed for an owner's mistake.
+- Pictures must name an owned section that exists, at most one per section, and pass `cw_illustrate::review`.
+
+If all pass, the text is woven in, the pictures file is written, and the note records who explained it, from which source hashes, and at which commit. Pictures of sections not sent are kept. A note edited by its owner, or adopted, is not written: `create_agent` files a proposal, which `approve` or `reject` later decides.
 
 ## Items
 
@@ -74,6 +79,15 @@ And 22 more items.
 - [[Api Module]] — from `approve_proposal`, `decide_proposals`, `list_explanations`, `read_explanation`
 - [[codewiki]] — from `batch_and_claim_texts_follow_the_backend`, `write_notes_skill_follows_the_tools_and_the_limits`
 - [[Briefing Module]] — from `explain_sentence`, `session_start`
+
+## Gotchas
+
+- Every refusal is an `Outcome`, not an error. The agent is expected to act on each one.
+- A section sent again without a picture loses its old picture, since that picture explained the old text.
+- Files the agent names as read are hashed and added as sources, up to a limit. Changing one later marks the note behind.
+- An approved agent proposal leaves the note in its owner's hands. The next change of its facts becomes a proposal again, never an overwrite.
+- The caller must refresh the search index after `Saved`; this module does not.
+- A section may not hold a `#` or `##` heading, because it would end the section or start one of the rules'.
 
 ## See also
 

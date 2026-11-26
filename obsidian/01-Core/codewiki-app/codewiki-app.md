@@ -8,7 +8,9 @@ tags: [core, codewiki-app]
 
 ## What it does
 
-A native viewer for the vault and the live index. All data comes from the backend over HTTP; this binary links none of the engine crates. The one thing it does outside the backend is update its own installation (`cw-update`).
+This is the Windows desktop app of CodeWiki. It shows the wiki notes and the live index of a repository in a native window, built on GPUI (a Rust UI toolkit) and gpui-kit. It lives in the tray, so closing the window hides it and the app keeps running.
+
+All data comes from the backend over HTTP through `cw-client`. The app links none of the engine crates, only `cw-core` for paths and names. The one job it does by itself is to update its own installation, through `cw-update`. The crate root file holds `AppView`, the one big view that owns the pages, the tabs, the tray and the backend connection.
 
 ## Source
 
@@ -17,11 +19,17 @@ A native viewer for the vault and the live index. All data comes from the backen
 
 ## How it works
 
-Builds a binary.
+`main` runs these steps before any window opens:
 
-1. The program starts at `main`. `main` calls `read` in [[Prefs Module]], then `level_named` in [[Logs Module]], then `init` in [[cw-telemetry]], then `acquire` in [[Instance Module]], then `launch` in [[Startup Module]], then `hold` in [[Instance Module]], and 13 more.
+1. It reads the log level from the prefs (or the `CODEWIKI_LOG` variable) and starts logging and error reports.
+2. It makes a channel for events that come from outside GPUI: a second launch, the tray, a notification, Ctrl+C.
+3. `instance::acquire` decides whether this launch is the main app. A second launch hands its request over to the running one and returns at once with no window.
+4. `win32::on_console_stop` sends `Event::Quit` on Ctrl+C, so an IDE's Stop button quits like the tray does.
+5. Inside the GPUI run: `gpui_kit::init`, motion, backdrop, fonts, themes, then `zoom::init`. The key bindings are set, including the zoom keys. The window opens with a Mica backdrop.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`AppView::listen` is the one task that takes events from the channel. It hides or shows the window with the Win32 calls between two GPUI updates, then calls `handle_event`. Closing the window sends `Event::Hide` when a tray icon exists; without a tray, closing ends the app unless there are unsaved edits.
+
+On quit, `on_app_quit` releases the single-instance lock, flushes error reports, and asks the backend to stop on a background task. That happens only when this app started it: `stops_backend_on_quit` is false for a backend named by `CODEWIKI_URL` and while an update installs.
 
 ## Items
 
@@ -80,6 +88,7 @@ Defined at the crate root:
 - `enum Landing` — where the app goes once a repository's notes have loaded.
 - `enum Event` — what reaches the app from outside GPUI: from another thread, or from code that runs with no way to the app's state. Each is sent through a channel and carried out by one task of the app's view (`AppView::listen`), so that none of it ever runs while GPUI is in the middle of something.
 - `struct Tab` — A tab that is not on screen. The active tab's page and history live in the view itself; its slot is refreshed when the user leaves it.
+- `struct DiagramViewer` — A note being edited. A diagram of the page, opened over the window to be enlarged.
 - `enum Page` — what the centre pane shows.
 - `const SIDEBAR_WIDTH: f32` — width of the sidebar and of the details pane, in pixels.
 - `fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>)` — the registered repositories, split into those whose folders are there and those whose folders are gone. A backend from before the list said so counts every folder as there.
@@ -88,13 +97,12 @@ Defined at the crate root:
 - `fn reach(attempt: connection::Attempt, register: bool) -> Result<Reached, String>` — reach a backend as `attempt` allows and list its repositories. With `register`, also register the folder the app was started on; failure there is not fatal, the user may have other repositories. Blocks; run it off the UI thread.
 - `fn load_notes(backend: &Backend, id: &str) -> Result<(Value, Value), String>` — the notes of repository `id` and its proposals. Blocks; run it off the UI thread.
 - `fn read_auto_explain() -> bool` — whether auto explaining is on: `auto-explain.txt` in the data directory, which the app reads itself, as it does the folders kept from agents.
+- `fn min_window_size() -> Size<Pixels>` — the smallest the window may be made. The window's own measures are the screen's pixels, whatever the zoom.
 - `fn stops_backend_on_quit(remote: bool, installing: bool) -> bool` — whether ending the app also stops the backend. `remote` says that the backend is the one `CODEWIKI_URL` names; `installing` that an update is being installed or waits for a restart.
-- `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
-- `fn search_hint(width: f32) -> &'static str` — the placeholder for a search field `width` design units wide (icon and padding included): the whole hint, a short one, or none, where the magnifier says it alone. Never a hint cut in the middle.
 - `fn reading_measure(page: &Page) -> f32` — the widest a line of `page` runs.
 - `fn main()` — private function.
 
-And 29 more items.
+And 25 more items.
 
 ## Depends on
 
@@ -111,6 +119,16 @@ And 29 more items.
 
 - [[Review View Module]] — from `empty_review`
 - [[Settings View Module]] — from `new`
+
+## Gotchas
+
+- `zoom::init` must come after `themes::init`, so the theme is still at 100% when zoom takes its sizes as the base.
+- Hiding and showing the window call back into GPUI. They run only in `listen`, never inside an update. The close handler therefore sends `Event::Hide` and does not hide the window itself.
+- A release build has no console. Logs and panics go to the app log file, so look there.
+- The window's minimum size and first bounds are in screen pixels and do not change with zoom.
+- Ctrl+Shift+= and the keypad plus arrive as "+", so zoom in has two bindings.
+- A launch with the tray option never shows its window until something asks for it; `placed` stops the app from showing a window GPUI has not yet positioned.
+- The backend is asked to stop with a short timeout, because GPUI waits only 200 ms for the quit hook.
 
 ## See also
 

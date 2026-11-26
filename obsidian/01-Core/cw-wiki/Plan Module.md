@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-The vault holds curated concept notes, not a page per file. Selection uses only structural facts, so it works without an LLM and is deterministic.
+Decides which wiki notes a repository gets. The vault is a set of curated concept notes, not one page per file, so something must pick the crates, modules, types, flows, integrations and patterns worth a note. `plan` does this from structural facts only (symbols, edges, ranks, manifests). It uses no model, so the same facts always give the same plan. The note generator calls it, and the renderer reads the resulting `Plan`.
 
 ## Source
 
@@ -16,10 +16,20 @@ The vault holds curated concept notes, not a page per file. Selection uses only 
 
 ## How it works
 
-1. `Repo::is_test` in [[Repo]] calls `is_test_path`.
-2. `generate_with` in [[Generate Module]] calls `plan`. `plan` calls `module_dir`, then `module_title`, then `enclosing_module`, then `startup_messages`, then `title_case`. `module_title` calls `title_case`.
+`Repo::new` or `Repo::at` builds lookup tables over the scanned facts: symbols by name, children by parent, callers and callees, trait implementors, and page rank. `Repo::at` also reads the manifests from disk.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`plan` then adds notes in this order:
+
+1. One crate note per unit (a crate, or its counterpart in another language).
+2. Module notes for modules that define something. In Rust, a private inline module needs 3 or more items. Outside Rust every file is a module, so it needs 3 items or 5 nested symbols. Tests and files already covered by an adopted note are skipped. The best 300 by rank are kept.
+3. Type notes: per unit, the public types in the top quarter by rank, plus any with 3 or more children or 2 or more implementors, at most 12.
+4. Ownership: each symbol is mapped to the nearest enclosing note, falling back to its crate note.
+5. A crate dependency flow when there are 2 or more units, and up to 3 startup flows per unit.
+6. Integrations: external crates used in enough files (2 for small repos, 3 otherwise), at most 15.
+7. Patterns: traits with 2 or more implementors, at most 10.
+8. A build note, then one `_index` map per folder and ancestor folder, then the home note.
+
+`startup_messages` walks calls breadth-first from an entry point, to depth 4. It keeps only calls that cross from one note's owner to another, and stops at 14 messages. A flow with fewer than 2 messages is dropped.
 
 ## Items
 
@@ -61,6 +71,14 @@ And 7 more private items with no comment.
 - [[Generate Module]] — from `generate_with`, `planned_path`
 - [[Render Module]] — from `new`
 - [[Repo]] — from `is_test`
+
+## Gotchas
+
+- Ownership is computed before flows. `startup_messages` needs `owner`, so a symbol with no owner is invisible to a flow.
+- Files in `covered` get no module or type notes, and their symbols belong to the adopted note.
+- Each selection is sorted by rank, cut to a cap, then sorted again by name. Caps such as 300 modules and 12 types per crate silently drop the rest.
+- `is_test_path` matches whole path segments (`tests`, `test`, `benches`, `examples`), so `testing_tools` is not a test.
+- A unit's first declared entry carries the unit's name. Later entries are named after themselves.
 
 ## See also
 

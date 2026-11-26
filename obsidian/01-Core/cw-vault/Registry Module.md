@@ -8,7 +8,7 @@ tags: [core, cw-vault, module]
 
 ## What it does
 
-Wikilinks name notes by title, so titles must be unique across the vault and fixed before any note body is written. The registry is that fixed list.
+Keeps the list of note names for a vault. Links between notes use the title only, so every title must be unique and fixed before any note body is written. This module holds one [[Registry]] of entries, each with an id, a vault path and a kind, and the helper `sanitize_name` that turns a title into a safe file name.
 
 ## Source
 
@@ -16,10 +16,7 @@ Wikilinks name notes by title, so titles must be unique across the vault and fix
 
 ## How it works
 
-1. `create` in [[Decisions Module]] and `generate_with` in [[Generate Module]], and 2 more, call `sanitize_name`.
-2. `Registry::insert` in [[Registry]] calls `stem`.
-3. `Registry::resolve` in [[Registry]] calls `folder`.
-4. `Registry::resolve` in [[Registry]] calls `join`.
+`sanitize_name` replaces characters that Obsidian or Windows forbid in names or link targets (brackets, pipe, hash, colon, slashes and a few more) with spaces. It collapses repeated spaces and trims dots at the ends. The `stem` helper takes the file name without `.md`. `folder` and `join` build and split vault paths for the lookup of `_index` maps. The [[Registry]] uses them to insert, reserve and resolve names.
 
 ## Items
 
@@ -41,6 +38,12 @@ Wikilinks name notes by title, so titles must be unique across the vault and fix
 - [[Generate Module]] — from `generate_with`, `planned_path`
 - [[VaultMeta]] — from `registry`, `save`
 - [[Decisions Module]] — from `create`
+
+## Gotchas
+
+- Names are compared in lower case, because Windows file names and Obsidian links ignore case.
+- Sanitizing can make two different titles the same name. The registry's `reserve` solves that by adding the folder name or a counter.
+- Map notes are not keyed by name. See [[Registry]].
 
 ## See also
 

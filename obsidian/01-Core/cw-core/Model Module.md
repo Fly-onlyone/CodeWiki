@@ -6,14 +6,23 @@ tags: [core, cw-core, module]
 
 > Data model shared between the parser, index, graph and API layers.
 
+## What it does
+
+The plain data types of the code graph. The parser makes them, the index stores them, and the query, health and API layers read them. They are a file ([[Language]], `FileRecord`), a named thing in a file ([[Symbol]] with its `SymbolKind` and `Visibility`), and a relation between two nodes (`Edge` with its `EdgeKind` and [[Confidence]]). Nothing here does work. The module is the shared vocabulary.
+
 ## Source
 
 - `crates/cw-core/src/model.rs` — module `cw_core::model`
 
 ## How it works
 
-1. `context` in [[Query Module]] and `Resolver::resolve` in [[Resolver]] call `file_node`.
-2. `edge_from_row` in [[Store Module]] calls `EdgeKind::parse`.
+A graph node is the qualified name of a symbol, such as `cw_core::hash::sha256_hex`, or `file:<path>` for a file. `file_node` builds the second form.
+
+Edge kinds are imports, calls, implements, references and declares. For a call, `site` holds the byte offset of the first such call in the caller's file; sorting a caller's edges by it restores source order. For other kinds it is 0.
+
+Every enum has `as_str` and `parse` for the text stored in the index. They serialize with serde, in lower case or snake case.
+
+`SymbolKind::is_type` marks structs, enums, unions, traits, classes and interfaces. Only those can earn their own concept note.
 
 ## Items
 
@@ -42,6 +51,13 @@ tags: [core, cw-core, module]
 - [[Resolve Module]] — from `Resolved`
 - [[Api Module]] — from `list_files`
 - [[Analyze Module]] — from `DEPENDENCY_KINDS`
+
+## Gotchas
+
+- `Language`, `Visibility` and `Confidence` parse unknown text to a default (`Other`, `Private`, `Low`). `SymbolKind` and `EdgeKind` return `None`, so [[Store Module]] must decide what a bad row means.
+- `Symbol.attrs` was added later with `serde(default)`, so older stored data still loads.
+- Line numbers are 1-based and inclusive.
+- File paths use forward slashes and are relative to the repository root.
 
 ## See also
 

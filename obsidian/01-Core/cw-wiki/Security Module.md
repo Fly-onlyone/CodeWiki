@@ -8,11 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Each rule is a narrow lexical pattern over code with comments and string contents masked out (`crate::rustscan`), so a pattern never fires on prose or on text inside a literal. Test code is skipped: files under `tests/`, `benches/` and `examples/`, and items behind `#[cfg(test)]` or `#[test]`. The rules favour silence over recall; they flag what is worth a reviewer's look, not everything that could go wrong.
-
-An `unsafe` block is reported only when no `// SAFETY:` comment says why it is sound: in the comments directly above the statement that holds it, or on the first line inside it. Clippy's `undocumented_unsafe_blocks` asks the same of this workspace.
-
-A finding is silenced by a comment on its line or the line above: `// codewiki-allow: security/<rule>`, or `// codewiki-allow` for any rule.
+Finds common security mistakes in Rust source with a set of narrow text rules. It needs no parser and no network. Each rule looks at code in which comments and string contents are blanked (see [[Rustscan Module]]), so a rule cannot fire on prose or on text inside a string. Test code is skipped. The rules prefer silence over recall: they flag what deserves a reviewer's look. The CLI, the API and the CI check use the findings.
 
 ## Source
 
@@ -20,9 +16,18 @@ A finding is silenced by a comment on its line or the line above: `// codewiki-a
 
 ## How it works
 
-1. `run` in [[codewiki]] and `security` in [[Api Module]], and 1 more, call `scan`. `scan` calls `is_test_path` in [[Rustscan Module]], then `scan_source`. `scan_source` calls `is_test_path` in [[Rustscan Module]], then `Scanned::new` in [[Scanned]], then `unsafe_blocks`, then `hardcoded_secrets`, then `command_injection`, then `sql_format`, and 6 more.
+`scan` goes over every indexed Rust file outside test folders, reads it from disk and calls `scan_source`. A file deleted since the last index is skipped. `scan_source` builds a [[Scanned]] value and runs eight rules. Each rule adds a `Hit` with an offset, a level and a message:
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- unsafe blocks (warning)
+- hard-coded secrets (error): known credential shapes such as private keys, AWS key ids, GitHub and Slack tokens; or a high-entropy string of 16 or more characters assigned to a name like `token` or `password`
+- command injection (warning): a shell started with a `format!`-built line, or a `format!`-built program name
+- SQL built with `format!` and run-time values (warning)
+- TLS verification switched off (error)
+- `env::set_var` and `remove_var` (warning)
+- world-writable file modes (warning)
+- `http://` URLs to remote hosts (warning)
+
+Hits inside test regions are dropped. Offsets become line numbers. Unsafe hits are dropped when `has_safety_comment` finds a `// SAFETY:` comment above the statement or on the first line inside the block. A finding is also dropped when the line or the line above holds a `codewiki-allow` comment. Results are sorted by line and rule, with one finding per line and rule.
 
 ## Items
 
@@ -64,6 +69,14 @@ And 23 more items.
 - [[codewiki]] — from `run`
 - [[cw-wiki]] — from `scans_source_files_and_skips_tests`
 - [[Api Module]] — from `security`
+
+## Gotchas
+
+- To silence one rule write `// codewiki-allow: security/<rule>` on the line or the line above. A bare `// codewiki-allow` silences all rules there.
+- The SAFETY comment is searched upward past the statement's own earlier lines, such as a `let x =` line, and past attributes. A blank line or code between comment and statement breaks the link.
+- Secret detection ignores names ending in `_env`, `_path`, `_url`, `_id` and similar. It also ignores placeholder words like `example`, ALL_CAPS names, URLs and values without both letters and digits.
+- Plain HTTP is only flagged for remote hosts. Localhost, private ranges, reserved top-level names, single-label names and schema or XML namespace hosts are exempt.
+- Only Rust files are scanned.
 
 ## See also
 

@@ -16,10 +16,11 @@ Sizes are MUI's (`Snackbar/Snackbar.js`, `SnackbarContent/SnackbarContent.js`). 
 
 ## How it works
 
-1. `AppView::toasts_view` in [[codewiki-app]] calls `snackbar`. `snackbar` calls `px` in [[Zoom Module]], then `Button::new` in [[Button Module]], then `text` in [[Surfaces Module]], then `IconButton::new` in [[Button Module]], then `paper` in [[Surfaces Module]].
-2. `AppView::toasts_view` in [[codewiki-app]] calls `stack`. `stack` calls `px` in [[Zoom Module]].
+The caller fills a `Content`: a tone, an icon, a title, an optional body, an optional action (label and handler) and an `on_close` handler. `snackbar` turns it into one card.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The card is a paper at elevation 6 with the theme's corners. Inside, a header row holds the app logo, the app name in caption style, and a small close icon button. Under it, a message row holds the icon in the tone color, a medium-weight title with the smaller muted body under it, and the action as a small text button at the end.
+
+`stack` puts the toasts in a column fixed 24 px from the bottom and right of the window, 8 px apart, aligned to the right edge. The caller passes them oldest first, so the newest sits nearest the corner.
 
 ## Items
 
@@ -55,6 +56,14 @@ And 3 more private items with no comment.
 ## Used by
 
 - [[codewiki-app]] — from `toasts_view`
+
+## Gotchas
+
+- The card is `occlude`d, so it takes clicks that land on it. The stack itself takes no room, so the page under it stays usable.
+- Widths run from 288 to 568. MUI sets no maximum; the 568 is the app's own so long lines wrap.
+- The header and its close button are not MUI. They copy a Windows notification, and the name is `cw_core::APP_NAME`, which reads "CodeWiki Dev" in a development build.
+- Each snackbar needs its own `id`, because the action and close buttons derive their ids from it.
+- The module only draws. The timing, the order and the dismissing belong to [[Toasts Module]].
 
 ## See also
 

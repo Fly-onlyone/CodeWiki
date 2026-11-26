@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Each setting is a name and a text, mostly one line; the recent list puts one folder on each line. A missing or unreadable file is "not set"; a failed write is ignored, because losing a preference must never stop the app.
+This is the app's tiny settings store. Each setting is one text file named after the setting, in the per-user app folder under APPDATA. Theme, motion, zoom, panes, the recent project list and update checks all keep their choice here. Losing a preference must never stop the app, so reads and writes never raise errors.
 
 ## Source
 
@@ -16,12 +16,9 @@ Each setting is a name and a text, mostly one line; the recent list puts one fol
 
 ## How it works
 
-1. `AppView::after_hide` and `main` in [[codewiki-app]], and 10 more, call `read`. `read` calls `read_in`, then `dir`. `read_in` calls `file`.
-2. `AppView::after_hide` and `AppView::run_settings_action` in [[codewiki-app]], and 11 more, call `write`. `write` calls `dir`, then `write_in`. `write_in` calls `file`.
-3. `acquire` in [[Instance Module]] and `user_theme_dir` in [[Themes Module]] call `dir`.
-4. `State::new` in [[Settings View Module]] calls `remove`. `remove` calls `dir`, then `remove_in`. `remove_in` calls `file`.
+`dir` builds the folder from the APPDATA variable and the app folder name from `cw_core::paths`. `read`, `write` and `remove` each call `dir` and then a private twin (`read_in`, `write_in`, `remove_in`) that takes the folder as an argument. The twins exist so tests can use a temporary folder.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`write_in` creates the folder if needed, then writes the file name plus .txt. `read_in` trims the text and treats an empty result as not set. `remove_in` deletes the file.
 
 ## Items
 
@@ -48,6 +45,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Motion Module]] — from `init`, `set`
 - [[Panes Module]] — from `load`, `store`
 - [[Zoom Module]] — from `init`, `set`
+
+## Gotchas
+
+- If APPDATA is not set, `dir` gives nothing. Then reads return not set and writes do nothing, silently.
+- Write errors are thrown away on purpose. A setting can fail to save with no sign.
+- A blank value reads back as not set, so an empty string cannot be told from a removed setting.
+- Values are trimmed on read, so leading and trailing spaces are lost.
+- A development build uses a different folder name, so its settings do not mix with an installed copy's.
 
 ## See also
 

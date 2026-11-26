@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-Like the reports in `pages`, each turns what the backend sent into a `Doc`. These show code that the vault deliberately does not hold as notes.
+Most pages of the app are notes that the vault holds as Markdown files. Some things are not notes: one symbol, one file, search results, hotspots, a proposal, the result of a sync, the notes that wait for a coding agent, Home, and the offline page. The backend sends these as JSON. This module turns each JSON answer into a `Doc`, the page model that [[Doc Module]] and the doc view draw. Each page is a plain function from data to `Doc`, so it can be tested without a window.
 
 ## Source
 
@@ -16,15 +16,13 @@ Like the reports in `pages`, each turns what the backend sent into a `Doc`. Thes
 
 ## How it works
 
-1. `Suggestions::show` in [[Suggest Module]] calls `hit_groups`. `hit_groups` calls `list`, then `hit_target`. `hit_target` calls `string`, then `note_stem`, then `plain_snippet`.
-2. `AppView::open_symbol` in [[codewiki-app]] calls `symbol_page`. `symbol_page` calls `Doc::new` in [[Doc]], then `string`, then `text`, then `file` (both in [[Doc Module]]), then `number`, then `list`, and 4 more.
-3. `AppView::run_search` in [[codewiki-app]] calls `search_page`. `search_page` calls `Doc::new` in [[Doc]], then `list`, then `hit_groups`, then `Row::new` in [[Doc Module]], then `section`.
-4. `AppView::open_hotspots` in [[codewiki-app]] calls `hotspots_page`. `hotspots_page` calls `list`, then `Doc::new` in [[Doc]], then `Table::new`, then `Column::new`, then `Column::numeric`, then `file` (all in [[Doc Module]]), and 3 more.
-5. `AppView::open_file` in [[codewiki-app]] calls `file_page`. `file_page` calls `string`, then `Doc::new` in [[Doc]], then `Stat::new` in [[Doc Module]], then `number`, then `code` in [[Doc Module]], then `list`, and 8 more.
+The app calls a page function after it has the backend's answer. `AppView::open_symbol` calls `symbol_page`. `run_search` calls `search_page`. `open_hotspots` calls `hotspots_page`. `open_file` calls `file_page`, which takes three answers: context, risk and radius. Home is built by `home_page` from a `HomeInput`, on every frame.
 
-11 more entry points: `proposal_page`, `review_empty_page`, `sync_page`, `waiting_count`, `waiting_page`, `agent_view_line`, and 5 more.
+The functions read JSON with small helpers. `string` gives an empty text for a missing field, `list` gives an empty list for a missing array, and `number` shows a dash for null. Rows are made by `symbol_row`, `file_row` and `note_rows`, each with an `Action` that says what a click does.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, in that order, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a note's snippet so it reads as one plain line. The search suggestions in [[Suggest Module]] share this code with the search page.
+
+`kept_by` checks the file system to see if coding agents are kept out of a folder.
 
 ## Items
 
@@ -65,6 +63,15 @@ And 15 more items.
 - [[Suggest Module]] — from `Suggestions`, `chosen`, `groups`, `show`
 - [[Palette Module]] — from `agents_entry`
 - [[Review View Module]] — from `empty_review`
+
+## Gotchas
+
+- Missing JSON fields never raise an error. They show as empty text or a dash. An old backend gives a thin page, not a crash.
+- A search hit of a kind the app does not open gives `None` from `hit_target` and is skipped.
+- A note row opens the note by its whole vault path. A bare folder path without `.md` is not found by the backend.
+- `kept_by` reads the file system and follows links. Call it when Home's data is refreshed, never while a page is built, since Home is built every frame.
+- `waiting_count` is 0 until the queue has been read, and `waiting_page` takes `None` while it is being read.
+- The offline page does not return to a backend on this machine by itself. It offers a button, because that backend could show other wikis or none.
 
 ## See also
 

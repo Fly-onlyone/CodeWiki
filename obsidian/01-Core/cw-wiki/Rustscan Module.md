@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-The structural parser deliberately skips unit-test modules, and neither analysis needs a syntax tree: they need to know which bytes are code, which are string literals, and which belong to test-only items. Comments and literal contents are blanked in `Scanned::code` so a pattern can never match inside either; offsets and line breaks are preserved.
+A small scanner for Rust source, not a parser. The main parser skips unit-test modules on purpose. The test map and the security rules still need to know three things: which bytes are real code, which are string literals, and which belong to test-only items. This module answers them. It produces a [[Scanned]] value in which comments and the insides of literals are replaced by spaces, so a pattern search can never match inside a comment or a string.
 
 ## Source
 
@@ -16,12 +16,9 @@ The structural parser deliberately skips unit-test modules, and neither analysis
 
 ## How it works
 
-1. `scan` and `scan_source` in [[Contracts Module]], and 8 more, call `is_test_path`.
-2. `Scanned::new` in [[Scanned]] calls `mask`. `mask` calls `blank`, then `string`, then `char_or_lifetime`, then `is_ident`, then `raw_string`. `string` calls `blank`. `char_or_lifetime` calls `blank`.
-3. `Scanned::matching` and `Scanned::statement_end` in [[Scanned]] call `matching`.
-4. `Scanned::new` in [[Scanned]] calls `find_tests`. `find_tests` calls `matching`, then `classify`, then `fn_name`. `classify` calls `is_ident`.
+`mask` walks the source byte by byte. It blanks line comments and nested block comments. It reads normal strings (`string`), raw strings with any number of hashes (`raw_string`), byte and C strings, and character literals (`char_or_lifetime`, which also steps over lifetimes). Blanking keeps newlines and byte offsets, so a position in the masked code is a position in the source. Each string is saved as a [[Literal]] with its open and close offsets.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`find_tests` then scans the masked code for attributes. `classify` sorts them: a test attribute (`test`, `tokio::test`, `rstest`, `test_case`), a `cfg(test)` attribute, or other. For a hit it skips further attributes, walks the item header to its body or semicolon using `matching` for brackets, and records the byte range as a test region. For test attributes it also finds the function name with `fn_name` and saves a [[TestFn]]. An inner attribute `#![cfg(test)]` marks the rest of the file.
 
 ## Items
 
@@ -54,6 +51,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Security Module]] — from `scan`, `scan_source`
 - [[Coverage Module]] — from `report`
 - [[Testmap Module]] — from `gather`
+
+## Gotchas
+
+- `cfg(not(test))` is not counted as a test region.
+- After a hit the scan steps past the attribute only, not the item, so tests nested in a test module are found too. Duplicate name and line pairs are skipped.
+- Literal values keep escapes as written, and the masked code only blanks ASCII bytes, so non-ASCII text stays valid.
+- `is_test_path` here matches `tests`, `benches` and `examples` folders. The planner has its own version that also matches `test` and works on module paths.
+- An unclosed bracket makes `matching` return the end of the file.
 
 ## See also
 

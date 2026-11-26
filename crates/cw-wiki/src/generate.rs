@@ -460,7 +460,13 @@ pub fn generate_with(
         // Reasons the explanation is behind that this run itself gives.
         let mut moved: Vec<String> = Vec::new();
         match lifecycle::action(entry, state, &input_hash) {
-            Action::Keep => report.kept += 1,
+            Action::Keep => {
+                // No fact changed, but a cited file may have, in a way no
+                // fact shows. Record the files as this run read them, or a
+                // brief would ask for a sync that changes nothing.
+                entry.sources = sources.clone();
+                report.kept += 1;
+            }
             Action::Merge => {
                 // The facts are the fresh draft's; the explanation is the
                 // agent's, as it stands in the note.

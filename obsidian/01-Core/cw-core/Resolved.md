@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-It holds decrypted secrets, so it has no `Debug` and should not outlive the work it was loaded for.
+The answer to "what value does this setting have right now?" For each of the 12 settings it holds the value in effect and where it came from: the environment, the saved file, or the default. Code that needs a setting, such as the embedder or a server address, reads it here, not from the file or the environment directly. The [[Settings Module (cw-core)]] note lists the settings.
 
 ## Source
 
@@ -16,10 +16,11 @@ It holds decrypted secrets, so it has no `Debug` and should not outlive the work
 
 ## How it works
 
-1. `run` in [[codewiki]] and `run` in [[Serve Module]] call `load`. `load` calls `from_parts`, then `load` in [[Settings Module (cw-core)]].
-2. `change` and `resolved` in [[Settings Module (cw-server)]] call `from_parts`. `from_parts` calls `saved_secret`. `saved_secret` calls `unprotect` in [[Secret Module]].
+`from_parts` goes through every [[Key]]. A set, non-blank environment variable wins (`Source::Env`). Otherwise a saved value from [[Settings]] is used (`Source::Saved`). Otherwise the key's default is used, which may be none (`Source::Default`).
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Secrets are handled apart. If the variable is not set, `saved_secret` decrypts the stored value with [[Secret Module]]. The `SecretState` records unset, from the environment, saved with a hint, or saved but unreadable.
+
+`load` reads the file in the data directory and the real environment. `from_env` ignores the file. `get` looks a value up by environment variable name. `source` and `secret_state` tell a settings page what to show. `from_parts` takes the environment as a function, so tests pass their own.
 
 ## Items
 
@@ -52,6 +53,13 @@ Members:
 - [[Serve Module]] — from `run`
 - [[Logs Module]] — from `get`
 - [[Semantic Module]] — from `configure`
+
+## Gotchas
+
+- It holds decrypted secrets. It has no `Debug` on purpose, so it cannot be printed by accident. Keep it only as long as needed.
+- A blank variable counts as not set. A variable of spaces does not hide the saved value.
+- A secret that cannot be decrypted gives no value, but the state is `Unreadable`, not `Unset`. A page can then ask the user to enter it again.
+- The embedder model has no default of its own, since it depends on the provider.
 
 ## See also
 

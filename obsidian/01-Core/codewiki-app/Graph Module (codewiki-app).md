@@ -8,9 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-No UI types, so it is unit-tested.
+This is the math behind the dependency graph view. The backend lays the nodes out and sends their positions. This module turns those world positions into screen positions, chooses what is worth drawing at the current zoom, and finds the node under the mouse. It holds no UI types, so plain unit tests cover it.
 
-Node positions come from the backend's layout. This module maps them to the screen, decides what is worth drawing at the current zoom, and finds the node under the cursor.
+It has to stay fast on graphs of many thousands of nodes. So it caps what it draws: a limited number of edges, a few labels, and density cells when too many nodes are in view.
 
 ## Source
 
@@ -18,13 +18,11 @@ Node positions come from the backend's layout. This module maps them to the scre
 
 ## How it works
 
-1. `AppView::open_graph` in [[codewiki-app]] calls `GraphData::from_json`. `GraphData::from_json` calls `GraphData::new`.
-2. `AppView::open_graph` in [[codewiki-app]] calls `GraphData::stress`. `GraphData::stress` calls `GraphData::new`.
-3. `AppView::graph_view` in [[codewiki-app]] calls `Camera::fit`.
-4. `AppView::graph_view` in [[codewiki-app]] calls `radius`.
-5. `AppView::graph_view` in [[codewiki-app]] calls `pick`. `pick` calls `radius`.
+`AppView::open_graph` builds a `GraphData` from the backend's JSON with `from_json`, or from `stress`, a synthetic clustered graph used to measure drawing speed. Both call `new`, which finds the largest rank.
 
-5 more entry points: `visible_nodes`, `visible_edges`, `cell_size`, `density_cells`, `label_candidates`.
+On each frame `AppView::graph_view` uses a `Camera`. `Camera::fit` frames the whole graph with a 10 percent margin the first time. `to_screen` and `to_world` convert between the two spaces, `pan` moves by a screen distance, and `zoom_at` zooms while keeping the point under the cursor fixed.
+
+Then the draw step chooses what to draw. `visible_nodes` keeps nodes inside the view plus a small margin. If more than `DETAIL_LIMIT` (2000) are in view, `density_cells` bins them into square cells and draws those instead. Each cell takes the cluster of its highest-ranked node, so important symbols keep their color. `visible_edges` keeps edges with an end in view and samples them evenly down to a limit. `label_candidates` picks the top-ranked visible nodes for labels. `radius` sizes a node from its rank, and `pick` finds the nearest node under the cursor, using the same radius plus 4 pixels.
 
 ## Items
 
@@ -48,6 +46,15 @@ Node positions come from the backend's layout. This module maps them to the scre
 
 - [[Diagram View Module]] — from `actual`, `clamp`, `fit`, `frame`
 - [[codewiki-app]] — from `AppView`, `DiagramViewer`, `diagram_viewer_view`, `graph_view`
+
+## Gotchas
+
+- `from_json` is forgiving. A missing or wrong field becomes an empty string or zero, and an edge whose index is out of range, or that links a node to itself, is dropped without a message.
+- Because of that, the edge count shown can differ from the backend's.
+- Zoom is clamped between `MIN_ZOOM` and `MAX_ZOOM`, both in `Camera::fit` and in `zoom_at`.
+- `visible_edges` with a limit of zero returns nothing. Over the limit it samples by even steps, so it shows overall shape, not every edge.
+- `Camera::fit` on an empty graph returns zoom 1 at the origin.
+- `max_rank` is never below a tiny positive value, so `radius` cannot divide by zero.
 
 ## See also
 

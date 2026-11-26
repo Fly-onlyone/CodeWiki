@@ -6,16 +6,19 @@ tags: [core, cw-core]
 
 > `Error` enum defined in `cw_core::error` with 4 methods.
 
+## What it does
+
+The one error enum of the engine crates, behind the `Result` alias in [[Error Module]]. Its four cases cover file trouble with a path, invalid data, a missing thing, and a failure from another library.
+
 ## Source
 
 - `crates/cw-core/src/error.rs` — definition of `Error`
 
 ## How it works
 
-1. `run` in [[codewiki]] and `checked` in [[cw-embed]], and 40 more, call `invalid`.
-2. `print_json` in [[codewiki]] and `finish` in [[cw-embed]], and 32 more, call `external`.
-3. `run` in [[codewiki]] and `publish` in [[Serve Module]], and 36 more, call `io`.
-4. `run` in [[codewiki]] and `get` in [[Repos Module]], and 11 more, call `not_found`.
+Code builds errors with four constructors. `io` takes the path and the I/O error, so the message says where it failed. `invalid` is for bad input, bad files or refused requests. `not_found` names what is missing. `external` takes the failed operation and any displayable error, and keeps its text.
+
+Messages are formed by `thiserror`: `I/O error at <path>: ...`, `invalid data: ...`, `not found: ...`, and `<context>: <message>`. Server code such as [[Api Module]] turns the case into an HTTP answer.
 
 ## Items
 
@@ -38,6 +41,12 @@ Members:
 - [[Repos Module]] — from `add`, `get`, `load`, `remove`
 - [[Settings Module (cw-server)]] — from `apply`, `change`, `checked`, `message`
 - [[Explanations Module]] — from `brief`, `not_explainable`, `note_text`, `record`
+
+## Gotchas
+
+- `external` keeps only text, not the original error, so it cannot be inspected later.
+- Messages reach users and agents as written. Write them as sentences someone can act on.
+- `Invalid` carries no path. Put the file name in the message.
 
 ## See also
 

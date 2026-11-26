@@ -6,15 +6,24 @@ tags: [core, codewiki, module]
 
 > `codewiki serve`: run the backend HTTP server.
 
+## What it does
+
+This is the `codewiki serve` command. It starts the backend: an HTTP server that the desktop app, the MCP bridge and other clients talk to. It picks the access token, tells local clients where to connect, runs the server until Ctrl+C, and removes its connection file on exit.
+
 ## Source
 
 - `crates/codewiki/src/serve.rs` — module `codewiki::serve`
 
 ## How it works
 
-1. `run` in [[codewiki]] calls `run`. `run` calls `data_dir` in [[Paths Module]], then `Error::invalid` in [[Error]], then `random_token`, then `Host::default` in [[cw-server]], then `drop_retired`, then `retire_builtin` (both in [[Settings Module (cw-core)]]), and 8 more. `random_token` calls `Error::external` in [[Error]].
+`run` does these steps:
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+1. It takes the token from `CODEWIKI_TOKEN`. If that is unset, it makes a random 64-character hex token, but only when the host is a loopback address. On any other address it refuses to start.
+2. It builds a `ServerConfig`. Settings may be changed only when the host is loopback.
+3. It cleans up removed features. It drops the old AI writer's settings and moves the removed built-in embedder to `local`, deleting its models. It logs a warning for any retired environment variable that is still set.
+4. It loads the settings and configures the embedder, so the first log line names the real one.
+5. It builds a tokio runtime and calls `cw_server::serve`. When the server is bound, `publish` writes `backend.json` into the data directory with the URL, the token and the process id.
+6. After Ctrl+C the server finishes its running requests, `withdraw` removes the file, and the runtime shuts down within five seconds.
 
 ## Items
 
@@ -39,6 +48,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[codewiki]] — from `run`
+
+## Gotchas
+
+- `withdraw` deletes `backend.json` only if its pid is this process. A client may already have started the next backend while this one was finishing, and that file must stay.
+- A host that is not loopback needs `CODEWIKI_TOKEN`. Without it the command fails at once, so no one is tempted to turn auth off.
+- A bind to an unspecified address (all interfaces) publishes `127.0.0.1` as the host, because that is where local clients can connect.
+- The runtime is shut down with a five second limit. A job's embedder batch may be in a blocking task that only ends when the embedding server answers, and Quit waits five seconds at most.
+- The connection file holds the token in plain text. Treat the data directory as private.
 
 ## See also
 

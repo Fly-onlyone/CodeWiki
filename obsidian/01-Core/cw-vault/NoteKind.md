@@ -8,7 +8,7 @@ tags: [core, cw-vault]
 
 ## What it does
 
-Decides its section template and its zone.
+Names the kind of thing a note documents: home, index, flow, concept, pattern, integration, operations, glossary or decision. The kind decides which sections the note has, in which order, and which of them an agent writes. The linter and the explanation tools both ask it.
 
 ## Source
 
@@ -16,7 +16,9 @@ Decides its section template and its zone.
 
 ## How it works
 
-1. `adopt_existing` and `adopted_kind` in [[Generate Module]] call `from_file_name`.
+`sections` returns the heading list of the kind in required order. Every heading is optional, because the writer leaves empty ones out, but the order is fixed. A concept note opens with `What it does` and puts the walk-through before the item list.
+
+`agent_sections` returns the part an agent writes: the purpose, the walk-through and what can go wrong. Rules write every other section from facts in the code. `explainable` is true when that list is not empty. `fact_fences` says that in a flow or operations note the code blocks of `How it works` are facts that rules write inside an agent's prose section. `from_file_name` maps `_HOME.md` and `_index.md` to their kinds; other file names have no implied kind.
 
 ## Items
 
@@ -40,6 +42,14 @@ Members:
 - [[Query Module]] — from `NoteInfo`, `agent_view`, `info`
 - [[Explanation Module]] — from `extract`, `weave`
 - [[Registry Module]] — from `RegistryEntry`
+
+## Gotchas
+
+- Home, index, glossary and decision notes have no agent sections. No agent explains them.
+- `See also` is never an agent section, and every agent section is also in the kind's own section list. A test checks both.
+- A flow has no `Items` section, and flow and operations notes share one section list.
+- Pattern notes use `Why` and `Don't` as the agent's sections, and integrations use `What it does`, `Wire-up`, `Auth mode` and `Gotchas`.
+- The serialized name is snake case, so a new kind changes `notes.jsonl`.
 
 ## See also
 

@@ -6,13 +6,21 @@ tags: [core, cw-parse]
 
 > `Resolver` struct defined in `cw_parse::resolve` with 9 methods.
 
+## What it does
+
+The `Resolver` turns the loose facts of all files into the edges of the code graph (calls, imports, implements, references, declares). The scanner only records names as they were written, such as a call to `shout`. The resolver decides which symbol that name means, with no compiler, using the imports, modules and symbols it knows. It also lists which outside packages each file uses.
+
 ## Source
 
 - `crates/cw-parse/src/resolve.rs` — definition of `Resolver`
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `new`. `new` calls `absolutize`.
+`new` indexes every symbol by qualified name and by bare name. It reads every import and stores it as module, alias, absolute path. Globs are stored apart. `with_crates` adds the dependency list of each Cargo package.
+
+`lookup` resolves a path written inside a module. It builds candidates in order: through an import, relative to the module, as a crate name, then through glob imports. `resolve_abs` tries each, following re-exports through imports and globs up to six hops (`MAX_REEXPORT_DEPTH`). `lookup_from` also checks the scopes around the caller, so an item declared inside a function is found.
+
+`resolve` goes file by file. An import that resolves gives a file-to-file Imports edge. One that does not, and names no local module, crate or toolchain crate, becomes an outside use. Module declarations give Declares edges, and impls of a trait give Implements. A plain call that resolves to a function or method gives a High confidence edge. A method call on a known `self` type is Medium. When the type is unknown, `by_bare_name` matches by name alone and gives Low. Value and type mentions give References.
 
 ## Items
 
@@ -44,6 +52,16 @@ Members:
 ## Used by
 
 - [[Scan Module]] — from `scan_repo`
+
+## Gotchas
+
+- Resolution is a guess without a compiler, so each edge carries a confidence of High, Medium or Low.
+- A path that does not resolve is never guessed for a plain call. It is assumed to name something outside the repository.
+- A name never matches a symbol in another language.
+- Bare-name matching for Rust respects visibility and crate dependencies. A crate the caller does not depend on cannot be matched, and common names such as `len` or `get` match only a private method in the caller's own module.
+- Tests, benches and examples count as separate crates. Their items are visible only from the same file.
+- Edges are de-duplicated. The `site` kept is the earliest call place.
+- A caller equal to its target is dropped, so recursion gives no edge.
 
 ## See also
 

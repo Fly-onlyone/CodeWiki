@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Decisions are read from two places: notes tagged `decision` in the vault, and ADR files the repository already keeps (`docs/adr/`, `decisions/`). A decision goes stale when the code it cites changes after it was written.
+Teams record why they chose something in decision notes or ADR files. This module collects those records, tells you when one has gone out of date, creates new ones from a template, and answers the question "why is this code the way it is?" for a file or a symbol.
 
 ## Source
 
@@ -16,11 +16,15 @@ Decisions are read from two places: notes tagged `decision` in the vault, and AD
 
 ## How it works
 
-1. `run` in [[codewiki]] and `list_decisions` in [[Api Module]], and 1 more, call `list`. `list` calls `load` in [[Gitintel Module]], then `is_adr_path`, then `build`, then `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]]. `build` calls `Note::parse` in [[Note Module]], then `cited_paths`, then `status_of`.
-2. `run` in [[codewiki]] and `create_decision` in [[Api Module]] call `create`. `create` calls `sanitize_name` in [[Registry Module]], then `Error::invalid`, then `Error::io` (both in [[Error]]).
-3. `run` in [[codewiki]] and `why` in [[Api Module]] call `why`. `why` calls `Error::not_found` in [[Error]], then `list`, then `VaultMeta::load` in [[VaultMeta]], then `Note::parse` in [[Note Module]], then `recent_commits`.
+`list` gathers decisions from three places: ADR files in the repository (folders named `adr`, `decisions` and similar, `is_adr_path`), vault notes of kind decision or tagged `decision` or `adr`, and any note in the vault decisions folder not yet in the manifest.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`build` turns each text into a `Decision`. It reads the status from a `Status:` line or the first line under a Status heading (default `accepted`). `cited_paths` takes backticked spans that look like file paths, outside code fences, and splits them into files that exist and files that do not.
+
+A decision is stale when it cites a missing file, or when a cited file was last changed after the decision file itself, using git history. Superseded and deprecated decisions are never stale.
+
+`create` makes `ADR-NNNN Title` in the decisions folder, numbering one above the highest existing number, from a fixed template with a Proposed status.
+
+`why` resolves its target to a file (a path first, then a symbol name). It returns the decisions that cite that file, the Why, Gotchas and Don't sections of notes whose sources include it, and the last 8 commits from `git log`.
 
 ## Items
 
@@ -55,6 +59,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Api Module]] — from `create_decision`, `list_decisions`, `why`
 - [[codewiki]] — from `run`
 - [[Ci Module]] — from `check`
+
+## Gotchas
+
+- Staleness depends on git history. Without it, only missing citations make a decision stale.
+- Only backticked paths with a slash and a file extension count as citations. Prose mentions do not.
+- `recent_commits` returns an empty list when git is missing or fails; the error is not shown.
+- A symbol name that matches several symbols resolves to one: the exact match, or the first fuzzy hit.
+- The title is cleaned with `sanitize_name`; a title that cleans to nothing is refused.
 
 ## See also
 

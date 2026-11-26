@@ -6,15 +6,23 @@ tags: [core, cw-index]
 
 > `Index` struct defined in `cw_index::store` with 19 methods.
 
+## What it does
+
+`Index` is the SQLite database that holds everything CodeWiki knows about a repository: files, symbols, the edges between them (calls, uses), crate info, graph metrics, search documents and vectors. The scanner writes facts into it. The query, health, risk and API code read facts out. It is the one place the rest of the program asks "what is in this code".
+
 ## Source
 
 - `crates/cw-index/src/store.rs` — definition of `Index`
 
 ## How it works
 
-1. `open_existing_index_in` and `open_index` in [[Service Module]], and 1 more, call `open`. `open` calls `Error::io` in [[Error]], then `db` in [[Store Module]], then `init`. `init` calls `db` in [[Store Module]].
+`open` makes the parent folder, opens the file, and sets WAL mode (readers do not block the writer) with `synchronous = NORMAL`. `open_in_memory` skips both; tests use it. Both call `init`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`init` reads `PRAGMA user_version`. If it differs from `SCHEMA_VERSION`, it drops all tables, creates them again from `SCHEMA` and stamps the new version. See [[Schema Module]].
+
+`replace_facts` is a full rewrite. In one transaction it empties files, symbols, edges, crates and external uses, then inserts the new [[Scan Module]] output. The reading methods (`files`, `symbols`, `edges_from`, `edges_to`, and so on) all go through one private `collect` helper and return rows in a fixed order.
+
+`replace_metrics` follows the same delete-then-insert pattern for graph scores. `set_meta` and `meta` keep small key/value facts such as the indexed commit.
 
 ## Items
 
@@ -64,6 +72,14 @@ And 1 more private item with no comment.
 - [[Coverage Module]] — from `import`, `import_text`, `load`, `report`
 - [[Api Module]] — from `find_symbols`, `graph`, `index`, `list_files`
 - [[Health Module]] — from `dead_code`, `doc_drift`, `file_health`
+
+## Gotchas
+
+- A changed schema version wipes the whole index, search documents and vectors too. It is rebuilt, not migrated.
+- `replace_facts` inserts symbols with `INSERT OR IGNORE`. If two symbols share a qualified name, the first one wins and the rest vanish silently.
+- `find_symbols` strips `%` from the needle and escapes `_`, so both act as plain characters. Exact bare-name matches come first, then shorter qualified names.
+- A stored external-use row whose names do not decode becomes a row with no names, not an error.
+- A symbol row with an unknown kind reads back as a function. An unknown edge kind reads back as a reference.
 
 ## See also
 

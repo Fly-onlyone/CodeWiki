@@ -6,14 +6,17 @@ tags: [core, cw-graph]
 
 > `Graph` struct defined in `cw_graph::graph` with 7 methods.
 
+## What it does
+
+`Graph` is the dependency graph of a repository in memory. Each node is a symbol or file; an edge `a -> b` means a depends on b. Each edge has a weight. The metrics in [[Metrics Module]], the cycle breaking in [[Refactor Module]] and the path search in [[Query Module]] all run on it.
+
 ## Source
 
 - `crates/cw-graph/src/graph.rs` — definition of `Graph`
 
 ## How it works
 
-1. `dependency_graph` in [[Analyze Module]] and `dependency_path` in [[Query Module]] call `from_edges`. `from_edges` calls `from_weighted`.
-2. `break_cycles` in [[Refactor Module]] calls `from_weighted`. `from_weighted` calls `len`.
+`from_edges` filters the resolved edges by kind and gives each a weight from its confidence, then calls `from_weighted`. That sorts the node names, merges parallel edges by adding weights, drops self loops, and fills two lists per node: `out` (targets) and `inc` (sources). `id` finds a node number by name, `len` and `edge_count` count nodes and edges, and `undirected` makes the symmetric view for community and layout work.
 
 ## Items
 
@@ -39,6 +42,12 @@ Members:
 - [[Analyze Module]] — from `analyze`, `dependency_graph`
 - [[Query Module]] — from `dependency_path`
 - [[Refactor Module]] — from `break_cycles`
+
+## Gotchas
+
+- Node numbers come from sorted names, so they change when nodes are added.
+- `out` and `inc` are public fields, but `index` is private; build graphs only through the constructors so the three stay in step.
+- The graph owns no edge kinds. Which relations count is decided by the `kinds` argument at build time, so the same edges can give different graphs.
 
 ## See also
 

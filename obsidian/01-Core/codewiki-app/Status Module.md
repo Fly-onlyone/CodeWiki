@@ -16,13 +16,13 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 
 ## How it works
 
-1. `AppView::take_status` in [[codewiki-app]] calls `parse`. `parse` calls `model_job_text`.
-2. `news` in [[Review Module]] calls `rises`.
-3. `AppView::tray_snapshot` in [[codewiki-app]] calls `state_with_job`.
-4. `AppView::tray_snapshot` in [[codewiki-app]] calls `mcp_text`. `mcp_text` calls `ago`.
-5. `AppView::tray_snapshot` in [[codewiki-app]] calls `state_text`.
+`parse` reads the body of `GET /v1/status` into a `Backend`: repositories being updated, how long ago an agent's MCP bridge last called, the embedding job text, proposal counts per repository, and a notes revision number. Ages are computed from the backend's own `now`, so a backend on another machine with a different clock gives the same result.
 
-1 more entry point: `tooltip`.
+The tray words come from small functions. `state_text` says what the app is doing: its own busy label first, then Backend not running, then Idle or Updating wiki (naming the repository when it is not the open one). `state_with_job` swaps Idle for the embedding job text. `mcp_text` says active when a bridge called within five minutes, else idle with the age from `ago`.
+
+`tooltip` joins app name, repository, state and MCP into one line. When it is too long, only the repository name is shortened, with an ellipsis, so state and MCP stay readable. `cut_utf16` cuts by UTF-16 units and never inside a character.
+
+`rises` compares two proposal counts and lists repositories whose count went up; [[Review Module]] uses it to decide what is news.
 
 ## Items
 
@@ -49,6 +49,13 @@ The backend's answer to `GET /v1/status` is read here, and put into the words of
 - [[codewiki-app]] — from `AppView`, `take_status`, `tray_snapshot`
 - [[Review Module]] — from `news`
 - [[Tray Module]] — from `tooltip`
+
+## Gotchas
+
+- The tooltip limit is 127 UTF-16 units, not characters or bytes. Windows holds 128 with its end mark.
+- With no earlier count, `rises` returns nothing, so the first answer never counts as news. A repository present in only one of the two counts is also skipped.
+- An older backend may omit proposals, bridge or job fields. Each maps to a safe default (unknown, no counts).
+- The proposal counts can lack repositories the backend did not count in time on slow storage.
 
 ## See also
 

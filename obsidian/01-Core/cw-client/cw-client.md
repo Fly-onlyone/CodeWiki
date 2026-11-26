@@ -8,7 +8,7 @@ tags: [core, cw-client]
 
 ## What it does
 
-Clients hold no index of their own. They find a running backend, starting a local one when none is running, and send every request to it.
+The library every CodeWiki client uses to reach the backend: the desktop app and the MCP bridge. Clients keep no index. This crate finds a running backend, starts a local one when none runs, and sends HTTP requests with the bearer token. It also holds the settings for using a backend on another machine, and the helper `encode` for query strings. [[Backend]] is the main type; [[Remote Module]] stores a saved remote backend.
 
 ## Source
 
@@ -17,17 +17,15 @@ Clients hold no index of their own. They find a running backend, starting a loca
 
 ## How it works
 
-Builds a library.
+The crate answers one question: which backend does this client use? The order is: `CODEWIKI_URL` (with `CODEWIKI_TOKEN`), then the backend saved in settings, then the one on this machine named by `backend.json`, and last a new `codewiki serve` it spawns itself. `env_remote`, `saved_remote` and `uses_remote` report the first two, so the app knows a backend is not its own to stop.
 
-1. `AppView::open_file` and `AppView::open_in_obsidian` in [[codewiki-app]], and 19 more, call `encode`.
-2. `Backend::new` and `Backend::status` in [[Backend]] call `agent`.
-3. `AppView::connect` and `AppView::run_settings_action` in [[codewiki-app]], and 1 more, call `env_remote`. `env_remote` calls `process_env`.
-4. `AppView::backend_to_stop` and `AppView::install_update` in [[codewiki-app]], and 1 more, call `uses_remote`. `uses_remote` calls `env_remote`, then `saved_remote`.
-5. `AppView::connect` and `AppView::open_settings` in [[codewiki-app]], and 2 more, call `saved_remote`. `saved_remote` calls `saved_in` in [[Remote Module]], then `data_dir` in [[Paths Module]].
+`check_remote` tests an address and token before saving: `/v1/health` must answer, then a call to `/v1/repos` proves the token. It saves nothing. `save_remote`, `use_local` and `forget_remote` pass through to [[Remote Module]].
 
-12 more entry points: `check_remote`, `save_remote`, `use_local`, `forget_remote`, `read_backend_file`, `health_version`, and 6 more.
+`health_version` reads the version from `/v1/health`. `is_older` compares versions with semver, so `connect` can replace an older local backend left from before an update.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+Starting is serialized by a process-wide lock (`Starts`). It tracks the child started last, whether a start is under way, and whether starts are held. `hold_starts` lets the app block new backends during an update. `spawn_backend` runs `codewiki serve` beside this executable, or from `PATH`, with the data and log folders set in its environment.
+
+`DecideResult` and `decide_proposals` support approving or rejecting several wiki proposals in one request.
 
 ## Items
 
@@ -76,6 +74,15 @@ And 15 more items.
 - [[Markdown Module]] — from `encode`
 - [[Review View Module]] — from `decide`
 - [[Settings Pages Module]] — from `Model`
+
+## Gotchas
+
+- The spawned backend's output is discarded. Its own `backend.log` has the reports. A pipe nobody reads would fill and stall it.
+- A newer backend is never stopped by an older client.
+- An unparsable version counts as not older, so that backend is kept.
+- The backend child is started with no console window on Windows.
+- `check_remote` needs a token: passed in, or saved for the same address.
+- Error answers are not turned into transport errors. The agent is built with `http_status_as_error(false)` so the JSON message reaches the caller.
 
 ## See also
 

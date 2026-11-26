@@ -8,7 +8,7 @@ tags: [core, cw-update, module]
 
 ## What it does
 
-Every step is a rename inside the installation folder. Before each one the journal `.update\swap.json` records it, so that a swap cut short by a crash or a power cut is undone the next time the app starts.
+Replaces the files of a running installation with the files of a new, unpacked package, and can undo that if anything goes wrong. Windows lets a running program be renamed but not overwritten, so every change is a rename inside the installation folder. A journal file, `.update\swap.json`, records each rename before it is made. If the app crashes or the power fails mid-swap, the next start reads the journal and puts everything back.
 
 ## Source
 
@@ -16,11 +16,9 @@ Every step is a rename inside the installation folder. Before each one the journ
 
 ## How it works
 
-1. `install` in [[cw-update]] calls `swap`. `swap` calls `old_name`, then `write_journal`, then `rename_patiently`, then `undo`, then `journal_path`, then `close_journal`. `old_name` calls `remove`. `write_journal` calls `journal_path`.
-2. `AppView::start_updates` in [[codewiki-app]] calls `recover_and_clean`. `recover_and_clean` calls `journal_path`, then `undo`, then `replaced_name`, then `remove`, then `rename_patiently`. `undo` calls `rename_patiently`.
-3. `AppView::start_updates` in [[codewiki-app]] calls `leftovers`. `leftovers` calls `replaced_name`.
+`swap` lists the entries of the staged package (minus `install.ps1` and `install.cmd`) and goes through them in name order. For an entry that already exists in the installation, it first plans a move to `<name>.old` (or `.old2`, `.old3` when an older copy is still in use, picked by `old_name`). Then it plans a move of the new entry into place. Each move is appended to the journal and written to disk, and only then made with `rename_patiently`. On the first failure `undo` reverses the moves from last to first. If that works, the journal is deleted and the error ends with "nothing was changed". If some move cannot be undone, the journal stays and the error says the next start will try again. On success `close_journal` deletes the journal.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`recover_and_clean` runs when the app starts. It undoes an unfinished journal, then walks the installation: a `.old` entry whose current file exists is deleted, one without it is renamed back. It deletes the `.update` folder and the old graphics-card worker folder `cuda`. `leftovers` lists what is still to delete, for the UI.
 
 ## Items
 
@@ -49,6 +47,15 @@ And 5 more private items with no comment.
 
 - [[codewiki-app]] — from `start_updates`
 - [[cw-update]] — from `install`
+
+## Gotchas
+
+- A step is recorded before it is made. `undo` skips a step whose target does not exist or whose source is back, so a recorded but unmade step is harmless and `undo` can run again after a crash.
+- `rename_patiently` tries 20 times, 250 ms apart, because Defender or the search indexer may hold a file for a moment. A swap can therefore wait several seconds before it fails.
+- If the journal cannot be deleted, `close_journal` empties it instead. An empty journal means "finished", so `recover_and_clean` only removes it. A non-empty journal would roll back a good update.
+- Right after an update the `.old` files of running programs cannot be deleted. They stay until the next start.
+- The `cuda` folder is removed only if it holds `codewiki-embed-cuda.exe`. A folder of that name without the worker is left alone.
+- A file held open with no sharing makes the whole swap fail and roll back. The staged package stays for another try.
 
 ## See also
 

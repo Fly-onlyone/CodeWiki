@@ -8,7 +8,9 @@ tags: [core, codewiki-mcp, module]
 
 ## What it does
 
-Plain functions, no backend, so they test without one.
+The user can close folders to coding agents in CodeWiki's settings. This module is the rule set that makes the MCP bridge obey. It decides whether a tool call may run, works out which repository a `repo` argument means, and removes closed repositories from lists that show many projects.
+
+The functions are plain: they take paths and JSON values and return answers. They need no backend, so tests run without one.
 
 ## Source
 
@@ -16,13 +18,11 @@ Plain functions, no backend, so they test without one.
 
 ## How it works
 
-1. `Bridge::screen` in [[codewiki-mcp]] calls `session_folders`. `session_folders` calls `normalize` in [[Agents Off Module]].
-2. `Bridge::call` and `Bridge::screen` in [[codewiki-mcp]] call `repo_arg`. `repo_arg` calls `normalize` in [[Agents Off Module]].
-3. `Bridge::screen` in [[codewiki-mcp]] calls `lookup_name`.
-4. `Bridge::screen` in [[codewiki-mcp]] calls `resolve_id`. `resolve_id` calls `find_repo`.
-5. `Bridge::call` in [[codewiki-mcp]] calls `path_of`.
+Session check: `session_folders` lists the folders the agent works in, which are the working directory and `CLAUDE_PROJECT_DIR` when set. `verdict` compares them with the closed list. If the list file cannot be read, the call is refused and the refusal names the file. If a closed entry covers a session folder, or lies inside one, the call is refused and names that entry. Otherwise it is `Open`.
 
-4 more entry points: `direct_path`, `target`, `verdict`, `hide_repos`.
+Argument check: `repo_arg` sorts a `repo` argument into a path or an id-or-name. `lookup_name` gives the name to look up in the repository list. `target` returns the repository id when a registered repository answers, and otherwise an absolute folder path. `direct_path` and `path_of` turn it into a folder so it can be tested against the closed list.
+
+List filtering: `hide_repos` removes closed entries from the repository list and returns their names. `hide_in_workspace` and `hide_in_contracts` remove those names from the cross-project views. A shared dependency left with fewer than two repositories is dropped. A matched call left with no visible provider moves to `unprovided`.
 
 ## Items
 
@@ -53,6 +53,15 @@ And 2 more private items with no comment.
 ## Used by
 
 - [[codewiki-mcp]] — from `call`, `get_contracts`, `get_workspace`, `screen`
+
+## Gotchas
+
+- A value like `D:secret` has a drive but no root. Windows reads it against that drive's current folder. `repo_arg` treats it as a path and makes it absolute, so it cannot pass as a name.
+- The backend never gets a bare word. A word that no repository answers to becomes a folder under the working directory, because the backend would read it against its own folder.
+- A missing path is looked up by its last component. This matches the backend's own fallback, so the check and the backend agree on the repository.
+- A list that cannot be read closes everything. This is on purpose: it fails safe.
+- Known limit in `hide_in_contracts`: a visible route called only by a hidden repository leaves `matched` and does not show in `unconsumed`. A true fix needs the server to compute over visible repositories only.
+- Names match without case, ids exactly. `path_of` accepts ids only.
 
 ## See also
 

@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-The first three are read from files of the repository, so every machine reads the same. What the package is stands in no file of the repository. A `PackageInfo` takes it from files the machine may have (cargo's registry cache, `node_modules`), and `describe` keeps what was found in `packages.json` beside the vault's manifest, so that a machine without those files writes the same notes.
+Notes about outside packages need facts: the version asked for, the version locked, the features turned on, and what the package is. This module reads the first three from the build files of the repository and keeps the fourth in a saved file, so that notes come out the same on every machine.
 
 ## Source
 
@@ -16,11 +16,11 @@ The first three are read from files of the repository, so every machine reads th
 
 ## How it works
 
-1. `Repo::at` in [[Repo]] calls `Packages::read`. `Packages::read` calls `locked_versions` in [[Workspace Module]].
-2. `RenderCtx::render_integration` in [[RenderCtx]] calls `declared`. `declared` calls `cargo`, then `other`. `cargo` calls `Declared::bare`, then `dependency_specs` in [[Workspace Module]]. `other` calls `asked_in`, then `Declared::bare`.
-3. `generate_with` in [[Generate Module]] calls `describe`. `describe` calls `load`, then `Language::from_path` in [[Language]], then `declared`, then `saved_path`, then `Error::io`, then `Error::external` (both in [[Error]]). `load` calls `saved_path`.
+`Packages::read` reads the root `Cargo.toml` and `Cargo.lock` of the repository. The lock gives exact versions by crate name, and the published name (for example `tree-sitter` for `tree_sitter`).
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`declared` answers what each build file asks of a package. For Rust units, `cargo` reads the dependency spec: requirement, features, and whether default features are off. A `workspace = true` spec is resolved through the root manifest. `Packages::locked` picks the locked version that the requirement accepts, using Cargo's default rule in `accepts`. If that cannot be told and the lock file has only one version, that one is used. For other units, `other` reads the requirement by file kind. Maven group matching, gradle strings and Python specifiers each have a helper.
+
+`describe` adds a one-line description for each package. It asks a `PackageInfo` (see [[Machine]]) with the published name and the locked version. If that finds nothing, it takes the text saved by an earlier run in `packages.json` under the vault's manifest folder. It rewrites the file only when the result differs. An empty result deletes the file.
 
 ## Items
 
@@ -65,6 +65,13 @@ And 2 more private items with no comment.
 - [[cw-wiki]] — from `KnowsSerde`
 - [[Machine]] — from `Machine`
 - [[RenderCtx]] — from `render_integration`
+
+## Gotchas
+
+- Requirement and locked version come from repository files, so every machine reads the same. Only the description depends on the machine.
+- `numbers` accepts only plain versions of one to three numbers. A range like `>=1, <3` or `*` gives no match, so the locked version is chosen only when there is exactly one.
+- A package that is no longer named in this run is dropped from `packages.json`.
+- `NoPackageInfo` knows nothing, so a run with it just replays the saved file.
 
 ## See also
 

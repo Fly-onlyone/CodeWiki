@@ -8,7 +8,7 @@ tags: [core, cw-vault, module]
 
 ## What it does
 
-Notes keep the owner's frontmatter convention (tags only), so everything the generator needs to track a note lives here instead. The files are plain text and sorted, so they diff and merge cleanly in git.
+Defines and stores the bookkeeping CodeWiki keeps about a vault. Notes carry only a `tags` frontmatter, so everything else the generator must remember sits in a folder of plain files under the vault: which source files a note cites and their hashes, the hash of the note as written, whether a person or an agent touched it, and which proposals were rejected. [[VaultMeta]] loads and saves it all. The files are sorted text, so they diff and merge cleanly in git.
 
 ## Source
 
@@ -16,10 +16,15 @@ Notes keep the owner's frontmatter convention (tags only), so everything the gen
 
 ## How it works
 
-1. `state` in [[Lifecycle Module]] and `approve` in [[Proposal Module]], and 7 more, call `body_hash`. `body_hash` calls `sha256_hex`, then `normalize_text` (both in [[Hash Module]]).
-2. `VaultMeta::load` in [[VaultMeta]] calls `Manifest::default`.
+Three files are written under the metadata folder:
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- `manifest.json` holds one `Manifest`: schema number, template pack and version, and the last commit the vault was brought up to date with.
+- `notes.jsonl` holds one JSON line per [[NoteEntry]], sorted by note id. Empty fields are left out.
+- `registry.json` is derived from the entries on every save, so it can never disagree with them. It feeds the [[Registry]] that resolves links.
+
+`VaultMeta::load` reads these. A missing file is not an error: a vault with no metadata loads as the empty default. A line of `notes.jsonl` that cannot be parsed is an error that names the line number.
+
+Each entry has an `Origin` (`Generated` or `Adopted`), its [[SourceRef]] list, a `body_hash` and an `input_hash`. `body_hash` hashes the note text after normalizing it, so line-ending changes do not count as edits. `Explained` records what an agent wrote and the files and hashes it wrote from. `behind` holds the reasons an explanation may be out of date. [[Lifecycle Module]] reads these fields to decide what may be rewritten.
 
 ## Items
 
@@ -48,6 +53,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Lifecycle Module]] — from `state`
 - [[Query Module]] — from `NoteInfo`
 - [[NoteEntry]] — from `NoteEntry`
+
+## Gotchas
+
+- Loading and saving rewrite the whole file set each time. Save writes `registry.json` too, even though nobody edits it by hand.
+- `body_hash` ignores CRLF versus LF. A note saved with Windows line endings is not seen as edited.
+- `rejected_inputs` is permanent memory: an input a person rejected is never proposed again.
+- Setting `explained` changes how the note is rewritten later. Rules then write only the sections the agent did not write.
+- A broken line in `notes.jsonl` stops the whole load, so a bad merge in git must be fixed by hand.
 
 ## See also
 

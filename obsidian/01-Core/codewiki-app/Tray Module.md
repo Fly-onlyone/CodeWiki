@@ -20,9 +20,11 @@ Clicks arrive in a window procedure, where nothing of GPUI may be touched. The t
 
 ## How it works
 
-1. `AppView::start_tray` in [[codewiki-app]] calls `Tray::new`. `Tray::new` calls `rows`, then `menu_text`, then `fill_recent`, then `tooltip`, then `keep_open` in [[Win32 Module]], then `shows_window`, and 1 more. `rows` calls `recent_label`. `fill_recent` calls `menu_text`.
+The app builds a `Snapshot` (open repository, state words, MCP words, whether sync can run, recent folders, a newer version if found). `rows` turns it into the menu as plain data: three labels, a version or update row, Open, Update wiki now, Recent repositories, Settings, Check for updates, Quit.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`Tray::new` creates the real menu from those rows, loads the icon from the program's resources, sets the tooltip, and installs two handlers. A left click or double click (`shows_window`) calls `on_show`. A menu row calls `on_command` with the `Command` decoded from the row's id. Right click opens the menu by itself.
+
+`Tray::refresh` compares new rows with the old ones and changes only rows that differ: text, enabled state, or the recent submenu's items. The tooltip is updated only when it changes. `menu_text` doubles `&` so Windows does not read it as an underline marker. `recent_label` shows a folder's name, then its parent in brackets.
 
 ## Items
 
@@ -49,6 +51,15 @@ Calls are listed in the order of the source; a condition or a loop around a call
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `Event`, `run_tray_command`, `start_tray`
+
+## Gotchas
+
+- The menu must keep the same rows in the same order. `refresh` pairs old and new rows by position. For example, with no update the version row is still there, greyed.
+- Do not rebuild the menu while it may be open: a rebuilt open menu closes under the pointer.
+- The callbacks run in a window procedure. They must only pass the event on, never touch GPUI.
+- Only the first event handler set in a process is kept. The app has exactly one tray icon.
+- `keep_open` is called because, after the menu was open, the icon's window has the keyboard and Alt+F4 would destroy it and remove the icon.
+- Quit is the last row so a script can reach it with Up and Enter.
 
 ## See also
 

@@ -20,10 +20,13 @@ MUI turns the arrow upside down while the list is open. The kit's icon cannot be
 
 ## How it works
 
-1. `AppView::settings_menu_view` in [[codewiki-app]] calls `menu`. `menu` calls `Menu::new` in [[Menu Module]], then `menu_width`, then `px` in [[Zoom Module]].
-2. `select_control` in [[Doc View Module]] calls `Select::new`.
+There are two parts: the closed `Select` and the open list built by `menu`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`Select::render` draws a text-field-shaped row: the optional icon, the label of the choice truncated, and a drop-down arrow 7 px from the end. The outline color eases over `duration::SHORTER` with the ease-out curve. It is primary when open or focused, primary at the hover opacity when hovered, the foreground at 23% at rest, and the disabled color when disabled. A second 1 px primary line, drawn as an inset shadow, makes the active border look thicker without moving the text. A focused but closed select also gets the focus ring.
+
+A click calls `on_click`. The owner then opens the list.
+
+`menu` builds a [[Menu Module]] aligned to the start of the anchor, with the sections the caller made. Its width is `menu_width` of the control's width, never under 160. The owner marks the row of the current choice as selected and keeps the open state, highlight and focus handle.
 
 ## Items
 
@@ -56,6 +59,15 @@ And 2 more private items with no comment.
 
 - [[codewiki-app]] — from `settings_menu_view`
 - [[Doc View Module]] — from `select_control`
+
+## Gotchas
+
+- The arrow does not turn upside down when the list opens, as MUI's does; the kit's icon cannot be rotated.
+- A select does not ripple. The ink is fully transparent, since it is an input and not a button.
+- The height is the text field's `HEIGHT`, so a select lines up with a text field in one row.
+- The control has no state of its own. `open` only changes how it looks; the owner must set it while the menu is shown.
+- A disabled select fades its icon and ignores a custom tint.
+- The menu is at least 160 wide even if a narrow window squeezes the control.
 
 ## See also
 

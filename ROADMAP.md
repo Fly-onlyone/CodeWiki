@@ -169,7 +169,6 @@ Words alone search in 24 to 31 ms. Lemonade, LM Studio and Ollama used 11 to 29 
   - the self-update's staged `codewiki.exe`. The update said so and changed nothing.
 
   The app started from its shortcut, with its backend, ran. Every refused case passed without `-Hardened`. On 2026-11-26, on the owner's choice, the same cases ran again under full hardening, with attack surface reduction exceptions for CodeWiki's own files only (`-ExceptCodeWiki`: the install folder, the setup program and Inno Setup's temporary copies; antivirus scanning stays on). All passed, and Defender recorded no event that names CodeWiki. On such a machine an administrator adds those exceptions.
-- At 125% zoom the toolbar's search field is narrow enough to cut its placeholder ("Searcl"), since the toolbar now also holds Review (N) and To explain (N).
 
 ## Disk use
 

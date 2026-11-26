@@ -362,6 +362,9 @@ struct AppView {
     theme_menu_focus: FocusHandle,
     /// Where the toolbar's theme button is, for the menu to hang under.
     theme_anchor: AnchorBounds,
+    /// Where the toolbar is: its width decides how much of it shows
+    /// (`toolbar_fit`).
+    toolbar_anchor: AnchorBounds,
     /// Set while the current note is open in the editor.
     editing: Option<Editing>,
     busy: Option<String>,
@@ -369,6 +372,8 @@ struct AppView {
     /// Where the app stands with updates.
     update: update::State,
     search: Entity<InputState>,
+    /// The search field's placeholder now, fitted to its width (`search_hint`).
+    search_hint: &'static str,
     /// What the search field suggests while it is typed in.
     suggestions: suggest::Suggestions,
     /// Bumped on every page change so the viewer rebuilds its state.
@@ -461,8 +466,7 @@ impl AppView {
             _ = view.update(cx, |this, cx| this.run_action(&action, cx));
         });
         let doc_page = cx.new(|_| doc_view::DocPage::new(on_action));
-        let search =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Search notes, symbols, files…"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(SEARCH_HINT));
         let subscription =
             cx.subscribe_in(&search, window, |this, input, event: &InputEvent, _, cx| {
                 let text = input.read(cx).value().to_string();
@@ -560,11 +564,13 @@ impl AppView {
             theme_menu_highlight: 0,
             theme_menu_focus,
             theme_anchor: AnchorBounds::default(),
+            toolbar_anchor: AnchorBounds::default(),
             editing: None,
             busy: Some("Connecting".into()),
             error: None,
             update: update::State::NotInstalled,
             search,
+            search_hint: SEARCH_HINT,
             suggestions: suggest::Suggestions::default(),
             page_serial: 0,
             doc_page,
@@ -3267,6 +3273,18 @@ impl AppView {
 
     fn toolbar(&self, cx: &mut Context<Self>) -> Div {
         let pending = self.pending_proposals.len();
+        // From the toolbar's width in the last frame, which its content does
+        // not change: it is as wide as the room it has.
+        let fit = self
+            .toolbar_anchor
+            .get()
+            .map_or(ToolbarFit::Full, |bounds| {
+                toolbar_fit(
+                    bounds.size.width / px(1.),
+                    self.update.available().is_some(),
+                )
+            });
+        let full = fit == ToolbarFit::Full;
         h_flex()
             .w_full()
             .gap_1()
@@ -3301,7 +3319,8 @@ impl AppView {
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
-            .child(div().flex_1().px_1().child({
+            // Never narrower than its magnifier.
+            .child(div().flex_1().min_w(px(44.)).px_1().child({
                 let view = cx.entity_id();
                 self.suggestions
                     .anchor
@@ -3339,32 +3358,53 @@ impl AppView {
                     _ => None,
                 },
                 |this, agent| {
-                    this.child(
-                        Button::new("agent-view")
-                            .icon(if agent { icons::NOTE } else { icons::AGENT })
-                            .label(if agent { "Whole note" } else { "Agent view" })
-                            .tooltip(if agent {
-                                "Show the whole note, with its pictures"
-                            } else {
-                                "Show the note as a coding agent reads it"
-                            })
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.toggle_agent_view(cx))),
-                    )
+                    let icon = if agent { icons::NOTE } else { icons::AGENT };
+                    let label = if agent { "Whole note" } else { "Agent view" };
+                    let tooltip = if agent {
+                        "Show the whole note, with its pictures"
+                    } else {
+                        "Show the note as a coding agent reads it"
+                    };
+                    let click = cx.listener(|this, _, _, cx| this.toggle_agent_view(cx));
+                    if full {
+                        this.child(
+                            Button::new("agent-view")
+                                .icon(icon)
+                                .label(label)
+                                .tooltip(tooltip)
+                                .small()
+                                .on_click(click),
+                        )
+                    } else {
+                        this.child(
+                            IconButton::new("agent-view", icon)
+                                .tooltip(format!("{label}: {tooltip}"))
+                                .small()
+                                .on_click(click),
+                        )
+                    }
                 },
             )
             .when(
                 matches!(self.page, Page::Note { agent: false, .. }) && self.editing.is_none(),
                 |this| {
-                    this.child(
-                        Button::new("edit")
-                            .icon(icons::EDIT)
-                            .label("Edit")
-                            .small()
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.start_edit(window, cx)),
-                            ),
-                    )
+                    let click = cx.listener(|this, _, window, cx| this.start_edit(window, cx));
+                    if full {
+                        this.child(
+                            Button::new("edit")
+                                .icon(icons::EDIT)
+                                .label("Edit")
+                                .small()
+                                .on_click(click),
+                        )
+                    } else {
+                        this.child(
+                            IconButton::new("edit", icons::EDIT)
+                                .tooltip("Edit")
+                                .small()
+                                .on_click(click),
+                        )
+                    }
                 },
             )
             .when_some(self.editing.as_ref().map(|e| e.dirty), |this, dirty| {
@@ -3391,7 +3431,11 @@ impl AppView {
                     this.child(
                         Button::new("update")
                             .icon(icons::UPDATE)
-                            .label(format!("Update to {version}"))
+                            .label(if full {
+                                format!("Update to {version}")
+                            } else {
+                                "Update".to_string()
+                            })
                             .tooltip("Download it, install it and restart CodeWiki")
                             .small()
                             .contained()
@@ -3400,30 +3444,42 @@ impl AppView {
                     )
                 },
             )
-            .child(
-                Button::new("commands")
-                    .icon(icons::COMMANDS)
-                    .label("Ctrl+K")
-                    .tooltip("Commands")
-                    .small()
-                    .text()
-                    .on_click(cx.listener(|this, _, window, cx| this.toggle_palette(window, cx))),
-            )
-            .child(
-                IconButton::new("graph", icons::GRAPH)
-                    .tint(icons::tint(icons::GRAPH, cx))
-                    .tooltip("Graph")
-                    .small()
-                    .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
-            )
-            .child(
-                IconButton::new("hotspots", icons::HOTSPOTS)
-                    .tint(icons::tint(icons::HOTSPOTS, cx))
-                    .tooltip("Hotspots")
-                    .small()
-                    .disabled(self.repo.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
-            )
+            .child({
+                let click = cx.listener(|this, _, window, cx| this.toggle_palette(window, cx));
+                if full {
+                    Button::new("commands")
+                        .icon(icons::COMMANDS)
+                        .label("Ctrl+K")
+                        .tooltip("Commands")
+                        .small()
+                        .text()
+                        .on_click(click)
+                        .into_any_element()
+                } else {
+                    IconButton::new("commands", icons::COMMANDS)
+                        .tooltip("Commands (Ctrl+K)")
+                        .small()
+                        .on_click(click)
+                        .into_any_element()
+                }
+            })
+            .when(fit != ToolbarFit::Tight, |this| {
+                this.child(
+                    IconButton::new("graph", icons::GRAPH)
+                        .tint(icons::tint(icons::GRAPH, cx))
+                        .tooltip("Graph")
+                        .small()
+                        .on_click(cx.listener(|this, _, _, cx| this.open_graph(cx))),
+                )
+                .child(
+                    IconButton::new("hotspots", icons::HOTSPOTS)
+                        .tint(icons::tint(icons::HOTSPOTS, cx))
+                        .tooltip("Hotspots")
+                        .small()
+                        .disabled(self.repo.is_none())
+                        .on_click(cx.listener(|this, _, _, cx| this.open_hotspots(cx))),
+                )
+            })
             .child({
                 let view = cx.entity_id();
                 self.theme_anchor.track(
@@ -3438,27 +3494,48 @@ impl AppView {
                     move |_, cx| doc_view::notify_after_draw(view, cx),
                 )
             })
-            .child(
-                Button::new("sync")
-                    .icon(icons::SYNC)
-                    .label("Sync")
-                    .small()
-                    .disabled(self.busy.is_some() || self.repo.is_none())
-                    .on_click(cx.listener(|this, _, _, cx| this.sync(cx))),
-            )
-            .child(
+            .child({
+                let disabled = self.busy.is_some() || self.repo.is_none();
+                let click = cx.listener(|this, _, _, cx| this.sync(cx));
+                if full {
+                    Button::new("sync")
+                        .icon(icons::SYNC)
+                        .label("Sync")
+                        .small()
+                        .disabled(disabled)
+                        .on_click(click)
+                        .into_any_element()
+                } else {
+                    IconButton::new("sync", icons::SYNC)
+                        .tooltip("Sync")
+                        .small()
+                        .disabled(disabled)
+                        .on_click(click)
+                        .into_any_element()
+                }
+            })
+            .child({
+                // Below full, the count alone, with the name in the tooltip.
+                let name = format!("Review ({pending})");
                 Button::new("review")
                     .icon(icons::REVIEW)
-                    .label(format!("Review ({pending})"))
+                    .label(if full {
+                        name.clone()
+                    } else {
+                        pending.to_string()
+                    })
+                    .tooltip(name)
                     .small()
                     .when(pending > 0, |b| b.contained())
-                    .on_click(cx.listener(|this, _, _, cx| this.open_review(cx))),
-            )
+                    .on_click(cx.listener(|this, _, _, cx| this.open_review(cx)))
+            })
             .child({
                 let n = live::waiting_count(self.waiting.as_ref());
+                let name = format!("To explain ({n})");
                 Button::new("to-explain")
                     .icon(icons::WAITING)
-                    .label(format!("To explain ({n})"))
+                    .label(if full { name.clone() } else { n.to_string() })
+                    .tooltip(name)
                     .small()
                     .disabled(n == 0)
                     .on_click(cx.listener(|this, _, _, cx| this.open_waiting(cx)))
@@ -5044,6 +5121,53 @@ fn stops_backend_on_quit(remote: bool, installing: bool) -> bool {
     !remote && !installing
 }
 
+/// How much of the toolbar shows. Its buttons with labels need more room
+/// than a window about 1000 px wide leaves it, or one at 125% zoom: they ran
+/// past its right edge, and Sync, Review and To explain could not be
+/// reached.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ToolbarFit {
+    /// Every button with its label.
+    Full,
+    /// Agent view, Edit, Commands and Sync as icons, with their names in
+    /// the tooltip; Review and To explain as an icon and their count.
+    Compact,
+    /// Compact, without Graph and Hotspots, which the palette also opens.
+    Tight,
+}
+
+/// The toolbar's fit for a toolbar `width` design units wide; `update` says
+/// that the update button is shown. The widths are what a note's toolbar
+/// takes, its widest, with room for the search field: a short hint at
+/// [`ToolbarFit::Full`], the magnifier alone below it.
+fn toolbar_fit(width: f32, update: bool) -> ToolbarFit {
+    let (full, compact) = if update { (154.0, 94.0) } else { (0.0, 0.0) };
+    if width >= 980.0 + full {
+        ToolbarFit::Full
+    } else if width >= 560.0 + compact {
+        ToolbarFit::Compact
+    } else {
+        ToolbarFit::Tight
+    }
+}
+
+/// The search field's placeholder, whole and short.
+const SEARCH_HINT: &str = "Search notes, symbols, files…";
+const SEARCH_HINT_SHORT: &str = "Search…";
+
+/// The placeholder for a search field `width` design units wide (icon and
+/// padding included): the whole hint, a short one, or none, where the
+/// magnifier says it alone. Never a hint cut in the middle.
+fn search_hint(width: f32) -> &'static str {
+    if width >= 270.0 {
+        SEARCH_HINT
+    } else if width >= 120.0 {
+        SEARCH_HINT_SHORT
+    } else {
+        ""
+    }
+}
+
 /// The text of the title bar: the app's name, and the open repository's
 /// while a page of it is shown. Home lists every repository and belongs to
 /// none, so there the name alone.
@@ -5114,8 +5238,24 @@ impl AppView {
         }
     }
 
+    /// Fit the search field's placeholder to the field's width in the last
+    /// frame. The field takes what the toolbar leaves, and a long hint in a
+    /// narrow field was cut ("Searcl" at 125% zoom).
+    fn fit_search_hint(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bounds) = self.suggestions.anchor.get() else {
+            return;
+        };
+        let hint = search_hint(bounds.size.width / px(1.));
+        if hint != self.search_hint {
+            self.search_hint = hint;
+            self.search
+                .update(cx, |state, cx| state.set_placeholder(hint, window, cx));
+        }
+    }
+
     /// Everything below the title bar: sidebar, toolbar, tabs, page, details.
     fn body(&mut self, window: &mut Window, cx: &mut Context<Self>) -> Div {
+        self.fit_search_hint(window, cx);
         // The pane's surface, unless the page lies on clear margins: then
         // the page brings its own (`on_reading_glass`) and what is above or
         // below it here takes this one.
@@ -5189,7 +5329,16 @@ impl AppView {
                     .flex_1()
                     .min_w_0()
                     .h_full()
-                    .child(self.toolbar(cx))
+                    .child({
+                        let view = cx.entity_id();
+                        self.toolbar_anchor
+                            .track(
+                                self.toolbar(cx),
+                                // A new width may show more or less of it.
+                                move |_, cx| doc_view::notify_after_draw(view, cx),
+                            )
+                            .w_full()
+                    })
                     .when(self.busy.is_some(), |column| {
                         column.child(feedback::linear_progress("busy", cx))
                     })
@@ -5395,7 +5544,8 @@ mod tests {
     use gpui_kit::{Bounds, DEFAULT_WINDOW_SIZE, Keystroke, point, px, size};
 
     use super::{
-        Repo, first_bounds, min_window_size, parse_repos, stops_backend_on_quit, window_title, zoom,
+        Repo, SEARCH_HINT, SEARCH_HINT_SHORT, ToolbarFit, first_bounds, min_window_size,
+        parse_repos, search_hint, stops_backend_on_quit, toolbar_fit, window_title, zoom,
     };
 
     #[test]
@@ -5469,6 +5619,29 @@ mod tests {
         assert!(!stops_backend_on_quit(true, false));
         // An update has stopped it, and may have started the next one.
         assert!(!stops_backend_on_quit(false, true));
+    }
+
+    #[test]
+    fn the_toolbar_gives_up_labels_before_it_runs_past_its_edge() {
+        // A 1600x900 screen at 100%: room for every label.
+        assert_eq!(toolbar_fit(1256.0, false), ToolbarFit::Full);
+        // A window about 1000 px wide with the sidebar shown, at 100% and at
+        // 125%, where Sync, Review and To explain were cut off.
+        assert_eq!(toolbar_fit(712.0, false), ToolbarFit::Compact);
+        assert_eq!(toolbar_fit(570.0, false), ToolbarFit::Compact);
+        // Narrower still: Graph and Hotspots go too.
+        assert_eq!(toolbar_fit(480.0, false), ToolbarFit::Tight);
+        // The update button needs room of its own.
+        assert_eq!(toolbar_fit(1000.0, true), ToolbarFit::Compact);
+    }
+
+    #[test]
+    fn the_search_hint_shortens_with_its_field_and_is_never_cut() {
+        assert_eq!(search_hint(400.0), SEARCH_HINT);
+        assert_eq!(search_hint(200.0), SEARCH_HINT_SHORT);
+        // About what the field had at 125% zoom in a 1536 px window, where
+        // the whole hint read "Searcl".
+        assert_eq!(search_hint(90.0), "");
     }
 
     #[test]

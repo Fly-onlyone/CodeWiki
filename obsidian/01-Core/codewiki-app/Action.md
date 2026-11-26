@@ -43,7 +43,7 @@ Declared as `pub enum Action`.
 
 - [[Doc View Module]] — from `LinkedLine`, `OnAction`, `choices_row`, `line`
 - [[Doc Module]] — from `Choice`, `Press`, `Row`, `aside`
-- [[codewiki-app]] — from `run_action`, `run_settings_action`
+- [[codewiki-app]] — from `run_action`, `run_action_with`, `run_settings_action`
 - [[Doc]] — from `actions`, `of_line`
 - [[Live Module]] — from `HitTarget`
 - [[Toasts Module]] — from `Notice`

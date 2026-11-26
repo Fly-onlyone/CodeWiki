@@ -72,6 +72,8 @@ Modules:
 - [[Startup Module]] — which repository the app opens when it starts.
 - [[Status Module]] — what the app says about itself in the tray: what the backend is doing and whether an agent is using it.
 - [[Suggest Module]] — what the search field suggests while it is typed in: the hits of its text, looked up at each pause in typing, in a list under the field.
+- [[Tab Ops Module]] — which tabs stay when some are closed: the logic of the tab menu, kept apart from the view so that it can be tested.
+- [[Tab Prefs Module]] — the two tab settings: whether the app has tabs at all, and whether a note the user opens goes to a tab of its own.
 - [[Themes Module]] — bundled color themes and theme switching.
 - [[Toasts Module]] — short messages for the user: what to show and where it goes.
 - [[Tray Module]] — the app's icon in the notification area, with its tooltip and its menu.
@@ -86,8 +88,9 @@ Defined at the crate root:
 - `const SCREEN_MARGIN: f32` — kept free around the first window on a screen it would otherwise fill. A window as large as the free area has its unseen frame, and with it a few pixels of the title bar, outside the screen.
 - `const WIKI_MAP: &str` — the vault's map note, which the app calls "Wiki map".
 - `enum Landing` — where the app goes once a repository's notes have loaded.
-- `enum Event` — what reaches the app from outside GPUI: from another thread, or from code that runs with no way to the app's state. Each is sent through a channel and carried out by one task of the app's view (`AppView::listen`), so that none of it ever runs while GPUI is in the middle of something.
 - `struct Tab` — A tab that is not on screen. The active tab's page and history live in the view itself; its slot is refreshed when the user leaves it.
+- `enum Place` — where a note that loads is shown.
+- `enum MenuTarget` — what a right-click opened a menu on.
 - `enum Page` — what the centre pane shows.
 - `const SIDEBAR_WIDTH: f32` — width of the sidebar and of the details pane, in pixels.
 - `fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>)` — the registered repositories, split into those whose folders are there and those whose folders are gone. A backend from before the list said so counts every folder as there.
@@ -99,21 +102,20 @@ Defined at the crate root:
 - `enum ToolbarFit` — how much of the toolbar shows. Its buttons with labels need more room than a window about 1000 px wide leaves it, or one at 125% zoom: they ran past its right edge, and Sync, Review and To explain could not be reached.
 - `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
 - `fn search_hint(width: f32) -> &'static str` — the placeholder for a search field `width` design units wide (icon and padding included): the whole hint, a short one, or none, where the magnifier says it alone. Never a hint cut in the middle.
-- `fn reading_measure(page: &Page) -> f32` — the widest a line of `page` runs.
 - `fn main()` — private function.
 
-And 31 more items.
+And 38 more items.
 
 ## Depends on
 
 - [[Review Module]] — uses `Click`, `Item`, `State`, `Targets`
 - [[Live Module]] — uses `HomeInput`, `Kept`, `OPEN`, `Project`
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
+- [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
 - [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
 - [[Supervisor]] — uses `Supervisor`, `default`, `due`, `failed`
 - [[Glass Module]] — uses `FADE`, `Levels`, `OPAQUE`, `chrome`
-- [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
-- [[Pages Module]] — uses `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page`
+- [[List Module]] — uses `ListItemButton`, `Placed`, `ROW_START`, `leading`
 
 ## Used by
 

@@ -80,7 +80,7 @@ And 25 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `main`, `margin_width`, `run_action`
+- [[codewiki-app]] — from `AppView`, `main`, `margin_width`, `run_action_with`
 - [[Glass Module]] — from `matched_backdrop`
 
 ## Gotchas

@@ -47,7 +47,7 @@ The app view calls `enabled` to draw the switch and to match palette entries, an
 
 ## Used by
 
-- [[codewiki-app]] — from `palette_matches`, `run_action`, `settings_frame`
+- [[codewiki-app]] — from `palette_matches`, `run_action_with`, `settings_frame`
 
 ## Gotchas
 

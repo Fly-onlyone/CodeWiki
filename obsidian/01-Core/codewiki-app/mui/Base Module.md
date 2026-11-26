@@ -27,9 +27,11 @@ State lives in a `Touch` entity keyed on the control's id: hover, pressed, the r
 ## Items
 
 - `pub type OnClick = Rc<dyn Fn(&ClickEvent, &mut Window, &mut App)>` — what a click does.
+- `pub type OnSecondary = Rc<dyn Fn(MouseButton, Point<Pixels>, &mut Window, &mut App)>` — what a press of the right or the middle button does, and where in the window it was.
 - `pub struct Touch` — the remembered state of one control.
 - `pub struct Ink` — how a control's ripple is drawn.
 - `pub struct Base` — the state of one control for this frame, and the means to wire it up.
+- `pub fn secondary(element: Stateful<Div>, on_secondary: Option<OnSecondary>) -> Stateful<Div>` — call `on_secondary` when the right or the middle button is pressed on `element`, which takes the press alone. With `None` the element is left as it is.
 - `pub fn focus_ring(primary: Hsla) -> BoxShadow` — the ring a control shows while it has keyboard focus. TradingAgent's `focusRing`: `0 0 0 2px rgba(primary, 0.4)`.
 - `pub struct Hover` — whether the pointer is over an element that is not pressable, such as a text field or a card.
 

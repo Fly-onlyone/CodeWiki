@@ -35,9 +35,9 @@ Serves the read side of the wiki to the app and to coding agents. The vault hold
 - `pub struct Related` — A related symbol with how sure the resolver is of the relation.
 - `pub struct SymbolDetail` — public struct; used by `Context`, `symbol_detail`.
 - `pub struct FileContext` — public struct; used by `Context`, `context`.
-- `pub enum Context` — public enum; used by `context`.
 - `pub struct Answer` — public struct; used by `answer`, `ask`.
 - `pub fn list_notes(root: &Path) -> Result<Vec<NoteInfo>>` — public function, returns `Result<Vec<NoteInfo>>`; called by `list_notes`.
+- `pub fn read_note(root: &Path, path_or_name: &str) -> Result<NoteContent>` — read a whole note by vault path or by name.
 - `pub fn read_note_as(root: &Path, path_or_name: &str, view: View) -> Result<NoteContent>` — read a note by vault path or by name, as much of it as `view` says.
 - `pub fn write_note(root: &Path, path: &str, text: &str) -> Result<()>` — save a human edit to an existing note. The manifest is left alone, so the note's changed hash marks it as human-edited from now on.
 - `pub fn status(root: &Path, index: &Index) -> Result<Status>` — public function, returns `Result<Status>`; called by `overview`, `repo_status`, `summarize`.
@@ -63,8 +63,8 @@ And 9 more items.
 ## Used by
 
 - [[Api Module]] — from `ask`, `context`, `dependency_path`, `list_notes`
+- [[cw-wiki]] — from `a_link_by_folder_path_opens_its_note`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_is_woven_into_the_note_and_recorded`
 - [[Explanations Module]] — from `brief`, `row`, `submit`
-- [[cw-wiki]] — from `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_is_woven_into_the_note_and_recorded`
 - [[Workspace Module (cw-server)]] — from `summarize`
 
 ## Gotchas

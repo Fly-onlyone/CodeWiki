@@ -4,7 +4,7 @@ tags: [moc, core, codewiki-app]
 
 # Core / codewiki-app — Map of Content
 
-> Notes for `codewiki-app`: 54 concepts.
+> Notes for `codewiki-app`: 56 concepts.
 
 ## Notes
 
@@ -55,6 +55,8 @@ tags: [moc, core, codewiki-app]
 - [[Status Module]] — what the app says about itself in the tray: what the backend is doing and whether an agent is using it.
 - [[Suggest Module]] — what the search field suggests while it is typed in: the hits of its text, looked up at each pause in typing, in a list under the field.
 - [[Supervisor]] — watches the backend and decides when, and how, to try it again.
+- [[Tab Ops Module]] — which tabs stay when some are closed: the logic of the tab menu, kept apart from the view so that it can be tested.
+- [[Tab Prefs Module]] — the two tab settings: whether the app has tabs at all, and whether a note the user opens goes to a tab of its own.
 - [[Themes Module]] — bundled color themes and theme switching.
 - [[Toasts]] — the toasts on screen, the ones that are leaving, and the notices sent to Windows.
 - [[Toasts Module]] — short messages for the user: what to show and where it goes.

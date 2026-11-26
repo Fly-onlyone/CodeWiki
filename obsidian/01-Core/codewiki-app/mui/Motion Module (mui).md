@@ -63,7 +63,7 @@ And 6 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `check_for_update`, `connect`, `diagram_viewer_view`, `draw_queued_diagrams`
+- [[codewiki-app]] — from `check_for_update`, `connect`, `context_menu_view`, `diagram_viewer_view`
 - [[Doc View Module]] — from `column`, `draw_strip`, `render`, `stat_tile`
 - [[Ripple Module]] — from `finished`, `frame`, `moving`
 - [[Spring]] — from `animation`, `config`, `policy`

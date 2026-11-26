@@ -32,7 +32,7 @@ An installed app checks once a day unless the user turned it off. It checks at s
 - `const CHECKED: &str` — the setting that holds when GitHub last answered a check, in seconds since 1970.
 - `pub enum State` — where the app stands with updates.
 - `pub fn auto_check() -> bool` — whether the app checks by itself when it starts.
-- `pub fn set_auto_check(on: bool)` — public function; called by `AppView::run_action`.
+- `pub fn set_auto_check(on: bool)` — public function; called by `AppView::run_action_with`.
 - `fn now() -> u64` — private function, returns `u64`; called by `check`, `due`, `due_after`.
 - `pub fn due() -> bool` — whether the daily check is due.
 - `fn due_after(last: Option<u64>, now: u64) -> bool` — due when it never ran, when a day has passed, or when the stored time is in the future (the clock was set back).

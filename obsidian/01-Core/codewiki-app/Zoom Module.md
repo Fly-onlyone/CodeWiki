@@ -65,7 +65,7 @@ And 12 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `body`, `details`, `diagram_viewer_view`, `drop`
+- [[codewiki-app]] — from `body`, `context_menu_view`, `details`, `diagram_viewer_view`
 - [[Doc View Module]] — from `caption`, `choices_row`, `code_block`, `column`
 - [[Feedback Module]] — from `alert_action`, `alert_titled`, `chip`, `dots`
 - [[List Module]] — from `bar_glow`, `icon_glow`, `render`, `subheader`

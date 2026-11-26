@@ -64,7 +64,7 @@ And 12 more items.
 
 ## Used by
 
-- [[codewiki-app]] — from `main`, `run_action`, `settings_frame`
+- [[codewiki-app]] — from `main`, `run_action_with`, `settings_frame`
 - [[codewiki]] — from `main`, `sentry_test`
 - [[codewiki-mcp]] — from `main`
 - [[Settings Pages Module]] — from `error_reports`

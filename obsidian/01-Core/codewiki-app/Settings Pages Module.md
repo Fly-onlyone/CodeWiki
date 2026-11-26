@@ -28,10 +28,10 @@ The search page picks a provider, then `server_rows` shows its address, key, mod
 - `pub struct KeptFolder` — A folder on the list of those kept from coding agents. Whether it still exists is looked up when the list is read, never while a page is drawn: a folder on a share that is offline can take long to answer.
 - `pub struct Model<'a>` — everything the pages read.
 - `pub fn page(category: Category, model: &Model) -> Doc` — the page of `category`.
-- `fn card(title: &str, body: Vec<Block>) -> Block` — private function, returns `Block`; called by `agents_card`, `appearance`, `auto_explain_card`, `backend` and 6 more.
+- `fn card(title: &str, body: Vec<Block>) -> Block` — private function, returns `Block`; called by `agents_card`, `appearance`, `auto_explain_card`, `backend` and 7 more.
 - `fn appearance(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
+- `fn tabs_card(model: &Model) -> Block` — whether the app has tabs, and where a note the user opens goes.
 - `fn zoom_card(model: &Model) -> Block` — how large the whole app is drawn.
-- `fn startup(model: &Model) -> Block` — where the app starts, whether Windows starts it at sign-in, and what closing the window does: the last two belong together, since an app started that way is seen only as its tray icon.
 - `fn without_settings(model: &Model) -> Vec<Block>` — what a page that needs the backend's settings shows without them.
 - `fn lock(model: &Model, settings: &Value, entry: &Value) -> Option<String>` — why the setting `entry` describes cannot be changed here, when it cannot.
 - `provider` — A select over the `options` the backend lists for `section.provider`.
@@ -45,7 +45,7 @@ The search page picks a provider, then `server_rows` shows its address, key, mod
 - `fn repositories(model: &Model) -> Vec<Block>` — private function, returns `Vec<Block>`; called by `page`.
 - `fn updates(model: &Model) -> Vec<Block>` — the version, what the last check found, and whether the app checks by itself.
 
-And 18 more items.
+And 19 more items.
 
 ## Depends on
 

@@ -34,14 +34,15 @@ Each tab gets its own `Base` (see [[Base Module]]). Its fill is primary at the s
 - `const LABEL_MAX: f32` — the widest a label gets before it is cut short.
 - `pub fn bar(left: f32, width: f32) -> (f32, f32)` — where the bar sits under a tab that starts at `left` and is `width` wide: its own left edge and width.
 - `type OnSelect = Rc<dyn Fn(usize, &mut Window, &mut App)>` — what choosing the tab at an index does.
+- `type OnTabSecondary = Rc<dyn Fn(usize, MouseButton, Point<Pixels>, &mut Window, &mut App)>` — what a press of the right or the middle button on the tab at an index does, and where in the window it was.
 - `pub struct Tab` — one tab: its label and, optionally, something after it, such as a close button.
-- `pub struct Tabs` — A row of tabs with a bar under the selected one.
+- `pub struct Tabs` — A row of tabs with a bar under the selected one. Tabs that do not fit scroll sideways, with the wheel too, and a newly selected tab scrolls into view.
 
 And 3 more private items with no comment.
 
 ## Depends on
 
-- [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
+- [[Base Module]] — uses `Ink`, `OnClick`, `OnSecondary`, `focus_ring`
 - [[Interaction Module]] — uses `current`, `pressed`
 - [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
 - [[Tokens Module]] — uses `easing`

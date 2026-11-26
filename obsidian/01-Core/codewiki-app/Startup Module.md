@@ -43,7 +43,7 @@ The command line is `codewiki-app [--tray] [<folder> [<view>]]`. Flags may stand
 - `const RECENT_CAP: usize` — how many folders the recent list keeps.
 - `const OPEN_LAST: &str` — the setting that says whether the app starts on the wiki map of the repository it opens, rather than on Home.
 - `pub fn open_last() -> bool` — whether the app starts on the wiki map of the repository it opens. Off until the user turns it on.
-- `pub fn set_open_last(on: bool)` — public function; called by `AppView::run_action`.
+- `pub fn set_open_last(on: bool)` — public function; called by `AppView::run_action_with`.
 - `pub fn looks_like_repo(dir: &Path) -> bool` — whether `dir` looks like a repository: it holds `.git` (a folder, or a file in a git worktree or submodule) or a CodeWiki vault.
 - `fn choose(arg: Option<String>, cwd: Option<PathBuf>, last: Option<String>) -> Option<String>` — the folder to open, from the first argument, the working folder and the repository opened last, in that order.
 - `pub fn repo() -> Option<String>` — the folder to open at startup, if any.

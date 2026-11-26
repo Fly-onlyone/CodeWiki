@@ -1090,6 +1090,16 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::tab_ops",
+    "path": "01-Core/codewiki-app/Tab Ops Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:codewiki_app::tab_prefs",
+    "path": "01-Core/codewiki-app/Tab Prefs Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::mui::tabs",
     "path": "01-Core/codewiki-app/mui/Tabs Module.md",
     "kind": "concept"

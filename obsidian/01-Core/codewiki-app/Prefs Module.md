@@ -40,11 +40,11 @@ This is the app's tiny settings store. Each setting is one text file named after
 - [[Startup Module]] — from `keep_recent`, `open_last`, `recent`, `remember`
 - [[Update Module]] — from `auto_check`, `check`, `due`, `set_auto_check`
 - [[codewiki-app]] — from `after_hide`, `main`, `run_settings_action`
+- [[Tab Prefs Module]] — from `init`, `set_new_tab`, `set_tabs`
 - [[Themes Module]] — from `init`, `select`, `user_theme_dir`
 - [[Backdrop Module]] — from `init`, `set_shown`
 - [[Motion Module]] — from `init`, `set`
 - [[Panes Module]] — from `load`, `store`
-- [[Zoom Module]] — from `init`, `set`
 
 ## Gotchas
 

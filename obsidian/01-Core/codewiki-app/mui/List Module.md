@@ -48,13 +48,15 @@ The selected label's color is the theme's link color put through `lift` by `labe
 - `fn bar_place(width: f32, shown: f32) -> (f32, f32)` — where the bar of a selected row is, `shown` of the way in: its left edge and its height, centred on the row. It grows from its middle as it slides in from the left.
 - `pub fn subheader(label: impl Into<SharedString>, cx: &App) -> Div` — the heading over a group of rows, in the theme's secondary color, which is its link color.
 - `pub struct ListItemButton` — A row that can be pressed.
+- `pub type Placed = std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>` — where a row was drawn in the last frame, in the window.
+- `offset_to_show` — the scroll offset that brings `row` into a list's `view` with the least movement, from the offset `current` it was drawn at. Offsets are GPUI's: 0 at the top, negative as the list scrolls down.
 - `pub struct ListFolder` — A row that opens and closes the rows under it.
 
 And 4 more private items with no comment.
 
 ## Depends on
 
-- [[Base Module]] — uses `Ink`, `OnClick`, `focus_ring`, `new`
+- [[Base Module]] — uses `Ink`, `OnClick`, `OnSecondary`, `focus_ring`
 - [[Interaction Module]] — uses `Interaction`, `current`, `lift`, `pressed`
 - [[Motion Module (mui)]] — uses `SNAPPY`, `scaled`
 - [[Duration Module]] — uses `SHORTEST`, `STANDARD`
@@ -65,7 +67,7 @@ And 4 more private items with no comment.
 
 ## Used by
 
-- [[codewiki-app]] — from `palette_view`, `review_queue`, `settings_entry`, `settings_frame`
+- [[codewiki-app]] — from `Reveal`, `follow_reveal`, `palette_view`, `review_queue`
 - [[Doc View Module]] — from `draw_row`
 - [[Autocomplete Module]] — from `render`
 - [[Menu Module]] — from `render`

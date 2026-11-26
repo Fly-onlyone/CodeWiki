@@ -39,7 +39,7 @@ And 1 more private item with no comment.
 
 ## Used by
 
-- [[codewiki-app]] — from `main`, `run_action`, `run_command`, `settings_frame`
+- [[codewiki-app]] — from `main`, `run_action_with`, `run_command`, `settings_frame`
 
 ## Gotchas
 

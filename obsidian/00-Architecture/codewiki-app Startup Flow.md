@@ -4,7 +4,7 @@ tags: [architecture, flow]
 
 # codewiki-app Startup Flow
 
-> Call sequence from the `main` entry point of `codewiki-app` across 12 parts of the codebase.
+> Call sequence from the `main` entry point of `codewiki-app` across 13 parts of the codebase.
 
 ## Source
 
@@ -24,9 +24,10 @@ sequenceDiagram
     participant p6 as Win32 Module
     participant p7 as Motion Module
     participant p8 as Backdrop Module
-    participant p9 as Fonts Module
-    participant p10 as Themes Module
-    participant p11 as Zoom Module
+    participant p9 as Tab Prefs Module
+    participant p10 as Fonts Module
+    participant p11 as Themes Module
+    participant p12 as Zoom Module
     p0->>p1: read()
     p0->>p2: level_named()
     p0->>p3: init()
@@ -36,11 +37,11 @@ sequenceDiagram
     p0->>p6: on_console_stop()
     p0->>p7: init()
     p0->>p8: init()
-    p0->>p9: register()
-    p0->>p10: init()
+    p0->>p9: init()
+    p0->>p10: register()
     p0->>p11: init()
-    p0->>p11: step_by()
-    p0->>p11: reset()
+    p0->>p12: init()
+    p0->>p12: step_by()
 ```
 
 The sequence follows resolved calls outward from `main`, keeping only calls that cross from one documented part into another. Calls reached through trait objects or macros do not appear.
@@ -56,6 +57,7 @@ The sequence follows resolved calls outward from `main`, keeping only calls that
 - [[Win32 Module]]
 - [[Motion Module]]
 - [[Backdrop Module]]
+- [[Tab Prefs Module]]
 - [[Fonts Module]]
 - [[Themes Module]]
 - [[Zoom Module]]

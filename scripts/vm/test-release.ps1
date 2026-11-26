@@ -1295,6 +1295,7 @@ function Get-AppPoint {
 $layout = @{
     neutral     = @(600, 17)    # the middle of the title bar: hovers nothing
     sidebarRow  = @(124, 248)   # Core > Overview, a sidebar row that is not open
+    sidebarRow2 = @(124, 560)   # Operations > Build and Test, with the window at 992x688
     homeIcon    = @(333, 61)    # the toolbar's Home icon button
     searchField = @(432, 61)    # the toolbar's search field, just after its icon (a click on the icon does not focus it)
     tab         = @(330, 112)   # the first tab
@@ -1448,6 +1449,91 @@ Test-Case "WT1" "The window title on Home" "a note of the repository shows 'Code
     Stop-GuestApp
     Add-Result -Id "WT1" -Title "The window title on Home" -Expect "the note's title bar names cw-core; Home's names no repository" -Status note -Shots @($noteShot, $homeShot) `
         -Observed "started on _HOME, then on home: with cw-core open behind it; the title is drawn by the app (Windows keeps 'CodeWiki' as the window text either way), so it is read off the screenshots: the first title bar reads 'CodeWiki — cw-core', the second 'CodeWiki'"
+}
+
+# ---------------------------------------------------------------- TT1, tab tools (0.5.0)
+# A right-clicked sidebar row once kept a strong fill for good: the press gave
+# it keyboard focus. Now a right-click opens a menu (Open in new tab, Copy
+# note path) and marks the row only while the menu is open. A tab has a menu
+# too (Close, Close others, to the right, to the left, all, Reveal in sidebar,
+# Copy note path); middle-click closes a tab; Ctrl+click or middle-click opens
+# a note in a new tab. Settings > Appearance > Tabs writes tabs.txt ("off":
+# no strip, one view) and new_tab.txt ("on": every note in a tab of its own).
+# The window is placed as in HV1, so the layout points hold.
+function Show-TabWindow {
+    Start-GuestApp -Arguments $guestRepo, "_HOME"
+    Wait-For 15
+    $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
+    if (-not $info) { throw "the app has no window" }
+    Wait-For 3
+    $info
+}
+function Set-GuestTabPref {
+    param([Parameter(Mandatory)][string]$Name, [string]$Value)
+    $file = "`$env:APPDATA\CodeWiki\$Name.txt"
+    if ($Value) {
+        Invoke-GuestScript -Script "New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null; Set-Content $file '$Value' -NoNewline" | Out-Null
+    } else {
+        Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
+    }
+}
+
+Test-Case "TT1" "Tab tools" "right-click menus on a sidebar note and a tab; the row's mark goes when its menu closes; Ctrl+click and middle-click open new tabs; Close others leaves one; tabs off hides the strip; new tabs on opens every note in its own tab" {
+    $taken = @()
+    try {
+        Stop-GuestApp
+        Set-GuestTabPref "tabs"; Set-GuestTabPref "new_tab"
+        $info = Show-TabWindow
+        $x, $y = Get-LayoutPoint -Info $info -Name "sidebarRow"
+        Send-Click -X $x -Y $y -Button right; Wait-For 2
+        $taken += Shot "tabs-sidebar-menu"
+        Send-Keys "esc"; Wait-For 1
+        $nx, $ny = Get-LayoutPoint -Info $info -Name "neutral"
+        Move-Pointer -X $nx -Y $ny; Wait-For 2
+        $taken += Shot "tabs-sidebar-menu-closed"
+        # A Ctrl+click on Operations > Build and Test, then a middle-click on
+        # Core > Overview: two new tabs, the last one shown. (The link
+        # 'cw-core' of _HOME names a folder's _index without .md, which the
+        # backend does not find, so it opens nothing either way.)
+        $lx, $ly = Get-LayoutPoint -Info $info -Name "sidebarRow2"
+        Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-For 3
+        Send-Click -X $x -Y $y -Button middle; Wait-For 3
+        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        $taken += Shot "tabs-three-open"
+        $tx, $ty = Get-LayoutPoint -Info $info -Name "tab"
+        Send-Click -X $tx -Y $ty -Button right; Wait-For 2
+        $taken += Shot "tabs-tab-menu"
+        # The menu's second row: Close others.
+        Send-Keys "down"; Wait-For 1
+        Send-Keys "enter"; Wait-For 3
+        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        $taken += Shot "tabs-closed-others"
+        Stop-GuestApp
+
+        Set-GuestTabPref "tabs" "off"
+        $info = Show-TabWindow
+        Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-For 3
+        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        $taken += Shot "tabs-off"
+        Stop-GuestApp
+        Set-GuestTabPref "tabs"
+
+        Set-GuestTabPref "new_tab" "on"
+        $info = Show-TabWindow
+        Send-Click -X $x -Y $y; Wait-For 3
+        Send-Click -X $lx -Y $ly; Wait-For 3
+        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        $taken += Shot "tabs-new-tab-on"
+        Stop-GuestApp
+        Start-GuestApp -Arguments $guestRepo, "settings:appearance"
+        Wait-For 12
+        $taken += Shot "tabs-settings"
+    } finally {
+        Stop-GuestApp
+        Set-GuestTabPref "tabs"; Set-GuestTabPref "new_tab"
+    }
+    Add-Result -Id "TT1" -Title "Tab tools" -Expect "both menus open at the pointer; no row keeps a mark after its menu closes; three tabs, then one; no strip with tabs off; a tab per note with new tabs on" -Status note -Shots $taken `
+        -Observed "window placed at 992x688 on _HOME. Right-clicked Core > Overview, Escape, pointer to the title bar; Ctrl+clicked Operations > Build and Test, middle-clicked Core > Overview; right-clicked the first tab, Down, Enter; then tabs.txt = off and a Ctrl+click on Build and Test; then new_tab.txt = on and clicks on Core > Overview and Build and Test; both files removed after. Read the screenshots: (1) a menu at the pointer with 'Open in new tab' and 'Copy note path', the row tinted; (2) no menu and no row filled except the open note's; (3) three tabs: Wiki map, Build and Test, Overview, the last selected; (4) a menu under the first tab: Close, Close others, Close to the right, Close all, Reveal in sidebar, Copy note path; (5) one tab, Wiki map; (6) no tab strip, the page shows Build and Test; (7) three tabs: Wiki map, Overview, Build and Test; (8) Settings > Appearance with a Tabs card: 'Tabs' on and 'Open notes in a new tab' off (it may need the page scrolled: the card is under Zoom)"
 }
 
 # ---------------------------------------------------------------- AC1, how many notes a session explains (0.5.0)

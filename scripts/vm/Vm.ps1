@@ -508,19 +508,38 @@ function Start-GuestExe {
     if ($run.Output -notcontains "started") { throw "could not start $Exe on the guest's desktop: $($run.Errors -join '; ')" }
 }
 
-# Finds a program's main window inside the guest. Not the process's
-# MainWindowHandle: that is whichever of its top-level windows Windows lists
-# first, and when the pointer rests where the app's close button appears, it
-# is the tooltip Windows shows for that button, 35 pixels wide. The main
-# window is the largest one on screen.
-$script:GuestWindowType = @'
+# The C# the window helpers use, in the guest: one type, VmTest.Windows, with
+# the window functions of user32 and a way to find a program's main window.
+# Not the process's MainWindowHandle: that is whichever of its top-level
+# windows Windows lists first, and when the pointer rests where the app's close
+# button appears, it is the tooltip Windows shows for that button, 35 pixels
+# wide. The main window is the largest one on screen.
+#
+# The text begins every script that needs it. The type is compiled only when
+# the process does not have it yet: the helper in the guest (guest\agent.ps1)
+# compiles it once, at its start, and a fresh process, as on the fallback
+# path, once per call. In memory, never as a DLL on disk.
+$script:GuestTypes = @'
+if (-not ('VmTest.Windows' -as [type])) {
 Add-Type -Namespace VmTest -Name Windows -MemberDefinition '
 [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+[StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
 public delegate bool EachWindow(IntPtr window, IntPtr data);
 [DllImport("user32.dll")] public static extern bool EnumWindows(EachWindow each, IntPtr data);
 [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
 [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr window);
 [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+[DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
+[DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
+[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
+[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
+[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr window);
+[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+[DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);
+[DllImport("user32.dll")] public static extern bool SystemParametersInfo(uint action, uint param, out Rect rect, uint winIni);
+[DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
 public static IntPtr Largest(int process) {
     IntPtr best = IntPtr.Zero;
     long most = 0;
@@ -537,6 +556,18 @@ public static IntPtr Largest(int process) {
     }, IntPtr.Zero);
     return best;
 }'
+}
+'@
+
+# The main window of the first process of that name that has one, or zero.
+$script:GuestWindowOf = @'
+function Get-MainWindow($name) {
+    foreach ($process in @(Get-Process $name -ErrorAction SilentlyContinue)) {
+        $window = [VmTest.Windows]::Largest($process.Id)
+        if ($window -ne [IntPtr]::Zero) { return $window }
+    }
+    [IntPtr]::Zero
+}
 '@
 
 # Wait for a program's window, click its top edge so that it has the keyboard
@@ -550,16 +581,14 @@ function Show-GuestWindow {
         [Parameter(Mandatory)][string]$ProcessName,
         [int]$TimeoutSec = 60
     )
-    $run = Invoke-GuestScript -TimeoutSec ($TimeoutSec + 60) -Script @"
-$script:GuestWindowType
+    $run = Invoke-GuestScript -InProcess -TimeoutSec ($TimeoutSec + 60) -Script @"
+$script:GuestTypes
+$script:GuestWindowOf
+[void][VmTest.Windows]::SetProcessDPIAware()
 `$deadline = (Get-Date).AddSeconds($TimeoutSec)
 do {
-    `$window = [IntPtr]::Zero
-    foreach (`$process in @(Get-Process '$ProcessName' -ErrorAction SilentlyContinue)) {
-        `$window = [VmTest.Windows]::Largest(`$process.Id)
-        if (`$window -ne [IntPtr]::Zero) { break }
-    }
-    if (`$window -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 500 }
+    `$window = Get-MainWindow '$ProcessName'
+    if (`$window -eq [IntPtr]::Zero) { Start-Sleep -Milliseconds 250 }
 } while (`$window -eq [IntPtr]::Zero -and (Get-Date) -lt `$deadline)
 if (`$window -ne [IntPtr]::Zero) {
     `$rect = New-Object VmTest.Windows+Rect
@@ -574,6 +603,7 @@ if (`$window -ne [IntPtr]::Zero) {
     Send-Click -X ([int](($window.Left + $window.Right) / 2)) -Y ($window.Top + 10)
     $window
 }
+
 # Where a program's main window is and what state it is in, without touching
 # it: the client area in screen pixels (what the app draws in; a click point
 # is measured from it), whether the window is minimized or maximized, and the
@@ -581,37 +611,26 @@ if (`$window -ne [IntPtr]::Zero) {
 # has no window.
 function Get-GuestWindowInfo {
     param([Parameter(Mandatory)][string]$ProcessName)
-    $run = Invoke-GuestScript -TimeoutSec 60 -Script @"
-Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Namespace VmTest -Name State -MemberDefinition '
-[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
-[StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
-[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-[DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
-[DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
-[DllImport("user32.dll")] public static extern bool IsIconic(IntPtr window);
-[DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr window);
-[DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
-[DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr window);'
+    $run = Invoke-GuestScript -InProcess -TimeoutSec 60 -Script @"
+$script:GuestTypes
+$script:GuestWindowOf
 # Without this, a scaled screen gives scaled numbers, and clicks miss.
-[void][VmTest.State]::SetProcessDPIAware()
-$script:GuestWindowType
-`$h = [IntPtr]::Zero
-foreach (`$process in @(Get-Process '$ProcessName' -ErrorAction SilentlyContinue)) {
-    `$h = [VmTest.Windows]::Largest(`$process.Id)
-    if (`$h -ne [IntPtr]::Zero) { break }
-}
+[void][VmTest.Windows]::SetProcessDPIAware()
+`$h = Get-MainWindow '$ProcessName'
 if (`$h -ne [IntPtr]::Zero) {
-    `$client = New-Object VmTest.State+Rect
-    `$outer = New-Object VmTest.State+Rect
-    `$origin = New-Object VmTest.State+Point
-    [void][VmTest.State]::GetClientRect(`$h, [ref]`$client)
-    [void][VmTest.State]::GetWindowRect(`$h, [ref]`$outer)
-    [void][VmTest.State]::ClientToScreen(`$h, [ref]`$origin)
-    `$free = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    `$screen = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
-    "info=`$(`$origin.X),`$(`$origin.Y),`$(`$client.Right),`$(`$client.Bottom);`$(`$outer.Left),`$(`$outer.Top),`$(`$outer.Right),`$(`$outer.Bottom);`$([int][VmTest.State]::IsIconic(`$h)),`$([int][VmTest.State]::IsZoomed(`$h)),`$([int]([VmTest.State]::GetForegroundWindow() -eq `$h));`$([VmTest.State]::GetDpiForWindow(`$h));`$(`$free.Left),`$(`$free.Top),`$(`$free.Right),`$(`$free.Bottom);`$(`$screen.Width),`$(`$screen.Height)"
+    `$client = New-Object VmTest.Windows+Rect
+    `$outer = New-Object VmTest.Windows+Rect
+    `$origin = New-Object VmTest.Windows+Point
+    `$free = New-Object VmTest.Windows+Rect
+    [void][VmTest.Windows]::GetClientRect(`$h, [ref]`$client)
+    [void][VmTest.Windows]::GetWindowRect(`$h, [ref]`$outer)
+    [void][VmTest.Windows]::ClientToScreen(`$h, [ref]`$origin)
+    # SPI_GETWORKAREA: what the taskbar leaves free. Not
+    # Screen.PrimaryScreen, which a process without a message pump caches.
+    [void][VmTest.Windows]::SystemParametersInfo(0x30, 0, [ref]`$free, 0)
+    `$screenWidth = [VmTest.Windows]::GetSystemMetrics(0)
+    `$screenHeight = [VmTest.Windows]::GetSystemMetrics(1)
+    "info=`$(`$origin.X),`$(`$origin.Y),`$(`$client.Right),`$(`$client.Bottom);`$(`$outer.Left),`$(`$outer.Top),`$(`$outer.Right),`$(`$outer.Bottom);`$([int][VmTest.Windows]::IsIconic(`$h)),`$([int][VmTest.Windows]::IsZoomed(`$h)),`$([int]([VmTest.Windows]::GetForegroundWindow() -eq `$h));`$([VmTest.Windows]::GetDpiForWindow(`$h));`$(`$free.Left),`$(`$free.Top),`$(`$free.Right),`$(`$free.Bottom);`$screenWidth,`$screenHeight"
 } else { "info=none" }
 "@
     if ($run.Output -notmatch 'info=(-?\d+),(-?\d+),(-?\d+),(-?\d+);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d),(\d),(\d);(\d+);(-?\d+),(-?\d+),(-?\d+),(-?\d+);(\d+),(\d+)') {
@@ -641,42 +660,38 @@ function Set-GuestWindowClient {
         [Parameter(Mandatory)][string]$ProcessName,
         [int]$Left = 16, [int]$Top = 12, [int]$Width = 992, [int]$Height = 688
     )
-    $run = Invoke-GuestScript -TimeoutSec 60 -Script @"
-Add-Type -Namespace VmTest -Name Place -MemberDefinition '
-[StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
-[StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
-[DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
-[DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr window, out Rect rect);
-[DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr window, out Rect rect);
-[DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr window, ref Point point);
-[DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr window, int command);
-[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);'
-[void][VmTest.Place]::SetProcessDPIAware()
-$script:GuestWindowType
-`$h = [IntPtr]::Zero
-foreach (`$process in @(Get-Process '$ProcessName' -ErrorAction SilentlyContinue)) {
-    `$h = [VmTest.Windows]::Largest(`$process.Id)
-    if (`$h -ne [IntPtr]::Zero) { break }
-}
+    # The same call that moves the window waits until its client area has the
+    # asked size (the app answers a resize on its own time) and reports it, so
+    # that no fixed sleep and no second call are needed.
+    $run = Invoke-GuestScript -InProcess -TimeoutSec 60 -Script @"
+$script:GuestTypes
+$script:GuestWindowOf
+[void][VmTest.Windows]::SetProcessDPIAware()
+`$h = Get-MainWindow '$ProcessName'
 if (`$h -eq [IntPtr]::Zero) { 'placed=none'; return }
 # A maximized window ignores a new size: restore it first (SW_RESTORE).
-[void][VmTest.Place]::ShowWindow(`$h, 9)
-`$outer = New-Object VmTest.Place+Rect
-`$client = New-Object VmTest.Place+Rect
-`$origin = New-Object VmTest.Place+Point
-[void][VmTest.Place]::GetWindowRect(`$h, [ref]`$outer)
-[void][VmTest.Place]::GetClientRect(`$h, [ref]`$client)
-[void][VmTest.Place]::ClientToScreen(`$h, [ref]`$origin)
+[void][VmTest.Windows]::ShowWindow(`$h, 9)
+`$outer = New-Object VmTest.Windows+Rect
+`$client = New-Object VmTest.Windows+Rect
+`$origin = New-Object VmTest.Windows+Point
+[void][VmTest.Windows]::GetWindowRect(`$h, [ref]`$outer)
+[void][VmTest.Windows]::GetClientRect(`$h, [ref]`$client)
+[void][VmTest.Windows]::ClientToScreen(`$h, [ref]`$origin)
 `$dx = `$origin.X - `$outer.Left
 `$dy = `$origin.Y - `$outer.Top
 `$extraWidth = (`$outer.Right - `$outer.Left) - `$client.Right
 `$extraHeight = (`$outer.Bottom - `$outer.Top) - `$client.Bottom
 # SWP_NOZORDER | SWP_NOACTIVATE
-[void][VmTest.Place]::SetWindowPos(`$h, [IntPtr]::Zero, $Left - `$dx, $Top - `$dy, $Width + `$extraWidth, $Height + `$extraHeight, 0x0014)
+[void][VmTest.Windows]::SetWindowPos(`$h, [IntPtr]::Zero, $Left - `$dx, $Top - `$dy, $Width + `$extraWidth, $Height + `$extraHeight, 0x0014)
 'placed=done'
+`$deadline = (Get-Date).AddSeconds(2)
+do {
+    Start-Sleep -Milliseconds 100
+    [void][VmTest.Windows]::GetClientRect(`$h, [ref]`$client)
+    [void][VmTest.Windows]::ClientToScreen(`$h, [ref]`$origin)
+} while ((`$client.Right -ne $Width -or `$client.Bottom -ne $Height -or `$origin.X -ne $Left -or `$origin.Y -ne $Top) -and (Get-Date) -lt `$deadline)
 "@
     if ($run.Output -notmatch 'placed=done') { throw "could not place the window of '$ProcessName': $($run.Output) $($run.Stderr)" }
-    Start-Sleep -Seconds 2
     Get-GuestWindowInfo $ProcessName
 }
 
@@ -792,6 +807,26 @@ Write-Output "__EXIT=`$__code"
 "@
 }
 
+# The same for the helper's in-process lane: no output file (the helper
+# collects what the runspace writes), and nothing that relies on being a file.
+function Get-GuestInProcBody {
+    param([Parameter(Mandatory)][string]$Script)
+    @"
+`$ErrorActionPreference = 'Continue'
+`$global:LASTEXITCODE = 0
+& {
+try {
+$Script
+    `$__code = `$global:LASTEXITCODE
+} catch {
+    `$_ | Out-String | Write-Output
+    `$__code = 997
+}
+Write-Output "__EXIT=`$__code"
+} 2>&1 | ForEach-Object { "`$_" }
+"@
+}
+
 # The result of a guest script from the lines the guest sent back: the code
 # after "__EXIT=" and the rest as output.
 function ConvertTo-GuestScriptResult {
@@ -830,10 +865,17 @@ function Invoke-GuestScript {
         [Parameter(Mandatory)][string]$Script,
         [int]$TimeoutSec = 300,
         [switch]$Background,
+        # For the rig's own instruments that read the screen, the log or the
+        # processes and start nothing of their own: the helper runs the code
+        # in a runspace of its own process, which saves the start of a
+        # powershell.exe (0.1 to 0.25 s a call against 0.6 to 1.1). The code
+        # sees the helper's environment, not a fresh one, and nothing it
+        # starts ends with it. Without the helper it runs as any script.
+        [switch]$InProcess,
         [switch]$NoAgent
     )
     if (-not $Background -and -not $NoAgent -and -not $script:Vm.NoAgent) {
-        $answer = Invoke-GuestAgent -Script $Script -TimeoutSec $TimeoutSec
+        $answer = Invoke-GuestAgent -Script $Script -TimeoutSec $TimeoutSec -InProcess:$InProcess
         if ($answer) { return $answer }
     }
     Invoke-GuestScriptByTask -Script $Script -TimeoutSec $TimeoutSec -Background:$Background
@@ -852,9 +894,10 @@ function Start-GuestAgent {
     $dir = Join-Path (Join-Path $script:Vm.GuestDir "agent") ([guid]::NewGuid().ToString("N").Substring(0, 8))
     $ready = $false
     try {
-        $run = Invoke-InGuest -Reuse -Lane none -TimeoutSec 120 -ArgumentList $source, $dir, $script:Vm.GuestDir -ScriptBlock {
-            param($source, $dir, $base)
+        $run = Invoke-InGuest -Reuse -Lane none -TimeoutSec 120 -ArgumentList $source, $dir, $script:Vm.GuestDir, $script:GuestTypes -ScriptBlock {
+            param($source, $dir, $base, $types)
             New-Item -ItemType Directory -Force (Join-Path $dir "in") | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $dir "types.ps1"), $types, (New-Object System.Text.UTF8Encoding $true))
             $file = Join-Path $base "agent.ps1"
             [System.IO.File]::WriteAllText($file, $source, (New-Object System.Text.UTF8Encoding $true))
             $shell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
@@ -891,16 +934,19 @@ function Start-GuestAgent {
 function Invoke-GuestAgent {
     param(
         [Parameter(Mandatory)][string]$Script,
-        [int]$TimeoutSec = 300
+        [int]$TimeoutSec = 300,
+        [switch]$InProcess
     )
     if (-not $script:Vm.Agent -and -not (Start-GuestAgent)) { return $null }
     $dir = $script:Vm.Agent.Dir
     $script:Vm.Sequence += 1
     $id = "vmtest-{0:d3}" -f $script:Vm.Sequence
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $request = @{ kind = "script"; timeoutSec = $TimeoutSec } | ConvertTo-Json -Compress
+    $kind = if ($InProcess) { "inproc" } else { "script" }
+    $request = @{ kind = $kind; timeoutSec = $TimeoutSec } | ConvertTo-Json -Compress
+    $body = if ($InProcess) { Get-GuestInProcBody $Script } else { Get-GuestScriptBody $Script }
     try {
-        $run = Invoke-InGuest -Reuse -Lane none -TimeoutSec ($TimeoutSec + 90) -ArgumentList $dir, $id, (Get-GuestScriptBody $Script), $request, $TimeoutSec -ScriptBlock {
+        $run = Invoke-InGuest -Reuse -Lane none -TimeoutSec ($TimeoutSec + 90) -ArgumentList $dir, $id, $body, $request, $TimeoutSec -ScriptBlock {
             param($dir, $id, $body, $request, $timeout)
             $in = Join-Path $dir "in"
             $file = Join-Path $in "$id.ps1"
@@ -958,8 +1004,10 @@ function Invoke-GuestAgent {
     }
     $text = @($lines | Where-Object { $_ -notlike "__STATUS=*" -and $_ -notlike "__DONE=*" })
     $result = ConvertTo-GuestScriptResult -Lines $text -Errors $(if ($run) { $run.Errors } else { "the call to the guest failed" })
-    if ($status -eq "__STATUS=lost") { $script:Vm.Agent = $null }
-    Write-Timing -Kind guest -What $id -Sec $clock.Elapsed.TotalSeconds -Lane agent -Exit $result.ExitCode
+    # A helper that lost a request, or had to stop a runspace, is gone or about
+    # to be: the next call starts a new one.
+    if ($status -eq "__STATUS=lost" -or ($InProcess -and $finished -like "__DONE=timeout")) { $script:Vm.Agent = $null }
+    Write-Timing -Kind guest -What $id -Sec $clock.Elapsed.TotalSeconds -Lane $(if ($InProcess) { "inproc" } else { "script" }) -Exit $result.ExitCode
     $result
 }
 

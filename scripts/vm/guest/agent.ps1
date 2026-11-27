@@ -28,6 +28,11 @@
 #   inproc   a new runspace in this process, for the rig's own instruments
 #            that read the screen or the log and start nothing.
 #
+# The C# helpers the rig's instruments use (window positions) are compiled once,
+# here, from <Dir>\types.ps1, which the host writes: a runspace of the inproc
+# lane then finds them already loaded. They are compiled in memory, never as
+# a file written beside the scripts.
+#
 # Nothing here is excluded from Windows protection: this is the signed
 # powershell.exe running a script file, as every guest script is.
 param([Parameter(Mandatory)][string]$Dir)
@@ -179,7 +184,8 @@ New-Item -ItemType Directory -Force $in | Out-Null
 [System.IO.File]::WriteAllText($alive, "$PID")
 # The first ConvertFrom-Json loads its module; do it before the first request.
 $null = '{"kind":"script","timeoutSec":1}' | ConvertFrom-Json
-
+$types = Join-Path $Dir "types.ps1"
+if (Test-Path $types) { . $types }
 
 $beat = [System.Diagnostics.Stopwatch]::StartNew()
 function Set-Beat {
@@ -198,7 +204,33 @@ function Write-Done {
     [System.IO.File]::Move("$done.tmp", $done)
 }
 
-while ($true) {
+# Run the text in a new runspace of this process. Returns "exit" with the
+# lines the text wrote in $lines, or "timeout" when it did not end in time.
+function Invoke-InProcess {
+    param([string]$Text, [int]$Timeout, [string]$OutFile)
+    $ps = [powershell]::Create()
+    try {
+        [void]$ps.AddScript($Text)
+        $async = $ps.BeginInvoke()
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        while (-not $async.AsyncWaitHandle.WaitOne(100)) {
+            Set-Beat
+            if ($clock.Elapsed.TotalSeconds -ge $Timeout) {
+                [void]$ps.BeginStop($null, $null)
+                [void]$async.AsyncWaitHandle.WaitOne(2000)
+                return "timeout"
+            }
+        }
+        $lines = @($ps.EndInvoke($async) | ForEach-Object { "$_" })
+        [System.IO.File]::WriteAllLines($OutFile, [string[]]$lines, (New-Object System.Text.UTF8Encoding $true))
+        "exit"
+    } finally {
+        $ps.Dispose()
+    }
+}
+
+$stopAfter = $false
+while (-not $stopAfter) {
     Set-Beat
     if ($beat.ElapsedMilliseconds -lt 5 -and (Test-Path (Join-Path $Dir "stop"))) { break }
     $next = $null
@@ -229,6 +261,11 @@ while ($true) {
             } finally {
                 $child.Dispose()
             }
+        } elseif ($request.kind -eq "inproc") {
+            $status = Invoke-InProcess -Text ([System.IO.File]::ReadAllText($script)) -Timeout $timeout -OutFile "$script.out"
+            # A runspace that would not stop may still be running its code: end
+            # this process; the host starts a new helper for the next call.
+            if ($status -eq "timeout") { $stopAfter = $true }
         } else {
             $status = "notstarted unknown kind '$($request.kind)'"
         }

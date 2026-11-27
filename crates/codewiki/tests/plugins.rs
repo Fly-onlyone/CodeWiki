@@ -370,6 +370,8 @@ fn write_notes_skill_follows_the_tools_and_the_limits(plugin: &str, model: &str)
         "Call sync_wiki",
         "Not written",
         "STOP",
+        // A note that a sync removed with what it described.
+        "No such note",
     ] {
         assert!(skill.contains(answer), "the skill lacks `{answer}`");
         assert!(bridge.contains(answer), "the bridge never says `{answer}`");

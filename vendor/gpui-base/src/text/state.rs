@@ -1,3 +1,7 @@
+// Modified for CodeWiki: `TextViewState` reports its headings and where a
+// block starts (`DocumentHeading`, `headings`, `block_top`,
+// `markdown_headings`; see NOTICE at the root of the CodeWiki repository).
+
 use futures::Stream as _;
 #[cfg(not(target_family = "wasm"))]
 use std::time::Instant;
@@ -13,8 +17,8 @@ use web_time::Instant;
 
 use gpui::{
     App, AppContext as _, Bounds, Context, EntityId, FocusHandle, IntoElement, KeyBinding,
-    ListState, ParentElement as _, Pixels, Point, Render, SharedString, Styled as _, Task, Window,
-    prelude::FluentBuilder as _, px,
+    ListOffset, ListState, ParentElement as _, Pixels, Point, Render, SharedString, Styled as _,
+    Task, Window, prelude::FluentBuilder as _, px,
 };
 
 use crate::{
@@ -106,6 +110,43 @@ pub(super) struct LineSpan {
     pub(super) top: Pixels,
     pub(super) bottom: Pixels,
     pub(super) line_height: Pixels,
+}
+
+/// A heading at the top level of a document, as the view draws it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentHeading {
+    /// 1 for `#`, 2 for `##`, and so on.
+    pub level: u8,
+    /// The text as drawn: a link's label, without Markdown's marks.
+    pub text: SharedString,
+    /// Its block at the top level of the document, which is its row in a
+    /// scrollable view.
+    pub block_ix: usize,
+}
+
+fn headings_of(blocks: &[node::BlockNode]) -> Vec<DocumentHeading> {
+    blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(block_ix, block)| match block {
+            node::BlockNode::Heading {
+                level, children, ..
+            } => Some(DocumentHeading {
+                level: *level,
+                text: children.text().trim().to_string().into(),
+                block_ix,
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The headings [`TextViewState::headings`] reports for the Markdown
+/// `source`, parsed without extensions. Empty when it does not parse.
+pub fn markdown_headings(source: &str) -> Vec<DocumentHeading> {
+    format::markdown::parse(source, &mut NodeContext::default())
+        .map(|document| headings_of(&document.blocks))
+        .unwrap_or_default()
 }
 
 /// The state of a TextView.
@@ -846,6 +887,39 @@ impl TextViewState {
     #[doc(hidden)]
     pub fn list_state(&self) -> &ListState {
         &self.list_state
+    }
+
+    /// The headings at the top level of the document, as the view draws
+    /// them. Empty until the text has been parsed, which a long text is in
+    /// the background.
+    pub fn headings(&self) -> Vec<DocumentHeading> {
+        headings_of(&self.parsed_content.document.blocks)
+    }
+
+    /// How far block `block_ix` starts below the top of the document, as the
+    /// blocks were last laid out. `None` when the view does not scroll, has
+    /// not been laid out with the current blocks, or has no such block.
+    pub fn block_top(&self, block_ix: usize) -> Option<Pixels> {
+        let list = &self.list_state;
+        let count = list.item_count();
+        if !self.scrollable
+            || block_ix >= count
+            || count != self.parsed_content.document.blocks.len()
+            || list.viewport_bounds().size.height <= px(0.)
+        {
+            return None;
+        }
+        // The list only knows where the blocks from its scroll top down are
+        // drawn, so its scroll top is moved to the block, read in pixels and
+        // put back. Nothing is laid out in between, so nothing moves.
+        let kept = list.logical_scroll_top();
+        list.scroll_to(ListOffset {
+            item_ix: block_ix,
+            offset_in_item: px(0.),
+        });
+        let top = -list.scroll_px_offset_for_scrollbar().y;
+        list.scroll_to(kept);
+        Some(top)
     }
 
     #[doc(hidden)]

@@ -2922,9 +2922,9 @@ if ($GuideShots) {
     }
 
     Test-Case "GS1" "Guide picture: Settings, Appearance" "settings-appearance.png shows the Tabs, Zoom and Startup cards" {
-        $shot = Save-GuideSettingsPage -Id "GS1" -Category "appearance" -Name "settings-appearance.png" -Notches 4
+        $shot = Save-GuideSettingsPage -Id "GS1" -Category "appearance" -Name "settings-appearance.png" -Notches 12
         Add-Result -Id "GS1" -Title "Guide picture: Settings, Appearance" -Expect "screenshots\guide\settings-appearance.png" -Status note -Shots @($shot) `
-            -Observed "Settings > Appearance at 1536x820, scrolled four notches; read the picture: the Zoom, Tabs and Startup cards are in view"
+            -Observed "Settings > Appearance at 1536x820, scrolled to the end of the page; read the picture: the Tabs and Startup cards (and Zoom, if the page is short enough) are in view"
     }
 
     Test-Case "GS2" "Guide picture: Settings, Repositories" "settings-repositories.png shows Auto explaining with Notes per session, and Kept from coding agents" {
@@ -4342,18 +4342,6 @@ Test-Case "SE1" "A stand-in embedding server: models and vectors" "Settings show
     $listing = Start-EmbedStub
     $set = Set-GuestEmbedder -Provider "llamacpp" -Model $stubModel -Url $stubUrl
     $shot = Shot "settings-search-stand-in"
-    if ($GuideShots) {
-        # A Test result under the model list. The provider is Llama / llama.cpp, served by the
-        # stand-in guest\embed-server.ps1: no real model server runs in this pass.
-        $info = Get-GuestWindowInfo "codewiki-app"
-        if ($info) {
-            $x, $y = Get-AppPoint -Info $info -X 320 -Y 746
-            Send-RestedClick -X $x -Y $y
-            Wait-ScreenSettled -TimeoutSec 8
-            Save-GuideShot -Name "settings-search.png" -Info $info
-            $guideLog.Add("note: settings-search.png shows the provider Llama / llama.cpp, answered by the stand-in server guest\embed-server.ps1 (model vm-embed-stub); no real model server")
-        }
-    }
     $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
 'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
 'test: ' + (Invoke-Backend POST '/v1/settings/test/embed')
@@ -4379,6 +4367,21 @@ $hits = @($parsed)
     Add-Result -Id "SE1" -Title "A stand-in embedding server: models and vectors" -Expect "the model is listed; the test answers with 16 dimensions; the job is done with every document embedded; a search sends the query to the server" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($shot) -Output ("stand-in's /v1/models: $listing`nsettings change: $set`n" + $run.Output + "`n" + $search.Output) `
         -Observed "llama.cpp chosen with the model '$stubModel' at $stubUrl; the server's list shows the model: $listed; Test answered: $tested; job $(if ($job) { "$($job.phase), $($job.docs_done) of $($job.docs_total) documents" } else { 'not read' }), the stand-in answered $($before.Posts) requests with $($before.Texts) texts; a search for 'settings' gave $hits hits and the stand-in then had $($after.Posts) requests (a query is embedded): $queried; read the screenshot: Settings > Semantic search names llama.cpp and $stubModel with no warning"
+    if ($GuideShots) {
+        # A Test result under the model list, taken after the case has judged what it needs (a Test click
+        # before it left the reembed nothing to do). The provider is Llama / llama.cpp, served by the
+        # stand-in guest\embed-server.ps1: no real model server runs in this pass.
+        $info = Get-GuestWindowInfo "codewiki-app"
+        if ($info) {
+            $x, $y = Get-AppPoint -Info $info -X 320 -Y 746
+            Send-RestedClick -X $x -Y $y
+            Wait-ScreenSettled -TimeoutSec 8
+            Move-Pointer -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int]($info.Height / 2))
+            Send-Scroll -3; Wait-ScreenSettled -TimeoutSec 2
+            Save-GuideShot -Name "settings-search.png" -Info $info
+            $guideLog.Add("note: settings-search.png shows the provider Llama / llama.cpp, answered by the stand-in server guest\embed-server.ps1 (model vm-embed-stub); no real model server")
+        }
+    }
     if ($Only -and $Only -notcontains "SE2") {
         Set-GuestEmbedder -Provider "local" | Out-Null
         Stop-EmbedStub
@@ -6055,9 +6058,10 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
             }
             $ready = Shot "setup-wizard-ready"
             if ($GuideShots) {
-                # Best effort: the whole screen, the wizard is a window of its own on it.
+                # Best effort: the wizard opens in the middle of the screen; this is that part of a 1600x900 one
+                # (the picture says how large it is, and when it is the whole screen).
                 $screen = Get-GuestScreenSize
-                Save-GuideShot -Name "setup-wizard.png" -Frame (Join-Path $shots $ready) -Rect @(0, 0, $screen.Width, $screen.Height)
+                Save-GuideShot -Name "setup-wizard.png" -Frame (Join-Path $shots $ready) -Rect @([int]($screen.Width * 0.30), [int]($screen.Height * 0.19), [int]($screen.Width * 0.40), [int]($screen.Height * 0.56))
             }
             if (-not $install) { throw "the wizard showed no Install button within a minute; read the screenshot; $(Format-SetupWizard $script:setupWizardSeen)" }
             $readyText = Format-SetupWizard $script:setupWizardSeen

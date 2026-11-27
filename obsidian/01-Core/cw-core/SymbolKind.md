@@ -32,18 +32,18 @@ Members:
 
 ## Used by
 
+- [[Resolver]] — from `c_callee`, `lookup_c`, `lookup_from`, `resolve`
 - [[Rust Module]] — from `push_symbol`, `simple_item`, `type_item`
 - [[Refactor Module]] — from `extract_types`, `split_files`
-- [[Resolver]] — from `by_bare_name`, `resolve`
+- [[Testmap Module]] — from `classes`, `test_types`
 - [[Store Module]] — from `symbol_from_row`
-- [[Health Module]] — from `file_health`
-- [[Plan Module]] — from `plan`
-- [[Symbol]] — from `Symbol`
-- [[Sink]] — from `symbol`
+- [[Cfamily Module]] — from `merge`
+- [[Go Module]] — from `symbol`
+- [[Scan Module]] — from `merge_partial`
 
 ## Gotchas
 
-- `parse` returns `Option` and gives `None` for an unknown name. [[Visibility]] and the other enums in the model fall back to a default instead. A caller must handle the `None`.
+- `parse` returns `Option` and gives `None` for an unknown name. Visibility and the other enums in the model fall back to a default instead. A caller must handle the `None`.
 - Adding a variant needs three edits: the enum, `as_str` and `parse`. The round-trip test lists only some variants, so a missed arm may not fail a test.
 - `Impl`, `Const`, `Static`, `Macro` and `Module` are not types by `is_type`, so they get no concept note of their own.
 

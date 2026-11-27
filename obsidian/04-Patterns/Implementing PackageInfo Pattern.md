@@ -17,6 +17,9 @@ impl PackageInfo for NewType {
     fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String> {
         todo!()
     }
+    fn describe_in( &self, language: Language, package: &str, version: Option<&str>, _dirs: &[&str], ) -> Option<String> {
+        todo!()
+    }
 }
 ```
 

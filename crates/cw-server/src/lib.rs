@@ -154,7 +154,25 @@ pub async fn serve(
     cw_wiki::semantic::set_inline_budget(Some(INLINE_BUDGET));
     {
         let state = state.clone();
-        tokio::task::spawn_blocking(move || embed_job::resume(&state));
+        tokio::task::spawn_blocking(move || {
+            // Before the job looks at the repositories: a linked worktree
+            // registered by an older backend is marked as one, and one
+            // whose folder is gone is forgotten.
+            {
+                let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+                let dir = &state.0.config.data_dir;
+                let tidied = repos::mark_worktrees(dir).and_then(|()| repos::prune_worktrees(dir));
+                match tidied {
+                    Ok(gone) => {
+                        for entry in gone {
+                            log::info!("forgot the worktree {}: its folder is gone", entry.name);
+                        }
+                    }
+                    Err(e) => log::warn!("could not tidy the list of repositories: {e}"),
+                }
+            }
+            embed_job::resume(&state)
+        });
     }
     let inner = state.0.clone();
     let stop = async move {

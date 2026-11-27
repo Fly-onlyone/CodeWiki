@@ -32,14 +32,14 @@ Declared as `pub struct ParsedFile`.
 
 ## Used by
 
+- [[Resolver]] — from `new`, `resolve`, `see_c_modules`
+- [[Cfamily Module]] — from `includes_of`, `merge`
 - [[Lang Module]] — from `link_imports`, `modules_of`
 - [[Rust Module]] — from `Extractor`, `parse_rust`
+- [[Typescript Module]] — from `parse_typescript`, `parse_typescript_with`
 - [[Sink]] — from `Sink`, `new`
-- [[Resolver]] — from `new`, `resolve`
-- [[Java Module]] — from `parse_java`
-- [[Python Module]] — from `parse_python`
-- [[Scan Module]] — from `scan_repo`
-- [[Typescript Module]] — from `parse_typescript`
+- [[C Module]] — from `parse_c`
+- [[Csharp Module]] — from `parse_csharp`
 
 ## Gotchas
 

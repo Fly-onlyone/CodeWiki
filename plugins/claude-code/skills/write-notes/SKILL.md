@@ -40,7 +40,7 @@ The request: `$ARGUMENTS`
 1. Call `sync_wiki` once. A note explained against old facts is refused.
 2. Call `list_waiting_notes` with the `folder` and `files` of the request, `limit` set to the number of notes still to write, and `claim` set to `true`. The notes listed are kept for you for 30 minutes and other agents get other notes; submitting a note frees it. Skip this for a single named note.
 3. For each note, in the order listed:
-   1. Call `get_note_brief`. If it starts with `STOP`, call `sync_wiki` and get the brief again.
+   1. Call `get_note_brief`. If it starts with `STOP`, call `sync_wiki` and get the brief again. If it answers `No such note`, the note went with the code it described: count it as skipped and go on.
    2. Read every file the brief lists, whole. Read further files when the answer is not in them: a caller, a type, a test. Keep the paths of those further files.
    3. Write the sections under "Your sections", following the next two parts of this skill.
    4. Call `submit_note` with the brief's `base`, the sections, the pictures, the further files as `read`, and `model` set to `claude-code`.
@@ -49,6 +49,7 @@ The request: `$ARGUMENTS`
       - `Not saved. Fix each of these`: fix what each line names and submit again with the same `base`. After three attempts, skip the note.
       - `Call get_note_brief again`: the note changed. Get the brief again and write from it.
       - `Call sync_wiki`: sync, get the brief again, write from it.
+      - `No such note`: a sync removed the note meanwhile, because what it described is gone. Count it as skipped and go on.
       - `Not written ... Proposal`: the owner edited this note, so the text waits for their review. Count it as proposed and go on. Never approve a proposal.
 4. `list_waiting_notes` lists at most 20 notes at a time. When the number asked for is larger, or `all`, go back to step 2 for the next notes. Never write a note again that you skipped in this run. Stop at the number asked for, or when the list comes back empty.
 5. End with one line: how many notes were written, how many proposed, how many skipped and why, and how many still wait.

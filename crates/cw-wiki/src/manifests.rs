@@ -9,16 +9,21 @@
 //! `packages.json` beside the vault's manifest, so that a machine without
 //! those files writes the same notes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use cw_core::{Error, Language, MANIFEST_DIR, Result};
-use cw_parse::Locked;
+use cw_parse::cdeps::{
+    names_library, parse_conan_lock, parse_conanfile_py, parse_conanfile_txt, parse_vcpkg,
+};
+use cw_parse::cmake::declared_packages;
 use cw_parse::workspace::{dependency_specs, locked_versions, package_description};
+use cw_parse::{JsLock, Locked, go_sum_versions, parse_go_mod, parse_version_catalog};
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Repo;
-use crate::units::{Manifest, Unit};
+use crate::units::{Manifest, Unit, xml_attribute, xml_element, xml_elements};
 
 /// File under the vault's manifest folder that keeps the descriptions.
 const SAVED: &str = "packages.json";
@@ -61,6 +66,9 @@ pub struct Packages {
     locked: BTreeMap<String, Locked>,
     /// Package -> what it is, in one line. Filled by [`describe`].
     pub descriptions: BTreeMap<String, String>,
+    /// The lock files of JavaScript packages, read once each, by path. A
+    /// format the reader does not know is kept as `None`.
+    js_locks: Mutex<HashMap<String, Option<Arc<JsLock>>>>,
 }
 
 impl Packages {
@@ -72,7 +80,18 @@ impl Packages {
                 .map(|lock| locked_versions(&lock))
                 .unwrap_or_default(),
             descriptions: BTreeMap::new(),
+            js_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The lock file of a JavaScript package, parsed the first time it is
+    /// asked for.
+    fn js_lock(&self, lock: &Manifest) -> Option<Arc<JsLock>> {
+        let mut known = self.js_locks.lock().ok()?;
+        known
+            .entry(lock.path.clone())
+            .or_insert_with(|| JsLock::read(&lock.path, &lock.text).map(Arc::new))
+            .clone()
     }
 
     /// The locked version of the crate `name` that `requirement` asks for.
@@ -133,7 +152,22 @@ pub fn declared(repo: &Repo, package: &str) -> Vec<Declared> {
         let of_unit = if unit.is_rust() {
             cargo(unit, package, &repo.packages).into_iter().collect()
         } else {
-            other(unit, package)
+            let mut asked = other(unit, package);
+            if unit.pm.is_some() {
+                for declared in &mut asked {
+                    let manifest = unit.manifests.iter().find(|m| m.path == declared.manifest);
+                    if let Some(manifest) = manifest {
+                        declared.locked = js_locked(
+                            unit,
+                            &repo.packages,
+                            manifest,
+                            package,
+                            &declared.requirement,
+                        );
+                    }
+                }
+            }
+            asked
         };
         for declared in of_unit {
             if !found.iter().any(|d| d.manifest == declared.manifest) {
@@ -170,19 +204,194 @@ fn cargo(unit: &Unit, package: &str, packages: &Packages) -> Option<Declared> {
 }
 
 fn other(unit: &Unit, package: &str) -> Vec<Declared> {
+    if unit.language == Language::CSharp {
+        return nuget(unit, package);
+    }
+    if unit.language == Language::Go {
+        return go(unit, package);
+    }
+    if unit.language.is_c_family() {
+        return cfamily(unit, package);
+    }
     let named = unit.declares(package);
-    unit.manifests
+    let mut out: Vec<Declared> = unit
+        .manifests
         .iter()
         .filter(|m| named.contains(&m.path.as_str()))
         .map(|m| {
-            let (requirement, features) = asked_in(m, package).unwrap_or_default();
+            // A build file may mention the name in `libs.<alias>` and leave
+            // the version to the catalog.
+            let (requirement, features) = asked_in(m, package)
+                .filter(|(requirement, _)| !requirement.is_empty())
+                .or_else(|| Some((jvm_requirement(unit, m, package)?, Vec::new())))
+                .unwrap_or_default();
             Declared {
                 requirement,
                 features,
                 ..Declared::bare(&m.path)
             }
         })
-        .collect()
+        .collect();
+    // A library of Kotlin's own family is not named by its group alone
+    // (`org.jetbrains.kotlinx:kotlinx-coroutines-core` is `kotlinx.coroutines`),
+    // and a build file may name it by its alias in the version catalog.
+    for manifest in &unit.manifests {
+        if out.iter().all(|d| d.manifest != manifest.path)
+            && let Some(requirement) = jvm_requirement(unit, manifest, package)
+        {
+            out.push(Declared {
+                requirement,
+                ..Declared::bare(&manifest.path)
+            });
+        }
+    }
+    out
+}
+
+/// The version a JavaScript lock file pins for `package`, which the
+/// `package.json` `manifest` asks for as `requirement`; empty when the unit
+/// has no lock file the reader knows.
+fn js_locked(
+    unit: &Unit,
+    packages: &Packages,
+    manifest: &Manifest,
+    package: &str,
+    requirement: &str,
+) -> String {
+    let (Some(lock), Some(pm)) = (&unit.lock, &unit.pm) else {
+        return String::new();
+    };
+    if !manifest.path.ends_with("package.json") {
+        return String::new();
+    }
+    packages
+        .js_lock(lock)
+        .and_then(|l| l.version(&pm.root, &unit.dir, package, requirement))
+        .unwrap_or_default()
+}
+
+/// True when the library a build file names is the one the scan called
+/// `package`: the same name once case is put aside, or evidently one of its
+/// family (`boost-asio` for `Boost`).
+fn same_library(declared: &str, package: &str) -> bool {
+    declared.eq_ignore_ascii_case(package) || names_library(package, declared)
+}
+
+/// What the build files of a C or C++ unit ask of a library: CMake's
+/// `find_package` and `FetchContent_Declare`, vcpkg's `dependencies` (with
+/// its `overrides` as the version in effect and its `builtin-baseline` where
+/// no version is written), Conan's `requires`, and Conan's lock file for the
+/// version in effect. One entry for each file that names the library.
+fn cfamily(unit: &Unit, package: &str) -> Vec<Declared> {
+    let mut out: Vec<Declared> = Vec::new();
+    for manifest in &unit.manifests {
+        let file = manifest.path.rsplit('/').next().unwrap_or(&manifest.path);
+        let declared = match file {
+            "CMakeLists.txt" => declared_packages(&manifest.text, &manifest.path)
+                .into_iter()
+                .find(|p| same_library(&p.name, package))
+                .map(|p| Declared {
+                    requirement: p.version,
+                    ..Declared::bare(&manifest.path)
+                }),
+            "vcpkg.json" => {
+                let vcpkg = parse_vcpkg(&manifest.text);
+                vcpkg
+                    .dependencies
+                    .iter()
+                    .find(|d| same_library(&d.name, package))
+                    .map(|d| {
+                        let pinned = vcpkg
+                            .overrides
+                            .iter()
+                            .find(|o| o.name == d.name)
+                            .map(|o| o.version.clone())
+                            .unwrap_or_default();
+                        let requirement = if !d.version.is_empty() {
+                            format!(">={}", d.version)
+                        } else if pinned.is_empty() && !vcpkg.baseline.is_empty() {
+                            format!(
+                                "baseline {}",
+                                vcpkg.baseline.chars().take(8).collect::<String>()
+                            )
+                        } else {
+                            String::new()
+                        };
+                        Declared {
+                            requirement,
+                            locked: pinned,
+                            ..Declared::bare(&manifest.path)
+                        }
+                    })
+            }
+            "conanfile.txt" | "conanfile.py" => {
+                let libraries = if file == "conanfile.txt" {
+                    parse_conanfile_txt(&manifest.text)
+                } else {
+                    parse_conanfile_py(&manifest.text)
+                };
+                libraries
+                    .into_iter()
+                    .find(|l| same_library(&l.name, package))
+                    .map(|l| {
+                        let locked = unit
+                            .lock
+                            .as_ref()
+                            .map(|lock| parse_conan_lock(&lock.text))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .find(|k| k.name == l.name)
+                            .map(|k| k.version)
+                            .unwrap_or_default();
+                        Declared {
+                            requirement: l.version,
+                            locked,
+                            ..Declared::bare(&manifest.path)
+                        }
+                    })
+            }
+            _ => None,
+        };
+        out.extend(declared);
+    }
+    out
+}
+
+/// What a Gradle or Maven build file asks of `package` when its text does
+/// not name the package itself: by the library's artifact, or by its alias
+/// in the version catalog the unit keeps.
+fn jvm_requirement(unit: &Unit, manifest: &Manifest, package: &str) -> Option<String> {
+    let file = manifest.path.rsplit('/').next().unwrap_or(&manifest.path);
+    match file {
+        "pom.xml" => maven(&manifest.text, package),
+        "build.gradle" | "build.gradle.kts" => gradle(&manifest.text, package).or_else(|| {
+            let catalog = unit
+                .lock
+                .as_ref()
+                .filter(|lock| lock.path.ends_with("libs.versions.toml"))?;
+            parse_version_catalog(&catalog.text)
+                .into_iter()
+                .find(|library| {
+                    names_package(&library.group, &library.name, package)
+                        && uses_accessor(&manifest.text, &library.accessor())
+                })
+                .map(|library| library.version)
+        }),
+        _ => None,
+    }
+}
+
+/// True when `text` uses the catalog accessor `libs.kotlinx.coroutines.core`
+/// as a whole: `libs.ktor.client` is not a use of `libs.ktor.client.core`.
+fn uses_accessor(text: &str, accessor: &str) -> bool {
+    let accessor_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '.' | '-');
+    text.match_indices(accessor).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(accessor_char)
+            && !text[at + accessor.len()..]
+                .chars()
+                .next()
+                .is_some_and(accessor_char)
+    })
 }
 
 /// The requirement and the extras `manifest` gives for `package`, read by
@@ -197,6 +406,170 @@ fn asked_in(manifest: &Manifest, package: &str) -> Option<(String, Vec<String>)>
         }
         _ => python(&manifest.text, package),
     }
+}
+
+/// What a Go module's `go.mod` asks of the module `package` (an import path
+/// outside the repository, cut to the module that holds it): the version of
+/// its `require` line, marked when the line is `// indirect` or a `replace`
+/// sends the module elsewhere, and the version `go.sum` holds a hash of.
+fn go(unit: &Unit, package: &str) -> Vec<Declared> {
+    let Some(manifest) = unit
+        .manifests
+        .first()
+        .filter(|m| m.path.ends_with("go.mod"))
+    else {
+        return Vec::new();
+    };
+    let go_mod = parse_go_mod(&manifest.text);
+    let Some(require) = go_mod.requires.iter().find(|r| r.path == package) else {
+        return Vec::new();
+    };
+    let mut requirement = require.version.clone();
+    if require.indirect {
+        requirement.push_str(" (indirect)");
+    }
+    let replaced = go_mod.replaces.iter().find(|r| {
+        r.old == package && (r.old_version.is_empty() || r.old_version == require.version)
+    });
+    if let Some(replace) = replaced {
+        requirement.push_str(&format!(
+            ", replaced by {}{}{}",
+            replace.new,
+            if replace.new_version.is_empty() {
+                ""
+            } else {
+                " "
+            },
+            replace.new_version
+        ));
+    }
+    let locked = unit
+        .lock
+        .as_ref()
+        .and_then(|lock| go_sum_versions(&lock.text).remove(package))
+        .map(|versions| {
+            // The version asked for, when go.sum has it; else the newest.
+            versions
+                .iter()
+                .find(|v| **v == require.version)
+                .or_else(|| versions.last())
+                .cloned()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    vec![Declared {
+        requirement,
+        locked,
+        ..Declared::bare(&manifest.path)
+    }]
+}
+
+/// The NuGet package a C# namespace root names, from the ids a build file
+/// references: the id equal to it, else the id that continues it
+/// (`Serilog.Sinks` is `Serilog.Sinks.File`), else the id it continues
+/// (`Avalonia.Controls` is part of `Avalonia`). Case does not matter.
+fn nuget_id<'a>(ids: &[&'a str], package: &str) -> Option<&'a str> {
+    let wanted = package.to_lowercase();
+    let lower = |id: &str| id.to_lowercase();
+    let continues = |long: &str, short: &str| {
+        long.strip_prefix(short)
+            .is_some_and(|rest| rest.starts_with('.'))
+    };
+    ids.iter()
+        .find(|id| lower(id) == wanted)
+        .or_else(|| ids.iter().find(|id| continues(&lower(id), &wanted)))
+        .or_else(|| {
+            ids.iter()
+                .filter(|id| continues(&wanted, &lower(id)))
+                .max_by_key(|id| id.len())
+        })
+        .copied()
+}
+
+/// The `PackageReference` lines of a project or props file: id and the
+/// version written there, empty when the version is not.
+fn package_references(text: &str) -> Vec<(String, String)> {
+    xml_elements(text, "PackageReference")
+        .into_iter()
+        .filter_map(|(attributes, inner)| {
+            let id = xml_attribute(attributes, "Include")
+                .or_else(|| xml_attribute(attributes, "Update"))?;
+            let version = xml_attribute(attributes, "Version")
+                .or_else(|| xml_attribute(attributes, "VersionOverride"))
+                .or_else(|| xml_element(inner, "Version").map(str::to_string))
+                .unwrap_or_default();
+            Some((id, version))
+        })
+        .collect()
+}
+
+/// The version `Directory.Packages.props` gives package `id` (central
+/// package management).
+fn central_version(unit: &Unit, id: &str) -> Option<String> {
+    unit.manifests
+        .iter()
+        .filter(|m| m.path.ends_with("Directory.Packages.props"))
+        .flat_map(|m| xml_elements(&m.text, "PackageVersion"))
+        .find_map(|(attributes, _)| {
+            let named = xml_attribute(attributes, "Include")?;
+            named
+                .eq_ignore_ascii_case(id)
+                .then(|| xml_attribute(attributes, "Version"))
+                .flatten()
+        })
+}
+
+/// The version of package `id` that the unit's `packages.lock.json` pins.
+fn locked_nuget(unit: &Unit, id: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(&unit.lock.as_ref()?.text).ok()?;
+    value
+        .get("dependencies")?
+        .as_object()?
+        .values()
+        .find_map(|framework| {
+            framework
+                .as_object()?
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(id))?
+                .1
+                .get("resolved")?
+                .as_str()
+                .map(str::to_string)
+        })
+}
+
+/// What the project files of a C# unit ask of `package`: the version written
+/// beside the reference or, for a reference with none, the central one, and
+/// the version the lock file pins.
+fn nuget(unit: &Unit, package: &str) -> Vec<Declared> {
+    let mut out = Vec::new();
+    for manifest in &unit.manifests {
+        let name = manifest.path.rsplit('/').next().unwrap_or(&manifest.path);
+        if !(name.ends_with(".csproj") || name == "Directory.Build.props") {
+            continue;
+        }
+        let references = package_references(&manifest.text);
+        let ids: Vec<&str> = references.iter().map(|(id, _)| id.as_str()).collect();
+        let Some(id) = nuget_id(&ids, package) else {
+            continue;
+        };
+        let written = references
+            .iter()
+            .find(|(named, _)| named == id)
+            .map(|(_, version)| version.clone())
+            .unwrap_or_default();
+        let requirement = if written.is_empty() {
+            central_version(unit, id).unwrap_or_default()
+        } else {
+            written
+        };
+        out.push(Declared {
+            requirement,
+            locked: locked_nuget(unit, id).unwrap_or_default(),
+            ..Declared::bare(&manifest.path)
+        });
+    }
+    out
 }
 
 fn npm(text: &str, package: &str) -> Option<String> {
@@ -220,6 +593,17 @@ fn in_group(group: &str, package: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
+/// True when the library `group:artifact` is the one a Java or Kotlin
+/// import of `package` comes from: its group is the package or starts with
+/// it, or, for the `kotlinx` libraries, whose group (`org.jetbrains.kotlinx`)
+/// does not say, its artifact (`kotlinx-coroutines-core`) starts with the
+/// package's name (`kotlinx.coroutines`).
+fn names_package(group: &str, artifact: &str, package: &str) -> bool {
+    in_group(group, package)
+        || (package.starts_with("kotlinx.")
+            && in_group(&artifact.replace(['-', '_'], "."), package))
+}
+
 /// Text of the first `<tag>` element in `xml`.
 fn element<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
@@ -232,7 +616,11 @@ fn maven(text: &str, package: &str) -> Option<String> {
     text.split("<dependency>")
         .skip(1)
         .filter_map(|rest| rest.split("</dependency>").next())
-        .find(|block| element(block, "groupId").is_some_and(|g| in_group(g, package)))
+        .find(|block| {
+            element(block, "groupId").is_some_and(|g| {
+                names_package(g, element(block, "artifactId").unwrap_or(""), package)
+            })
+        })
         .map(|block| element(block, "version").unwrap_or("").to_string())
 }
 
@@ -243,7 +631,7 @@ fn gradle(text: &str, package: &str) -> Option<String> {
         .skip(1)
         .step_by(2)
         .map(|quoted| quoted.split(':').collect::<Vec<_>>())
-        .find(|parts| parts.len() >= 2 && in_group(parts[0], package))
+        .find(|parts| parts.len() >= 2 && names_package(parts[0], parts[1], package))
         .map(|parts| parts.get(2).copied().unwrap_or("").to_string())
 }
 
@@ -313,6 +701,19 @@ pub trait PackageInfo {
     /// `package` is the name it is published under, `version` the locked
     /// one when the repository has a lock file.
     fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String>;
+
+    /// As [`PackageInfo::describe`], for a JavaScript package that may be
+    /// installed under one of the folders `dirs` (a workspace package has its
+    /// own `node_modules`).
+    fn describe_in(
+        &self,
+        language: Language,
+        package: &str,
+        version: Option<&str>,
+        _dirs: &[&str],
+    ) -> Option<String> {
+        self.describe(language, package, version)
+    }
 }
 
 /// Knows no package. A run with it writes what `packages.json` holds.
@@ -332,6 +733,8 @@ pub struct Machine {
     root: PathBuf,
     /// The folders of `<cargo home>/registry/src`, one for each registry.
     registries: Vec<PathBuf>,
+    /// The folder NuGet unpacks packages into, when the machine has one.
+    nuget: Option<PathBuf>,
 }
 
 impl Machine {
@@ -345,7 +748,20 @@ impl Machine {
                     .or_else(|| std::env::var_os("HOME"))
                     .map(|home| PathBuf::from(home).join(".cargo"))
             });
-        Self::with_cargo_home(root, home.as_deref())
+        let nuget = std::env::var_os("NUGET_PACKAGES")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .or_else(|| std::env::var_os("HOME"))
+                    .map(|home| PathBuf::from(home).join(".nuget").join("packages"))
+            });
+        Self::with_cargo_home(root, home.as_deref()).with_nuget(nuget)
+    }
+
+    /// The same machine with NuGet's package folder given.
+    pub fn with_nuget(mut self, folder: Option<PathBuf>) -> Self {
+        self.nuget = folder.filter(|f| f.is_dir());
+        self
     }
 
     /// As [`Machine::new`], with the cargo home given.
@@ -361,7 +777,50 @@ impl Machine {
         Self {
             root: root.to_path_buf(),
             registries,
+            nuget: None,
         }
+    }
+
+    /// The `description` of the NuGet package a namespace root names, from
+    /// the `.nuspec` NuGet unpacked next to the package. NuGet names its
+    /// folders by the lowercase id, so the package is the folder named like
+    /// `package`, else the first one that continues it.
+    fn nuget_description(&self, package: &str, version: Option<&str>) -> Option<String> {
+        let folder = self.nuget.as_ref()?;
+        let wanted = package.to_lowercase();
+        let mut ids: Vec<String> = std::fs::read_dir(folder)
+            .ok()?
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name == &wanted || name.starts_with(&format!("{wanted}.")))
+            .collect();
+        ids.sort();
+        let id = ids
+            .iter()
+            .find(|id| **id == wanted)
+            .or_else(|| ids.first())?;
+        let package_dir = folder.join(id);
+        let version_dir = match version {
+            Some(version) if package_dir.join(version).is_dir() => package_dir.join(version),
+            _ => {
+                let mut versions: Vec<PathBuf> = std::fs::read_dir(&package_dir)
+                    .ok()?
+                    .filter_map(|entry| Some(entry.ok()?.path()))
+                    .filter(|path| path.is_dir())
+                    .collect();
+                versions.sort();
+                versions.pop()?
+            }
+        };
+        let nuspec = std::fs::read_dir(&version_dir)
+            .ok()?
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .find(|path| path.extension().is_some_and(|e| e == "nuspec"))?;
+        let text = std::fs::read_to_string(nuspec).ok()?;
+        let line = xml_element(&text, "description")?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!line.is_empty()).then_some(line)
     }
 
     fn crate_manifest(&self, package: &str, version: Option<&str>) -> Option<String> {
@@ -390,26 +849,63 @@ impl Machine {
     }
 }
 
-impl PackageInfo for Machine {
-    fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String> {
-        match language {
-            Language::Rust => package_description(&self.crate_manifest(package, version)?),
-            Language::TypeScript | Language::JavaScript => {
-                let path = self
-                    .root
-                    .join("node_modules")
-                    .join(package)
-                    .join("package.json");
-                let value: serde_json::Value =
-                    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+impl Machine {
+    /// The `description` of the `package.json` that `node_modules` holds for
+    /// `package`: in the folders `dirs` (each package of a workspace has its
+    /// own), then at the repository root, then in pnpm's hoisted store. A
+    /// pnpm `node_modules/<name>` is a link into `.pnpm`, and reading through
+    /// it needs nothing more than reading a folder.
+    fn node_description(&self, package: &str, dirs: &[&str]) -> Option<String> {
+        let mut bases: Vec<PathBuf> = dirs.iter().map(|d| self.root.join(d)).collect();
+        bases.push(self.root.clone());
+        bases.dedup();
+        for base in bases {
+            for modules in [
+                base.join("node_modules"),
+                base.join("node_modules").join(".pnpm").join("node_modules"),
+            ] {
+                let Ok(text) = std::fs::read_to_string(modules.join(package).join("package.json"))
+                else {
+                    continue;
+                };
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
                 let line = value
-                    .get("description")?
-                    .as_str()?
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ");
-                (!line.is_empty()).then_some(line)
+                if !line.is_empty() {
+                    return Some(line);
+                }
             }
+        }
+        None
+    }
+}
+
+impl PackageInfo for Machine {
+    fn describe_in(
+        &self,
+        language: Language,
+        package: &str,
+        version: Option<&str>,
+        dirs: &[&str],
+    ) -> Option<String> {
+        match language {
+            Language::TypeScript | Language::JavaScript => self.node_description(package, dirs),
+            _ => self.describe(language, package, version),
+        }
+    }
+
+    fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String> {
+        match language {
+            Language::Rust => package_description(&self.crate_manifest(package, version)?),
+            Language::TypeScript | Language::JavaScript => self.node_description(package, &[]),
+            Language::CSharp => self.nuget_description(package, version),
             _ => None,
         }
     }
@@ -459,11 +955,19 @@ pub fn describe(
             .into_iter()
             .map(|d| d.locked)
             .find(|locked| !locked.is_empty());
+        let folders: Vec<&str> = repo
+            .units
+            .list
+            .iter()
+            .filter(|u| u.pm.is_some())
+            .map(|u| u.dir.as_str())
+            .collect();
         let found = info
-            .describe(
+            .describe_in(
                 language,
                 repo.packages.published(package),
                 version.as_deref(),
+                &folders,
             )
             .or_else(|| before.get(*package).cloned());
         if let Some(description) = found {
@@ -638,6 +1142,145 @@ mod tests {
         assert_eq!(asked("requests-oauthlib==1.0\n"), None);
     }
 
+    fn kotlin_unit(build: &str, catalog: Option<&str>) -> Unit {
+        Unit {
+            name: "app".into(),
+            package: "app".into(),
+            slug: "app".into(),
+            dir: "app".into(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: false,
+            has_bin: false,
+            language: Language::Kotlin,
+            manifests: vec![Manifest {
+                path: "app/build.gradle.kts".into(),
+                text: build.into(),
+            }],
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            pm: None,
+            lock: catalog.map(|text| Manifest {
+                path: "gradle/libs.versions.toml".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_the_libraries_of_a_kotlin_build() {
+        let build = "dependencies {
+    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3\")
+    implementation(\"io.ktor:ktor-client-core\")
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.ktor.client.cio)
+    testImplementation(kotlin(\"test\"))
+    testImplementation(libs.junit)
+}
+";
+        // The Kotlin DSL writes the coordinates in a string, as Groovy does.
+        assert_eq!(
+            gradle(build, "kotlinx.coroutines").as_deref(),
+            Some("1.7.3")
+        );
+        assert_eq!(gradle(build, "kotlinx.serialization"), None);
+        assert_eq!(gradle(build, "io.ktor").as_deref(), Some(""));
+        // Only the `kotlinx` libraries are named by their artifact.
+        assert_eq!(gradle("implementation(\"a.b:kotlinx-x:1\")", "org.z"), None);
+
+        let catalog = "[versions]
+serialization = \"1.6.0\"
+ktor = \"2.3.0\"
+
+[libraries]
+kotlinx-serialization-json = { module = \"org.jetbrains.kotlinx:kotlinx-serialization-json\", version.ref = \"serialization\" }
+ktor-client-core = { module = \"io.ktor:ktor-client-core\", version.ref = \"ktor\" }
+ktor-client-cio = { module = \"io.ktor:ktor-client-cio\", version.ref = \"ktor\" }
+unused = \"com.unused:lib:9.9\"
+junit = \"junit:junit:4.13.2\"
+";
+        let unit = kotlin_unit(build, Some(catalog));
+        let asked = |package: &str| -> Vec<(String, String)> {
+            other(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement))
+                .collect()
+        };
+        let build_file = "app/build.gradle.kts".to_string();
+        // In the string, and through the alias of the catalog.
+        assert_eq!(
+            asked("kotlinx.coroutines"),
+            [(build_file.clone(), "1.7.3".to_string())]
+        );
+        assert_eq!(
+            asked("kotlinx.serialization"),
+            [(build_file.clone(), "1.6.0".to_string())]
+        );
+        assert_eq!(asked("junit"), [(build_file.clone(), "4.13.2".to_string())]);
+        // `libs.ktor.client.cio` names `io.ktor`; the string names it too, and
+        // the build file is listed once, with the version its text writes.
+        assert_eq!(asked("io.ktor"), [(build_file, String::new())]);
+        // A library of the catalog that no build file uses is not declared.
+        assert!(asked("com.unused").is_empty());
+        // Without the catalog the alias still names the library, and no
+        // version is known.
+        let bare = other(&kotlin_unit(build, None), "kotlinx.serialization");
+        assert_eq!(bare.len(), 1);
+        assert_eq!(bare[0].requirement, "");
+        assert!(uses_accessor("api(libs.ktor.client)", "libs.ktor.client"));
+        assert!(!uses_accessor(
+            "api(libs.ktor.client.core)",
+            "libs.ktor.client"
+        ));
+        assert!(!uses_accessor(
+            "api(mylibs.ktor.client)",
+            "libs.ktor.client"
+        ));
+
+        let pom = "<dependency><groupId>org.jetbrains.kotlinx</groupId><artifactId>kotlinx-coroutines-core</artifactId><version>1.7.3</version></dependency>";
+        assert_eq!(maven(pom, "kotlinx.coroutines").as_deref(), Some("1.7.3"));
+    }
+
+    #[test]
+    fn reads_node_modules_of_a_workspace_package_and_of_pnpms_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |rel: &str, text: &str| {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "repo/packages/ui/node_modules/react/package.json",
+            "{\"description\": \"The UI library\"}",
+        );
+        write(
+            "repo/node_modules/.pnpm/node_modules/hoisted/package.json",
+            "{\"description\": \"Hoisted by pnpm\"}",
+        );
+        write(
+            "repo/node_modules/lodash/package.json",
+            "{\"description\": \"Utilities\"}",
+        );
+        let machine = Machine::with_cargo_home(&dir.path().join("repo"), None);
+        let ask = |package: &str, folders: &[&str]| {
+            machine.describe_in(Language::TypeScript, package, None, folders)
+        };
+        // The package's own folder first, then the root, then pnpm's store.
+        assert_eq!(
+            ask("react", &["packages/ui"]).as_deref(),
+            Some("The UI library")
+        );
+        assert_eq!(ask("react", &["packages/web"]), None);
+        assert_eq!(
+            ask("lodash", &["packages/ui"]).as_deref(),
+            Some("Utilities")
+        );
+        assert_eq!(ask("hoisted", &[]).as_deref(), Some("Hoisted by pnpm"));
+    }
+
     #[test]
     fn reads_a_description_from_the_cargo_cache_and_node_modules() {
         let dir = tempfile::tempdir().unwrap();
@@ -684,5 +1327,315 @@ mod tests {
         // No cargo home at all.
         let bare = Machine::with_cargo_home(dir.path(), None);
         assert_eq!(bare.describe(Language::Rust, "tree-sitter", None), None);
+    }
+
+    fn csharp_unit(manifests: &[(&str, &str)], lock: Option<&str>) -> Unit {
+        Unit {
+            name: "core".into(),
+            package: "Core".into(),
+            slug: "core".into(),
+            dir: "src/Core".into(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: false,
+            has_bin: false,
+            language: Language::CSharp,
+            manifests: manifests
+                .iter()
+                .map(|(path, text)| Manifest {
+                    path: path.to_string(),
+                    text: text.to_string(),
+                })
+                .collect(),
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            pm: None,
+            lock: lock.map(|text| Manifest {
+                path: "src/Core/packages.lock.json".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_nuget_requirements_from_the_project_the_props_and_the_lock() {
+        let project = r#"<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="xunit.v3">
+      <Version>3.2.2</Version>
+    </PackageReference>
+  </ItemGroup>
+</Project>"#;
+        let central = r#"<Project><ItemGroup>
+  <PackageVersion Include="Serilog.Sinks.File" Version="6.0.0" />
+  <PackageVersion Include="Avalonia" Version="11.3.0" />
+</ItemGroup></Project>"#;
+        let lock = r#"{"version": 2, "dependencies": {"net10.0": {
+  "Serilog.Sinks.File": {"type": "Direct", "requested": "[6.0.0, )", "resolved": "6.0.1"},
+  "Avalonia": {"type": "Direct", "requested": "[11.3.0, )", "resolved": "11.3.2"}
+}}}"#;
+        let unit = csharp_unit(
+            &[
+                ("src/Core/Core.csproj", project),
+                ("Directory.Packages.props", central),
+            ],
+            Some(lock),
+        );
+        let asked = |package: &str| -> Vec<(String, String, String)> {
+            nuget(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement, d.locked))
+                .collect()
+        };
+        let csproj = "src/Core/Core.csproj".to_string();
+        // A version beside the reference; no lock entry for it.
+        assert_eq!(
+            asked("Serilog"),
+            [(csproj.clone(), "4.2.0".into(), "".into())]
+        );
+        // A namespace root two segments long names the package that continues
+        // it, and the central file gives the version the reference lacks.
+        assert_eq!(
+            asked("Serilog.Sinks"),
+            [(csproj.clone(), "6.0.0".into(), "6.0.1".into())]
+        );
+        assert_eq!(
+            asked("Avalonia.Controls"),
+            [(csproj.clone(), "11.3.0".into(), "11.3.2".into())]
+        );
+        // The id and the namespace differ in case and in shape.
+        assert_eq!(
+            asked("Xunit"),
+            [(csproj.clone(), "3.2.2".into(), "".into())]
+        );
+        assert!(asked("Newtonsoft.Json").is_empty());
+        // The central file and the lock are no declarations of their own.
+        assert!(
+            nuget(&unit, "Avalonia")
+                .iter()
+                .all(|d| d.manifest == csproj)
+        );
+    }
+
+    fn go_unit(go_mod: &str, go_sum: Option<&str>) -> Unit {
+        Unit {
+            name: "app".into(),
+            package: "app".into(),
+            slug: "app".into(),
+            dir: String::new(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: false,
+            has_bin: false,
+            language: Language::Go,
+            manifests: vec![Manifest {
+                path: "go.mod".into(),
+                text: go_mod.into(),
+            }],
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            pm: None,
+            lock: go_sum.map(|text| Manifest {
+                path: "go.sum".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_go_requirements_from_the_go_mod_and_the_go_sum() {
+        let unit = go_unit(
+            "module example.com/app\n\nrequire (\n\tgithub.com/spf13/cobra v1.8.0\n\tgolang.org/x/sync v0.7.0 // indirect\n\tgithub.com/google/uuid v1.6.0\n\tgithub.com/local/lib v0.1.0\n)\n\nreplace github.com/google/uuid => github.com/fork/uuid v1.6.1\nreplace github.com/local/lib => ../lib\n",
+            Some(
+                "github.com/spf13/cobra v1.8.0 h1:a=\ngithub.com/spf13/cobra v1.8.0/go.mod h1:b=\ngithub.com/spf13/cobra v1.7.0 h1:c=\ngolang.org/x/sync v0.6.0 h1:d=\n",
+            ),
+        );
+        let asked = |package: &str| -> Vec<(String, String, String)> {
+            go(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement, d.locked))
+                .collect()
+        };
+        assert_eq!(
+            asked("github.com/spf13/cobra"),
+            [("go.mod".into(), "v1.8.0".into(), "v1.8.0".into())]
+        );
+        // `// indirect` is said; go.sum holds another version than go.mod
+        // asks for, and the newest of those stands.
+        assert_eq!(
+            asked("golang.org/x/sync"),
+            [("go.mod".into(), "v0.7.0 (indirect)".into(), "v0.6.0".into())]
+        );
+        // A replace by another module, and by a folder of this machine.
+        assert_eq!(
+            asked("github.com/google/uuid"),
+            [(
+                "go.mod".into(),
+                "v1.6.0, replaced by github.com/fork/uuid v1.6.1".into(),
+                "".into()
+            )]
+        );
+        assert_eq!(
+            asked("github.com/local/lib"),
+            [(
+                "go.mod".into(),
+                "v0.1.0, replaced by ../lib".into(),
+                "".into()
+            )]
+        );
+        assert!(asked("github.com/other/thing").is_empty());
+        // Without a go.sum nothing is locked.
+        let bare = go_unit("module x\nrequire a.com/b/c v1.0.0\n", None);
+        assert_eq!(go(&bare, "a.com/b/c")[0].locked, "");
+        // A package from outside has no description on a machine without one.
+        let machine = Machine::with_cargo_home(Path::new("."), None);
+        assert_eq!(
+            machine.describe(Language::Go, "github.com/spf13/cobra", None),
+            None
+        );
+    }
+
+    #[test]
+    fn a_nuget_description_comes_from_the_unpacked_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |rel: &str, text: &str| {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "nuget/serilog.sinks.file/6.0.0/serilog.sinks.file.nuspec",
+            "<package><metadata><id>Serilog.Sinks.File</id><description>Write log events\n  to files.</description></metadata></package>",
+        );
+        write(
+            "nuget/serilog.sinks.file/5.0.0/serilog.sinks.file.nuspec",
+            "<package><metadata><description>Old.</description></metadata></package>",
+        );
+        write(
+            "nuget/avalonia/11.3.2/avalonia.nuspec",
+            "<package><metadata><description>Cross-platform UI.</description></metadata></package>",
+        );
+        let machine =
+            Machine::with_cargo_home(dir.path(), None).with_nuget(Some(dir.path().join("nuget")));
+        let describe = |package, version| machine.describe(Language::CSharp, package, version);
+        assert_eq!(
+            describe("Serilog.Sinks", Some("6.0.0")).as_deref(),
+            Some("Write log events to files.")
+        );
+        // The locked version, else the newest unpacked.
+        assert_eq!(
+            describe("Serilog.Sinks", Some("5.0.0")).as_deref(),
+            Some("Old.")
+        );
+        assert_eq!(
+            describe("Serilog.Sinks", None).as_deref(),
+            Some("Write log events to files.")
+        );
+        assert_eq!(
+            describe("Avalonia", None).as_deref(),
+            Some("Cross-platform UI.")
+        );
+        assert_eq!(describe("Newtonsoft.Json", None), None);
+        // A machine with no NuGet folder knows nothing.
+        let bare = Machine::with_cargo_home(dir.path(), None).with_nuget(None);
+        assert_eq!(bare.describe(Language::CSharp, "Avalonia", None), None);
+    }
+
+    fn c_unit(manifests: &[(&str, &str)], lock: Option<&str>) -> Unit {
+        Unit {
+            name: "core".into(),
+            package: "core".into(),
+            slug: "core".into(),
+            dir: String::new(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: true,
+            has_bin: false,
+            language: Language::Cpp,
+            manifests: manifests
+                .iter()
+                .map(|(path, text)| Manifest {
+                    path: (*path).into(),
+                    text: (*text).into(),
+                })
+                .collect(),
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            pm: None,
+            lock: lock.map(|text| Manifest {
+                path: "conan.lock".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_c_requirements_from_cmake_vcpkg_and_conan() {
+        let unit = c_unit(
+            &[
+                (
+                    "CMakeLists.txt",
+                    "find_package(fmt 10.1 REQUIRED)\nfind_package(Boost 1.80 COMPONENTS system)\nfind_package(Threads)\nFetchContent_Declare(googletest GIT_REPOSITORY https://x/googletest.git GIT_TAG v1.14.0)\n",
+                ),
+                (
+                    "vcpkg.json",
+                    "{\"builtin-baseline\": \"0123456789abcdef\", \"dependencies\": [\"fmt\", {\"name\": \"boost-asio\", \"version>=\": \"1.80.0\"}, \"zlib\"], \"overrides\": [{\"name\": \"fmt\", \"version\": \"10.1.1\"}]}",
+                ),
+                ("conanfile.txt", "[requires]\nfmt/10.1.0\nspdlog/1.12.0\n"),
+            ],
+            Some("{\"requires\": [\"fmt/10.1.0#aa%1\", \"spdlog/1.12.0#bb%2\"]}"),
+        );
+        let asked = |package: &str| -> Vec<(String, String, String)> {
+            other(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement, d.locked))
+                .collect()
+        };
+        let row = |m: &str, r: &str, l: &str| (m.to_string(), r.to_string(), l.to_string());
+        // The version CMake asks, vcpkg's override, and Conan's pin.
+        assert_eq!(
+            asked("fmt"),
+            [
+                row("CMakeLists.txt", "10.1", ""),
+                row("vcpkg.json", "", "10.1.1"),
+                row("conanfile.txt", "10.1.0", "10.1.0"),
+            ]
+        );
+        // A library of a family: CMake's `Boost` and vcpkg's `boost-asio`.
+        assert_eq!(
+            asked("Boost"),
+            [
+                row("CMakeLists.txt", "1.80", ""),
+                row("vcpkg.json", ">=1.80.0", ""),
+            ]
+        );
+        // No version written: vcpkg's baseline says which registry state.
+        assert_eq!(asked("zlib"), [row("vcpkg.json", "baseline 01234567", "")]);
+        assert_eq!(asked("Threads"), [row("CMakeLists.txt", "", "")]);
+        assert_eq!(asked("googletest"), [row("CMakeLists.txt", "v1.14.0", "")]);
+        assert_eq!(asked("spdlog"), [row("conanfile.txt", "1.12.0", "1.12.0")]);
+        assert!(asked("openssl").is_empty());
+        // `conanfile.py` states its requirements in the class.
+        let python = c_unit(
+            &[(
+                "conanfile.py",
+                "class P(ConanFile):\n    requires = \"zlib/1.3.1\"\n    def requirements(self):\n        self.requires(\"fmt/10.2.0\")\n",
+            )],
+            None,
+        );
+        assert_eq!(other(&python, "fmt")[0].requirement, "10.2.0");
+        assert_eq!(other(&python, "zlib")[0].requirement, "1.3.1");
     }
 }

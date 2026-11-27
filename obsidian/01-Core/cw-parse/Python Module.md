@@ -36,10 +36,10 @@ And 4 more private items with no comment.
 ## Depends on
 
 - [[Lang Module]] — uses `collapse`, `dedent`, `dotted`, `field_all`
-- [[Sink]] — uses `Sink`, `between`, `inherits`, `module_symbol`
+- [[Sink]] — uses `Sink`, `between`, `inherits`, `new`
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
-- [[Model Module]] — uses `Visibility`
+- [[Visibility]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

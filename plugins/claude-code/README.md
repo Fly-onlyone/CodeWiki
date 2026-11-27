@@ -59,7 +59,7 @@ claude plugin marketplace remove codewiki
 | `get_risk` | Risk of changing one file, 0 to 100, with the reasons. |
 | `get_change_risk` | Risk of a set of changed files taken together (by default the uncommitted changes), files that usually change with them but are missing, and files outside the change that depend on it. |
 | `get_blast_radius` | Files affected if a file changes its behavior: direct dependents, then further hops. |
-| `get_impacted_tests` | Tests to run after a change (by default the uncommitted changes), nearest first, with the `cargo test` commands, plus changed files no test reaches. |
+| `get_impacted_tests` | Tests to run after a change (by default the uncommitted changes), nearest first, with the commands that run them (`cargo test` for Rust, `dotnet test` for C#, `go test` for Go, `gradle` or `mvn` for Java and Kotlin, `ctest` or the test executable for C and C++, `pytest` or `python -m unittest` for Python, `vitest`, `jest`, `mocha`, `playwright`, `ava`, `node --test` or `bun test` through the package's own manager (`npm`, `pnpm`, `yarn`, `bun`) for TypeScript and JavaScript), plus changed files no test reaches. Every language CodeWiki maps is covered. |
 | `get_hotspots` | Files that are both large and often changed, with main author and bus factor. |
 | `get_dead_code` | Symbols nothing refers to, marked `likely` or `possible`. Verify before deleting. |
 | `get_health` | Files scoring below 10 with the findings behind the score, plus documentation coverage and drift. |

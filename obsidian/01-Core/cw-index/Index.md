@@ -60,12 +60,12 @@ And 1 more private item with no comment.
 - [[Error Module]] — uses `Result`
 - [[Resolve Module]] — uses `ExternalUse`
 - [[Scan Module]] — uses `RepoFacts`
-- [[Workspace Module]] — uses `CrateInfo`
+- [[Language]] — uses `parse`
 
 ## Used by
 
+- [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `apply_writes_both_files_and_preserves_the_authors_text`, `cpp_fixture`
 - [[Semantic Module]] — from `behind`, `embed_documents`, `embed_documents_with`, `embed_within`
-- [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `apply_writes_both_files_and_preserves_the_authors_text`, `fixture`, `indexed`
 - [[Gitintel Module]] — from `blast_radius`, `change_risk`, `dependents_by_file`, `file_risk`
 - [[Query Module]] — from `answer`, `context`, `dependency_path`, `overview`
 - [[Service Module]] — from `built`, `index_notes`, `open_existing_index_in`, `open_index`

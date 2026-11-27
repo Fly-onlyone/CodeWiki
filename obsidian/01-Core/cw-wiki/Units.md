@@ -24,8 +24,11 @@ Declared as `pub struct Units`.
 
 Members:
 
+- `pub fn c_tests(&self) -> bool` — true when the repository has tests written in C or C++.
 - `pub fn index_of(&self, symbol: &Symbol) -> Option<usize>` — index of the unit that holds `symbol`.
 - `pub fn rust_index(&self, qualified: &str) -> Option<usize>` — index of the crate a Rust path starts in.
+- `pub fn is_test(&self, file: &str) -> bool` — true for a source file the units found to be test code: one that holds a test, or sits in a project of tests.
+- `pub fn of_file(&self, file: &str) -> Option<&Unit>` — unit of a source file outside Rust.
 - `pub fn by_name(&self, name: &str) -> Option<&Unit>` — public method, returns `Option<&Unit>`.
 - `pub fn all_rust(&self) -> bool` — public method, returns `bool`.
 
@@ -37,7 +40,7 @@ Members:
 
 ## Used by
 
-- [[RenderCtx]] — from `render_crate`, `render_crate_flow`, `render_home`, `render_operations`
+- [[RenderCtx]] — from `entry_label`, `render_crate`, `render_crate_flow`, `render_home`
 - [[Repo]] — from `Repo`, `build`, `top_modules`, `unit_index`
 - [[Plan Module]] — from `plan`
 - [[Units Module]] — from `discover`

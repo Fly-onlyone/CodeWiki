@@ -36,6 +36,9 @@ pub const QUEUE_WIDTH: f32 = 300.0;
 /// The row above the queue, with the checkbox that selects every row:
 /// `ListSubheader.js`, `lineHeight: '48px'`.
 const QUEUE_HEAD: f32 = 48.0;
+/// How tall the list of a retire proposal's notes grows before it scrolls:
+/// the text of the proposal under it must stay in sight.
+const RETIRE_LIST_HEIGHT: f32 = 240.0;
 
 /// Where the review page shows a proposal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -165,6 +168,11 @@ impl AppView {
                         {
                             this.error = None;
                         }
+                        // The notes a retire proposal names; what the user
+                        // left out stays left out while the same notes show.
+                        this.review.retire = review::retire_notes(&detail);
+                        let listed = this.review.retire.clone();
+                        this.review.keep.retain(|path| listed.contains(path));
                         this.set_page(
                             Page::Review {
                                 open: Some(id),
@@ -192,6 +200,69 @@ impl AppView {
             self.show_proposal(open, Show::InPlace, cx);
         }
         cx.notify();
+    }
+
+    /// The id of the open proposal, when it is a retire proposal whose notes
+    /// are loaded.
+    fn open_retire(&self) -> Option<&str> {
+        let open = self.review_open()?;
+        let retire = self
+            .pending_proposals
+            .iter()
+            .any(|item| item.id == open && item.kind == Kind::Retire);
+        (retire && !self.review.retire.is_empty()).then_some(open)
+    }
+
+    /// The notes of the open retire proposal, each with a check box: a
+    /// ticked note is deleted when the proposal is approved, and one the
+    /// user unticks stays, as history.
+    fn review_retire(&self, cx: &mut Context<Self>) -> Option<Div> {
+        self.open_retire()?;
+        let muted = cx.theme().muted_foreground;
+        let rows: Vec<Div> = self
+            .review
+            .retire
+            .iter()
+            .map(|path| {
+                let toggled = path.clone();
+                h_flex()
+                    .gap_1()
+                    .items_center()
+                    .child(
+                        Checkbox::new(SharedString::from(format!("retire-check:{path}")))
+                            .check(Check::of(!self.review.keep.contains(path)))
+                            .edge_start()
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                if !this.review.keep.remove(&toggled) {
+                                    this.review.keep.insert(toggled.clone());
+                                }
+                                cx.notify();
+                            })),
+                    )
+                    .child(div().text_sm().child(path.clone()))
+            })
+            .collect();
+        Some(
+            v_flex()
+                .flex_shrink_0()
+                .border_b_1()
+                .border_color(cx.theme().border)
+                .child(
+                    div()
+                        .px(px(list::ROW_START))
+                        .pt_2()
+                        .text_xs()
+                        .text_color(muted)
+                        .child("A ticked note is deleted. Untick a note to keep it as history."),
+                )
+                .child(
+                    div()
+                        .id("review-retire")
+                        .max_h(px(RETIRE_LIST_HEIGHT))
+                        .overflow_y_scrollbar()
+                        .child(v_flex().px(px(list::ROW_START)).pb_2().children(rows)),
+                ),
+        )
     }
 
     /// What the buttons decide: the selection whenever it holds anything,
@@ -254,6 +325,11 @@ impl AppView {
         if ids.is_empty() {
             return;
         }
+        // The open retire proposal goes with the notes the user left out.
+        let keep: Option<(String, Vec<String>)> = self
+            .open_retire()
+            .filter(|open| approve && ids.iter().any(|id| id == open))
+            .map(|open| (open.to_string(), self.review.keep.iter().cloned().collect()));
         let (order, items) = (self.review_order(), self.pending_proposals.clone());
         let current = self.review_open().map(str::to_string);
         log::info!(
@@ -265,7 +341,7 @@ impl AppView {
         self.run(
             if approve { "Approving" } else { "Rejecting" },
             cx,
-            move |b| decide(b, &repo.id, approve, &ids),
+            move |b| decide(b, &repo.id, approve, &ids, keep.as_ref()),
             move |this, results, cx| {
                 for notice in review::decided_notices(approve, &results, &items) {
                     this.notify_user(notice, cx);
@@ -353,6 +429,7 @@ impl AppView {
             .h_full()
             .children(self.review_actions(cx))
             .children(self.review_clash(cx))
+            .children(self.review_retire(cx))
             .child(self.doc_element(doc, cx));
         if self.pending_proposals.is_empty() {
             return detail.into_any_element();
@@ -385,6 +462,7 @@ impl AppView {
                 let tone = match item.kind {
                     Kind::Sync => Tone::Info,
                     Kind::Agent => Tone::Tertiary,
+                    Kind::Retire => Tone::Warning,
                 };
                 let checkbox =
                     Checkbox::new(SharedString::from(format!("review-check:{}", item.id)))
@@ -450,7 +528,15 @@ impl AppView {
     /// The buttons above the open proposal: for the selection whenever it
     /// holds anything, for the open proposal while nothing is selected.
     fn review_actions(&self, cx: &mut Context<Self>) -> Option<Div> {
-        let (approve, reject) = self.review_targets().labels()?;
+        let targets = self.review_targets();
+        let (mut approve, mut reject) = targets.labels()?;
+        // A retire proposal alone: the buttons say what becomes of its notes.
+        if let Some(open) = self.open_retire()
+            && targets.ids() == [open.to_string()]
+        {
+            approve = review::retire_label(self.review.retire.len(), self.review.keep.len());
+            reject = "Keep all as history".to_string();
+        }
         let busy = self.busy.is_some();
         Some(
             h_flex()
@@ -518,20 +604,35 @@ impl AppView {
 /// route, which every backend has, and a refusal is its result; several go
 /// in one call, which an older backend refuses with an error that says so.
 /// Blocks; run it off the UI thread.
+///
+/// `keep` names a retire proposal among them and the notes of it to keep:
+/// only its own route takes those, so it goes there by itself and the
+/// others as before; the results come back in the order of `ids`.
 fn decide(
     backend: &Backend,
     repo: &str,
     approve: bool,
     ids: &[String],
+    keep: Option<&(String, Vec<String>)>,
 ) -> Result<Vec<DecideResult>, String> {
+    if let Some((retire, _)) = keep
+        && ids.len() > 1
+    {
+        let others: Vec<String> = ids.iter().filter(|id| *id != retire).cloned().collect();
+        let mut results = decide(backend, repo, approve, std::slice::from_ref(retire), keep)?;
+        results.extend(decide(backend, repo, approve, &others, None)?);
+        results.sort_by_key(|result| ids.iter().position(|id| *id == result.id));
+        return Ok(results);
+    }
     let [id] = ids else {
         return backend.decide_proposals(repo, approve, ids);
     };
     let verb = if approve { "approve" } else { "reject" };
-    let answer = backend.post(
-        &format!("/v1/repos/{repo}/proposals/{id}/{verb}"),
-        &json!({}),
-    );
+    let body = match keep {
+        Some((_, kept)) if approve => json!({ "keep": kept }),
+        _ => json!({}),
+    };
+    let answer = backend.post(&format!("/v1/repos/{repo}/proposals/{id}/{verb}"), &body);
     Ok(vec![match answer {
         Ok(done) => DecideResult {
             id: id.clone(),

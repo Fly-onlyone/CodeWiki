@@ -4,7 +4,7 @@ tags: [integration]
 
 # tree_sitter
 
-> External crate `tree_sitter`, imported by 5 source files.
+> External crate `tree_sitter`, imported by 9 source files.
 
 ## What it does
 
@@ -12,13 +12,16 @@ Tree-sitter is the parser behind the structural index. It turns source text into
 
 ## Used for
 
-Imported by 5 source files. Main users:
+Imported by 9 source files. Main users:
 
+- [[C Module]] — imports `Node`, `Parser`
+- [[Csharp Module]] — imports `Node`, `Parser`
+- [[Go Module]] — imports `Node`, `Parser`
 - [[Java Module]] — imports `Node`, `Parser`
+- [[Kotlin Module]] — imports `Node`, `Parser`
 - [[Lang Module]] — imports `Node`
 - [[Python Module]] — imports `Node`, `Parser`
 - [[Rust Module]] — imports `Node`, `Parser`
-- [[Typescript Module]] — imports `Node`, `Parser`
 
 ## Configuration
 

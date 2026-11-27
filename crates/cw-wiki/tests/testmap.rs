@@ -163,3 +163,1347 @@ fn lists_the_tests_a_change_can_break() {
     let none = testmap::impacted_tests(dir.path(), &index, &[]).unwrap();
     assert!(none.test_files.is_empty() && none.commands.is_empty());
 }
+
+/// Two test projects over one library: `Core.Tests` runs under VSTest, where
+/// `--filter` names classes, `Mtp.Tests` has no VSTest host and runs whole.
+fn csharp_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Acme.slnx", "<Solution />\n");
+    write(
+        r,
+        "src/Core/Core.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+    );
+    write(
+        r,
+        "src/Core/Helper.cs",
+        "namespace Acme.Core;\n\npublic static class Helper\n{\n    public static int Twice(int x) => x * 2;\n}\n",
+    );
+    write(
+        r,
+        "src/Core/Engine.cs",
+        "namespace Acme.Core;\n\npublic class Engine\n{\n    public int Run() => Helper.Twice(2);\n}\n",
+    );
+    write(
+        r,
+        "src/Core/Lonely.cs",
+        "namespace Acme.Core;\n\npublic class Lonely\n{\n    public void Nobody() { }\n}\n",
+    );
+    write(
+        r,
+        "tests/Core.Tests/Core.Tests.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"..\\..\\src\\Core\\Core.csproj\" /><PackageReference Include=\"Microsoft.NET.Test.Sdk\" /><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>\n",
+    );
+    write(
+        r,
+        "tests/Core.Tests/EngineTests.cs",
+        "using Acme.Core;\n\nnamespace Acme.Core.Tests;\n\npublic class EngineTests\n{\n    [Fact]\n    public void Runs() { Assert.Equal(4, new Engine().Run()); }\n\n    [Theory]\n    [InlineData(1)]\n    public void Repeats(int n) { new Engine().Run(); }\n\n    public void NotATest() { }\n}\n",
+    );
+    write(
+        r,
+        "tests/Core.Tests/HelperTests.cs",
+        "using Acme.Core;\n\nnamespace Acme.Core.Tests;\n\npublic class HelperTests\n{\n    [Fact]\n    public void Doubles() { Assert.Equal(4, Helper.Twice(2)); }\n}\n",
+    );
+    write(
+        r,
+        "tests/Mtp.Tests/Mtp.Tests.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"..\\..\\src\\Core\\Core.csproj\" /><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>\n",
+    );
+    write(
+        r,
+        "tests/Mtp.Tests/EngineMtpTests.cs",
+        "using Acme.Core;\n\nnamespace Acme.Mtp.Tests;\n\npublic class EngineMtpTests\n{\n    [Fact]\n    public void Runs() { new Engine().Run(); }\n}\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_csharp_tests_and_the_command_that_runs_them() {
+    let (dir, index) = csharp_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+
+    assert_eq!(map.tests_total, 4);
+    let found: Vec<(&str, TestKind, Vec<&str>)> = map
+        .test_files
+        .iter()
+        .map(|t| {
+            (
+                t.path.as_str(),
+                t.kind,
+                t.tests.iter().map(|c| c.name.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "tests/Core.Tests/EngineTests.cs",
+                TestKind::Integration,
+                vec!["EngineTests.Runs", "EngineTests.Repeats"]
+            ),
+            (
+                "tests/Core.Tests/HelperTests.cs",
+                TestKind::Integration,
+                vec!["HelperTests.Doubles"]
+            ),
+            (
+                "tests/Mtp.Tests/EngineMtpTests.cs",
+                TestKind::Integration,
+                vec!["EngineMtpTests.Runs"]
+            ),
+        ]
+    );
+    assert_eq!(map.test_files[0].tests[0].line, 7);
+    // VSTest: the class of the file; no VSTest host: the whole project.
+    assert_eq!(
+        map.test_files[0].command,
+        "dotnet test tests/Core.Tests/Core.Tests.csproj --filter \"FullyQualifiedName~Acme.Core.Tests.EngineTests\""
+    );
+    assert_eq!(
+        map.test_files[2].command,
+        "dotnet test tests/Mtp.Tests/Mtp.Tests.csproj"
+    );
+
+    // Test files are no source files; the library files are.
+    let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "src/Core/Engine.cs",
+            "src/Core/Helper.cs",
+            "src/Core/Lonely.cs"
+        ]
+    );
+    let helper = map
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("Helper.cs"))
+        .unwrap();
+    assert_eq!(helper.direct, ["tests/Core.Tests/HelperTests.cs"]);
+    assert_eq!(
+        helper.indirect,
+        [
+            "tests/Core.Tests/EngineTests.cs",
+            "tests/Mtp.Tests/EngineMtpTests.cs"
+        ]
+    );
+    assert_eq!(map.untested, ["src/Core/Lonely.cs"]);
+}
+
+#[test]
+fn lists_the_csharp_tests_a_change_can_break() {
+    let (dir, index) = csharp_fixture();
+    let changed = ["src\\Core\\Helper.cs".to_string()];
+    let impact = testmap::impacted_tests(dir.path(), &index, &changed).unwrap();
+
+    assert_eq!(impact.changed, ["src/Core/Helper.cs"]);
+    let rows: Vec<(&str, u32)> = impact
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.distance))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("tests/Core.Tests/HelperTests.cs", 1),
+            ("tests/Core.Tests/EngineTests.cs", 2),
+            ("tests/Mtp.Tests/EngineMtpTests.cs", 2),
+        ],
+        "nearest first"
+    );
+    assert_eq!(impact.tests_total, 4);
+    // One run for each project, over the classes of every file it holds.
+    assert_eq!(
+        impact.commands,
+        [
+            "dotnet test tests/Core.Tests/Core.Tests.csproj --filter \"FullyQualifiedName~Acme.Core.Tests.HelperTests|FullyQualifiedName~Acme.Core.Tests.EngineTests\"",
+            "dotnet test tests/Mtp.Tests/Mtp.Tests.csproj",
+        ]
+    );
+    assert!(impact.untested_changes.is_empty());
+
+    // A change nothing depends on, and a changed test file of a project with
+    // no class filter: its run is the project.
+    let changed = [
+        "src/Core/Lonely.cs".to_string(),
+        "tests/Mtp.Tests/EngineMtpTests.cs".to_string(),
+    ];
+    let impact = testmap::impacted_tests(dir.path(), &index, &changed).unwrap();
+    assert_eq!(impact.test_files.len(), 1);
+    assert_eq!(impact.test_files[0].distance, 0);
+    assert_eq!(impact.untested_changes, ["src/Core/Lonely.cs"]);
+    assert_eq!(
+        impact.commands,
+        ["dotnet test tests/Mtp.Tests/Mtp.Tests.csproj"]
+    );
+}
+
+/// A Go module with a package that has an in-package test file and an external
+/// test package, a package that imports it, one with ten tests, one with
+/// none, and a second module in a folder of its own.
+fn go_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "go.mod", "module example.com/app\n\ngo 1.22\n");
+    write(
+        r,
+        "store/store.go",
+        "package store\n\ntype Store struct{ items map[string]string }\n\nfunc New() *Store { return &Store{items: map[string]string{}} }\n\nfunc (s *Store) Get(key string) string { return s.items[key] }\n",
+    );
+    write(
+        r,
+        "store/extra.go",
+        "package store\n\nfunc Extra() int { return 1 }\n",
+    );
+    write(
+        r,
+        "store/store_test.go",
+        "package store\n\nimport \"testing\"\n\nfunc TestMain(m *testing.M) { m.Run() }\n\nfunc TestNew(t *testing.T) { New() }\n\nfunc TestGet(t *testing.T) { New().Get(\"a\") }\n\nfunc testHelper(t *testing.T) {}\n\nfunc Testimony(t *testing.T) {}\n\nfunc BenchmarkNew(b *testing.B) { New() }\n\nfunc ExampleNew() { New() }\n\nfunc FuzzGet(f *testing.F) { New() }\n",
+    );
+    write(
+        r,
+        "store/cache_test.go",
+        "package store_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/app/store\"\n)\n\nfunc TestCache(t *testing.T) { store.New() }\n",
+    );
+    write(
+        r,
+        "words/words.go",
+        "package words\n\nimport \"example.com/app/store\"\n\nfunc Shout() { store.New() }\n",
+    );
+    write(
+        r,
+        "words/words_test.go",
+        "package words\n\nimport \"testing\"\n\nfunc TestShout(t *testing.T) { Shout() }\n",
+    );
+    write(
+        r,
+        "lonely/lonely.go",
+        "package lonely\n\nfunc Nobody() {}\n",
+    );
+    write(r, "many/many.go", "package many\n\nfunc Many() {}\n");
+    let mut many = String::from("package many\n\nimport \"testing\"\n");
+    for n in 0..10 {
+        many.push_str(&format!("\nfunc TestMany{n}(t *testing.T) {{ Many() }}\n"));
+    }
+    write(r, "many/many_test.go", &many);
+    write(r, "tools/gen/go.mod", "module example.com/gen\n");
+    write(r, "tools/gen/gen.go", "package gen\n\nfunc Gen() {}\n");
+    write(
+        r,
+        "tools/gen/gen_test.go",
+        "package gen\n\nimport \"testing\"\n\nfunc TestGen(t *testing.T) { Gen() }\n\nfunc BenchmarkGen(b *testing.B) { Gen() }\n",
+    );
+    write(
+        r,
+        "tools/gen/bench_test.go",
+        "package gen\n\nimport \"testing\"\n\nfunc BenchmarkOnly(b *testing.B) { Gen() }\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_go_tests_and_the_command_that_runs_them() {
+    let (dir, index) = go_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+
+    let found: Vec<(&str, TestKind, Vec<&str>)> = map
+        .test_files
+        .iter()
+        .map(|t| {
+            (
+                t.path.as_str(),
+                t.kind,
+                t.tests.iter().map(|c| c.name.as_str()).collect(),
+            )
+        })
+        .collect();
+    // `TestMain`, a lower-case helper and `Testimony` are no tests; benchmarks,
+    // fuzz targets and examples are.
+    let many: Vec<String> = (0..10).map(|n| format!("TestMany{n}")).collect();
+    assert_eq!(found.len(), 6);
+    assert_eq!(
+        found[0],
+        (
+            "many/many_test.go",
+            TestKind::Integration,
+            many.iter().map(String::as_str).collect()
+        )
+    );
+    assert_eq!(
+        found[1],
+        (
+            "store/cache_test.go",
+            TestKind::Integration,
+            vec!["TestCache"]
+        )
+    );
+    assert_eq!(
+        found[2],
+        (
+            "store/store_test.go",
+            TestKind::Integration,
+            vec![
+                "TestNew",
+                "TestGet",
+                "BenchmarkNew",
+                "ExampleNew",
+                "FuzzGet"
+            ]
+        )
+    );
+    let command = |path: &str| {
+        map.test_files
+            .iter()
+            .find(|t| t.path == path)
+            .map(|t| t.command.as_str())
+            .unwrap()
+    };
+    assert_eq!(
+        command("store/store_test.go"),
+        "go test ./store -run '^(TestNew|TestGet|ExampleNew|FuzzGet)$' -bench '^(BenchmarkNew)$'"
+    );
+    assert_eq!(
+        command("store/cache_test.go"),
+        "go test ./store -run '^(TestCache)$'"
+    );
+    // A module below the root runs from its own folder.
+    assert_eq!(
+        command("tools/gen/gen_test.go"),
+        "go test -C tools/gen . -run '^(TestGen)$' -bench '^(BenchmarkGen)$'"
+    );
+    // A file of benchmarks alone runs no test.
+    assert_eq!(
+        command("tools/gen/bench_test.go"),
+        "go test -C tools/gen . -run '^$' -bench '^(BenchmarkOnly)$'"
+    );
+
+    // Test files are no source files; a package's tests reach every file of it.
+    let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "lonely/lonely.go",
+            "many/many.go",
+            "store/extra.go",
+            "store/store.go",
+            "tools/gen/gen.go",
+            "words/words.go"
+        ]
+    );
+    let extra = map
+        .files
+        .iter()
+        .find(|f| f.path == "store/extra.go")
+        .unwrap();
+    assert_eq!(extra.direct, ["store/cache_test.go", "store/store_test.go"]);
+    let store = map
+        .files
+        .iter()
+        .find(|f| f.path == "store/store.go")
+        .unwrap();
+    assert_eq!(store.indirect, ["words/words_test.go"]);
+    assert_eq!(map.untested, ["lonely/lonely.go"]);
+}
+
+#[test]
+fn lists_the_go_tests_a_change_can_break() {
+    let (dir, index) = go_fixture();
+    let changed = ["store\\store.go".to_string()];
+    let impact = testmap::impacted_tests(dir.path(), &index, &changed).unwrap();
+
+    assert_eq!(impact.changed, ["store/store.go"]);
+    let rows: Vec<(&str, u32)> = impact
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.distance))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("store/cache_test.go", 1),
+            ("store/store_test.go", 1),
+            ("words/words_test.go", 2),
+        ],
+        "nearest first"
+    );
+    // One run for each package, over the tests of every file of it.
+    assert_eq!(
+        impact.commands,
+        [
+            "go test ./store -run '^(TestCache|TestNew|TestGet|ExampleNew|FuzzGet)$' -bench '^(BenchmarkNew)$'",
+            "go test ./words -run '^(TestShout)$'",
+        ]
+    );
+    assert!(impact.untested_changes.is_empty());
+
+    // Many tests in one package: the package runs whole.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["many/many.go".to_string()]).unwrap();
+    assert_eq!(impact.tests_total, 10);
+    assert_eq!(impact.commands, ["go test ./many"]);
+
+    // The module below the root, and the benchmarks of two files folded.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["tools/gen/gen.go".to_string()]).unwrap();
+    assert_eq!(
+        impact.commands,
+        ["go test -C tools/gen . -run '^(TestGen)$' -bench '^(BenchmarkOnly|BenchmarkGen)$'"]
+    );
+
+    // A file no test reaches.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["lonely/lonely.go".to_string()]).unwrap();
+    assert!(impact.test_files.is_empty() && impact.commands.is_empty());
+    assert_eq!(impact.untested_changes, ["lonely/lonely.go"]);
+}
+
+/// A Gradle build of three modules with Kotlin and Java side by side, a
+/// Kotlin Multiplatform module, a module under a nested build, one with too
+/// many test classes, and two Maven builds.
+fn jvm_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(
+        r,
+        "settings.gradle.kts",
+        "include(\"core\", \"app\", \"kmp\", \"wide\")\n",
+    );
+    write(r, "gradlew", "#!/bin/sh\n");
+    write(r, "core/build.gradle.kts", "plugins { kotlin(\"jvm\") }\n");
+    write(
+        r,
+        "core/src/main/java/com/acme/core/Money.java",
+        "package com.acme.core;\n\npublic class Money {\n    public int cents() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "core/src/main/kotlin/com/acme/core/Prices.kt",
+        "package com.acme.core\n\nfun total(m: Money): Int = m.cents() * 2\n",
+    );
+    write(
+        r,
+        "core/src/main/kotlin/com/acme/core/Cart.kt",
+        "package com.acme.core\n\nclass Cart {\n    fun count(): Int = 0\n}\n",
+    );
+    write(
+        r,
+        "core/src/test/kotlin/com/acme/core/PricesTest.kt",
+        "package com.acme.core\n\nimport org.junit.jupiter.api.Test\nimport org.junit.jupiter.params.ParameterizedTest\n\nclass PricesTest {\n    @Test\n    fun `totals a price`() {\n        total(Money())\n    }\n\n    @ParameterizedTest\n    fun totalsMany() {\n        total(Money())\n    }\n\n    fun helper() {}\n\n    @org.junit.jupiter.api.Nested\n    inner class Inner {\n        @Test\n        fun nested() {\n            total(Money())\n        }\n    }\n}\n",
+    );
+    write(
+        r,
+        "core/src/test/java/com/acme/core/MoneyTest.java",
+        "package com.acme.core;\n\nimport org.junit.jupiter.api.RepeatedTest;\nimport org.junit.jupiter.api.Test;\n\nclass MoneyTest {\n    @Test\n    void cents() {\n        new Money().cents();\n    }\n\n    @RepeatedTest(3)\n    void repeated() {\n        new Money().cents();\n    }\n}\n",
+    );
+    write(
+        r,
+        "core/src/test/kotlin/com/acme/core/CartSpec.kt",
+        "package com.acme.core\n\nimport io.kotest.core.spec.style.StringSpec\n\nclass CartSpec : StringSpec({\n    \"counts\" { Cart().count() }\n})\n",
+    );
+    write(r, "app/build.gradle.kts", "plugins { kotlin(\"jvm\") }\n");
+    write(
+        r,
+        "app/src/main/kotlin/com/acme/app/App.kt",
+        "package com.acme.app\n\nimport com.acme.core.Cart\n\nfun run(): Int = Cart().count()\n",
+    );
+    write(
+        r,
+        "app/src/test/kotlin/com/acme/app/AppTest.kt",
+        "package com.acme.app\n\nimport kotlin.test.Test\n\nclass AppTest {\n    @Test\n    fun runs() { run() }\n}\n",
+    );
+    write(
+        r,
+        "kmp/build.gradle.kts",
+        "plugins { kotlin(\"multiplatform\") }\n",
+    );
+    write(
+        r,
+        "kmp/src/commonMain/kotlin/com/acme/kmp/Shared.kt",
+        "package com.acme.kmp\n\nfun shared(): Int = 1\n\nfun jvmOnly(): Int = 2\n",
+    );
+    write(
+        r,
+        "kmp/src/commonTest/kotlin/com/acme/kmp/SharedTest.kt",
+        "package com.acme.kmp\n\nimport kotlin.test.Test\n\nclass SharedTest {\n    @Test\n    fun works() { shared() }\n}\n",
+    );
+    write(
+        r,
+        "kmp/src/jvmTest/kotlin/com/acme/kmp/JvmOnlyTest.kt",
+        "package com.acme.kmp\n\nimport kotlin.test.Test\n\nclass JvmOnlyTest {\n    @Test\n    fun only() { jvmOnly() }\n}\n",
+    );
+    write(r, "wide/build.gradle", "plugins { id 'java' }\n");
+    write(
+        r,
+        "wide/src/main/java/com/acme/wide/Wide.java",
+        "package com.acme.wide;\n\npublic class Wide {\n    public static int wide() { return 1; }\n}\n",
+    );
+    for n in 0..9 {
+        write(
+            r,
+            &format!("wide/src/test/java/com/acme/wide/Wide{n}Test.java"),
+            &format!(
+                "package com.acme.wide;\n\nimport org.junit.Test;\n\npublic class Wide{n}Test {{\n    @Test\n    public void wide() {{ Wide.wide(); }}\n}}\n"
+            ),
+        );
+    }
+    // A nested Gradle build without a wrapper.
+    write(r, "plain/settings.gradle", "include 'lib'\n");
+    write(r, "plain/lib/build.gradle", "plugins { id 'java' }\n");
+    write(
+        r,
+        "plain/lib/src/main/java/com/acme/plain/Plain.java",
+        "package com.acme.plain;\n\npublic class Plain {\n    public static int plain() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "plain/lib/src/test/java/com/acme/plain/PlainTest.java",
+        "package com.acme.plain;\n\nimport org.junit.Test;\n\npublic class PlainTest {\n    @Test\n    public void plain() { Plain.plain(); }\n}\n",
+    );
+    // A Maven build of one module.
+    write(
+        r,
+        "single/pom.xml",
+        "<project><artifactId>single</artifactId></project>\n",
+    );
+    write(
+        r,
+        "single/src/main/java/com/acme/single/Calc.java",
+        "package com.acme.single;\n\npublic class Calc {\n    public static int add() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "single/src/test/java/com/acme/single/CalcTest.java",
+        "package com.acme.single;\n\nimport org.junit.Test;\n\npublic class CalcTest {\n    @Test\n    public void adds() { Calc.add(); }\n}\n",
+    );
+    // A Maven reactor, and a module of it.
+    write(
+        r,
+        "reactor/pom.xml",
+        "<project><modules><module>svc</module></modules></project>\n",
+    );
+    write(
+        r,
+        "reactor/svc/pom.xml",
+        "<project><artifactId>svc</artifactId></project>\n",
+    );
+    write(
+        r,
+        "reactor/svc/src/main/java/com/acme/svc/Svc.java",
+        "package com.acme.svc;\n\npublic class Svc {\n    public static int svc() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "reactor/svc/src/test/java/com/acme/svc/SvcTest.java",
+        "package com.acme.svc;\n\nimport org.junit.jupiter.api.Test;\n\nclass SvcTest {\n    @Test\n    void svc() { Svc.svc(); }\n\n    @Test\n    void again() { Svc.svc(); }\n}\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_jvm_tests_and_the_command_that_runs_them() {
+    let (dir, index) = jvm_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    let found = |path: &str| {
+        let file = map
+            .test_files
+            .iter()
+            .find(|t| t.path == path)
+            .unwrap_or_else(|| panic!("no tests in {path}"));
+        assert_eq!(file.kind, TestKind::Integration, "{path}");
+        (
+            file.tests
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            file.command.as_str(),
+        )
+    };
+    // Methods with a test annotation of any framework, in either language,
+    // and a spec class; a helper is no test.
+    assert_eq!(
+        found("core/src/test/kotlin/com/acme/core/PricesTest.kt"),
+        (
+            vec![
+                "PricesTest.totals_a_price",
+                "PricesTest.totalsMany",
+                "Inner.nested"
+            ],
+            // The nested class has tests too, which `PricesTest` alone misses.
+            "./gradlew :core:test --tests \"com.acme.core.PricesTest*\""
+        )
+    );
+    assert_eq!(
+        found("core/src/test/java/com/acme/core/MoneyTest.java"),
+        (
+            vec!["MoneyTest.cents", "MoneyTest.repeated"],
+            "./gradlew :core:test --tests \"com.acme.core.MoneyTest\""
+        )
+    );
+    assert_eq!(
+        found("core/src/test/kotlin/com/acme/core/CartSpec.kt"),
+        (
+            vec!["CartSpec"],
+            "./gradlew :core:test --tests \"com.acme.core.CartSpec\""
+        )
+    );
+    assert_eq!(
+        found("app/src/test/kotlin/com/acme/app/AppTest.kt"),
+        (
+            vec!["AppTest.runs"],
+            "./gradlew :app:test --tests \"com.acme.app.AppTest\""
+        )
+    );
+    // A Kotlin Multiplatform source set names its task; the shared tests run
+    // through `allTests`, which takes no filter.
+    assert_eq!(
+        found("kmp/src/commonTest/kotlin/com/acme/kmp/SharedTest.kt").1,
+        "./gradlew :kmp:allTests"
+    );
+    assert_eq!(
+        found("kmp/src/jvmTest/kotlin/com/acme/kmp/JvmOnlyTest.kt").1,
+        "./gradlew :kmp:jvmTest --tests \"com.acme.kmp.JvmOnlyTest\""
+    );
+    // A nested build is run from its own folder, with `gradle` when it has no
+    // wrapper; Maven is told the module with `-pl` below an aggregator, and
+    // by `-f` when the build has no other module.
+    assert_eq!(
+        found("plain/lib/src/test/java/com/acme/plain/PlainTest.java").1,
+        "gradle -p plain :lib:test --tests \"com.acme.plain.PlainTest\""
+    );
+    assert_eq!(
+        found("single/src/test/java/com/acme/single/CalcTest.java").1,
+        "mvn -f single/pom.xml test -Dtest=CalcTest"
+    );
+    assert_eq!(
+        found("reactor/svc/src/test/java/com/acme/svc/SvcTest.java").1,
+        "mvn -f reactor/pom.xml -pl svc test -Dtest=SvcTest"
+    );
+    // Nine test files of Kotlin and Java, and nine more of the wide module.
+    assert_eq!(map.test_files.len(), 18);
+    assert_eq!(map.tests_total, 22);
+    assert!(map.untested.is_empty(), "{:?}", map.untested);
+}
+
+#[test]
+fn lists_the_jvm_tests_a_change_can_break() {
+    let (dir, index) = jvm_fixture();
+    let commands = |changed: &[&str]| {
+        let changed: Vec<String> = changed.iter().map(|c| c.to_string()).collect();
+        testmap::impacted_tests(dir.path(), &index, &changed).unwrap()
+    };
+
+    // A Kotlin file reaches its Kotlin test, a Java file reaches the tests of
+    // both languages; one command runs a module's tests.
+    let kotlin = commands(&["core/src/main/kotlin/com/acme/core/Prices.kt"]);
+    assert_eq!(
+        kotlin
+            .test_files
+            .iter()
+            .map(|t| (t.path.as_str(), t.distance))
+            .collect::<Vec<_>>(),
+        [("core/src/test/kotlin/com/acme/core/PricesTest.kt", 1)]
+    );
+    assert_eq!(
+        kotlin.commands,
+        ["./gradlew :core:test --tests \"com.acme.core.PricesTest*\""]
+    );
+    let java = commands(&["core/src/main/java/com/acme/core/Money.java"]);
+    assert_eq!(
+        java.test_files
+            .iter()
+            .map(|t| t.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "core/src/test/java/com/acme/core/MoneyTest.java",
+            "core/src/test/kotlin/com/acme/core/PricesTest.kt"
+        ]
+    );
+    assert_eq!(
+        java.commands,
+        [
+            "./gradlew :core:test --tests \"com.acme.core.MoneyTest\" --tests \"com.acme.core.PricesTest*\""
+        ]
+    );
+    // Two changes of one module are one run; modules are separate runs.
+    let both = commands(&[
+        "core/src/main/kotlin/com/acme/core/Prices.kt",
+        "core/src/main/java/com/acme/core/Money.java",
+        "core/src/main/kotlin/com/acme/core/Cart.kt",
+    ]);
+    assert_eq!(
+        both.commands,
+        [
+            "./gradlew :core:test --tests \"com.acme.core.MoneyTest\" --tests \"com.acme.core.CartSpec\" --tests \"com.acme.core.PricesTest*\"",
+            "./gradlew :app:test --tests \"com.acme.app.AppTest\"",
+        ]
+    );
+    // A test in another module reaches the code it imports.
+    let cart = commands(&["core/src/main/kotlin/com/acme/core/Cart.kt"]);
+    assert_eq!(
+        cart.test_files
+            .iter()
+            .map(|t| (t.path.as_str(), t.distance))
+            .collect::<Vec<_>>(),
+        [
+            ("core/src/test/kotlin/com/acme/core/CartSpec.kt", 1),
+            ("app/src/test/kotlin/com/acme/app/AppTest.kt", 2),
+        ]
+    );
+
+    // More than eight test classes in a module: the module runs whole.
+    let wide = commands(&["wide/src/main/java/com/acme/wide/Wide.java"]);
+    assert_eq!(wide.test_files.len(), 9);
+    assert_eq!(wide.commands, ["./gradlew :wide:test"]);
+
+    // Kotlin Multiplatform: each source set has its task.
+    let kmp = commands(&["kmp/src/commonMain/kotlin/com/acme/kmp/Shared.kt"]);
+    assert_eq!(
+        kmp.commands,
+        [
+            "./gradlew :kmp:allTests",
+            "./gradlew :kmp:jvmTest --tests \"com.acme.kmp.JvmOnlyTest\"",
+        ]
+    );
+
+    // Maven names the classes, one run for the module.
+    let maven = commands(&["reactor/svc/src/main/java/com/acme/svc/Svc.java"]);
+    assert_eq!(maven.tests_total, 2);
+    assert_eq!(
+        maven.commands,
+        ["mvn -f reactor/pom.xml -pl svc test -Dtest=SvcTest"]
+    );
+    let single = commands(&[
+        "single/src/main/java/com/acme/single/Calc.java",
+        "plain/lib/src/main/java/com/acme/plain/Plain.java",
+    ]);
+    assert_eq!(
+        single.commands,
+        [
+            "gradle -p plain :lib:test --tests \"com.acme.plain.PlainTest\"",
+            "mvn -f single/pom.xml test -Dtest=CalcTest",
+        ]
+    );
+    assert!(single.untested_changes.is_empty());
+}
+
+/// A CMake project with GoogleTest registered through CTest, a library with
+/// header and source apart, Catch2 and Boost.Test executables that CTest does
+/// not know by test, a plain `add_test`, and a folder with no build file.
+fn cpp_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(
+        r,
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.20)\nproject(geo CXX)\nenable_testing()\nadd_subdirectory(src)\nadd_subdirectory(tests)\n",
+    );
+    write(
+        r,
+        "src/CMakeLists.txt",
+        "add_library(geo geo/circle.cpp geo/area.cpp)\ntarget_include_directories(geo PUBLIC .)\n",
+    );
+    write(
+        r,
+        "src/geo/circle.hpp",
+        "#pragma once\nnamespace geo { class Circle { public: double area() const; static Circle unit(); }; double square(double x); }\n",
+    );
+    write(
+        r,
+        "src/geo/circle.cpp",
+        "#include \"geo/circle.hpp\"\nnamespace geo {\ndouble Circle::area() const { return 3.14 * square(1.0); }\nCircle Circle::unit() { return Circle(); }\n}\n",
+    );
+    write(
+        r,
+        "src/geo/area.cpp",
+        "#include \"geo/circle.hpp\"\nnamespace geo { double square(double x) { return x * x; } }\n",
+    );
+    write(
+        r,
+        "src/geo/lonely.hpp",
+        "#pragma once\ninline int nobody() { return 0; }\n",
+    );
+    write(
+        r,
+        "tests/CMakeLists.txt",
+        "add_executable(geo_tests circle_test.cpp square_test.cpp)\ntarget_link_libraries(geo_tests geo GTest::gtest_main)\ngtest_discover_tests(geo_tests)\nadd_executable(catch_tests map_test.cpp)\ntarget_link_libraries(catch_tests geo Catch2::Catch2WithMain)\nadd_executable(boost_tests b_test.cpp)\ntarget_link_libraries(boost_tests geo)\nadd_executable(smoke_check check/smoke.cpp)\ntarget_link_libraries(smoke_check geo)\nadd_test(NAME smoke COMMAND smoke_check)\n",
+    );
+    write(
+        r,
+        "tests/circle_test.cpp",
+        "#include <gtest/gtest.h>\n#include \"geo/circle.hpp\"\n\nTEST(Circle, Area) { EXPECT_GT(geo::Circle().area(), 0); }\nTEST_F(CircleFixture, Unit) { geo::Circle::unit(); }\nTEST_P(CircleParams, Sizes) { geo::Circle c; }\n",
+    );
+    write(
+        r,
+        "tests/square_test.cpp",
+        "#include <gtest/gtest.h>\n#include \"geo/circle.hpp\"\n\nTEST(Square, Zero) { EXPECT_EQ(geo::square(0), 0); }\n",
+    );
+    write(
+        r,
+        "tests/map_test.cpp",
+        "#include <catch2/catch_test_macros.hpp>\n#include \"geo/circle.hpp\"\n\nTEST_CASE(\"circle area\", \"[circle]\") { geo::Circle().area(); }\nTEST_CASE(\"unit circle\") { geo::Circle::unit(); }\n",
+    );
+    write(
+        r,
+        "tests/b_test.cpp",
+        "#include <boost/test/unit_test.hpp>\n#include \"geo/circle.hpp\"\n\nBOOST_AUTO_TEST_CASE(squares) { geo::square(2); }\n",
+    );
+    write(
+        r,
+        "tests/check/smoke.cpp",
+        "#include \"geo/circle.hpp\"\n\nint main() { return geo::square(1) > 0 ? 0 : 1; }\n",
+    );
+    // No build file at all: tests the repository cannot say how to run.
+    write(r, "bare/list.c", "int list_len(void) { return 3; }\n");
+    write(r, "bare/list.h", "int list_len(void);\n");
+    write(
+        r,
+        "bare/list_test.c",
+        "#include \"list.h\"\nTEST(List, Len) { list_len(); }\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_cpp_tests_and_the_command_that_runs_them() {
+    let (dir, index) = cpp_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    let rows: Vec<(&str, usize, TestKind)> = map
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.tests.len(), t.kind))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("bare/list_test.c", 1, TestKind::Integration),
+            ("tests/b_test.cpp", 1, TestKind::Integration),
+            ("tests/check/smoke.cpp", 1, TestKind::Integration),
+            ("tests/circle_test.cpp", 3, TestKind::Integration),
+            ("tests/map_test.cpp", 2, TestKind::Integration),
+            ("tests/square_test.cpp", 1, TestKind::Integration),
+        ]
+    );
+    let by_path = |path: &str| map.test_files.iter().find(|t| t.path == path).unwrap();
+    // The names a framework gives its tests.
+    let names = |path: &str| -> Vec<&str> {
+        by_path(path)
+            .tests
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect()
+    };
+    assert_eq!(
+        names("tests/circle_test.cpp"),
+        ["Circle.Area", "CircleFixture.Unit", "CircleParams.Sizes"]
+    );
+    assert_eq!(names("tests/map_test.cpp"), ["circle area", "unit circle"]);
+    assert_eq!(names("tests/b_test.cpp"), ["squares"]);
+
+    // Registered by name with CTest: a regex of the names. A parameterized
+    // test is known by a longer name, so its regex is not anchored.
+    assert_eq!(
+        by_path("tests/circle_test.cpp").command,
+        "ctest --test-dir build -R '^Circle\\.Area$|^CircleFixture\\.Unit$|CircleParams[./]Sizes'"
+    );
+    assert_eq!(
+        by_path("tests/square_test.cpp").command,
+        "ctest --test-dir build -R '^Square\\.Zero$'"
+    );
+    // Not registered by test: the executable with its framework's filter,
+    // from the folder CMake builds in.
+    assert_eq!(
+        by_path("tests/map_test.cpp").command,
+        "./build/tests/catch_tests \"circle area\",\"unit circle\""
+    );
+    assert_eq!(
+        by_path("tests/b_test.cpp").command,
+        "./build/tests/boost_tests --run_test=squares"
+    );
+    // No build file, no executable to name.
+    assert_eq!(by_path("bare/list_test.c").command, "");
+
+    // `add_test(NAME smoke COMMAND smoke_check)`: CTest knows the whole
+    // program by the name it was registered under.
+    assert_eq!(names("tests/check/smoke.cpp"), ["smoke"]);
+    assert_eq!(
+        by_path("tests/check/smoke.cpp").command,
+        "ctest --test-dir build -R '^smoke$'"
+    );
+    // A source is reached through its header.
+    let circle = map
+        .files
+        .iter()
+        .find(|f| f.path == "src/geo/circle.cpp")
+        .unwrap();
+    assert!(
+        circle.direct.contains(&"tests/circle_test.cpp".to_string())
+            || circle
+                .indirect
+                .contains(&"tests/circle_test.cpp".to_string()),
+        "{circle:?}"
+    );
+}
+
+#[test]
+fn lists_the_cpp_tests_a_change_can_break() {
+    let (dir, index) = cpp_fixture();
+    // A change to the source reaches every test through the header.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["src/geo/circle.cpp".to_string()]).unwrap();
+    let paths: Vec<&str> = impact.test_files.iter().map(|t| t.path.as_str()).collect();
+    for expected in [
+        "tests/b_test.cpp",
+        "tests/circle_test.cpp",
+        "tests/map_test.cpp",
+        "tests/square_test.cpp",
+    ] {
+        assert!(paths.contains(&expected), "{expected} in {paths:?}");
+    }
+    // The ctest regexes fold into one run; each executable has its own.
+    // Nearest first, then by file: the Boost executable's test file comes
+    // before the others.
+    assert_eq!(
+        impact.commands,
+        [
+            "./build/tests/boost_tests --run_test=squares",
+            "ctest --test-dir build -R '^smoke$|^Circle\\.Area$|^CircleFixture\\.Unit$|CircleParams[./]Sizes|^Square\\.Zero$'",
+            "./build/tests/catch_tests \"circle area\",\"unit circle\"",
+        ]
+    );
+    // A change to the test file alone.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["tests/square_test.cpp".to_string()])
+            .unwrap();
+    assert_eq!(impact.test_files.len(), 1);
+    assert_eq!(
+        impact.commands,
+        ["ctest --test-dir build -R '^Square\\.Zero$'"]
+    );
+    // A header nothing includes.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["src/geo/lonely.hpp".to_string()]).unwrap();
+    assert!(impact.test_files.is_empty() && impact.commands.is_empty());
+    assert_eq!(impact.untested_changes, ["src/geo/lonely.hpp"]);
+}
+
+#[test]
+fn many_cpp_tests_in_one_run_run_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(
+        r,
+        "CMakeLists.txt",
+        "project(many CXX)\nadd_library(core core.cpp)\nadd_executable(many_tests many_test.cpp)\ntarget_link_libraries(many_tests core GTest::gtest_main)\ngtest_discover_tests(many_tests)\nadd_executable(plain_tests plain_test.cpp)\ntarget_link_libraries(plain_tests core GTest::gtest)\n",
+    );
+    write(r, "core.hpp", "int core();\n");
+    write(
+        r,
+        "core.cpp",
+        "#include \"core.hpp\"\nint core() { return 1; }\n",
+    );
+    let many: String = (0..10)
+        .map(|i| format!("TEST(Many, N{i}) {{ core(); }}\n"))
+        .collect();
+    write(
+        r,
+        "many_test.cpp",
+        &format!("#include \"core.hpp\"\n{many}"),
+    );
+    write(
+        r,
+        "plain_test.cpp",
+        &format!("#include \"core.hpp\"\n{many}"),
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    let impact = testmap::impacted_tests(r, &index, &["core.cpp".to_string()]).unwrap();
+    assert_eq!(impact.tests_total, 20);
+    // Past the limit CTest runs every test, and the executable runs whole.
+    assert_eq!(
+        impact.commands,
+        ["ctest --test-dir build", "./build/plain_tests"]
+    );
+}
+
+/// An index of the files, written to a temporary folder.
+fn repo(files: &[(&str, &str)]) -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    for (rel, text) in files {
+        write(dir.path(), rel, text);
+    }
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(dir.path(), &mut index).unwrap();
+    (dir, index)
+}
+
+fn impact_of(dir: &tempfile::TempDir, index: &Index, changed: &[&str]) -> testmap::Impact {
+    let changed: Vec<String> = changed.iter().map(|c| c.to_string()).collect();
+    testmap::impacted_tests(dir.path(), index, &changed).unwrap()
+}
+
+fn names_of(map: &testmap::TestMap, path: &str) -> Vec<String> {
+    map.test_files
+        .iter()
+        .find(|t| t.path == path)
+        .unwrap_or_else(|| panic!("{path} holds no test: {:?}", map.test_files))
+        .tests
+        .iter()
+        .map(|t| t.name.clone())
+        .collect()
+}
+
+/// A src-layout project that names pytest and is run with `uv`, and
+/// `conftest.py` beside the tests.
+fn pytest_fixture() -> (tempfile::TempDir, Index) {
+    repo(&[
+        (
+            "pyproject.toml",
+            "[project]\nname = \"shop\"\ndependencies = [\"requests\"]\n\n[dependency-groups]\ndev = [\"pytest>=8\"]\n",
+        ),
+        ("uv.lock", "version = 1\n"),
+        ("src/shop/orders.py", "def place():\n    return 1\n"),
+        (
+            "src/shop/pricing.py",
+            "from shop.orders import place\n\n\ndef total():\n    return place()\n",
+        ),
+        (
+            "tests/conftest.py",
+            "import pytest\n\n\n@pytest.fixture\ndef order():\n    return 1\n\n\ndef test_in_conftest():\n    pass\n",
+        ),
+        (
+            "tests/test_orders.py",
+            "import pytest\nfrom shop.orders import place\n\n\ndef test_place():\n    assert place()\n\n\nclass TestOrders:\n    def test_add(self):\n        pass\n\n    def helper(self):\n        pass\n\n\nclass Helper:\n    def test_not_collected(self):\n        pass\n",
+        ),
+        (
+            "tests/test_pricing.py",
+            "from shop.pricing import total\n\n\ndef test_total():\n    assert total()\n",
+        ),
+    ])
+}
+
+#[test]
+fn maps_python_tests_and_the_pytest_command_that_runs_them() {
+    let (dir, index) = pytest_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    // `conftest.py` is support, a method of a class that is no `Test*` is not collected.
+    let files: Vec<&str> = map.test_files.iter().map(|t| t.path.as_str()).collect();
+    assert_eq!(files, ["tests/test_orders.py", "tests/test_pricing.py"]);
+    assert_eq!(
+        names_of(&map, "tests/test_orders.py"),
+        ["test_place", "TestOrders::test_add"]
+    );
+    assert!(
+        map.test_files
+            .iter()
+            .all(|t| t.kind == TestKind::Integration)
+    );
+    assert_eq!(map.tests_total, 3);
+    let sources: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(sources, ["src/shop/orders.py", "src/shop/pricing.py"]);
+    let orders = &map.files[0];
+    assert_eq!(orders.direct, ["tests/test_orders.py"]);
+    assert_eq!(orders.indirect, ["tests/test_pricing.py"]);
+
+    let impact = impact_of(&dir, &index, &["src/shop/orders.py"]);
+    let rows: Vec<(&str, u32)> = impact
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.distance))
+        .collect();
+    assert_eq!(
+        rows,
+        [("tests/test_orders.py", 1), ("tests/test_pricing.py", 2)]
+    );
+    // One run, node ids, through the tool `uv.lock` names.
+    assert_eq!(
+        impact.commands,
+        [
+            "uv run pytest tests/test_orders.py::test_place tests/test_orders.py::TestOrders::test_add tests/test_pricing.py::test_total"
+        ]
+    );
+    assert_eq!(
+        impact_of(&dir, &index, &["src/shop/pricing.py"]).commands,
+        ["uv run pytest tests/test_pricing.py::test_total"]
+    );
+}
+
+#[test]
+fn a_python_project_without_pytest_runs_unittest_by_module_name() {
+    let (dir, index) = repo(&[
+        ("app/__init__.py", ""),
+        ("app/calc.py", "def add(a, b):\n    return a + b\n"),
+        (
+            "tests/test_calc.py",
+            "import unittest\n\nfrom app.calc import add\n\n\nclass Base(unittest.TestCase):\n    pass\n\n\nclass CalcCase(Base):\n    def test_add(self):\n        self.assertEqual(add(1, 2), 3)\n\n    def test_sub(self):\n        pass\n\n    def check(self):\n        pass\n\n\ndef test_function_unittest_cannot_run():\n    pass\n",
+        ),
+    ]);
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    assert_eq!(
+        names_of(&map, "tests/test_calc.py"),
+        [
+            "CalcCase::test_add",
+            "CalcCase::test_sub",
+            "test_function_unittest_cannot_run"
+        ]
+    );
+    let impact = impact_of(&dir, &index, &["app/calc.py"]);
+    assert_eq!(
+        impact.commands,
+        ["python -m unittest tests.test_calc.CalcCase.test_add tests.test_calc.CalcCase.test_sub"]
+    );
+}
+
+#[test]
+fn many_python_tests_run_by_file_and_then_whole() {
+    let mut files: Vec<(String, String)> = vec![
+        (
+            "pyproject.toml".into(),
+            "[tool.pytest.ini_options]\n".into(),
+        ),
+        (
+            "engine/core.py".into(),
+            "def core():\n    return 1\n".into(),
+        ),
+    ];
+    let many: String = (0..10)
+        .map(|i| format!("def test_n{i}():\n    core()\n\n\n"))
+        .collect();
+    files.push((
+        "tests/test_many.py".into(),
+        format!("from engine.core import core\n\n\n{many}"),
+    ));
+    files.push((
+        "tests/test_one.py".into(),
+        "from engine.core import core\n\n\ndef test_one():\n    core()\n".into(),
+    ));
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (dir, index) = repo(&borrowed);
+    // A file with more than 8 tests is named whole; the other keeps its id.
+    assert_eq!(
+        impact_of(&dir, &index, &["engine/core.py"]).commands,
+        ["pytest tests/test_many.py tests/test_one.py::test_one"]
+    );
+    // Past 8 files, the whole project.
+    for n in 0..8 {
+        files.push((
+            format!("tests/test_extra{n}.py"),
+            format!("from engine.core import core\n\n\ndef test_extra{n}():\n    core()\n"),
+        ));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (dir, index) = repo(&borrowed);
+    assert_eq!(
+        impact_of(&dir, &index, &["engine/core.py"]).commands,
+        ["pytest"]
+    );
+}
+
+#[test]
+fn a_python_project_below_the_root_is_entered_first() {
+    let (dir, index) = repo(&[
+        (
+            "services/billing/pyproject.toml",
+            "[tool.poetry]\nname = \"billing\"\n",
+        ),
+        ("services/billing/poetry.lock", ""),
+        (
+            "services/billing/billing/invoice.py",
+            "def issue():\n    return 1\n",
+        ),
+        (
+            "services/billing/tests/test_invoice.py",
+            "from billing.invoice import issue\n\n\ndef test_issue():\n    issue()\n",
+        ),
+    ]);
+    assert_eq!(
+        impact_of(&dir, &index, &["services/billing/billing/invoice.py"]).commands,
+        ["cd services/billing && poetry run python -m unittest tests.test_invoice"]
+    );
+}
+
+#[test]
+fn maps_pnpm_workspace_tests_and_the_commands_that_run_them() {
+    let (dir, index) = repo(&[
+        (
+            "package.json",
+            "{ \"name\": \"root\", \"private\": true, \"packageManager\": \"pnpm@9.1.0\" }\n",
+        ),
+        ("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n"),
+        ("pnpm-lock.yaml", "lockfileVersion: '9.0'\n"),
+        (
+            "packages/ui/package.json",
+            "{ \"name\": \"@acme/ui\", \"main\": \"src/button.ts\", \"scripts\": { \"test\": \"vitest run\" }, \"devDependencies\": { \"vitest\": \"^1\" } }\n",
+        ),
+        (
+            "packages/ui/src/button.ts",
+            "export function Button() { return 'b'; }\n",
+        ),
+        (
+            "packages/ui/src/button.test.ts",
+            "import { describe, it, expect } from 'vitest';\nimport { Button } from './button';\n\ndescribe('Button', () => {\n  it('renders', () => { expect(Button()).toBe('b'); });\n});\n",
+        ),
+        (
+            "packages/web/package.json",
+            "{ \"name\": \"web\", \"dependencies\": { \"@acme/ui\": \"workspace:*\" }, \"scripts\": { \"test\": \"jest\" }, \"devDependencies\": { \"jest\": \"^29\" } }\n",
+        ),
+        (
+            "packages/web/src/app.ts",
+            "import { Button } from '@acme/ui';\n\nexport function app() { return Button(); }\n",
+        ),
+        (
+            "packages/web/src/app.test.ts",
+            "import { app } from './app';\n\ntest('app shows the button', () => { expect(app()).toBe('b'); });\n",
+        ),
+    ]);
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    assert_eq!(
+        names_of(&map, "packages/ui/src/button.test.ts"),
+        ["Button", "renders"]
+    );
+    assert_eq!(
+        names_of(&map, "packages/web/src/app.test.ts"),
+        ["app shows the button"]
+    );
+    // `web` imports `@acme/ui` by its name, so the ui test is not alone.
+    let impact = impact_of(&dir, &index, &["packages/ui/src/button.ts"]);
+    let rows: Vec<(&str, u32)> = impact
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.distance))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("packages/ui/src/button.test.ts", 1),
+            ("packages/web/src/app.test.ts", 2)
+        ]
+    );
+    assert_eq!(
+        impact.commands,
+        [
+            "pnpm --filter \"@acme/ui\" exec vitest run src/button.test.ts",
+            "pnpm --filter web exec jest src/app.test.ts"
+        ]
+    );
+}
+
+#[test]
+fn each_manager_runs_a_test_file_its_own_way() {
+    let test = "import { x } from './a';\n\ntest('x works', () => { x(); });\n";
+    let source = "export function x() {}\n";
+    let case = |manager_files: &[(&str, &str)], package: &str| {
+        let mut files: Vec<(&str, &str)> = vec![
+            ("package.json", package),
+            ("src/a.ts", source),
+            ("src/a.test.ts", test),
+        ];
+        files.extend_from_slice(manager_files);
+        let (dir, index) = repo(&files);
+        impact_of(&dir, &index, &["src/a.ts"]).commands
+    };
+    let jest = "{ \"name\": \"p\", \"scripts\": { \"test\": \"jest\" } }\n";
+    assert_eq!(case(&[], jest), ["npx jest src/a.test.ts"]);
+    assert_eq!(
+        case(&[("yarn.lock", "# yarn lockfile v1\n")], jest),
+        ["yarn jest src/a.test.ts"]
+    );
+    assert_eq!(
+        case(&[("yarn.lock", "__metadata:\n  version: 8\n")], jest),
+        ["yarn jest src/a.test.ts"]
+    );
+    assert_eq!(
+        case(
+            &[("bun.lock", "{ \"lockfileVersion\": 1 }\n")],
+            "{ \"name\": \"p\", \"scripts\": { \"test\": \"bun test\" } }\n"
+        ),
+        ["bun test ./src/a.test.ts"]
+    );
+    // A runner the map does not know runs the test script whole.
+    assert_eq!(
+        case(
+            &[("pnpm-lock.yaml", "lockfileVersion: '9.0'\n")],
+            "{ \"name\": \"p\", \"scripts\": { \"test\": \"tap\" } }\n"
+        ),
+        ["pnpm run test"]
+    );
+    // And a package with no test script and no runner has no command.
+    assert!(case(&[], "{ \"name\": \"p\" }\n").is_empty());
+}
+
+#[test]
+fn node_test_runs_the_file_and_an_e2e_spec_only_follows_its_imports() {
+    let (dir, index) = repo(&[
+        (
+            "package.json",
+            "{ \"name\": \"lib\", \"scripts\": { \"test\": \"node --test\" } }\n",
+        ),
+        ("src/a.js", "export function a() { return 1; }\n"),
+        (
+            "test/a.test.js",
+            "import test from 'node:test';\nimport { a } from '../src/a.js';\n\ntest('a returns one', () => { a(); });\n",
+        ),
+        ("src/app.js", "export function app() { return 2; }\n"),
+        ("e2e/pages/login.js", "export function login() {}\n"),
+        (
+            "e2e/login.spec.js",
+            "import { test } from '@playwright/test';\nimport { login } from './pages/login.js';\n\ntest('logs in', async () => { login(); });\n",
+        ),
+    ]);
+    let impact = impact_of(&dir, &index, &["src/a.js"]);
+    assert_eq!(impact.commands, ["node --test test/a.test.js"]);
+    // The app's source is not an import of the spec: nothing runs it.
+    let impact = impact_of(&dir, &index, &["src/app.js"]);
+    assert!(impact.test_files.is_empty());
+    assert_eq!(impact.untested_changes, ["src/app.js"]);
+    // A page object the spec imports does.
+    let impact = impact_of(&dir, &index, &["e2e/pages/login.js"]);
+    assert_eq!(impact.commands, ["npx playwright test e2e/login.spec.js"]);
+}
+
+#[test]
+fn many_js_test_files_run_whole() {
+    let mut files: Vec<(String, String)> = vec![
+        (
+            "package.json".into(),
+            "{ \"name\": \"p\", \"devDependencies\": { \"vitest\": \"1\" } }\n".into(),
+        ),
+        ("src/a.ts".into(), "export function a() {}\n".into()),
+    ];
+    for n in 0..9 {
+        files.push((
+            format!("src/t{n}.test.ts"),
+            format!("import {{ a }} from './a';\n\ntest('t{n}', () => a());\n"),
+        ));
+    }
+    let borrowed: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(a, b)| (a.as_str(), b.as_str()))
+        .collect();
+    let (dir, index) = repo(&borrowed);
+    assert_eq!(
+        impact_of(&dir, &index, &["src/a.ts"]).commands,
+        ["npx vitest run"]
+    );
+}

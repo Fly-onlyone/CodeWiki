@@ -9,9 +9,10 @@ use std::path::Path;
 
 use cw_core::{Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility};
 use cw_index::NodeMetrics;
-use cw_parse::RepoFacts;
+use cw_parse::{GENERATED_ATTR, RepoFacts};
 use cw_vault::NoteKind;
 
+use crate::filemap::{self, FileMap};
 use crate::manifests::Packages;
 use crate::units::{self, Unit, Units, is_test_file};
 
@@ -60,6 +61,10 @@ pub enum Subject {
     Integration(String),
     TraitPattern(String),
     Operations,
+    /// A unit of source files no parser maps, by its name in the file map.
+    FileUnit(String),
+    /// A folder of such files, by its repo-relative path.
+    Folder(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,11 +86,15 @@ pub struct Plan {
     pub notes: Vec<Planned>,
     /// Symbol qualified name -> id of the note that documents it.
     pub owner: HashMap<String, String>,
+    /// The units and folders of source no parser maps.
+    pub files: FileMap,
 }
 
 /// Lookup tables over the scanned facts.
 pub struct Repo<'a> {
     pub facts: &'a RepoFacts,
+    /// Name of the repository's folder.
+    pub name: String,
     /// Crates and their counterparts in other languages.
     pub units: Units,
     pub symbols: HashMap<&'a str, &'a Symbol>,
@@ -107,6 +116,7 @@ impl<'a> Repo<'a> {
         Self::build(
             facts,
             metrics,
+            "repository",
             units::discover(facts, "repository", &|_| None),
             Packages::default(),
         )
@@ -114,14 +124,12 @@ impl<'a> Repo<'a> {
 
     /// Lookup tables for the repository checked out at `root`.
     pub fn at(root: &Path, facts: &'a RepoFacts, metrics: &'a [(String, NodeMetrics)]) -> Self {
-        let name = root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "repository".into());
+        let name = crate::git::repo_name(root).unwrap_or_else(|| "repository".into());
         let read = |path: &str| std::fs::read_to_string(root.join(path)).ok();
         Self::build(
             facts,
             metrics,
+            &name,
             units::discover(facts, &name, &read),
             Packages::read(&read),
         )
@@ -130,6 +138,7 @@ impl<'a> Repo<'a> {
     fn build(
         facts: &'a RepoFacts,
         metrics: &'a [(String, NodeMetrics)],
+        name: &str,
         units: Units,
         packages: Packages,
     ) -> Self {
@@ -156,6 +165,7 @@ impl<'a> Repo<'a> {
         }
         Self {
             facts,
+            name: name.to_string(),
             units,
             symbols,
             children,
@@ -220,6 +230,7 @@ impl<'a> Repo<'a> {
             .filter(|s| {
                 s.kind == SymbolKind::Module
                     && Some(s.qualified.as_str()) != root
+                    && !self.is_go_test_package(s)
                     && self
                         .unit_of(&s.qualified)
                         .is_some_and(|u| u.name == unit.name)
@@ -244,6 +255,7 @@ impl<'a> Repo<'a> {
             .filter(|s| {
                 s.kind == SymbolKind::Module
                     && !s.file.contains("__init__.")
+                    && !self.is_go_test_package(s)
                     && self
                         .unit_of(&s.qualified)
                         .is_some_and(|u| u.name == unit.name)
@@ -259,10 +271,21 @@ impl<'a> Repo<'a> {
             .sum()
     }
 
-    /// True for test code, which gets no notes of its own.
+    /// True for a Go package that holds tests alone (an external test
+    /// package, or a folder of `_test.go` files): no part of the code.
+    fn is_go_test_package(&self, module: &Symbol) -> bool {
+        Language::from_path(&module.file) == Language::Go && self.is_test(module)
+    }
+
+    /// True for test code, which gets no notes of its own. Generated Go code
+    /// is kept out the same way: its symbols exist and are called, but a
+    /// note about code nobody writes would rank among those that matter.
     pub fn is_test(&self, symbol: &Symbol) -> bool {
         is_test_path(&symbol.qualified)
-            || (Language::from_path(&symbol.file) != Language::Rust && is_test_file(&symbol.file))
+            || (Language::from_path(&symbol.file) != Language::Rust
+                && (is_test_file(&symbol.file)
+                    || self.units.is_test(&symbol.file)
+                    || symbol.attrs.iter().any(|a| a == GENERATED_ATTR)))
     }
 
     pub fn rank_of(&self, qualified: &str) -> f64 {
@@ -285,6 +308,23 @@ impl<'a> Repo<'a> {
                 .map(|c| self.subtree_rank(&c.qualified))
                 .sum::<f64>()
     }
+}
+
+/// A file that builds or configures a .NET solution: the solution itself,
+/// the files every project below a folder takes, the SDK pin.
+fn is_dotnet_build_file(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.ends_with(".sln")
+        || name.ends_with(".slnx")
+        || matches!(
+            name,
+            "Directory.Build.props"
+                | "Directory.Build.targets"
+                | "Directory.Packages.props"
+                | "global.json"
+                | "nuget.config"
+                | "NuGet.Config"
+        )
 }
 
 /// Title of the note about `module`. A TypeScript `index` file is named
@@ -332,6 +372,20 @@ fn module_dir(unit: &Unit, module: &str) -> String {
     dir
 }
 
+/// The file a symbol stands in and, for C and C++ code, the files that
+/// define what a header declares: a change in either changes the note.
+fn files_of(symbol: &Symbol) -> Vec<String> {
+    let mut files = vec![symbol.file.clone()];
+    files.extend(
+        symbol
+            .attrs
+            .iter()
+            .filter_map(|a| a.strip_prefix(cw_parse::IMPL_ATTR))
+            .map(str::to_string),
+    );
+    files
+}
+
 /// Nearest enclosing module of a symbol (itself when it is a module).
 fn enclosing_module<'a>(repo: &Repo<'a>, symbol: &'a Symbol) -> &'a str {
     let mut current = symbol;
@@ -346,12 +400,38 @@ fn enclosing_module<'a>(repo: &Repo<'a>, symbol: &'a Symbol) -> &'a str {
     }
 }
 
+/// Keep the first `limit` of `ranked`, and behind them every one that is
+/// pinned: a limit drops the least important notes, never an explained one.
+pub(crate) fn cut<T>(ranked: &mut Vec<T>, limit: usize, pinned: impl Fn(&T) -> bool) {
+    let mut place = 0;
+    ranked.retain(|item| {
+        place += 1;
+        place <= limit || pinned(item)
+    });
+}
+
 /// Select notes. `covered` maps source files already documented by adopted
 /// notes to the id of the adopted note; those files get no new module or type
 /// notes.
-pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
+///
+/// `pinned` holds the ids of the notes a coding agent explained. Which
+/// modules, types, integrations and patterns get a note is a ranking with
+/// limits, and a ranking moves when other code changes. A pinned note keeps
+/// its place for as long as what it describes exists, so that an
+/// explanation is lost only with its subject.
+pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<String>) -> Plan {
     let facts = repo.facts;
     let mut notes: Vec<Planned> = Vec::new();
+    let pinned_as = |prefix: &str| -> HashSet<&str> {
+        pinned
+            .iter()
+            .filter_map(|id| id.strip_prefix(prefix))
+            .collect()
+    };
+    let pinned_modules = pinned_as("mod:");
+    let pinned_types = pinned_as("type:");
+    let pinned_integrations = pinned_as("integration:");
+    let pinned_patterns = pinned_as("pattern:");
 
     for unit in &repo.units.list {
         let mut sources: Vec<String> = unit.manifests.iter().map(|m| m.path.clone()).collect();
@@ -388,9 +468,12 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             s.kind == SymbolKind::Module
                 && !repo.is_test(s)
                 && !covered.contains_key(&s.file)
-                && items > 0
                 && repo.unit_of(&s.qualified).is_some_and(|unit| {
                     if unit.root.as_deref() == Some(s.qualified.as_str()) {
+                        false
+                    } else if pinned_modules.contains(s.qualified.as_str()) {
+                        true
+                    } else if items == 0 {
                         false
                     } else if unit.is_rust() {
                         s.qualified.contains("::")
@@ -408,7 +491,9 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             .total_cmp(&repo.subtree_rank(&a.qualified))
             .then_with(|| a.qualified.cmp(&b.qualified))
     });
-    modules.truncate(MAX_MODULE_NOTES);
+    cut(&mut modules, MAX_MODULE_NOTES, |m| {
+        pinned_modules.contains(m.qualified.as_str())
+    });
     modules.sort_by(|a, b| a.qualified.cmp(&b.qualified));
     for m in &modules {
         let unit = repo.unit_of(&m.qualified).expect("filtered above");
@@ -419,7 +504,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             kind: NoteKind::Concept,
             tags: vec!["core".into(), unit.slug.clone(), "module".into()],
             subject: Subject::Module(m.qualified.clone()),
-            sources: vec![m.file.clone()],
+            sources: files_of(m),
         });
     }
 
@@ -430,7 +515,8 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             .iter()
             .filter(|s| {
                 s.kind.is_type()
-                    && s.visibility != Visibility::Private
+                    && (s.visibility != Visibility::Private
+                        || pinned_types.contains(s.qualified.as_str()))
                     && repo.units.index_of(s) == Some(index)
                     && !repo.is_test(s)
                     && !covered.contains_key(&s.file)
@@ -452,10 +538,13 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                         .implementors
                         .get(s.qualified.as_str())
                         .is_some_and(|v| v.len() >= 2)
+                    || pinned_types.contains(s.qualified.as_str())
             })
             .map(|(_, s)| *s)
-            .take(MAX_TYPES_PER_CRATE)
             .collect();
+        cut(&mut chosen, MAX_TYPES_PER_CRATE, |t| {
+            pinned_types.contains(t.qualified.as_str())
+        });
         chosen.sort_by(|a, b| a.qualified.cmp(&b.qualified));
         for t in chosen {
             let module = enclosing_module(repo, t);
@@ -467,7 +556,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                 kind: NoteKind::Concept,
                 tags: vec!["core".into(), unit.slug.clone()],
                 subject: Subject::Type(t.qualified.clone()),
-                sources: vec![t.file.clone()],
+                sources: files_of(t),
             });
         }
     }
@@ -552,6 +641,15 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             // script is named after itself.
             let by_unit = format!("flow:startup:{}", unit.name);
             let own = entry.declared && !notes.iter().any(|n| n.id == by_unit);
+            let id = if own {
+                by_unit
+            } else {
+                format!("flow:startup:{}", entry.symbol)
+            };
+            // Past the limit only a flow an agent explained is still drawn.
+            if flows >= MAX_FLOWS_PER_UNIT && !pinned.contains(&id) {
+                continue;
+            }
             let label = match symbol.kind {
                 SymbolKind::Module => symbol.name.as_str(),
                 _ => {
@@ -560,11 +658,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                 }
             };
             notes.push(Planned {
-                id: if own {
-                    by_unit
-                } else {
-                    format!("flow:startup:{}", entry.symbol)
-                },
+                id,
                 dir: ZONE_ARCHITECTURE.into(),
                 title: if own {
                     format!("{} Startup Flow", unit.package)
@@ -581,9 +675,6 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                 sources: vec![symbol.file.clone()],
             });
             flows += 1;
-            if flows == MAX_FLOWS_PER_UNIT {
-                break;
-            }
         }
     }
 
@@ -603,11 +694,13 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
     let threshold = if code_files < 30 { 2 } else { 3 };
     let mut integrations: Vec<(&str, &BTreeSet<&str>)> = usage
         .iter()
-        .filter(|(_, files)| files.len() >= threshold)
+        .filter(|(krate, files)| files.len() >= threshold || pinned_integrations.contains(*krate))
         .map(|(k, f)| (*k, f))
         .collect();
     integrations.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
-    integrations.truncate(MAX_INTEGRATIONS);
+    cut(&mut integrations, MAX_INTEGRATIONS, |(krate, _)| {
+        pinned_integrations.contains(krate)
+    });
     integrations.sort_by(|a, b| a.0.cmp(b.0));
     for (krate, files) in integrations {
         notes.push(Planned {
@@ -626,12 +719,15 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
         .implementors
         .iter()
         .filter(|(t, impls)| {
-            impls.len() >= 2 && repo.symbols.get(*t).is_some_and(|s| !repo.is_test(s))
+            (impls.len() >= 2 || pinned_patterns.contains(*t))
+                && repo.symbols.get(*t).is_some_and(|s| !repo.is_test(s))
         })
         .map(|(t, i)| (*t, i))
         .collect();
     patterns.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
-    patterns.truncate(MAX_PATTERNS);
+    cut(&mut patterns, MAX_PATTERNS, |(t, _)| {
+        pinned_patterns.contains(t)
+    });
     patterns.sort_by(|a, b| a.0.cmp(b.0));
     for (tr, _) in patterns {
         let symbol = repo.symbols[tr];
@@ -640,6 +736,10 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             dir: ZONE_PATTERNS.into(),
             title: if symbol.kind == SymbolKind::Class {
                 format!("Extending {} Pattern", symbol.name)
+            } else if symbol.kind == SymbolKind::Struct
+                && Language::from_path(&symbol.file) == Language::Go
+            {
+                format!("Embedding {} Pattern", symbol.name)
             } else {
                 format!("Implementing {} Pattern", symbol.name)
             },
@@ -658,18 +758,30 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             .filter(|u| !u.is_rust())
             .flat_map(|u| u.manifests.iter().map(|m| m.path.as_str()))
             .collect();
+        let has_c = repo.units.list.iter().any(|u| u.language.is_c_family());
         let mut sources: Vec<String> = facts
             .files
             .iter()
             .map(|f| f.path.as_str())
             .filter(|p| {
-                *p == "Cargo.toml"
+                // The files at the top that every C or C++ build starts from.
+                (has_c
+                    && matches!(
+                        *p,
+                        "CMakeLists.txt"
+                            | "CMakePresets.json"
+                            | "vcpkg.json"
+                            | "conanfile.txt"
+                            | "conanfile.py"
+                    ))
+                    || *p == "Cargo.toml"
                     || p.starts_with(".github/workflows/")
                     || p.rsplit('/')
                         .next()
                         .is_some_and(|n| n.starts_with("Dockerfile"))
                     || *p == "rust-toolchain.toml"
                     || *p == "deny.toml"
+                    || is_dotnet_build_file(p)
                     || manifests.contains(p)
             })
             .map(str::to_string)
@@ -683,6 +795,49 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             tags: vec!["operations".into()],
             subject: Subject::Operations,
             sources,
+        });
+    }
+
+    // Source no parser maps: a note for each unit and each folder that holds
+    // enough of it. They come last among the content notes, so that no name
+    // a note above has reserved can change.
+    let taken: HashSet<String> = repo
+        .units
+        .list
+        .iter()
+        .map(|u| u.slug.to_lowercase())
+        .collect();
+    let files = filemap::build(
+        facts,
+        &repo.name,
+        &taken,
+        !repo.units.list.is_empty(),
+        pinned,
+    );
+    for unit in &files.units {
+        notes.push(Planned {
+            id: format!("unit:{}", unit.name),
+            dir: format!("{ZONE_CORE}/{}", unit.slug),
+            title: unit.package.clone(),
+            kind: NoteKind::Concept,
+            tags: vec!["core".into(), unit.slug.clone()],
+            subject: Subject::FileUnit(unit.name.clone()),
+            sources: unit.sources.iter().map(|f| f.path.clone()).collect(),
+        });
+    }
+    for folder in &files.folders {
+        notes.push(Planned {
+            id: format!("dir:{}", folder.dir),
+            dir: folder.vault_dir.clone(),
+            title: folder.title.clone(),
+            kind: NoteKind::Concept,
+            tags: vec![
+                "core".into(),
+                files.units[folder.unit].slug.clone(),
+                "folder".into(),
+            ],
+            subject: Subject::Folder(folder.dir.clone()),
+            sources: folder.sources.iter().map(|f| f.path.clone()).collect(),
         });
     }
 
@@ -731,7 +886,11 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
         sources: Vec::new(),
     });
 
-    Plan { notes, owner }
+    Plan {
+        notes,
+        owner,
+        files,
+    }
 }
 
 /// Follow calls outward from an entry point and keep those that cross from

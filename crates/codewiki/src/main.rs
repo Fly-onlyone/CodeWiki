@@ -85,7 +85,8 @@ enum Command {
     /// Tests per file, and source files no test reaches.
     Tests,
     /// Tests to run after changing the given files, or after the uncommitted
-    /// changes when no file is given.
+    /// changes when no file is given, with the commands that run them, for
+    /// every mapped language.
     ImpactedTests { files: Vec<String> },
     /// Import an LCOV or Cobertura coverage report and rank the least
     /// covered files by how often they change and how much depends on them.
@@ -404,6 +405,10 @@ fn print_report(report: &cw_wiki::Report, json: bool) -> Result<()> {
     }
     for path in &report.behind {
         println!("  explanation may be behind in {path}");
+    }
+    // What became of notes whose subject is gone or moved.
+    for line in &report.summary {
+        println!("{line}");
     }
     if !report.behind.is_empty() || report.unexplained > 0 {
         println!(

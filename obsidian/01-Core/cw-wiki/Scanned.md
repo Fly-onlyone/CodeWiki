@@ -24,7 +24,7 @@ Declared as `pub(crate) struct Scanned`.
 
 Members:
 
-- `pub fn new(source: &str) -> Self` — public method, returns `Self`; called by `gather`, `scan_source`.
+- `pub fn new(source: &str) -> Self` — public method, returns `Self`; called by `scan_source`.
 - `pub fn line_of(&self, offset: usize) -> u32` — 1-based line of a byte offset.
 - `pub fn in_test(&self, offset: usize) -> bool` — true when `offset` lies in an item compiled only for tests.
 - `pub fn literal_at(&self, open: usize) -> Option<&Literal>` — the literal whose opening quote is at `open`.
@@ -42,7 +42,7 @@ Members:
 
 - [[Security Module]] — from `bound_to_format`, `call_args`, `command_injection`, `env_set_var`
 - [[Contracts Module]] — from `attribute_routes`, `call_open`, `first_literal`, `fn_body`
-- [[Testmap Module]] — from `gather`
+- [[Testmap Module]] — from `tests`
 
 ## Gotchas
 

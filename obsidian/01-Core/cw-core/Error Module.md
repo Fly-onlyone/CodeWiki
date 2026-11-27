@@ -20,7 +20,7 @@ Gives the engine crates one error type, [[Error]], and one `Result<T>` alias. In
 
 ## Items
 
-- `pub type Result<T> = std::result::Result<T, Error>` — public type alias; used by `Embedder::embed`, `Embedder::embed_query`, `Embedder::probe`, `Facts::load` and 195 more.
+- `pub type Result<T> = std::result::Result<T, Error>` — public type alias; used by `Embedder::embed`, `Embedder::embed_query`, `Embedder::probe`, `Facts::load` and 214 more.
 - [[Error]] — enum
 
 ## Depends on
@@ -30,13 +30,13 @@ Gives the engine crates one error type, [[Error]], and one `Result<T>` alias. In
 ## Used by
 
 - [[Index]] — from `collect`, `crates`, `edges`, `edges_from`
-- [[Proposal Module]] — from `approve`, `check_id`, `create`, `create_agent`
+- [[Proposal Module]] — from `approve`, `check_id`, `close_retire`, `create`
 - [[Query Module]] — from `answer`, `check_vault_path`, `context`, `dependency_path`
 - [[cw-index]] — from `document_opening`, `documents`, `nearest`, `prune_vectors`
-- [[Explanations Module]] — from `approve`, `brief`, `every`, `fits_all`
+- [[Explanations Module]] — from `approve`, `approve_keeping`, `brief`, `every`
+- [[Generate Module]] — from `adopt_existing`, `carry_moves`, `follow_units`, `generate`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`, `open_existing_index_in`
 - [[cw-embed]] — from `checked`, `finish`, `from_config`, `from_env`
-- [[Generate Module]] — from `adopt_existing`, `generate`, `generate_with`, `keep_placed_pictures`
 
 ## Gotchas
 

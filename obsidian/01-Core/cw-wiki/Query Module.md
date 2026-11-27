@@ -52,7 +52,7 @@ And 9 more items.
 ## Depends on
 
 - [[Index]] — uses `Index`, `crates`, `edges`, `edges_from`
-- [[VaultMeta]] — uses `VaultMeta`, `by_path`, `load`, `notes_for_source`
+- [[VaultMeta]] — uses `VaultMeta`, `by_path`, `live_notes`, `load`
 - [[Error]] — uses `invalid`, `io`, `not_found`
 - [[Model Module]] — uses `Edge`, `file_node`
 - [[Lifecycle Module]] — uses `NoteState`, `state`
@@ -63,7 +63,7 @@ And 9 more items.
 ## Used by
 
 - [[Api Module]] — from `ask`, `context`, `dependency_path`, `list_notes`
-- [[cw-wiki]] — from `a_link_by_folder_path_opens_its_note`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_is_woven_into_the_note_and_recorded`
+- [[cw-wiki]] — from `a_link_by_folder_path_opens_its_note`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `a_submission_is_woven_into_the_note_and_recorded`
 - [[Explanations Module]] — from `brief`, `row`, `submit`
 - [[Workspace Module (cw-server)]] — from `summarize`
 

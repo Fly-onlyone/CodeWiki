@@ -46,6 +46,8 @@ Defined at the crate root:
 - `visible_repos` — the `/v1/repos` listing without the repositories whose folders `entries` keep or that hold one of them, and their names.
 - `get_visible` — fetch `uri` and drop the repositories `entries` keep from it with `hide`. With an empty list the answer is returned as it is.
 - `fn failed(message: String) -> McpError` — A tool call that failed: logged, and returned to the agent as an error.
+- `fn is_no_such_note(error: &McpError) -> bool` — whether a call failed because the wiki has no note of the name given.
+- `fn no_such_note(note: &str) -> String` — what an agent is told of a note that is not in the wiki. It is no failure of the agent's: a sync removes a note when what it describes is gone from the repository, and a list of waiting notes may be older than that sync.
 - `fn field<'a>(value: &'a Value, key: &str) -> &'a str` — the string under `key`, or an empty string.
 - `struct ClaimIds` — the agent ids this bridge lists notes under. Every listing that claims gets an id of its own: the main agent, its background note writer and a note writer launched after `/clear` all run through one bridge, and with one id for all of them a second batch was handed the notes the first still held. A submission sends the id its note was listed under.
 - `held_key` — the key of the note that `note` names in `repo`, read as the backend reads it: a vault path, or a note's name, which is its file name without `.md` in any case.
@@ -53,12 +55,10 @@ Defined at the crate root:
 - `fn waiting_line(waiting: &Value) -> String` — how many notes wait for an agent, in words; empty when none does.
 - `fn sync_text(report: &Value) -> String` — what a sync did, and what it left for an agent.
 - `fn waiting_text(queue: &Value, claimed: bool) -> String` — the queue of notes that wait, for an agent to read. `claimed` tells that the listing asked to keep the notes for this agent.
-- `fn brief_text(brief: &Value) -> String` — the brief of one note, for an agent to read.
-- `fn outcome_text(outcome: &Value) -> String` — what became of a submission, for an agent to act on.
 - `fn note_text(content: &Value) -> String` — the text of a note as the backend answered, with a last line that names what was left out and how to get it.
 - `async fn main() -> std::process::ExitCode` — private function, returns `std::process::ExitCode`.
 
-And 24 more items.
+And 26 more items.
 
 ## Depends on
 

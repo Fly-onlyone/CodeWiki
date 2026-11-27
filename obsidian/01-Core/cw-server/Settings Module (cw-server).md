@@ -40,8 +40,8 @@ Backs the settings routes. It describes the settings in effect, changes the save
 ## Depends on
 
 - [[Settings Module (cw-core)]] — uses `ALL`, `EMBED_MODEL`, `EMBED_PROVIDER`, `LEMONADE_KEY`
-- [[Resolved]] — uses `Resolved`, `from_parts`, `secret_state`, `source`
 - [[cw-embed]] — uses `PROVIDERS`, `from_settings`, `list_models_in`
+- [[Resolved]] — uses `Resolved`, `from_parts`, `secret_state`
 - [[Error]] — uses `Error`, `invalid`
 - [[Error Module]] — uses `Result`
 - [[Secret Module]] — uses `available`

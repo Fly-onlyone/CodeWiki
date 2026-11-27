@@ -50,7 +50,7 @@ Defined at the crate root:
 
 - [[codewiki-app]] — from `APP_IDENTITY`, `after_hide`, `main`, `note_file`
 - [[Query Module]] — from `answer`, `list_notes`, `notes_citing`, `overview`
-- [[Explanations Module]] — from `approve`, `brief`, `fits_all`, `reject`
+- [[Explanations Module]] — from `approve_keeping`, `brief`, `fits_all`, `reject`
 - [[Api Module]] — from `health`, `pending_proposals`, `require_token`, `vault`
 - [[Decisions Module]] — from `create`, `list`, `why`
 - [[Service Module]] — from `built`, `index_notes`, `is_stale`

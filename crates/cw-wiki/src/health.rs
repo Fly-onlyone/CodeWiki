@@ -9,11 +9,13 @@ use std::path::Path;
 
 use cw_core::{EdgeKind, Result, Symbol, SymbolKind, VAULT_DIR, Visibility};
 use cw_index::Index;
+use cw_parse::{EXTENSION_ATTR, GENERATED_ATTR, KOTEST_ATTR};
 use cw_vault::lifecycle::{self, NoteState};
-use cw_vault::{Note, VaultMeta};
+use cw_vault::{Gone, Note, VaultMeta};
 use serde::{Deserialize, Serialize};
 
 use crate::analyze::DEPENDENCY_KINDS;
+use crate::units::{is_csharp_test_attribute, is_kotlin_entry, is_test_file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,16 +53,98 @@ pub(crate) const PASSIVE_ATTRS: [&str; 12] = [
     "repr",
 ];
 
+/// Attributes of C# code that only describe an item.
+const PASSIVE_CSHARP_ATTRS: [&str; 10] = [
+    "Obsolete",
+    "Serializable",
+    "Flags",
+    "SuppressMessage",
+    "ExcludeFromCodeCoverage",
+    "DebuggerDisplay",
+    "MethodImpl",
+    "Conditional",
+    "NonSerialized",
+    "CLSCompliant",
+];
+
 fn is_test_symbol(symbol: &Symbol) -> bool {
     symbol
         .attrs
         .iter()
-        .any(|a| a == "test" || a.ends_with("::test"))
+        .any(|a| a == "test" || a.ends_with("::test") || is_csharp_test_attribute(a))
         || symbol
             .file
             .split('/')
             .any(|s| matches!(s, "tests" | "benches" | "examples"))
         || symbol.file.ends_with("build.rs")
+        || (symbol.file.ends_with(".cs") && is_test_file(&symbol.file))
+        || symbol.file.ends_with("_test.go")
+        // A Kotest spec is a test whatever it is called, and so is any
+        // Kotlin symbol of a test source set.
+        || symbol.attrs.iter().any(|a| a == KOTEST_ATTR)
+        || (symbol.file.ends_with(".kt") && is_test_file(&symbol.file))
+}
+
+/// A Kotlin member the language reaches by itself: one that overrides, which
+/// the supertype's callers reach, and an operator, which an expression calls.
+fn is_kotlin_dispatch(symbol: &Symbol) -> bool {
+    symbol.file.ends_with(".kt")
+        && symbol.kind == SymbolKind::Method
+        && symbol
+            .signature
+            .split_whitespace()
+            .any(|w| matches!(w, "override" | "operator"))
+}
+
+/// The functions the Go runtime calls: `main`, and each `init`.
+fn is_go_entry_point(symbol: &Symbol) -> bool {
+    symbol.file.ends_with(".go")
+        && symbol.kind == SymbolKind::Function
+        && matches!(symbol.name.as_str(), "main" | "init")
+}
+
+/// An exported Go name outside `package main` and outside an `internal`
+/// folder is the package's API, which code outside the repository may use.
+fn is_go_api(symbol: &Symbol, by_name: &HashMap<&str, &Symbol>) -> bool {
+    if !symbol.file.ends_with(".go")
+        || symbol.visibility != Visibility::Public
+        || symbol.file.split('/').any(|d| d == "internal")
+    {
+        return false;
+    }
+    let mut current = symbol;
+    while let Some(parent) = current
+        .parent
+        .as_deref()
+        .and_then(|p| by_name.get(p).copied())
+    {
+        if parent.kind == SymbolKind::Module {
+            return parent.signature != "package main";
+        }
+        current = parent;
+    }
+    false
+}
+
+/// What a C or C++ header declares for others: its API, which code outside
+/// the repository may call. `DllMain` and the other entry points a loader
+/// calls are never dead either.
+fn is_c_api(symbol: &Symbol) -> bool {
+    cw_core::Language::from_path(&symbol.file).is_c_family()
+        && ((symbol.visibility == Visibility::Public && cw_parse::is_c_header(&symbol.file))
+            || matches!(
+                symbol.name.as_str(),
+                "wmain" | "WinMain" | "wWinMain" | "DllMain"
+            ))
+}
+
+/// A C# program's `Main`, which the runtime calls.
+fn is_csharp_main(symbol: &Symbol) -> bool {
+    symbol.file.ends_with(".cs")
+        && symbol.name == "Main"
+        && (symbol.kind == SymbolKind::Function
+            || (symbol.kind == SymbolKind::Method
+                && symbol.signature.split_whitespace().any(|w| w == "static")))
 }
 
 /// Symbols nothing refers to.
@@ -108,6 +192,14 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
             || used_parents.contains(symbol.qualified.as_str())
             || is_test_symbol(symbol)
             || (symbol.kind == SymbolKind::Function && symbol.name == "main")
+            || is_csharp_main(symbol)
+            || is_kotlin_entry(symbol)
+            || is_kotlin_dispatch(symbol)
+            || is_go_entry_point(symbol)
+            // Generated code is nobody's to delete.
+            || symbol.attrs.iter().any(|a| a == GENERATED_ATTR)
+            || is_go_api(symbol, &by_name)
+            || is_c_api(symbol)
         {
             continue;
         }
@@ -127,18 +219,29 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
         if exported {
             continue;
         }
+        let csharp = symbol.file.ends_with(".cs");
         let wiring: Vec<&String> = symbol
             .attrs
             .iter()
-            .filter(|a| !PASSIVE_ATTRS.contains(&a.as_str()))
+            .filter(|a| {
+                if csharp {
+                    !PASSIVE_CSHARP_ATTRS.contains(&a.as_str())
+                } else {
+                    !PASSIVE_ATTRS.contains(&a.as_str()) && a.as_str() != EXTENSION_ATTR
+                }
+            })
             .collect();
         let (certainty, reason) = if !wiring.is_empty() {
+            let (open, close) = if csharp { ("[", "]") } else { ("#[", "]") };
             (
                 Certainty::Possible,
-                format!("no reference found, but `#[{}]` may register it", wiring[0]),
+                format!(
+                    "no reference found, but `{open}{}{close}` may register it",
+                    wiring[0]
+                ),
             )
         } else if cw_core::Language::from_path(&symbol.file) != cw_core::Language::Rust {
-            // Python, TypeScript, JavaScript and Java reach code through
+            // Python, TypeScript, JavaScript, Java, Kotlin, C# and Go reach code through
             // reflection, decorators, frameworks and duck typing that a
             // static index cannot follow.
             (
@@ -186,6 +289,9 @@ pub enum DriftKind {
     DeadPath,
     /// A wikilink points at no note.
     BrokenLink,
+    /// What the note describes is gone from the repository, and the note
+    /// is still in the vault.
+    SubjectGone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +349,22 @@ pub fn doc_drift(root: &Path, index: &Index) -> Result<DocReport> {
     let mut drift = Vec::new();
     let mut cited: HashSet<&str> = HashSet::new();
     for entry in meta.notes.values() {
+        // One finding says it all for a note of something gone: each of
+        // its sources and paths is missing for that one reason.
+        if let Some(why) = entry.gone {
+            drift.push(Drift {
+                note: entry.path.clone(),
+                kind: DriftKind::SubjectGone,
+                detail: match why {
+                    Gone::Pending => "what it describes is gone; it waits in the retire proposal for a decision",
+                    Gone::History => "what it describes is gone; its owner keeps it as history",
+                    Gone::Uncommitted => "what it describes is gone in a change that is not committed; it stays until the change is",
+                    Gone::Unsaved => "what it describes is gone; it stays because git does not hold the note as it is",
+                }
+                .to_string(),
+            });
+            continue;
+        }
         let text = std::fs::read_to_string(vault.join(&entry.path)).ok();
         for source in &entry.sources {
             cited.insert(source.path.as_str());
@@ -391,6 +513,26 @@ const WIDE_API: usize = 30;
 /// Counts top-level commas of the first parenthesised group, so generic
 /// arguments and nested tuples do not inflate it.
 fn parameter_count(signature: &str) -> usize {
+    // A Go method names its receiver in a group of its own, before its name,
+    // and a channel direction is no bracket.
+    let go;
+    let mut signature = signature;
+    if let Some(rest) = signature.strip_prefix("func (") {
+        let mut depth = 1usize;
+        let after = rest.char_indices().find_map(|(i, c)| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(i + 1)
+        });
+        signature = after.map_or(signature, |at| &rest[at..]);
+    }
+    if signature.starts_with("func ") || signature.contains("<-") {
+        go = signature.replace("<-", "  ");
+        signature = &go;
+    }
     let Some(open) = signature.find('(') else {
         return 0;
     };
@@ -430,7 +572,11 @@ fn parameter_count(signature: &str) -> usize {
         .filter(|p| !p.is_empty())
         .filter(|p| {
             let name = p.trim_start_matches('&').trim_start_matches("mut ").trim();
-            !(name == "self" || name == "cls" || name.starts_with("self:"))
+            // The `this` of a C# extension method is its receiver.
+            !(name == "self"
+                || name == "cls"
+                || name.starts_with("self:")
+                || name.starts_with("this "))
         })
         .count()
 }
@@ -665,7 +811,20 @@ mod tests {
             ("fn f(a: HashMap<String, u8>, b: (u8, u8), c: [u8; 2])", 3),
             ("fn f<T: Into<String>>(a: T, b: impl Fn(u8, u8) -> u8,)", 2),
             ("def f(self, a, b=(1, 2))", 2),
+            ("public static string Cut(this string s, int n)", 1),
+            (
+                "public Task<Map<string, int>> Load<T>(Dictionary<string, T> by)",
+                1,
+            ),
             ("struct S", 0),
+            ("func (s *Store) Get(key string, n int) (Item, error)", 2),
+            ("func Map[T, U any](xs []T, f func(T) U) []U", 2),
+            ("func New() *Store", 0),
+            (
+                "func Send(out chan<- int, in <-chan string, rest ...int)",
+                3,
+            ),
+            ("Read(key string) (Item, error)", 1),
         ] {
             assert_eq!(parameter_count(signature), expected, "{signature}");
         }

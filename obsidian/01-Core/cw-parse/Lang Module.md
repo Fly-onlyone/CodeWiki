@@ -4,7 +4,7 @@ tags: [core, cw-parse, module]
 
 # Lang Module
 
-> Plumbing shared by the Python, TypeScript and Java extractors: the fact sink, text helpers, the file-to-module mapping and import classification.
+> Plumbing shared by the Python, TypeScript, Java, Kotlin, C# and Go extractors: the fact sink, text helpers, the file-to-module mapping and import classification.
 
 ## What it does
 
@@ -24,16 +24,15 @@ Path rules: `python_module` starts the name at the outermost folder that has an 
 
 ## Items
 
-- `const NODE_BUILTINS: [&str; 34]` — modules built into Node.js, importable with or without the `node:` prefix.
 - `pub(crate) fn named(node: Node) -> Vec<Node>` — named children of `node`, collected so the tree can be walked while the extractor is mutated.
 - `pub(crate) fn field_all<'t>(node: Node<'t>, name: &str) -> Vec<Node<'t>>` — every child stored under the field `name`.
-- `pub(crate) fn split_qualified(qualified: &str) -> Vec<String>` — internal function, returns `Vec<String>`; called by `Extractor::export`, `Extractor::import_from`, `Extractor::qualify`, `Extractor::target` and 2 more.
+- `pub(crate) fn split_qualified(qualified: &str) -> Vec<String>` — internal function, returns `Vec<String>`; called by `Extractor::export`, `Extractor::import_from`, `Extractor::qualify`, `Extractor::qualify_in` and 3 more.
 - `pub(crate) fn dotted(text: &str) -> Vec<String>` — segments of a dotted name such as `pkg.util.shout`.
 - `pub(crate) fn collapse(raw: &str) -> String` — declaration text with whitespace collapsed and the body opener removed.
 - `pub(crate) fn dedent(text: &str) -> String` — remove the indentation shared by the lines after the first.
 - `pub(crate) fn block_doc(comment: &str) -> Option<String>` — text of a `/** ... */` comment with the markers and leading stars removed. Returns `None` for any other comment.
 - `pub(crate) fn sanitize(segment: &str) -> String` — make a path component usable as a name segment.
-- `pub(crate) fn starts_uppercase(name: &str) -> bool` — internal function, returns `bool`; called by `Extractor::invocation`, `Extractor::walk`.
+- `pub(crate) fn starts_uppercase(name: &str) -> bool` — internal function, returns `bool`; called by `Extractor::call_by_name`, `Extractor::invocation`, `Extractor::member_call`, `Extractor::walk`.
 - `pub(crate) fn is_generic_param(name: &str) -> bool` — single uppercase letters are almost always generic parameters.
 - `pub(crate) fn marker_name(text: &str) -> String` — name of a decorator or annotation: the text after `@` up to its arguments.
 - [[Sink]] — collects the facts of one file.
@@ -42,25 +41,32 @@ Path rules: `python_module` starts the name at the outermost folder that has an 
 - `pub fn resolve_ts_import(files: &HashSet<&str>, from: &str, spec: &str) -> Option<String>` — file a relative TypeScript import specifier names, as written in `from`. Tries the specifier itself, then each source extension, then an `index` file in a directory of that name. Non-relative specifiers return `None`.
 - `pub(crate) fn ts_package(spec: &str) -> Option<String>` — package a non-relative TypeScript import specifier names, or `None` when it is a Node.js builtin or a path alias whose target is not known.
 - `pub(crate) fn java_default_package(path: &str) -> String` — module used for a Java file with no `package` declaration: its directory.
-- `fn external(import: UseImport, package: String, package_len: usize) -> UseImport` — an import that leaves the repository: keep one segment naming the package, and what the import takes from it. The first `package_len` segments of the path name the package.
-- `pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)])` — decide, for every Python and Java import, whether it names repository code, an outside package, or the language's own library. Imports of the last kind are dropped. Also records which Python package holds which module.
+- `pub(crate) fn csharp_default_namespace(path: &str) -> String` — module used for a C# file with no `namespace` declaration (the global namespace): its directory.
+- `pub(crate) fn nuget_ids(xml: &str) -> Vec<String>` — the NuGet package ids a project or props file names, in a `PackageReference` or a `PackageVersion`.
+- `pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String], go: &GoBuild)` — decide, for every Python, Java, Kotlin, C# and Go import, whether it names repository code, an outside package, or the language's own library. Imports of the last kind are dropped. Also records which Python package holds which module.
 
-And 9 more items.
+And 17 more items.
 
 ## Depends on
 
 - [[Language]] — uses `Language`, `from_path`
+- [[Jsbuild Module]] — uses `resolve_source`
 - [[Rust Module]] — uses `ModDecl`
+- [[GoModules]] — uses `GoModules`
+- [[PythonRoots]] — uses `module`
 - [[ParsedFile]] — uses `ParsedFile`
 - [[UseImport]] — uses `UseImport`
 
 ## Used by
 
+- [[Kotlin Module]] — from `annotation_name`, `before_lambda`, `call`, `call_by_name`
 - [[Typescript Module]] — from `bindings`, `children`, `class`, `class_body`
+- [[C Module]] — from `bases`, `block_test`, `comment_text`, `declaration_in`
+- [[Csharp Module]] — from `base_list`, `declarators`, `doc`, `field`
+- [[Go Module]] — from `assertion_target`, `collect_locals`, `function`, `imports`
 - [[Java Module]] — from `children`, `doc`, `enum_constant`, `field`
 - [[Python Module]] — from `bindings`, `block`, `class`, `collect_roots`
 - [[Sink]] — from `inherits`, `type_ref`
-- [[Scan Module]] — from `scan_repo`
 
 ## Gotchas
 

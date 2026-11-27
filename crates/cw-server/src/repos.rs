@@ -12,6 +12,17 @@ pub struct RepoEntry {
     pub name: String,
     /// Absolute path of the repository root on the backend's machine.
     pub path: String,
+    /// For a linked git worktree: the id its main checkout has or would
+    /// have. A worktree is one more copy of a repository, usually made by
+    /// a coding agent for one task, and not a project of its own: lists of
+    /// projects leave it out, and it is forgotten once its folder is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worktree_of: Option<String>,
+}
+
+/// The id of the main checkout `root` is a linked worktree of, if it is one.
+fn main_of(root: &Path) -> Option<String> {
+    cw_wiki::git::main_checkout(root).map(|main| repo_id(&main))
 }
 
 fn file(data_dir: &Path) -> PathBuf {
@@ -60,11 +71,59 @@ pub fn add(data_dir: &Path, path: &str) -> Result<RepoEntry> {
             .unwrap_or_else(|| display.to_string()),
         // Windows canonical paths carry a `\\?\` prefix that tools reject.
         path: display.trim_start_matches(r"\\?\").to_string(),
+        worktree_of: main_of(&root),
     };
     repos.push(entry.clone());
     repos.sort_by_key(|a| a.name.to_lowercase());
     save(data_dir, &repos)?;
     Ok(entry)
+}
+
+/// Mark the entries that are linked worktrees and were registered before
+/// worktrees were told apart. Asks git once for each unmarked entry whose
+/// folder exists, so it runs at the backend's start, not on each listing.
+pub fn mark_worktrees(data_dir: &Path) -> Result<()> {
+    let mut repos = load(data_dir)?;
+    let mut changed = false;
+    for entry in repos.iter_mut().filter(|e| e.worktree_of.is_none()) {
+        let root = Path::new(&entry.path);
+        if root.is_dir()
+            && let Some(main) = main_of(root)
+        {
+            entry.worktree_of = Some(main);
+            changed = true;
+        }
+    }
+    if changed {
+        save(data_dir, &repos)?;
+    }
+    Ok(())
+}
+
+/// Forget every linked worktree whose folder is gone, with its index: the
+/// folder of a worktree does not come back, unlike a repository on a drive
+/// that is unplugged for a while. Returns the entries forgotten.
+pub fn prune_worktrees(data_dir: &Path) -> Result<Vec<RepoEntry>> {
+    let repos = load(data_dir)?;
+    let index = data_dir.join("index");
+    // The index goes first. Windows does not delete a file that is open,
+    // and a job may still hold the database: such an entry stays listed,
+    // so that the next call tries again and no index is left without one.
+    let forgotten = |entry: &RepoEntry| {
+        if entry.worktree_of.is_none() || Path::new(&entry.path).is_dir() {
+            return false;
+        }
+        // The database and the files SQLite keeps beside it.
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(index.join(format!("{}.db{suffix}", entry.id)));
+        }
+        !index.join(format!("{}.db", entry.id)).exists()
+    };
+    let (gone, kept): (Vec<RepoEntry>, Vec<RepoEntry>) = repos.into_iter().partition(forgotten);
+    if !gone.is_empty() {
+        save(data_dir, &kept)?;
+    }
+    Ok(gone)
 }
 
 /// Forget a repository. Its vault and source are not touched.

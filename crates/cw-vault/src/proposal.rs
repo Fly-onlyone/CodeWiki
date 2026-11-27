@@ -35,6 +35,22 @@ pub enum ProposalKind {
     Sync,
     /// A coding agent that explained the note.
     Agent,
+    /// A sync that found notes its owner wrote about code that is gone. It
+    /// proposes to delete them, all in one proposal ([`Proposal::retire`]).
+    Retire,
+}
+
+/// One note a retire proposal would delete.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Retired {
+    pub note_id: String,
+    /// Vault-relative path of the note.
+    pub path: String,
+    /// Body hash of the note as the proposal saw it. A note that changed
+    /// since is not deleted.
+    pub base_hash: String,
+    /// The repository paths the note names, none of which exists.
+    pub cited: Vec<String>,
 }
 
 /// What an agent's proposal carries beside the note's text.
@@ -75,7 +91,14 @@ pub struct Proposal {
     /// Whether the proposal carries pictures ([`pictures_text`]).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub pictures: bool,
+    /// For a retire proposal: the notes it would delete, by path. Such a
+    /// proposal is about no single note: `note_path` is empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub retire: Vec<Retired>,
 }
+
+/// The id every retire proposal's `note_id` holds: it stands for the vault.
+pub const RETIRE_NOTE: &str = "retire";
 
 fn proposals_dir(vault: &Path) -> PathBuf {
     VaultMeta::dir(vault).join("proposals")
@@ -178,11 +201,12 @@ fn create_as(
         .map(|o| o.pictures.clone())
         .unwrap_or_default();
     let proposal = Proposal {
-        // The two kinds never share an id, so neither overwrites the other.
+        // The kinds never share an id, so none overwrites another.
         id: match kind {
-            ProposalKind::Sync => format!("{}-{short}", slug(note_id)),
+            ProposalKind::Sync | ProposalKind::Retire => format!("{}-{short}", slug(note_id)),
             ProposalKind::Agent => format!("{}-agent-{short}", slug(note_id)),
         },
+        retire: Vec::new(),
         kind,
         explained: offer.as_ref().map(|o| o.explained.clone()),
         model: offer.and_then(|o| o.model),
@@ -208,6 +232,102 @@ fn create_as(
     if proposal.pictures {
         write(PICTURES, &pictures)?;
     }
+    Ok(proposal)
+}
+
+/// Queue the proposal to delete `notes`, which their owner wrote about code
+/// that is gone: one proposal for all of them, which a person decides as a
+/// whole, leaving out the notes they want to keep. With no notes nothing is
+/// queued. A pending retire proposal for other notes is replaced; one for
+/// these same notes stays as it is, and `None` says so.
+pub fn create_retire(vault: &Path, mut notes: Vec<Retired>) -> Result<Option<Proposal>> {
+    notes.sort_by(|a, b| a.path.cmp(&b.path));
+    // What would be deleted names the proposal: the same notes, unchanged,
+    // are one proposal however many syncs find them.
+    let listed: String = notes
+        .iter()
+        .map(|note| format!("{}\n{}\n", note.path, note.base_hash))
+        .collect();
+    let input_hash = sha256_hex(format!("retire\n{listed}"));
+    let id = format!("{RETIRE_NOTE}-{}", &input_hash[..12]);
+    let mut waits = false;
+    for old in list(vault)? {
+        if old.kind == ProposalKind::Retire && old.status == ProposalStatus::Pending {
+            if old.id == id && !notes.is_empty() {
+                waits = true;
+            } else {
+                remove(vault, &old.id)?;
+            }
+        }
+    }
+    if notes.is_empty() || waits {
+        return Ok(None);
+    }
+    let dir = proposals_dir(vault);
+    std::fs::create_dir_all(&dir).map_err(|e| Error::io(&dir, e))?;
+    let count = notes.len();
+    let mut text = format!(
+        "# Notes about code that is gone\n\n> {count} {} only files that no longer exist in the repository.\n\nApproving deletes them from the wiki. Git keeps every one of them as it is now. Leave out the notes you want to keep: a note left out, or all of them when you reject, stays as history and is not proposed again.\n",
+        if count == 1 {
+            "note names"
+        } else {
+            "notes name"
+        }
+    );
+    let mut patch = String::new();
+    for note in &notes {
+        text.push_str(&format!("\n## {}\n\n", note.path));
+        for path in &note.cited {
+            text.push_str(&format!("- `{path}` is gone\n"));
+        }
+        patch.push_str(&format!("- {}\n", note.path));
+    }
+    let proposal = Proposal {
+        id,
+        note_id: RETIRE_NOTE.to_string(),
+        note_path: String::new(),
+        base_hash: String::new(),
+        input_hash,
+        reason: format!(
+            "{count} {} code that is gone",
+            if count == 1 {
+                "note describes"
+            } else {
+                "notes describe"
+            }
+        ),
+        status: ProposalStatus::Pending,
+        kind: ProposalKind::Retire,
+        explained: None,
+        model: None,
+        pictures: false,
+        retire: notes,
+    };
+    write_json(vault, &proposal)?;
+    let write = |ext: &str, text: &str| {
+        let path = dir.join(format!("{}.{ext}", proposal.id));
+        std::fs::write(&path, text).map_err(|e| Error::io(path, e))
+    };
+    write("md", &text)?;
+    write("patch", &patch)?;
+    Ok(Some(proposal))
+}
+
+/// Record the decision on the pending retire proposal `id`. What the
+/// decision does to the notes is the caller's work: it needs to know what
+/// git holds, which this crate does not.
+pub fn close_retire(vault: &Path, id: &str, status: ProposalStatus) -> Result<Proposal> {
+    let mut proposal = get(vault, id)?;
+    if proposal.kind != ProposalKind::Retire {
+        return Err(Error::invalid(format!(
+            "proposal {id} is not a retire proposal"
+        )));
+    }
+    if proposal.status != ProposalStatus::Pending {
+        return Err(Error::invalid(format!("proposal {id} is not pending")));
+    }
+    proposal.status = status;
+    write_json(vault, &proposal)?;
     Ok(proposal)
 }
 
@@ -341,6 +461,12 @@ pub fn approve(vault: &Path, id: &str) -> Result<Proposal> {
     if proposal.status != ProposalStatus::Pending {
         return Err(Error::invalid(format!("proposal {id} is not pending")));
     }
+    // It writes no note: it deletes several, and only where git holds them.
+    if proposal.kind == ProposalKind::Retire {
+        return Err(Error::invalid(format!(
+            "proposal {id} retires notes and is not applied as a note's text"
+        )));
+    }
     let note_path = vault.join(&proposal.note_path);
     let current = match std::fs::read_to_string(&note_path) {
         Ok(text) => text,
@@ -370,12 +496,29 @@ pub fn approve(vault: &Path, id: &str) -> Result<Proposal> {
     Ok(proposal)
 }
 
+/// Mark the pending proposal `id` as overtaken: what it would write is no
+/// longer true of the repository, so it can no longer be approved. A
+/// proposal that is not pending is left as it is.
+pub fn supersede(vault: &Path, id: &str) -> Result<()> {
+    let mut proposal = get(vault, id)?;
+    if proposal.status == ProposalStatus::Pending {
+        proposal.status = ProposalStatus::Superseded;
+        write_json(vault, &proposal)?;
+    }
+    Ok(())
+}
+
 /// Reject a pending proposal. The caller records `input_hash` on the note
 /// entry so the same change is not proposed again.
 pub fn reject(vault: &Path, id: &str) -> Result<Proposal> {
     let mut proposal = get(vault, id)?;
     if proposal.status != ProposalStatus::Pending {
         return Err(Error::invalid(format!("proposal {id} is not pending")));
+    }
+    if proposal.kind == ProposalKind::Retire {
+        return Err(Error::invalid(format!(
+            "proposal {id} retires notes and is closed with its notes"
+        )));
     }
     proposal.status = ProposalStatus::Rejected;
     write_json(vault, &proposal)?;
@@ -407,6 +550,96 @@ mod tests {
             "src/note.rs changed",
         )
         .unwrap()
+    }
+
+    fn retired(path: &str) -> Retired {
+        Retired {
+            note_id: format!("adopted:{path}"),
+            path: path.into(),
+            base_hash: body_hash(OLD),
+            cited: vec!["legacy/service.py".into()],
+        }
+    }
+
+    #[test]
+    fn one_retire_proposal_names_every_note_and_touches_none() {
+        let dir = vault_with_note();
+        let made = create_retire(
+            dir.path(),
+            vec![retired("06-Notes/B.md"), retired("01-Core/Note.md")],
+        )
+        .unwrap()
+        .expect("a proposal is queued");
+        assert_eq!(made.kind, ProposalKind::Retire);
+        assert_eq!(made.note_id, RETIRE_NOTE);
+        assert_eq!(made.note_path, "");
+        assert_eq!(made.reason, "2 notes describe code that is gone");
+        let paths: Vec<&str> = made.retire.iter().map(|n| n.path.as_str()).collect();
+        assert_eq!(paths, ["01-Core/Note.md", "06-Notes/B.md"], "by path");
+        assert_eq!(pending_count(dir.path()).unwrap(), 1);
+        let text = proposed_text(dir.path(), &made.id).unwrap();
+        assert!(
+            text.contains("## 06-Notes/B.md") && text.contains("- `legacy/service.py` is gone")
+        );
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("01-Core/Note.md")).unwrap(),
+            OLD
+        );
+        // It is not a note's text: neither of the two ways to decide a
+        // note's proposal takes it.
+        assert!(approve(dir.path(), &made.id).is_err());
+        assert!(reject(dir.path(), &made.id).is_err());
+        assert_eq!(
+            get(dir.path(), &made.id).unwrap().status,
+            ProposalStatus::Pending
+        );
+    }
+
+    #[test]
+    fn the_same_notes_are_one_retire_proposal_and_others_replace_it() {
+        let dir = vault_with_note();
+        let first = create_retire(dir.path(), vec![retired("01-Core/Note.md")])
+            .unwrap()
+            .unwrap();
+        // The next sync finds the same notes: the proposal stays.
+        assert_eq!(
+            create_retire(dir.path(), vec![retired("01-Core/Note.md")]).unwrap(),
+            None
+        );
+        assert_eq!(list(dir.path()).unwrap(), std::slice::from_ref(&first));
+
+        // One more note is gone: one proposal still, for both.
+        let second = create_retire(
+            dir.path(),
+            vec![retired("01-Core/Note.md"), retired("06-Notes/B.md")],
+        )
+        .unwrap()
+        .unwrap();
+        assert_ne!(second.id, first.id);
+        assert_eq!(list(dir.path()).unwrap(), std::slice::from_ref(&second));
+
+        // A sync's proposal for a note is another matter and stays.
+        let other = queue(dir.path(), "inputhash0001");
+        // Nothing is gone any more: the retire proposal goes.
+        assert_eq!(create_retire(dir.path(), Vec::new()).unwrap(), None);
+        assert_eq!(list(dir.path()).unwrap(), [other]);
+    }
+
+    #[test]
+    fn a_decided_retire_proposal_stays_decided() {
+        let dir = vault_with_note();
+        let made = create_retire(dir.path(), vec![retired("01-Core/Note.md")])
+            .unwrap()
+            .unwrap();
+        let done = close_retire(dir.path(), &made.id, ProposalStatus::Rejected).unwrap();
+        assert_eq!(done.status, ProposalStatus::Rejected);
+        assert!(close_retire(dir.path(), &made.id, ProposalStatus::Approved).is_err());
+        // A decided one is never replaced or removed by a later sync.
+        assert_eq!(create_retire(dir.path(), Vec::new()).unwrap(), None);
+        assert_eq!(list(dir.path()).unwrap().len(), 1);
+        // Only a retire proposal is closed this way.
+        let other = queue(dir.path(), "inputhash0001");
+        assert!(close_retire(dir.path(), &other.id, ProposalStatus::Approved).is_err());
     }
 
     #[test]

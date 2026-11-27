@@ -25,6 +25,7 @@ After the walk, any name listed in an `export { a, b }` clause is made public.
 ## Items
 
 - `parse_typescript` — parse one TypeScript or TSX source file. `module` is the qualified module the file defines, for example `src::util::text`. `resolve` maps a relative import specifier written in this file to the module it names, or `None` when no such file is indexed.
+- `parse_typescript_with` — as `parse_typescript`, with `is_alias` saying that a specifier is an alias of the repository (a `paths` pattern of its tsconfig matches): such an import is the repository's own, so it is no outside package even when no file was found for it.
 - `enum Target` — what an import specifier names.
 - `fn pattern_names(node: Node, src: &[u8], out: &mut HashSet<String>)` — names bound by a declaration or parameter pattern.
 - `fn bindings(node: Node, src: &[u8], out: &mut HashSet<String>)` — names bound anywhere in a function scope, not descending into nested functions and classes.
@@ -33,11 +34,11 @@ And 4 more private items with no comment.
 
 ## Depends on
 
-- [[Sink]] — uses `Sink`, `between`, `import_external`, `inherits`
 - [[Lang Module]] — uses `block_doc`, `collapse`, `dotted`, `field_all`
+- [[Sink]] — uses `Sink`, `between`, `import_external`, `inherits`
 - [[Error]] — uses `external`, `invalid`
 - [[Error Module]] — uses `Result`
-- [[Model Module]] — uses `Visibility`
+- [[Visibility]] — uses `Visibility`
 - [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by

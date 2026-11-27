@@ -7,11 +7,13 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cw_core::{Language, Symbol, SymbolKind, Visibility};
+use cw_parse::PmInfo;
 use cw_vault::{NoteKind, Registry};
 
 use crate::analyze::DEPENDENCY_KINDS;
 use crate::doctext::{clean_inline, doc_body, ensure_period, first_sentence};
 use crate::explain;
+use crate::filemap;
 use crate::manifests;
 use crate::plan::{
     Plan, Planned, Repo, Subject, ZONE_ARCHITECTURE, ZONE_CORE, ZONE_INTEGRATIONS, ZONE_OPERATIONS,
@@ -25,9 +27,21 @@ const MAX_NAMES: usize = 4;
 const MAX_MANIFESTS: usize = 3;
 /// Modules listed in the note of a unit that has no root module.
 const MAX_UNIT_MODULES: usize = 12;
+/// Notes the home note names of a folder of hand-written notes that has
+/// no map note of its own.
+const MAX_HAND_NOTES: usize = 8;
 
 /// Note-level dependency edges: note id -> other note id -> symbol names.
 type NoteDeps = HashMap<String, BTreeMap<String, BTreeSet<String>>>;
+
+/// A top folder of the vault that holds notes their owner wrote by hand.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HandZone {
+    /// Whether the folder has a map note of its owner's, `_index.md`.
+    pub index: bool,
+    /// Names of its notes, without the map note.
+    pub notes: Vec<String>,
+}
 
 pub struct RenderCtx<'a> {
     pub repo: &'a Repo<'a>,
@@ -35,6 +49,10 @@ pub struct RenderCtx<'a> {
     pub registry: &'a Registry,
     pub repo_name: &'a str,
     pub summaries: HashMap<String, String>,
+    /// The folders of the notes written by hand, by folder name. The home
+    /// note links each one that none of its other sections reaches, so
+    /// that a note of its owner is never cut off from the map.
+    pub hand_zones: BTreeMap<String, HandZone>,
     /// Ids of the notes this run will write or keep.
     planned: std::collections::HashSet<String>,
     depends_on: NoteDeps,
@@ -62,6 +80,13 @@ impl<'a> RenderCtx<'a> {
             if from == to {
                 continue;
             }
+            // A Go test is no user of the code it tests: its package owns it,
+            // and a note would list its own tests among the code that uses it.
+            if repo.symbols.get(e.src.as_str()).is_some_and(|s| {
+                Language::from_path(&s.file) == Language::Go && is_test_file(&s.file)
+            }) {
+                continue;
+            }
             let name = |q: &str| q.rsplit("::").next().unwrap_or(q).to_string();
             depends_on
                 .entry(from.clone())
@@ -82,6 +107,7 @@ impl<'a> RenderCtx<'a> {
             registry,
             repo_name,
             summaries: HashMap::new(),
+            hand_zones: BTreeMap::new(),
             planned: plan.notes.iter().map(|n| n.id.clone()).collect(),
             depends_on,
             used_by,
@@ -140,11 +166,20 @@ impl<'a> RenderCtx<'a> {
                     .or(doc.filter(|d| !d.is_empty()))
                     .unwrap_or_else(|| match unit.filter(|u| !u.is_rust()) {
                         Some(unit) => format!(
-                            "{} {} `{}` with {}.",
-                            language_name(unit.language),
+                            "{} {}{} `{}` with {}.",
+                            self.unit_language(unit),
+                            if unit.tests { "test " } else { "" },
                             unit_noun(unit.language),
                             note.title,
-                            count(repo.module_count(unit), "module")
+                            count(
+                                repo.module_count(unit),
+                                // A Go package is a folder, not a file's module.
+                                if unit.language == Language::Go {
+                                    "package"
+                                } else {
+                                    "module"
+                                }
+                            )
                         ),
                         None => {
                             let modules = repo
@@ -241,6 +276,9 @@ impl<'a> RenderCtx<'a> {
                 let how = match symbol.kind {
                     SymbolKind::Class => "extending the class",
                     SymbolKind::Interface => "implementing the interface",
+                    SymbolKind::Struct if Language::from_path(&symbol.file) == Language::Go => {
+                        "embedding the struct"
+                    }
                     _ => "implementing the trait",
                 };
                 format!(
@@ -251,6 +289,18 @@ impl<'a> RenderCtx<'a> {
             Subject::Operations => {
                 "Commands and automation that build, check and test the repository.".into()
             }
+            Subject::FileUnit(name) => self
+                .plan
+                .files
+                .unit(name)
+                .map(filemap::unit_summary)
+                .unwrap_or_default(),
+            Subject::Folder(dir) => self
+                .plan
+                .files
+                .folder(dir)
+                .map(|f| filemap::folder_summary(&self.plan.files, f))
+                .unwrap_or_default(),
             Subject::Index(dir) => {
                 let count = self
                     .plan
@@ -265,6 +315,10 @@ impl<'a> RenderCtx<'a> {
                     }
                     ZONE_CORE if repo.units.all_rust() => {
                         "Crates, modules and key types that make up the codebase.".into()
+                    }
+                    ZONE_CORE if repo.units.list.is_empty() && !self.plan.files.is_empty() => {
+                        "Projects and folders of source files that make up the codebase, mapped at file level."
+                            .into()
                     }
                     ZONE_CORE => {
                         "Packages, modules and key types that make up the codebase.".into()
@@ -287,20 +341,60 @@ impl<'a> RenderCtx<'a> {
                 let files = repo.facts.files.len();
                 let tail = "This vault maps its architecture, modules and conventions.";
                 if repo.units.list.is_empty() {
+                    if !self.plan.files.is_empty() {
+                        return self.plan.files.home_summary(self.repo_name, tail);
+                    }
                     return format!(
                         "**{}** is a repository of {files} files with no code in a language CodeWiki maps. {tail}",
                         self.repo_name
                     );
                 }
                 let (languages, parts) = self.composition();
+                // Source no parser maps is told apart from the rest.
+                let unmapped = if self.plan.files.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", self.plan.files.mixed_sentence())
+                };
                 format!(
-                    "**{}** is a {} codebase of {} and {files} source files. {tail}",
+                    "**{}** is a {} codebase of {} and {files} source files.{unmapped} {tail}",
                     self.repo_name,
                     join_and(&languages),
                     parts.join(", ")
                 )
             }
         }
+    }
+
+    /// The language a unit is called after: the one with more files. A
+    /// Gradle or Maven module that holds both Java and Kotlin is named for
+    /// both, the larger first (`Kotlin and Java`, and Kotlin on a tie).
+    fn unit_language(&self, unit: &Unit) -> String {
+        if matches!(unit.language, Language::Java | Language::Kotlin) {
+            let files = |language: Language| {
+                self.repo
+                    .facts
+                    .files
+                    .iter()
+                    .filter(|f| f.language == language)
+                    .filter(|f| {
+                        self.repo
+                            .units
+                            .of_file(&f.path)
+                            .is_some_and(|u| u.name == unit.name)
+                    })
+                    .count()
+            };
+            let (other, name) = if unit.language == Language::Kotlin {
+                (Language::Java, "Kotlin and Java")
+            } else {
+                (Language::Kotlin, "Java and Kotlin")
+            };
+            if files(other) > 0 {
+                return name.to_string();
+            }
+        }
+        language_name(unit.language).to_string()
     }
 
     /// The languages of the repository and how many units each has, the
@@ -350,7 +444,8 @@ impl<'a> RenderCtx<'a> {
     }
 
     /// How a reader names the entry point `entry`: `main` in Rust, the file
-    /// for a script, `Class.main` in Java.
+    /// for a script or for the top-level statements of a C# file,
+    /// `Class.main` in Java.
     fn entry_label(&self, entry: &str) -> String {
         let Some(symbol) = self.repo.symbols.get(entry) else {
             return "main".into();
@@ -358,8 +453,45 @@ impl<'a> RenderCtx<'a> {
         if Language::from_path(&symbol.file) == Language::Rust {
             return "main".into();
         }
+        if Language::from_path(&symbol.file) == Language::Go {
+            // The folder of the program, relative to its module: what
+            // `go run` is given.
+            let unit_dir = self
+                .repo
+                .units
+                .of_file(&symbol.file)
+                .map_or("", |u| u.dir.as_str());
+            let folder = symbol.file.rsplit_once('/').map_or("", |(dir, _)| dir);
+            let relative = folder
+                .strip_prefix(unit_dir)
+                .unwrap_or(folder)
+                .trim_start_matches('/');
+            return if relative.is_empty() {
+                symbol
+                    .file
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&symbol.file)
+                    .to_string()
+            } else {
+                relative.to_string()
+            };
+        }
+        // A function at the top of a C# or Kotlin file stands in no type: it
+        // is known by its file.
+        let top_level = symbol.kind == SymbolKind::Function
+            && matches!(
+                Language::from_path(&symbol.file),
+                Language::CSharp | Language::Kotlin | Language::C | Language::Cpp
+            );
         match symbol.kind {
             SymbolKind::Module => symbol
+                .file
+                .rsplit('/')
+                .next()
+                .unwrap_or(&symbol.file)
+                .to_string(),
+            _ if top_level => symbol
                 .file
                 .rsplit('/')
                 .next()
@@ -411,6 +543,23 @@ impl<'a> RenderCtx<'a> {
             Subject::Integration(krate) => self.render_integration(&mut doc, note, krate),
             Subject::TraitPattern(q) => self.render_pattern(&mut doc, note, q),
             Subject::Operations => self.render_operations(&mut doc, note),
+            Subject::FileUnit(name) => {
+                if let Some(unit) = self.plan.files.unit(name) {
+                    let link = |id: &str| self.link(id);
+                    for (heading, body) in filemap::unit_sections(&self.plan.files, unit, &link) {
+                        doc.section(heading, body);
+                    }
+                }
+            }
+            Subject::Folder(dir) => {
+                if let Some(folder) = self.plan.files.folder(dir) {
+                    let link = |id: &str| self.link(id);
+                    for (heading, body) in filemap::folder_sections(&self.plan.files, folder, &link)
+                    {
+                        doc.section(heading, body);
+                    }
+                }
+            }
             Subject::Index(dir) => return self.render_index(note, dir),
             Subject::Home => return self.render_home(note),
         }
@@ -486,7 +635,13 @@ impl<'a> RenderCtx<'a> {
                 } else {
                     format!("under `{}`", k.dir)
                 };
-                let mut shape = format!("Holds {} {place}.", count(repo.module_count(k), "module"));
+                // A Go package is a folder of files, not a module of one.
+                let noun = if k.language == Language::Go {
+                    "package"
+                } else {
+                    "module"
+                };
+                let mut shape = format!("Holds {} {place}.", count(repo.module_count(k), noun));
                 let entries: Vec<String> = k
                     .entries
                     .iter()
@@ -551,7 +706,11 @@ impl<'a> RenderCtx<'a> {
         let language = Language::from_path(&symbol.file);
         // The summary is the comment's first sentence; the rest is here.
         doc.section("What it does", doc_body(&symbol.doc, language, true));
-        doc.section("Source", format!("- `{}` — module `{q}`", symbol.file));
+        let mut source = format!("- `{}` — module `{q}`", symbol.file);
+        for file in implementation_files(symbol) {
+            source.push_str(&format!("\n- `{file}` — implementation of module `{q}`"));
+        }
+        doc.section("Source", source);
         let walk = explain::walk(self, &note.id);
         doc.section("How it works", walk.text(self, &note.id, q, "module"));
         let mut body = Vec::new();
@@ -590,10 +749,14 @@ impl<'a> RenderCtx<'a> {
         let symbol = repo.symbols[q];
         let language = Language::from_path(&symbol.file);
         doc.section("What it does", doc_body(&symbol.doc, language, true));
-        doc.section(
-            "Source",
-            format!("- `{}` — definition of `{}`", symbol.file, symbol.name),
-        );
+        let mut source = format!("- `{}` — definition of `{}`", symbol.file, symbol.name);
+        for file in implementation_files(symbol) {
+            source.push_str(&format!(
+                "\n- `{file}` — implementation of `{}`",
+                symbol.name
+            ));
+        }
+        doc.section("Source", source);
         let walk = explain::walk(self, &note.id);
         doc.section("How it works", walk.text(self, &note.id, q, "type"));
         let mut body = vec![format!("Declared as `{}`.", symbol.signature)];
@@ -700,8 +863,25 @@ impl<'a> RenderCtx<'a> {
         };
         let foundations = names(&|n| !internal_deps.contains_key(n) && dependents.contains_key(n));
         let tops = names(&|n| !dependents.contains_key(n) && internal_deps.contains_key(n));
+        let csharp = crates.iter().any(|c| c.language == Language::CSharp);
+        let go = crates.iter().any(|c| c.language == Language::Go);
         let mut prose = vec![if rust {
             "An arrow points from a crate to a crate it depends on.".to_string()
+        } else if go {
+            let mut declaring: Vec<String> = Vec::new();
+            if csharp || crates.iter().any(|c| c.is_rust()) {
+                declaring.push("Rust crates".to_string());
+            }
+            if csharp {
+                declaring.push("C# projects".to_string());
+            }
+            declaring.push("Go modules".to_string());
+            format!(
+                "An arrow points from a package to a package it depends on. {} declare their dependencies; for other languages they are read from imports.",
+                join_and(&declaring)
+            )
+        } else if csharp {
+            "An arrow points from a package to a package it depends on. Rust crates and C# projects declare their dependencies; for other languages they are read from imports.".to_string()
         } else {
             "An arrow points from a package to a package it depends on. Rust crates declare their dependencies; for other languages they are read from imports.".to_string()
         }];
@@ -998,6 +1178,102 @@ impl<'a> RenderCtx<'a> {
                 code.push('}');
                 ("java", code)
             }
+            Language::Kotlin => {
+                // An interface is implemented; a class is extended through
+                // what it lets be overridden.
+                let parameters = kotlin_type_parameters(&symbol.signature, &symbol.name);
+                let generic = if parameters.is_empty() {
+                    String::new()
+                } else {
+                    format!("<{}>", parameters.join(", "))
+                };
+                let supertype = if symbol.kind == SymbolKind::Class {
+                    format!("{}{generic}()", symbol.name)
+                } else {
+                    format!("{}{generic}", symbol.name)
+                };
+                let mut code = format!("class NewType{generic} : {supertype} {{\n");
+                for m in methods
+                    .iter()
+                    .filter(|m| m.visibility != Visibility::Private && m.name != symbol.name)
+                    .filter(|m| {
+                        symbol.kind != SymbolKind::Class
+                            || m.signature
+                                .split_whitespace()
+                                .any(|w| matches!(w, "abstract" | "open" | "override"))
+                    })
+                    .take(MAX_LISTED)
+                {
+                    code.push_str(&format!(
+                        "    {} {{\n        TODO()\n    }}\n",
+                        kotlin_override(&m.signature)
+                    ));
+                }
+                code.push('}');
+                ("kotlin", code)
+            }
+            Language::Go if symbol.kind == SymbolKind::Interface => {
+                let mut code = "type NewType struct{}".to_string();
+                for m in methods.iter().take(MAX_LISTED) {
+                    code.push_str(&format!(
+                        "\n\nfunc (t *NewType) {} {{\n\tpanic(\"not implemented\")\n}}",
+                        m.signature
+                    ));
+                }
+                ("go", code)
+            }
+            // A struct is taken on by embedding it.
+            Language::Go => (
+                "go",
+                format!("type NewType struct {{\n\t{}\n}}", symbol.name),
+            ),
+            Language::CSharp => {
+                let mut code = format!("class NewType : {} {{\n", symbol.name);
+                for m in methods
+                    .iter()
+                    .filter(|m| m.visibility != Visibility::Private && m.name != symbol.name)
+                    // A class is extended through what it lets be overridden.
+                    .filter(|m| {
+                        symbol.kind != SymbolKind::Class
+                            || m.signature
+                                .split_whitespace()
+                                .any(|w| matches!(w, "abstract" | "virtual"))
+                    })
+                    .take(MAX_LISTED)
+                {
+                    code.push_str(&format!(
+                        "    {} {{\n        throw new NotImplementedException();\n    }}\n",
+                        csharp_override(&m.signature)
+                    ));
+                }
+                code.push('}');
+                ("csharp", code)
+            }
+            Language::C | Language::Cpp => {
+                let mut code = format!("class NewType : public {} {{\npublic:\n", symbol.name);
+                for m in methods
+                    .iter()
+                    .filter(|m| m.visibility == Visibility::Public)
+                    .filter(|m| {
+                        !m.attrs
+                            .iter()
+                            .any(|a| matches!(a.as_str(), "destructor" | "special"))
+                            && m.name != symbol.name
+                    })
+                    // A class is extended through what it lets be overridden.
+                    .filter(|m| {
+                        symbol.kind != SymbolKind::Class || m.attrs.iter().any(|a| a == "virtual")
+                    })
+                    .take(MAX_LISTED)
+                {
+                    code.push_str(&format!(
+                        "    {} {{\n        throw std::logic_error(\"not implemented\");\n    }}\n",
+                        cpp_override(&m.signature)
+                    ));
+                }
+                code.push_str("};");
+                ("cpp", code)
+            }
             Language::TypeScript | Language::JavaScript => {
                 let mut code = format!("class NewType {keyword} {} {{\n", symbol.name);
                 for m in methods
@@ -1196,19 +1472,116 @@ impl<'a> RenderCtx<'a> {
                 if unit.manifests.is_empty() {
                     return out;
                 }
-                let npm = if unit.dir.is_empty() {
-                    "npm".to_string()
-                } else {
-                    format!("npm --prefix {}", quote(&unit.dir))
-                };
-                out.push(format!("{npm} install"));
+                let pm = unit.pm.clone().unwrap_or_else(|| PmInfo::plain(&unit.dir));
+                out.push(crate::pm::install(&pm));
                 for script in ["build", "test", "lint", "start"] {
                     if unit.scripts.iter().any(|s| s == script) {
-                        out.push(format!("{npm} run {script}"));
+                        out.push(crate::pm::run_script(&pm, &unit.dir, script));
                     }
                 }
             }
-            Language::Java => {
+            Language::CSharp => {
+                // One solution builds and tests every project; without one
+                // each project does.
+                let solution = repo
+                    .facts
+                    .files
+                    .iter()
+                    .map(|f| f.path.as_str())
+                    .filter(|p| p.ends_with(".sln") || p.ends_with(".slnx"))
+                    .filter(|p| {
+                        let dir = dir_of(p);
+                        dir.is_empty()
+                            || unit.dir == dir
+                            || unit.dir.starts_with(&format!("{dir}/"))
+                    })
+                    .min_by_key(|p| (p.matches('/').count(), p.len()));
+                let project = unit
+                    .manifests
+                    .first()
+                    .filter(|m| m.path.ends_with(".csproj"));
+                match (solution, project) {
+                    (Some(solution), _) => {
+                        out.push(format!("dotnet build {}", quote(solution)));
+                        if repo.units.list.iter().any(|u| u.tests) {
+                            out.push(format!("dotnet test {}", quote(solution)));
+                        }
+                    }
+                    (None, Some(project)) => {
+                        out.push(format!("dotnet build {}", quote(&project.path)));
+                        if unit.tests {
+                            out.push(format!("dotnet test {}", quote(&project.path)));
+                        }
+                    }
+                    (None, None) => {}
+                }
+                if let Some(project) = project
+                    && !unit.entries.is_empty()
+                {
+                    out.push(format!("dotnet run --project {}", quote(&project.path)));
+                }
+            }
+            Language::Go => {
+                if !unit
+                    .manifests
+                    .first()
+                    .is_some_and(|m| m.path.ends_with("go.mod"))
+                {
+                    return out;
+                }
+                // `-C` runs the command in the module's folder, so that every
+                // command runs from the repository root.
+                let from = if unit.dir.is_empty() {
+                    String::new()
+                } else {
+                    format!(" -C {}", quote(&unit.dir))
+                };
+                out.push(format!("go build{from} ./..."));
+                let tested = repo.facts.files.iter().any(|f| {
+                    f.path.ends_with("_test.go")
+                        && repo
+                            .units
+                            .of_file(&f.path)
+                            .is_some_and(|u| u.name == unit.name)
+                });
+                if tested {
+                    out.push(format!("go test{from} ./..."));
+                }
+                for entry in &unit.entries {
+                    let Some(symbol) = repo.symbols.get(entry.symbol.as_str()) else {
+                        continue;
+                    };
+                    let folder = dir_of(&symbol.file);
+                    let relative = folder
+                        .strip_prefix(unit.dir.as_str())
+                        .unwrap_or(&folder)
+                        .trim_start_matches('/');
+                    out.push(if relative.is_empty() {
+                        format!("go run{from} .")
+                    } else {
+                        format!("go run{from} ./{}", quote(relative))
+                    });
+                }
+            }
+            Language::C | Language::Cpp => {
+                // CMake builds in a folder next to the sources. Presets name
+                // a folder of their own (`binaryDir`), so no command here
+                // follows them: the reader sees `CMakePresets.json` among the
+                // sources, and the commands that follow assume `build`.
+                if !unit
+                    .manifests
+                    .iter()
+                    .any(|m| file_name(&m.path) == "CMakeLists.txt")
+                {
+                    return out;
+                }
+                out.push("cmake -S . -B build".into());
+                out.push("cmake --build build".into());
+                if repo.units.c_tests() {
+                    out.push("ctest --test-dir build".into());
+                }
+            }
+            Language::Java | Language::Kotlin => {
                 for m in &unit.manifests {
                     let dir = dir_of(&m.path);
                     if file_name(&m.path) == "pom.xml" {
@@ -1302,16 +1675,28 @@ impl<'a> RenderCtx<'a> {
 
     fn render_home(&self, note: &Planned) -> String {
         let mut out = front(&note.tags);
+        // Without a unit there are no flows, crates or modules to name.
+        let tour = if self.repo.units.list.is_empty() && !self.plan.files.is_empty() {
+            "A graph-linked tour of the codebase, mapped at file level: its projects, its folders and the files in them."
+                .to_string()
+        } else if self.repo.units.list.is_empty() {
+            "A graph-linked tour of the repository.".to_string()
+        } else {
+            format!(
+                "A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into {}, modules and patterns.",
+                if self.repo.units.all_rust() {
+                    "crates"
+                } else {
+                    "packages"
+                }
+            )
+        };
         out.push_str(&format!(
-            "# {} — Knowledge Vault\n\nA graph-linked tour of the codebase. **Start with the architecture flows**, then drill into {}, modules and patterns.\n\n> {}\n",
-            self.repo_name,
-            if self.repo.units.all_rust() {
-                "crates"
-            } else {
-                "packages"
-            },
-            self.summaries[&note.id]
+            "# {} — Knowledge Vault\n\n{tour}\n\n> {}\n",
+            self.repo_name, self.summaries[&note.id]
         ));
+        // Top folders a section of this note links.
+        let mut reached: Vec<&str> = Vec::new();
         let in_zone = |zone: &str| -> Vec<&Planned> {
             let mut notes: Vec<&Planned> = self
                 .plan
@@ -1341,25 +1726,40 @@ impl<'a> RenderCtx<'a> {
             }
             if let Some(link) = zone_link(ZONE_ARCHITECTURE, "All architecture concepts") {
                 out.push_str(&format!("\n→ {link}\n"));
+                reached.push(ZONE_ARCHITECTURE);
             }
         }
 
         let crates = &self.repo.units.list;
-        if !crates.is_empty() {
-            out.push_str(if self.repo.units.all_rust() {
-                "\n## 🦀 Core\n\n"
-            } else {
-                "\n## 📦 Core\n\n"
-            });
-            for c in crates {
-                let dir = format!("{ZONE_CORE}/{}", c.slug);
+        if !crates.is_empty() || !self.plan.files.is_empty() {
+            out.push_str(
+                if self.repo.units.all_rust() && self.plan.files.is_empty() {
+                    "\n## 🦀 Core\n\n"
+                } else {
+                    "\n## 📦 Core\n\n"
+                },
+            );
+            let parts = crates
+                .iter()
+                .map(|c| (format!("crate:{}", c.name), &c.slug, &c.package))
+                .chain(
+                    self.plan
+                        .files
+                        .units
+                        .iter()
+                        .map(|u| (format!("unit:{}", u.name), &u.slug, &u.package)),
+                );
+            for (id, slug, package) in parts {
+                let dir = format!("{ZONE_CORE}/{slug}");
                 if self.registry.by_id(&format!("index:{dir}")).is_some() {
-                    let summary = &self.summaries[&format!("crate:{}", c.name)];
+                    let summary = &self.summaries[&id];
                     out.push_str(&format!(
-                        "- [[{dir}/_index|{}/]] — {}\n",
-                        c.package,
+                        "- [[{dir}/_index|{package}/]] — {}\n",
                         lower_first(summary)
                     ));
+                    if !reached.contains(&ZONE_CORE) {
+                        reached.push(ZONE_CORE);
+                    }
                 }
             }
         }
@@ -1382,6 +1782,41 @@ impl<'a> RenderCtx<'a> {
                 "\n## {heading}\n\n→ {link} — {}.\n",
                 names.join(", ")
             ));
+            reached.push(zone);
+        }
+
+        // The folders of the notes their owner wrote, which no rule knows.
+        let by_hand: Vec<(&String, &HandZone)> = self
+            .hand_zones
+            .iter()
+            .filter(|(folder, zone)| {
+                !reached.contains(&folder.as_str()) && (zone.index || !zone.notes.is_empty())
+            })
+            .collect();
+        if !by_hand.is_empty() {
+            out.push_str("\n## 📝 Notes written by hand\n\n");
+            for (folder, zone) in by_hand {
+                let count = match zone.notes.len() {
+                    1 => "1 note".to_string(),
+                    n => format!("{n} notes"),
+                };
+                if zone.index {
+                    out.push_str(&format!("- [[{folder}/_index|{folder}/]] — {count}\n"));
+                } else {
+                    let mut names: Vec<&str> = zone.notes.iter().map(String::as_str).collect();
+                    names.sort_unstable();
+                    let more = names.len().saturating_sub(MAX_HAND_NOTES);
+                    let mut links: Vec<String> = names
+                        .iter()
+                        .take(MAX_HAND_NOTES)
+                        .map(|name| format!("[[{name}]]"))
+                        .collect();
+                    if more > 0 {
+                        links.push(format!("and {more} more"));
+                    }
+                    out.push_str(&format!("- {folder}/ — {count}: {}\n", links.join(", ")));
+                }
+            }
         }
 
         // Reading path: a flow, then the most depended-upon crate, then its top type.
@@ -1491,7 +1926,7 @@ fn top_children<'a>(repo: &Repo<'a>, parent: &str, limit: usize) -> Vec<&'a Symb
     items
 }
 
-fn join_and(items: &[String]) -> String {
+pub(crate) fn join_and(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),
@@ -1501,7 +1936,7 @@ fn join_and(items: &[String]) -> String {
 }
 
 /// `1 module`, `3 modules`.
-fn count(n: usize, noun: &str) -> String {
+pub(crate) fn count(n: usize, noun: &str) -> String {
     if n == 1 {
         format!("1 {noun}")
     } else {
@@ -1516,6 +1951,11 @@ fn language_name(language: Language) -> &'static str {
         Language::TypeScript => "TypeScript",
         Language::JavaScript => "JavaScript",
         Language::Java => "Java",
+        Language::Kotlin => "Kotlin",
+        Language::CSharp => "C#",
+        Language::Go => "Go",
+        Language::C => "C",
+        Language::Cpp => "C++",
         _ => "source",
     }
 }
@@ -1524,7 +1964,10 @@ fn language_name(language: Language) -> &'static str {
 fn unit_noun(language: Language) -> &'static str {
     match language {
         Language::Rust => "crate",
-        Language::Java => "module",
+        Language::Java | Language::Kotlin => "module",
+        Language::CSharp => "project",
+        Language::Go => "module",
+        Language::C | Language::Cpp => "project",
         _ => "package",
     }
 }
@@ -1541,6 +1984,114 @@ fn external_noun(files: &BTreeSet<&str>) -> &'static str {
     }
 }
 
+/// The files, besides the header a symbol stands in, that define what the
+/// header declares (C and C++).
+fn implementation_files(symbol: &Symbol) -> Vec<&str> {
+    symbol
+        .attrs
+        .iter()
+        .filter_map(|a| a.strip_prefix(cw_parse::IMPL_ATTR))
+        .collect()
+}
+
+/// A member of a C++ interface as the override a class that takes it on
+/// writes: `virtual` goes, `override` comes, and a pure virtual's `= 0` goes.
+fn cpp_override(signature: &str) -> String {
+    let mut text = signature.trim().trim_end_matches(';').trim().to_string();
+    if let Some(rest) = text.strip_prefix("virtual ") {
+        text = rest.to_string();
+    }
+    for tail in ["= 0", "= default", "= delete"] {
+        if let Some(rest) = text.strip_suffix(tail) {
+            text = rest.trim_end().to_string();
+        }
+    }
+    if text.split_whitespace().any(|w| w == "override") {
+        text
+    } else {
+        format!("{text} override")
+    }
+}
+
+/// A C# member as a stub in a type that extends or implements it: an
+/// interface member has no modifier and becomes public, an abstract or
+/// virtual one is overridden.
+fn csharp_override(signature: &str) -> String {
+    let words: Vec<&str> = signature.split_whitespace().collect();
+    let has = |w: &str| words.contains(&w);
+    if has("abstract") || has("virtual") {
+        return words
+            .iter()
+            .map(|w| {
+                if matches!(*w, "abstract" | "virtual") {
+                    "override"
+                } else {
+                    w
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    if has("public") || has("protected") || has("internal") {
+        signature.to_string()
+    } else {
+        format!("public {signature}")
+    }
+}
+
+/// The names of the type parameters a Kotlin declaration lists after its
+/// name: `T` and `R` for `interface Mapper<in T, out R : Any> : Base<T>`.
+fn kotlin_type_parameters(signature: &str, name: &str) -> Vec<String> {
+    let Some(at) = signature.find(&format!(" {name}<")) else {
+        return Vec::new();
+    };
+    let rest = &signature[at + name.len() + 2..];
+    let mut depth = 1usize;
+    let mut parts: Vec<String> = vec![String::new()];
+    for c in rest.chars() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            ',' if depth == 1 => {
+                parts.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(last) = parts.last_mut() {
+            last.push(c);
+        }
+    }
+    parts
+        .iter()
+        .filter_map(|part| {
+            part.split_whitespace()
+                .find(|w| !matches!(*w, "in" | "out" | "reified"))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// A Kotlin member as a stub in a type that extends or implements it: what
+/// let it be overridden is replaced by `override`.
+fn kotlin_override(signature: &str) -> String {
+    let words: Vec<&str> = signature
+        .split_whitespace()
+        .filter(|w| {
+            !matches!(
+                *w,
+                "abstract" | "open" | "override" | "final" | "public" | "protected"
+            )
+        })
+        .collect();
+    format!("override {}", words.join(" "))
+}
+
 /// What a build file outside Cargo is for.
 fn build_role(path: &str) -> &'static str {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -1551,6 +2102,20 @@ fn build_role(path: &str) -> &'static str {
         "package.json" => "package manifest",
         "pom.xml" => "Maven build",
         "build.gradle" | "build.gradle.kts" => "Gradle build",
+        "CMakeLists.txt" => "CMake build",
+        "CMakePresets.json" => "CMake presets",
+        "vcpkg.json" => "vcpkg dependencies",
+        "conanfile.txt" | "conanfile.py" => "Conan dependencies",
+        "conan.lock" => "Conan lock file",
+        "go.mod" => "Go module",
+        "go.work" => "Go workspace",
+        "go.sum" => "Go module checksums",
+        "Directory.Packages.props" => "central NuGet package versions",
+        "Directory.Build.props" | "Directory.Build.targets" => "shared MSBuild properties",
+        "global.json" => ".NET SDK version",
+        "nuget.config" | "NuGet.Config" => "NuGet sources",
+        _ if name.ends_with(".csproj") => "C# project",
+        _ if name.ends_with(".sln") || name.ends_with(".slnx") => "solution",
         _ if name.starts_with("requirements") => "Python dependencies",
         _ => "build file",
     }
@@ -1565,7 +2130,8 @@ pub(crate) fn lower_first(text: &str) -> String {
     let plain = chars.next().is_some_and(char::is_uppercase)
         && chars.clone().next().is_some()
         && chars.all(char::is_lowercase)
-        && !PROPER_NOUNS.contains(&word);
+        && !PROPER_NOUNS.contains(&word)
+        && !starts_with_language_unit(text);
     if plain {
         let first = text.chars().next().unwrap_or_default();
         first.to_lowercase().collect::<String>() + &text[first.len_utf8()..]
@@ -1574,16 +2140,88 @@ pub(crate) fn lower_first(text: &str) -> String {
     }
 }
 
+/// True for the sentence of a unit that starts with the name of its
+/// language and that name is an ordinary word: `Go module `app` with 3
+/// packages.` keeps its capital, a sentence that starts with "Go to" does
+/// not. (`C`, `C++` and `C#` are never lowered, whatever follows.)
+fn starts_with_language_unit(text: &str) -> bool {
+    text.strip_prefix("Go ").is_some_and(|rest| {
+        let rest = rest.strip_prefix("test ").unwrap_or(rest);
+        rest.starts_with("module `")
+    })
+}
+
 /// Product and technology names that keep their capital at the start of a
 /// list item.
-const PROPER_NOUNS: [&str; 17] = [
+const PROPER_NOUNS: [&str; 18] = [
     "Obsidian", "Rust", "Markdown", "Mermaid", "Windows", "Docker", "Git", "Cargo", "Claude",
-    "Codex", "Unicode", "Louvain", "Tarjan", "Brandes", "Python", "Linux", "Java",
+    "Codex", "Unicode", "Louvain", "Tarjan", "Brandes", "Python", "Linux", "Java", "Kotlin",
 ];
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stubs_a_csharp_member_for_the_type_that_takes_it_on() {
+        assert_eq!(csharp_override("string Name()"), "public string Name()");
+        assert_eq!(
+            csharp_override("public string Name()"),
+            "public string Name()"
+        );
+        assert_eq!(
+            csharp_override("protected abstract void Run(int a)"),
+            "protected override void Run(int a)"
+        );
+        assert_eq!(
+            csharp_override("public virtual Task<int> Load()"),
+            "public override Task<int> Load()"
+        );
+        assert_eq!(build_role("src/App/App.Core.csproj"), "C# project");
+        assert_eq!(
+            build_role("Directory.Packages.props"),
+            "central NuGet package versions"
+        );
+        assert_eq!(build_role("a/b/App.slnx"), "solution");
+        assert_eq!(language_name(Language::CSharp), "C#");
+        assert_eq!(unit_noun(Language::CSharp), "project");
+        assert_eq!(language_name(Language::Go), "Go");
+        assert_eq!(unit_noun(Language::Go), "module");
+        assert_eq!(build_role("services/api/go.mod"), "Go module");
+        assert_eq!(build_role("go.work"), "Go workspace");
+        assert_eq!(language_name(Language::Kotlin), "Kotlin");
+        assert_eq!(unit_noun(Language::Kotlin), "module");
+        assert_eq!(build_role("app/build.gradle.kts"), "Gradle build");
+        // A Kotlin name keeps its capital at the start of a list item.
+        assert_eq!(lower_first("Kotlin module `app`."), "Kotlin module `app`.");
+    }
+
+    #[test]
+    fn a_kotlin_stub_repeats_the_type_parameters_of_its_supertype() {
+        let parameters = |signature: &str, name: &str| kotlin_type_parameters(signature, name);
+        assert_eq!(
+            parameters("interface Codec<T> : Encoding<T>", "Codec"),
+            ["T"]
+        );
+        assert_eq!(
+            parameters(
+                "interface Mapper<in T, out R : Comparable<R>> : Base<T>",
+                "Mapper"
+            ),
+            ["T", "R"]
+        );
+        assert!(parameters("interface Named", "Named").is_empty());
+        // The name's own generics, not a supertype's.
+        assert!(parameters("interface Named : Base<T>", "Named").is_empty());
+        assert_eq!(
+            kotlin_override("abstract fun total(): Int"),
+            "override fun total(): Int"
+        );
+        assert_eq!(
+            kotlin_override("open suspend fun load(id: Int): Item?"),
+            "override suspend fun load(id: Int): Item?"
+        );
+    }
 
     #[test]
     fn formats_lists_and_labels() {
@@ -1605,5 +2243,44 @@ mod tests {
             "Obsidian vault model."
         );
         assert_eq!(lower_first("A graph."), "A graph.");
+    }
+
+    #[test]
+    fn a_unit_sentence_keeps_the_name_of_its_language() {
+        // The names that are no plain word keep their spelling.
+        for text in [
+            "C project `core` with 3 modules.",
+            "C++ project `net` with 1 module.",
+            "C# project `App` with 2 modules.",
+            "Go module `ledger` with 5 packages.",
+            "Go test module `ledger` with 1 package.",
+        ] {
+            assert_eq!(lower_first(text), text);
+        }
+        // An ordinary sentence that starts with the word still lowers it.
+        assert_eq!(lower_first("Go to the store."), "go to the store.");
+        assert_eq!(
+            lower_first("Go modules are folders."),
+            "go modules are folders."
+        );
+        assert_eq!(language_name(Language::C), "C");
+        assert_eq!(language_name(Language::Cpp), "C++");
+        assert_eq!(unit_noun(Language::Cpp), "project");
+    }
+
+    #[test]
+    fn stubs_a_cpp_member_for_the_class_that_takes_it_on() {
+        assert_eq!(
+            cpp_override("virtual double area() const = 0"),
+            "double area() const override"
+        );
+        assert_eq!(
+            cpp_override("virtual void run() override;"),
+            "void run() override"
+        );
+        assert_eq!(
+            cpp_override("int size() const"),
+            "int size() const override"
+        );
     }
 }

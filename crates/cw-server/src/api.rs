@@ -427,7 +427,24 @@ struct ListedRepo {
 
 async fn list_repos(State(state): State<AppState>) -> Api<Vec<ListedRepo>> {
     blocking(move || {
+        // A worktree whose folder went is no repository any more. Only
+        // when there is one to forget does this write, under the lock.
+        let data_dir = &state.0.config.data_dir;
+        let stale = repos::load(data_dir)?
+            .iter()
+            .any(|e| e.worktree_of.is_some() && !std::path::Path::new(&e.path).is_dir());
+        if stale {
+            let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
+            for entry in repos::prune_worktrees(data_dir)? {
+                log::info!("forgot the worktree {}: its folder is gone", entry.name);
+            }
+        }
+        // One that could not be forgotten yet, because its index is still
+        // open, is no repository either: it is left out until it goes.
         Ok(repos::load(&state.0.config.data_dir)?
+            .into_iter()
+            .filter(|e| e.worktree_of.is_none() || std::path::Path::new(&e.path).is_dir())
+            .collect::<Vec<_>>()
             .into_iter()
             .map(|entry| ListedRepo {
                 present: std::path::Path::new(&entry.path).is_dir(),
@@ -1074,14 +1091,25 @@ async fn get_proposal(
     .await
 }
 
+/// What an approval may say beside the proposal's id.
+#[derive(Deserialize, Default)]
+struct ApproveBody {
+    /// For a retire proposal: vault paths of the notes to keep, as history.
+    /// The others are deleted.
+    #[serde(default)]
+    keep: Vec<String>,
+}
+
 async fn approve_proposal(
     State(state): State<AppState>,
     Path((id, pid)): Path<(String, String)>,
+    body: Option<Json<ApproveBody>>,
 ) -> Api<proposal::Proposal> {
     blocking(move || {
+        let keep = body.map(|body| body.0.keep).unwrap_or_default();
         let repo = Repo::open(&state, &id)?;
         let _guard = state.0.write_lock.lock().unwrap_or_else(|p| p.into_inner());
-        let done = explanations::approve(&repo.root, &pid)?;
+        let done = explanations::approve_keeping(&repo.root, &pid, &keep)?;
         service::index_notes(&repo.root, &mut repo.index()?)?;
         state.0.activity.notes_changed();
         Ok(done)

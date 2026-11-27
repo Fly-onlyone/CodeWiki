@@ -31,18 +31,25 @@ The rest are helpers for Rust visibility. `home_module` gives the module a symbo
 - `fn is_separate_target(file: &str) -> bool` — A file of an integration test, a bench or an example: a crate of its own, whose items the library cannot name.
 - `fn visible_from(symbol: &Symbol, module: &str) -> bool` — whether Rust code in `module` can name `symbol`: a private item in its own module and the ones inside it, a `pub(crate)` item in its crate, and an item of a test, bench or example only from that file.
 - `const COMMON_METHODS: [&str; 64]` — method names so common in the standard library that a receiver of unknown type almost never means a repository method of the same name.
+- `const COMMON_CSHARP_METHODS: [&str; 52]` — the same for C#, whose method names are capitalized. The lookup is by exact name, so `Add` and `add` stay apart.
+- `const COMMON_GO_METHODS: [&str; 52]` — the same for Go, whose exported names are capitalized: methods of the standard library that nearly every receiver of unknown type has.
+- `const COMMON_KOTLIN_METHODS: [&str; 81]` — the same for Kotlin: the scope functions, the collection and string extensions and the infix functions of its standard library, which any receiver of unknown type may be given. They are extension functions of the platform, so a repository function of the same name is no answer.
+- `const COMMON_C_METHODS: &[&str]` — the same for C and C++: the calls of the standard library, the C library and the usual containers that a receiver of unknown type nearly always means.
+- `enum Want` — what a name stands for at the place it is written, in C and C++ code.
+- `fn same_language(a: Language, b: Language) -> bool` — private function, returns `bool`; called by `Resolver::by_bare_name`.
 - [[Resolver]] — struct
 
 And 1 more private item with no comment.
 
 ## Depends on
 
+- [[Language]] — uses `Language`, `is_c_family`
 - [[Model Module]] — uses `Edge`
 - [[Symbol]] — uses `Symbol`
 
 ## Used by
 
-- [[Resolver]] — from `by_bare_name`, `resolve`, `resolve_abs`
+- [[Resolver]] — from `by_bare_name`, `lookup_c`, `resolve`, `resolve_abs`
 - [[Scan Module]] — from `RepoFacts`
 - [[Index]] — from `external_uses`
 - [[RenderCtx]] — from `render_integration`

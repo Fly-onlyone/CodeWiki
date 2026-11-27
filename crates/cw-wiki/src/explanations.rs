@@ -130,7 +130,8 @@ fn untouched(vault: &Path, entry: &NoteEntry) -> bool {
 /// does not: what an agent wrote for it would only be a proposal, again at
 /// every run.
 fn waits(vault: &Path, entry: &NoteEntry) -> Option<Why> {
-    if !entry.kind.explainable() {
+    // A note kept after its subject went has nothing left to explain.
+    if !entry.kind.explainable() || entry.gone.is_some() {
         return None;
     }
     let why = match &entry.explained {
@@ -831,7 +832,23 @@ fn record(
 /// note stays its owner's: it was edited by hand and nothing overwrites
 /// it, so the next change of its facts is a proposal again.
 pub fn approve(root: &Path, id: &str) -> Result<proposal::Proposal> {
+    approve_keeping(root, id, &[])
+}
+
+/// [`approve`], for a retire proposal with some of its notes left out:
+/// `keep` holds the vault paths of the notes that stay, as history. The
+/// others are deleted where git holds them ([`crate::gone`]). Any other
+/// proposal is about one note and takes no `keep`.
+pub fn approve_keeping(root: &Path, id: &str, keep: &[String]) -> Result<proposal::Proposal> {
     let vault = root.join(VAULT_DIR);
+    if proposal::get(&vault, id)?.kind == ProposalKind::Retire {
+        return crate::gone::retire(root, id, keep);
+    }
+    if !keep.is_empty() {
+        return Err(Error::invalid(format!(
+            "proposal {id} is about one note; only a retire proposal leaves notes out"
+        )));
+    }
     // Read before the approval, which may be refused.
     let pictures = proposal::pictures_text(&vault, id)?;
     let done = proposal::approve(&vault, id)?;
@@ -860,6 +877,10 @@ pub fn approve(root: &Path, id: &str) -> Result<proposal::Proposal> {
 /// agent may offer another.
 pub fn reject(root: &Path, id: &str) -> Result<proposal::Proposal> {
     let vault = root.join(VAULT_DIR);
+    // The notes of a rejected retire proposal stay, as history.
+    if proposal::get(&vault, id)?.kind == ProposalKind::Retire {
+        return crate::gone::keep_all(root, id);
+    }
     let done = proposal::reject(&vault, id)?;
     if done.kind == ProposalKind::Sync {
         let mut meta = VaultMeta::load(&vault)?;

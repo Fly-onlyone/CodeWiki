@@ -37,7 +37,6 @@ The explanation routes let agents list and write waiting notes. Listing and lend
 - `fn trace_name(method: &str, route: Option<&str>) -> Option<String>` — the name a request is traced under: its method and its route, never its path, which holds ids and names. `None` for a request that is not traced.
 - `pub fn routes(state: AppState) -> Router` — public function, returns `Router`; called by `router`, `serve`.
 - `fn lock_claims(state: &AppState) -> std::sync::MutexGuard<'_, crate::claims::Claims>` — the claims on waiting notes. Take it inside the write lock, never the other way round, and hold it briefly.
-- `async fn backend_status(State(state): State<AppState>) -> Json<Value>` — what the backend is doing: the wiki updates that are running, whoever started them, and when an agent's MCP bridge last called. The app shows it in its tray icon. Unlike `/v1/health` it needs the token.
 - `fn pending_proposals(data_dir: &std::path::Path, found: &mut dyn FnMut(String, pending::Found))` — count the pending proposals of each registered repository, by repository id, and tell each to `found`: `None` for one whose folder is gone or whose vault cannot be read.
 - `fn embed_closed(state: &AppState) -> Option<Response>` — the answer of every embedding job route on a backend that listens beyond this machine. The job runs on the backend's machine and calls the model server its settings name; like the settings, that is decided there.
 - `struct Repo` — resolved repository: its root folder and its index.
@@ -50,8 +49,9 @@ The explanation routes let agents list and write waiting notes. Listing and lend
 - `struct ExplanationsQuery` — which waiting notes a coding agent asks for.
 - `const MAX_AGENT_LEN: usize` — the longest agent id accepted.
 - `struct WriteExplanationQuery` — which note an agent writes, and who it is.
+- `struct ApproveBody` — what an approval may say beside the proposal's id.
 
-And 85 more items.
+And 86 more items.
 
 ## Depends on
 
@@ -60,9 +60,9 @@ And 85 more items.
 - [[Gitintel Module]] — uses `BlastRadius`, `ChangeRisk`, `FileRisk`, `GitIntel`
 - [[Proposal Module]] — uses `Proposal`, `get`, `list`, `patch_text`
 - [[Index]] — uses `Index`, `edges`, `files`, `find_symbols`
+- [[Repos Module]] — uses `RepoEntry`, `add`, `get`, `load`
 - [[Coverage Module]] — uses `CoverageReport`, `import`, `import_text`, `load`
 - [[Health Module]] — uses `DeadSymbol`, `DocReport`, `FileHealth`, `dead_code`
-- [[Claims]] — uses `Claims`, `claim`, `expire`, `others`
 
 ## Used by
 

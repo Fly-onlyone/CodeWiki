@@ -26,13 +26,20 @@ Answers two questions about Rust tests. First: which tests exist, which source f
 
 ## Items
 
-- `pub enum TestKind` — public enum; used by `ImpactedTestFile`, `TestFile`, `command`.
-- `pub struct TestCase` — public struct; used by `TestFile`, `gather`.
+- [[TestKind]] — enum
+- `pub struct TestCase` — public struct; used by `CSharpTests::command`, `CTests::command`, `GoTests::command`, `JsTests::command` and 7 more.
 - `pub struct TestFile` — A file that contains tests.
 - `pub struct FileTests` — how one source file is tested.
 - `pub struct TestMap` — public struct; used by `test_map`.
-- `fn command(crates: &[CrateInfo], path: &str, kind: TestKind) -> String` — private function, returns `String`; called by `gather`.
-- `struct Facts` — everything the analyses below need, gathered once.
+- `struct Env<'a>` — what a language's test code is, found in a repository. Built once for a run from the index and the checkout.
+- `trait TestLanguage: Sync` — the two things that differ between languages: what a test is, and the command that runs one. Everything else about the map is reachability over the dependency graph.
+- `fn language_of(language: Language) -> Option<&'static dyn TestLanguage>` — private function, returns `Option<&'static dyn TestLanguage>`; called by `gather`.
+- `fn is_csharp_test(symbol: &Symbol) -> bool` — A test method: an attribute of a test framework on a method.
+- `enum GoTest` — what kind of test a Go function is, by the rules of `go test`: the name starts with `Test`, `Benchmark`, `Fuzz` or `Example` and what follows does not start with a lower-case letter, and the parameter says which: a `*testing.T`, `*testing.B` or `*testing.F`, none for an example.
+- `fn is_jvm_test(symbol: &Symbol) -> bool` — A test: a method with one of the annotations (as written: `Test`, `org.junit.Test`), or a class that extends one of Kotest's spec styles, whose tests are written in its constructor and carry no annotation.
+- `fn parent_dir(path: &str) -> &str` — private function, returns `&str`; called by `JsTests::command`, `JvmTests::gradle`, `JvmTests::maven`, `JvmTests::module`.
+- `fn join_path(dir: &str, name: &str) -> String` — private function, returns `String`; called by `JvmTests::gradle`, `JvmTests::is_gradle`, `JvmTests::maven`, `JvmTests::module` and 1 more.
+- `struct JvmTests` — Java and Kotlin tests, run by Gradle or Maven. A file is a test file when it is test code by name or by its Gradle source set (`src/test`, `src/commonTest`, `src/jvmTest`). One command runs a module's tests of both languages, so the two share this entry.
 - `fn gather(root: &Path, index: &Index) -> Result<Facts>` — private function, returns `Result<Facts>`; called by `impacted_tests`, `test_map`.
 - `distances` — Breadth-first distances from `start` along `next`, `start` itself at 0.
 - `pub fn test_map(root: &Path, index: &Index) -> Result<TestMap>` — tests per file and the files nothing tests.
@@ -40,20 +47,29 @@ Answers two questions about Rust tests. First: which tests exist, which source f
 - `pub struct Impact` — public struct; used by `impacted_tests`.
 - `pub fn impacted_tests(root: &Path, index: &Index, changed: &[String]) -> Result<Impact>` — tests to run when `changed` files change: tests in the changed files, and tests in every file that depends on them, however many hops away.
 
+And 21 more items.
+
+Submodules: [[Js Module]], [[Python Module (testmap)]].
+
 ## Depends on
 
+- [[Units Module]] — uses `is_csharp_test_attribute`, `is_jvm_test_file`, `is_test_file`, `links_a_test_framework`
 - [[Index]] — uses `Index`, `crates`, `files`, `symbols`
-- [[Workspace Module]] — uses `CrateInfo`, `module_path`, `owning_crate`
-- [[Error Module]] — uses `Result`
-- [[Gitintel Module]] — uses `dependents_by_file`
-- [[Rustscan Module]] — uses `is_test_path`
-- [[Scanned]] — uses `new`
+- [[C Module]] — uses `TEST_ATTR`, `TEST_FRAMEWORK_ATTR`, `TEST_NAME_ATTR`
+- [[Language]] — uses `Language`, `from_path`, `is_c_family`
+- [[Cmake Module]] — uses `Target`, `read_cmake`
+- [[Workspace Module]] — uses `module_path`, `owning_crate`
+- [[JsRepo]] — uses `JsRepo`, `read`
+- [[PythonRoots]] — uses `PythonRoots`, `read`
 
 ## Used by
 
-- [[cw-wiki]] — from `lists_the_tests_a_change_can_break`, `maps_tests_to_the_files_they_reach`
+- [[cw-wiki]] — from `a_python_project_without_pytest_runs_unittest_by_module_name`, `impact_of`, `lists_the_cpp_tests_a_change_can_break`, `lists_the_csharp_tests_a_change_can_break`
+- [[Js Module]] — from `JsTests`, `command`, `commands`, `find_tests`
+- [[PythonTests]] — from `PythonTests`, `command`, `commands`, `is_test_file`
 - [[Api Module]] — from `impacted_tests`, `test_map`
 - [[codewiki]] — from `run`
+- [[Python Module (testmap)]] — from `read_project`
 
 ## Gotchas
 

@@ -1,4 +1,4 @@
-//! Plumbing shared by the Python, TypeScript and Java extractors: the fact
+//! Plumbing shared by the Python, TypeScript, Java, Kotlin, C# and Go extractors: the fact
 //! sink, text helpers, the file-to-module mapping and import classification.
 //!
 //! Qualified names use `::` between segments in every language, so one
@@ -11,6 +11,9 @@ use std::collections::HashSet;
 use cw_core::{Language, Symbol, SymbolKind, Visibility};
 use tree_sitter::Node;
 
+use crate::gomod::GoModules;
+use crate::jsbuild::resolve_source;
+use crate::pyroots::PythonRoots;
 use crate::rust::{CallSite, ImplFact, ModDecl, ParsedFile, TypeRef, UseImport, ValueRef};
 
 const MAX_SIGNATURE_CHARS: usize = 300;
@@ -135,6 +138,22 @@ const PYTHON_STDLIB: [&str; 112] = [
 /// Root packages of the Java platform.
 const JAVA_PLATFORM: [&str; 4] = ["java", "javax", "jdk", "sun"];
 
+/// Root package of Kotlin's standard library, its own platform. `kotlinx` is
+/// a set of libraries (coroutines, serialization, ...) that a build file
+/// names, so it is no platform.
+const KOTLIN_PLATFORM: &str = "kotlin";
+
+/// Namespaces the .NET platform ships. `System` is the platform's root;
+/// `Microsoft` holds platform namespaces and NuGet packages alike, so only
+/// the namespaces the runtime itself carries are listed here, and every
+/// other `Microsoft.*` namespace is a package (see [`link_csharp`]).
+const CSHARP_PLATFORM: [&str; 4] = [
+    "System",
+    "Microsoft.CSharp",
+    "Microsoft.Win32",
+    "Microsoft.VisualBasic",
+];
+
 /// Modules built into Node.js, importable with or without the `node:` prefix.
 const NODE_BUILTINS: [&str; 34] = [
     "assert",
@@ -172,9 +191,6 @@ const NODE_BUILTINS: [&str; 34] = [
     "zlib",
     "inspector",
 ];
-
-/// Extensions a TypeScript import specifier may leave out.
-const TS_EXTENSIONS: [&str; 5] = ["ts", "tsx", "d.ts", "mts", "cts"];
 
 /// Named children of `node`, collected so the tree can be walked while the
 /// extractor is mutated.
@@ -491,27 +507,7 @@ impl<'a> Sink<'a> {
 /// it matches what `import` statements write. A file outside any package is
 /// named by its path from the repository root, minus a leading `src` or `lib`.
 pub fn python_module(files: &HashSet<&str>, path: &str) -> (String, bool) {
-    let stem_path = path.rsplit_once('.').map_or(path, |(stem, _)| stem);
-    let mut dirs: Vec<&str> = stem_path.split('/').collect();
-    let stem = dirs.pop().unwrap_or("");
-    let is_package = stem == "__init__";
-    let has_init = |depth: usize| {
-        let dir = dirs[..=depth].join("/");
-        ["py", "pyi"]
-            .iter()
-            .any(|ext| files.contains(format!("{dir}/__init__.{ext}").as_str()))
-    };
-    let start = (0..dirs.len())
-        .find(|&i| has_init(i))
-        .unwrap_or_else(|| usize::from(dirs.first().is_some_and(|d| matches!(*d, "src" | "lib"))));
-    let mut segments: Vec<String> = dirs[start..].iter().map(|d| sanitize(d)).collect();
-    if !is_package {
-        segments.push(sanitize(stem));
-    }
-    if segments.is_empty() {
-        segments.push("__init__".to_string());
-    }
-    (segments.join("::"), is_package)
+    PythonRoots::default().module(files, path)
 }
 
 /// Module a TypeScript file defines: its path without the extension.
@@ -523,9 +519,6 @@ pub fn ts_module(path: &str) -> String {
         .collect::<Vec<_>>()
         .join("::")
 }
-
-/// JavaScript source extensions, tried after the TypeScript ones.
-const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
 
 /// File a relative TypeScript import specifier names, as written in `from`.
 /// Tries the specifier itself, then each source extension, then an `index`
@@ -545,36 +538,7 @@ pub fn resolve_ts_import(files: &HashSet<&str>, from: &str, spec: &str) -> Optio
             other => parts.push(other),
         }
     }
-    let base = parts.join("/");
-    let is_source = |p: &str| {
-        matches!(
-            Language::from_path(p),
-            Language::TypeScript | Language::JavaScript
-        )
-    };
-    if is_source(&base) && files.contains(base.as_str()) {
-        return Some(base);
-    }
-    // `./text.js` is how ESM TypeScript names `./text.ts`.
-    let stem = [".js", ".jsx", ".mjs", ".cjs"]
-        .iter()
-        .find_map(|ext| base.strip_suffix(ext))
-        .unwrap_or(&base);
-    let index = if base.is_empty() {
-        "index".to_string()
-    } else {
-        format!("{base}/index")
-    };
-    [stem, index.as_str()]
-        .iter()
-        .filter(|candidate| !candidate.is_empty())
-        .flat_map(|candidate| {
-            TS_EXTENSIONS
-                .iter()
-                .chain(JS_EXTENSIONS.iter())
-                .map(move |ext| format!("{candidate}.{ext}"))
-        })
-        .find(|candidate| files.contains(candidate.as_str()))
+    resolve_source(files, &parts.join("/"))
 }
 
 /// Package a non-relative TypeScript import specifier names, or `None` when
@@ -602,6 +566,17 @@ pub(crate) fn java_default_package(path: &str) -> String {
     dirs.pop();
     if dirs.is_empty() {
         return "default_package".to_string();
+    }
+    dirs.join("::")
+}
+
+/// Module used for a C# file with no `namespace` declaration (the global
+/// namespace): its directory.
+pub(crate) fn csharp_default_namespace(path: &str) -> String {
+    let mut dirs: Vec<String> = path.split('/').map(sanitize).collect();
+    dirs.pop();
+    if dirs.is_empty() {
+        return "global_namespace".to_string();
     }
     dirs.join("::")
 }
@@ -665,12 +640,15 @@ fn link_python(mut import: UseImport, modules: &HashSet<String>) -> Option<UseIm
     Some(external(import, root, 1))
 }
 
-fn link_java(import: UseImport, packages: &HashSet<String>) -> Option<UseImport> {
+/// An import of a Java or Kotlin file. `packages` holds the packages of both
+/// languages: they share them. `kotlin` says the file is Kotlin, whose
+/// platform also has the `kotlin` root.
+fn link_jvm(import: UseImport, packages: &HashSet<String>, kotlin: bool) -> Option<UseImport> {
     if has_module_prefix(packages, &import.path, 1) {
         return Some(import);
     }
     let root = import.path.first()?;
-    if JAVA_PLATFORM.contains(&root.as_str()) {
+    if JAVA_PLATFORM.contains(&root.as_str()) || (kotlin && root == KOTLIN_PLATFORM) {
         return None;
     }
     // `org.junit.Test` belongs to `org.junit`; the class name is not part of
@@ -681,13 +659,244 @@ fn link_java(import: UseImport, packages: &HashSet<String>) -> Option<UseImport>
     Some(external(import, package, keep))
 }
 
-/// Decide, for every Python and Java import, whether it names repository
-/// code, an outside package, or the language's own library. Imports of the
-/// last kind are dropped. Also records which Python package holds which
-/// module.
-pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)]) {
+/// The NuGet package ids a project or props file names, in a
+/// `PackageReference` or a `PackageVersion`.
+pub(crate) fn nuget_ids(xml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for tag in ["<PackageReference", "<PackageVersion"] {
+        let mut rest = xml;
+        while let Some(at) = rest.find(tag) {
+            let after = &rest[at + tag.len()..];
+            rest = after;
+            if !after.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let head = &after[..after.find('>').unwrap_or(after.len())];
+            for key in ["Include", "Update"] {
+                let Some(start) = head.find(&format!("{key}=")) else {
+                    continue;
+                };
+                let value = &head[start + key.len() + 1..];
+                let Some(quote) = value.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+                    continue;
+                };
+                if let Some(end) = value[1..].find(quote) {
+                    out.push(value[1..=end].to_string());
+                    break;
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The package an import outside the repository names, from the namespace
+/// it opens, or `None` for a namespace the platform ships.
+///
+/// The repository's own package ids come first: a namespace is the package
+/// whose id equals it, else the longest id that starts it (`Avalonia.Controls`
+/// is in `Avalonia`), else the first id it starts (`Xunit` is in `xunit.v3`).
+/// With no id that fits, the namespace root names it: two segments
+/// (`Serilog.Sinks`), and three below `Microsoft.Extensions`, whose packages
+/// are each one namespace down. Case does not matter.
+fn csharp_package(path: &[String], glob: bool, ids: &[String]) -> Option<(String, usize)> {
+    let starts = |n: usize, names: &[&str]| {
+        path.len() >= n
+            && names
+                .iter()
+                .any(|name| name.split('.').eq(path[..n].iter().map(String::as_str)))
+    };
+    if CSHARP_PLATFORM
+        .iter()
+        .any(|platform| starts(platform.split('.').count(), &[platform]))
+    {
+        return None;
+    }
+    // `using Alias = Xunit.Assert;` names a type last; a namespace is all
+    // package.
+    let len = path.len();
+    let namespace_len = if glob { len } else { len - 1 }.max(1);
+    let namespace = path[..namespace_len].join(".").to_lowercase();
+    let continues = |long: &str, short: &str| {
+        long.strip_prefix(short)
+            .is_some_and(|rest| rest.starts_with('.'))
+    };
+    let lower: Vec<(String, &String)> = ids.iter().map(|id| (id.to_lowercase(), id)).collect();
+    let found = lower
+        .iter()
+        .find(|(id, _)| *id == namespace)
+        .or_else(|| {
+            lower
+                .iter()
+                .filter(|(id, _)| continues(&namespace, id))
+                .max_by_key(|(id, _)| id.len())
+        })
+        .or_else(|| {
+            lower
+                .iter()
+                .filter(|(id, _)| continues(id, &namespace))
+                .min_by_key(|(id, _)| id.len())
+        });
+    if let Some((lower_id, id)) = found {
+        // An id that starts the namespace leaves the rest of it as what the
+        // import takes; a namespace that starts the id is all package.
+        let own = if *lower_id == namespace || continues(&namespace, lower_id) {
+            id.split('.').count().min(namespace_len)
+        } else {
+            namespace_len
+        };
+        return Some(((*id).clone(), own));
+    }
+    let limit = if starts(2, &["Microsoft.Extensions"]) {
+        3
+    } else {
+        2
+    };
+    let keep = namespace_len.clamp(1, limit);
+    Some((path[..keep].join("."), keep))
+}
+
+fn link_csharp(
+    import: UseImport,
+    namespaces: &HashSet<String>,
+    ids: &[String],
+) -> Option<UseImport> {
+    if has_module_prefix(namespaces, &import.path, 1) {
+        return Some(import);
+    }
+    let (package, keep) = csharp_package(&import.path, import.glob, ids)?;
+    Some(external(import, package, keep))
+}
+
+/// Give every namespace the `global using` lines of the repository that name
+/// repository code; the parser leaves them with an empty scope. The line
+/// stays in the file that holds it. A `global using` of a package takes the
+/// file's own namespace: it only says the file uses the package.
+fn spread_global_usings(
+    uses: Vec<UseImport>,
+    namespaces: &HashSet<String>,
+    home: &str,
+) -> Vec<UseImport> {
+    let mut sorted: Vec<&String> = namespaces.iter().collect();
+    sorted.sort();
+    let mut out = Vec::with_capacity(uses.len());
+    for import in uses {
+        if !import.scope.is_empty() {
+            out.push(import);
+            continue;
+        }
+        if !has_module_prefix(namespaces, &import.path, 1) {
+            out.push(UseImport {
+                scope: home.to_string(),
+                ..import
+            });
+            continue;
+        }
+        for scope in &sorted {
+            out.push(UseImport {
+                scope: (*scope).clone(),
+                ..import.clone()
+            });
+        }
+    }
+    out
+}
+
+/// What the repository's Go build files say, which turns an import path into
+/// a package of the repository or a module outside it.
+#[derive(Debug, Default)]
+pub(crate) struct GoBuild {
+    /// Every `go.mod`: its folder and module path.
+    pub modules: GoModules,
+    /// The module paths the `go.mod` files require or replace.
+    pub requires: Vec<String>,
+}
+
+/// Number of leading path segments that name the module of an import path
+/// outside the repository, when no `go.mod` of the repository says: a host
+/// that gives every project an owner takes three (`github.com/spf13/cobra`),
+/// any other two (`gopkg.in/yaml.v3`, `google.golang.org/grpc`); a major
+/// version element after them (`/v5`) belongs to the module.
+fn go_module_len(segments: &[String]) -> usize {
+    let first = segments.first().map_or("", String::as_str);
+    let base = if matches!(
+        first,
+        "github.com" | "gitlab.com" | "bitbucket.org" | "codeberg.org" | "golang.org" | "git.sr.ht"
+    ) {
+        3
+    } else {
+        2
+    };
+    let base = base.min(segments.len());
+    let versioned = segments.get(base).is_some_and(|s| {
+        s.strip_prefix('v')
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    });
+    base + usize::from(versioned)
+}
+
+/// A Go import is a whole package, never a name inside one. It names a
+/// package of the repository when its path, made into a qualified name, is
+/// one; the standard library has no dot in its first element and is no
+/// integration; a path under a module of the repository that holds no such
+/// package (generated code, a folder with no Go file) names nothing. What
+/// is left belongs to a module outside the repository: the longest module
+/// path a `go.mod` requires that starts it, else a guess from the host.
+fn link_go(import: UseImport, packages: &HashSet<String>, go: &GoBuild) -> Option<UseImport> {
+    let raw = import.path.join("/");
+    let qualified: Vec<String> = import.path.iter().map(|s| sanitize(s)).collect();
+    if packages.contains(&qualified.join("::")) {
+        return Some(UseImport {
+            path: qualified,
+            ..import
+        });
+    }
+    let inside = |module: &str| raw == module || raw.starts_with(&format!("{module}/"));
+    if go.modules.list.iter().any(|(_, module)| inside(module)) {
+        return None;
+    }
+    if !import.path.first()?.contains('.') {
+        return None;
+    }
+    let len = go
+        .requires
+        .iter()
+        .filter(|module| inside(module))
+        .map(|module| module.split('/').count())
+        .max()
+        .unwrap_or_else(|| go_module_len(&import.path))
+        .min(import.path.len());
+    let package = import.path[..len].join("/");
+    let mut taken = import.path[len..].join("/");
+    if import.glob {
+        if !taken.is_empty() {
+            taken.push('/');
+        }
+        taken.push('*');
+    }
+    Some(UseImport {
+        path: vec![package],
+        alias: String::new(),
+        glob: false,
+        external: taken,
+        ..import
+    })
+}
+
+/// Decide, for every Python, Java, Kotlin, C# and Go import, whether it names
+/// repository code, an outside package, or the language's own library.
+/// Imports of the last kind are dropped. Also records which Python package
+/// holds which module.
+pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String], go: &GoBuild) {
     let python = modules_of(parsed, Language::Python);
-    let java = modules_of(parsed, Language::Java);
+    // Java and Kotlin files of one package are one module, and each language
+    // imports the other's classes.
+    let mut jvm = modules_of(parsed, Language::Java);
+    jvm.extend(modules_of(parsed, Language::Kotlin));
+    let csharp = modules_of(parsed, Language::CSharp);
+    let packages = modules_of(parsed, Language::Go);
     for (file, facts) in parsed.iter_mut() {
         let uses = std::mem::take(&mut facts.uses);
         match Language::from_path(file) {
@@ -711,10 +920,28 @@ pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)]) {
                     });
                 }
             }
-            Language::Java => {
+            language @ (Language::Java | Language::Kotlin) => {
                 facts.uses = uses
                     .into_iter()
-                    .filter_map(|u| link_java(u, &java))
+                    .filter_map(|u| link_jvm(u, &jvm, language == Language::Kotlin))
+                    .collect();
+            }
+            Language::CSharp => {
+                let home = facts
+                    .symbols
+                    .iter()
+                    .find(|s| s.kind == SymbolKind::Module)
+                    .map(|s| s.qualified.clone())
+                    .unwrap_or_default();
+                facts.uses = spread_global_usings(uses, &csharp, &home)
+                    .into_iter()
+                    .filter_map(|u| link_csharp(u, &csharp, nuget))
+                    .collect();
+            }
+            Language::Go => {
+                facts.uses = uses
+                    .into_iter()
+                    .filter_map(|u| link_go(u, &packages, go))
                     .collect();
             }
             _ => facts.uses = uses,
@@ -777,6 +1004,85 @@ mod tests {
         assert_eq!(ts_package("node:fs"), None);
         assert_eq!(ts_package("path"), None);
         assert_eq!(ts_package("@/components/x"), None);
+    }
+
+    #[test]
+    fn names_the_package_of_a_csharp_namespace() {
+        let ids = nuget_ids(
+            r#"<Project><ItemGroup>
+  <PackageReference Include="Avalonia" />
+  <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.6" />
+  <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  <PackageVersion Include="xunit.v3" Version="3.2.2" />
+  <PackageVersion Include='CommunityToolkit.Mvvm' Version="8.4.0"/>
+  <PackageReferenceGroup Include="no" />
+</ItemGroup></Project>"#,
+        );
+        assert_eq!(
+            ids,
+            [
+                "Avalonia",
+                "Avalonia.Headless.XUnit",
+                "CommunityToolkit.Mvvm",
+                "xunit.runner.visualstudio",
+                "xunit.v3"
+            ]
+        );
+        let package = |namespace: &str, glob: bool, ids: &[String]| {
+            let path: Vec<String> = namespace.split('.').map(str::to_string).collect();
+            csharp_package(&path, glob, ids).map(|(name, _)| name)
+        };
+        // An id that starts the namespace, or one the namespace starts.
+        assert_eq!(
+            package("Avalonia.Controls", true, &ids).as_deref(),
+            Some("Avalonia")
+        );
+        assert_eq!(package("Avalonia", true, &ids).as_deref(), Some("Avalonia"));
+        assert_eq!(package("Xunit", true, &ids).as_deref(), Some("xunit.v3"));
+        assert_eq!(
+            package("CommunityToolkit.Mvvm.ComponentModel", true, &ids).as_deref(),
+            Some("CommunityToolkit.Mvvm")
+        );
+        // Without a matching id the namespace root names the package.
+        assert_eq!(
+            package("Serilog.Sinks.File", true, &ids).as_deref(),
+            Some("Serilog.Sinks")
+        );
+        assert_eq!(package("Serilog", true, &[]).as_deref(), Some("Serilog"));
+        assert_eq!(
+            package("Microsoft.Extensions.Logging.Abstractions", true, &[]).as_deref(),
+            Some("Microsoft.Extensions.Logging")
+        );
+        assert_eq!(
+            package("Microsoft.Data.Sqlite", true, &[]).as_deref(),
+            Some("Microsoft.Data")
+        );
+        // An alias names a type last, which is no part of the package.
+        assert_eq!(
+            package("Newtonsoft.Json.JsonConvert", false, &[]).as_deref(),
+            Some("Newtonsoft.Json")
+        );
+        // `System` is the platform. Of `Microsoft`, only what the runtime
+        // carries is; the rest is a package.
+        for platform in [
+            "System",
+            "System.Linq",
+            "Microsoft.CSharp.RuntimeBinder",
+            "Microsoft.Win32",
+            "Microsoft.Win32.SafeHandles",
+            "Microsoft.VisualBasic",
+        ] {
+            assert_eq!(package(platform, true, &ids), None, "{platform}");
+        }
+        for not_platform in [
+            "Microsoft.AspNetCore.Mvc",
+            "Microsoft.CodeAnalysis",
+            "Microsoft",
+        ] {
+            assert!(package(not_platform, true, &[]).is_some(), "{not_platform}");
+        }
+        // `Systematic` is no `System`.
+        assert!(package("Systematic.Core", true, &[]).is_some());
     }
 
     #[test]

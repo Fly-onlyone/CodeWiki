@@ -55,11 +55,11 @@ Defined at the crate root:
 - [[Semantic Module]] — uses `behind`, `configure`, `embedder`, `set_inline_budget`
 - [[cw-core]] — uses `CLIENT_HEADER`, `MCP_CLIENT`, `VERSION`
 - [[Jobs (cw-server)]] — uses `close`, `default`, `status`
+- [[Repos Module]] — uses `mark_worktrees`, `prune_worktrees`
 - [[Service Module]] — uses `DOCUMENT_KINDS`, `open_existing_index_in`
 - [[Error]] — uses `external`, `invalid`
 - [[LocalEmbedder]] — uses `LocalEmbedder`, `default`
 - [[Error Module]] — uses `Result`
-- [[Hash Module]] — uses `hmac_sha256`
 
 ## Used by
 

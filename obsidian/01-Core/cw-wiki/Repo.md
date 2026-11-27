@@ -35,7 +35,8 @@ Members:
 - `pub fn top_modules(&self, unit: &Unit) -> Vec<&'a Symbol>` — modules directly below the top of `unit`, in name order.
 - `pub fn module_count(&self, unit: &Unit) -> usize` — number of source modules in `unit`. A package's `__init__` file is the package itself, not one of its modules.
 - `pub fn descendants(&self, qualified: &str) -> usize` — number of symbols nested anywhere below `qualified`.
-- `pub fn is_test(&self, symbol: &Symbol) -> bool` — true for test code, which gets no notes of its own.
+- `fn is_go_test_package(&self, module: &Symbol) -> bool` — true for a Go package that holds tests alone (an external test package, or a folder of `_test.go` files): no part of the code.
+- `pub fn is_test(&self, symbol: &Symbol) -> bool` — true for test code, which gets no notes of its own. Generated Go code is kept out the same way: its symbols exist and are called, but a note about code nobody writes would rank among those that matter.
 - `pub fn rank_of(&self, qualified: &str) -> f64` — public method, returns `f64`; called by `Repo::subtree_rank`.
 - `pub fn children_of(&self, qualified: &str) -> &[&'a Symbol]` — public method, returns `&[&'a Symbol]`; called by `Repo::descendants`, `Repo::subtree_rank`, `Repo::top_modules`.
 - `pub fn subtree_rank(&self, qualified: &str) -> f64` — rank of a symbol plus everything nested in it.
@@ -48,14 +49,14 @@ Members:
 - [[Unit]] — uses `Unit`, `is_rust`
 - [[Model Module]] — uses `Edge`
 - [[Store Module]] — uses `NodeMetrics`
+- [[Go Module]] — uses `GENERATED_ATTR`
 - [[Scan Module]] — uses `RepoFacts`
-- [[Plan Module]] — uses `is_test_path`
 
 ## Used by
 
 - [[RenderCtx]] — from `RenderCtx`, `new`, `render_crate`, `render_home`
-- [[Explain Module]] — from `facts`, `items`, `walk`
 - [[Plan Module]] — from `enclosing_module`, `plan`, `startup_messages`
+- [[Explain Module]] — from `items`, `walk`
 - [[Manifests Module]] — from `declared`, `describe`
 - [[Generate Module]] — from `generate_with`
 - [[Render Module]] — from `top_children`

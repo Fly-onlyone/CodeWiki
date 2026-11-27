@@ -472,6 +472,21 @@ fn failed(message: String) -> McpError {
     McpError::internal_error(message, None)
 }
 
+/// Whether a call failed because the wiki has no note of the name given.
+fn is_no_such_note(error: &McpError) -> bool {
+    error.message.contains("not found: note '")
+}
+
+/// What an agent is told of a note that is not in the wiki. It is no
+/// failure of the agent's: a sync removes a note when what it describes is
+/// gone from the repository, and a list of waiting notes may be older than
+/// that sync.
+fn no_such_note(note: &str) -> String {
+    format!(
+        "No such note: {note}. A sync removes a note when what it describes is gone from the repository. Skip it and go on."
+    )
+}
+
 /// The string under `key`, or an empty string.
 fn field<'a>(value: &'a Value, key: &str) -> &'a str {
     value[key].as_str().unwrap_or("")
@@ -1171,7 +1186,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "Tests to run after a change. With no `files`, uses the uncommitted changes in the working tree. Lists the test files that can reach the changed files through the dependency graph, nearest first, with the test names and the `cargo test` commands that run them, plus changed files no test reaches. Call after editing and before reporting work as done."
+        description = "Tests to run after a change. With no `files`, uses the uncommitted changes in the working tree. Lists the test files that can reach the changed files through the dependency graph, nearest first, with the test names and the commands that run them (`cargo test` for Rust, `dotnet test` for C#, `go test` for Go, `gradle` or `mvn` for Java and Kotlin, `ctest` or the test executable for C and C++, `pytest` or `python -m unittest` for Python, the package's own runner through its package manager for TypeScript and JavaScript: `vitest`, `jest`, `mocha`, `playwright`, `ava`, `node --test` or `bun test`), plus changed files no test reaches. Every language CodeWiki maps is covered. Call after editing and before reporting work as done."
     )]
     async fn get_impacted_tests(
         &self,
@@ -1466,7 +1481,7 @@ impl Bridge {
         &self,
         Parameters(p): Parameters<BriefParams>,
     ) -> Result<CallToolResult, McpError> {
-        let note = p.note;
+        let (note, named) = (p.note.clone(), p.note);
         let brief = self
             .call(p.repo, move |b, id| {
                 b.get(&format!(
@@ -1474,8 +1489,11 @@ impl Bridge {
                     encode(&note)
                 ))
             })
-            .await?;
-        text(brief_text(&brief))
+            .await;
+        match brief {
+            Err(error) if is_no_such_note(&error) => text(no_such_note(&named)),
+            brief => text(brief_text(&brief?)),
+        }
     }
 
     #[tool(
@@ -1485,7 +1503,7 @@ impl Bridge {
         &self,
         Parameters(p): Parameters<SubmitParams>,
     ) -> Result<CallToolResult, McpError> {
-        let note = p.note;
+        let (note, named) = (p.note.clone(), p.note);
         let body = json!({
             "base": p.base,
             "sections": p
@@ -1519,8 +1537,11 @@ impl Bridge {
                 claims.settle(id, &note, &outcome);
                 Ok(outcome)
             })
-            .await?;
-        text(outcome_text(&outcome))
+            .await;
+        match outcome {
+            Err(error) if is_no_such_note(&error) => text(no_such_note(&named)),
+            outcome => text(outcome_text(&outcome?)),
+        }
     }
 }
 
@@ -1657,6 +1678,14 @@ fn sync_text(report: &Value) -> String {
     }));
     if !waiting.is_empty() {
         summary.push_str(&format!(" {waiting} Call list_waiting_notes to see them."));
+    }
+    // What became of notes whose subject is gone or moved, in the words
+    // the backend chose. An older backend sends none.
+    for line in report["summary"].as_array().into_iter().flatten() {
+        if let Some(line) = line.as_str() {
+            summary.push(' ');
+            summary.push_str(line);
+        }
     }
     summary
 }
@@ -1862,6 +1891,19 @@ fn outcome_text(outcome: &Value) -> String {
 /// what was left out and how to get it.
 fn note_text(content: &Value) -> String {
     let mut body = content["text"].as_str().unwrap_or("").to_string();
+    // A note kept after what it describes went must not be read as a note
+    // about the code as it is.
+    if let Some(why) = content["info"]["gone"].as_str() {
+        let reason = match why {
+            "pending" => "it waits for its owner to retire it",
+            "history" => "its owner keeps it as history",
+            "uncommitted" => "the deletion is not committed yet",
+            _ => "git does not hold the note as it is, so it was not deleted",
+        };
+        body = format!(
+            "(What this note describes is gone from the repository; {reason}. Do not take it for the code as it is now.)\n\n{body}"
+        );
+    }
     let left_out: Vec<String> = content["left_out"]
         .as_array()
         .into_iter()
@@ -2448,6 +2490,46 @@ mod tests {
             body.contains("  /v1/repos/{id}/notes  src/main.rs:12\n"),
             "{body}"
         );
+    }
+
+    #[test]
+    fn a_note_of_something_gone_says_so_first() {
+        let kept = note_text(&json!({
+            "info": { "state": "gone", "gone": "history" },
+            "text": "# Old Service\n\n> Mine.\n",
+        }));
+        assert_eq!(
+            kept,
+            "(What this note describes is gone from the repository; its owner keeps it as history. Do not take it for the code as it is now.)\n\n# Old Service\n\n> Mine.\n"
+        );
+        let live = note_text(&json!({
+            "info": { "state": "generated" },
+            "text": "# Scan Module\n",
+        }));
+        assert_eq!(live, "# Scan Module\n");
+    }
+
+    #[test]
+    fn a_sync_says_what_became_of_notes_of_code_that_is_gone() {
+        let text = sync_text(&json!({
+            "written": [], "kept": 4, "proposed": [], "removed": ["01-Core/a/Old.md"],
+            "adopted": [], "notes_total": 4,
+            "summary": [
+                "Removed 1 note whose subject is gone: `01-Core/a/Old.md`.",
+                "2 notes written by hand name only files that are gone."
+            ]
+        }));
+        assert!(
+            text.ends_with(
+                "Total notes: 4. Removed 1 note whose subject is gone: `01-Core/a/Old.md`. 2 notes written by hand name only files that are gone."
+            ),
+            "{text}"
+        );
+        // A backend from before the lines existed.
+        let old = sync_text(&json!({
+            "written": [], "kept": 4, "proposed": [], "removed": [], "adopted": [], "notes_total": 4
+        }));
+        assert!(old.ends_with("Total notes: 4."), "{old}");
     }
 
     #[test]

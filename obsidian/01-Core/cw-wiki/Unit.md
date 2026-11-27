@@ -30,14 +30,15 @@ Members:
 ## Depends on
 
 - [[Units Module]] — uses `Entry`, `Manifest`
+- [[Jsbuild Module]] — uses `PmInfo`
 - [[Language]] — uses `Language`
 
 ## Used by
 
-- [[RenderCtx]] — from `render_crate`, `render_operations`, `render_type`, `summary`
-- [[Manifests Module]] — from `cargo`, `declared`, `other`
+- [[Manifests Module]] — from `cargo`, `central_version`, `cfamily`, `declared`
+- [[RenderCtx]] — from `render_crate`, `render_crate_flow`, `render_operations`, `render_type`
+- [[Units]] — from `Units`, `all_rust`, `by_name`, `of_file`
 - [[Repo]] — from `module_count`, `top_modules`, `unit_of`
-- [[Units]] — from `Units`, `all_rust`, `by_name`
 - [[Plan Module]] — from `module_dir`, `plan`
 - [[Units Module]] — from `discover`
 

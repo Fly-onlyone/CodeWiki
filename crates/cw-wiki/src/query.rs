@@ -33,6 +33,10 @@ pub struct NoteInfo {
     /// Why the explanation may be behind the code, when it is.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behind: Vec<String>,
+    /// Why the note is still in the vault, when what it describes is gone
+    /// from the repository (`state` is then `gone`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gone: Option<cw_vault::Gone>,
 }
 
 /// Where a note's explanation stands. Rules write a note's facts; what the
@@ -213,6 +217,7 @@ fn info(entry: &NoteEntry, vault: &Path) -> NoteInfo {
         },
         explained_by: entry.explained.as_ref().and(entry.model.clone()),
         behind: entry.behind.clone(),
+        gone: entry.gone,
     }
 }
 
@@ -320,7 +325,7 @@ pub fn status(root: &Path, index: &Index) -> Result<Status> {
         files: index.files()?.len(),
         symbols: index.symbols()?.len(),
         edges: index.edges()?.len(),
-        notes: meta.notes.len(),
+        notes: meta.live_notes(),
         pending_proposals: pending,
         stale: crate::git::vault_is_behind(root, meta.manifest.last_indexed_commit.as_deref()),
         vault_commit: meta.manifest.last_indexed_commit,

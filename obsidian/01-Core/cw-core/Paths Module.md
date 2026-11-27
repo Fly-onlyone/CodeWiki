@@ -44,8 +44,8 @@ Says where CodeWiki keeps per-user files and which file holds a repository's ind
 - [[Service Module]] — from `open_existing_index_in`, `open_index`, `open_index_in`, `update`
 - [[codewiki-mcp]] — from `listed_folders`, `screen`
 - [[Settings View Module]] — from `new`, `read_agents_off`
+- [[Repos Module]] — from `add`, `main_of`
 - [[Backend]] — from `connect`, `find`
-- [[cw-telemetry]] — from `consent_path`
 
 ## Gotchas
 

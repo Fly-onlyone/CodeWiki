@@ -20,11 +20,14 @@ Stores the list of repositories the backend manages, as `repos.json` in the data
 
 ## Items
 
-- `pub struct RepoEntry` — public struct; used by `ListedRepo`, `add`, `add_repo`, `embed_all` and 8 more.
+- `pub struct RepoEntry` — public struct; used by `ListedRepo`, `add`, `add_repo`, `embed_all` and 9 more.
+- `fn main_of(root: &Path) -> Option<String>` — the id of the main checkout `root` is a linked worktree of, if it is one.
 - `fn file(data_dir: &Path) -> PathBuf` — private function, returns `PathBuf`; called by `load`, `save`.
-- `pub fn load(data_dir: &Path) -> Result<Vec<RepoEntry>>` — public function, returns `Result<Vec<RepoEntry>>`; called by `add`, `embed_all`, `get`, `git_hook` and 6 more.
-- `fn save(data_dir: &Path, repos: &[RepoEntry]) -> Result<()>` — private function, returns `Result<()>`; called by `add`, `remove`.
+- `pub fn load(data_dir: &Path) -> Result<Vec<RepoEntry>>` — public function, returns `Result<Vec<RepoEntry>>`; called by `add`, `embed_all`, `get`, `git_hook` and 8 more.
+- `fn save(data_dir: &Path, repos: &[RepoEntry]) -> Result<()>` — private function, returns `Result<()>`; called by `add`, `mark_worktrees`, `prune_worktrees`, `remove`.
 - `pub fn add(data_dir: &Path, path: &str) -> Result<RepoEntry>` — add a repository by path. Adding the same path twice returns the existing entry.
+- `pub fn mark_worktrees(data_dir: &Path) -> Result<()>` — mark the entries that are linked worktrees and were registered before worktrees were told apart. Asks git once for each unmarked entry whose folder exists, so it runs at the backend's start, not on each listing.
+- `pub fn prune_worktrees(data_dir: &Path) -> Result<Vec<RepoEntry>>` — forget every linked worktree whose folder is gone, with its index: the folder of a worktree does not come back, unlike a repository on a drive that is unplugged for a while. Returns the entries forgotten.
 - `pub fn remove(data_dir: &Path, id: &str) -> Result<()>` — forget a repository. Its vault and source are not touched.
 - `pub fn get(data_dir: &Path, id: &str) -> Result<RepoEntry>` — public function, returns `Result<RepoEntry>`; called by `Repo::open`, `get_repo`, `repo_contracts`.
 
@@ -33,12 +36,14 @@ Stores the list of repositories the backend manages, as `repos.json` in the data
 - [[Error]] — uses `external`, `invalid`, `io`, `not_found`
 - [[Error Module]] — uses `Result`
 - [[Paths Module]] — uses `repo_id`
+- [[Git Module]] — uses `main_checkout`
 
 ## Used by
 
 - [[Api Module]] — from `ListedRepo`, `add_repo`, `get_repo`, `git_hook`
 - [[Workspace Module (cw-server)]] — from `open`, `repo_contracts`, `summarize`, `workspace`
 - [[Embed Job Module]] — from `embed_all`, `embed_repo`, `resume`
+- [[cw-server]] — from `serve`
 
 ## Gotchas
 

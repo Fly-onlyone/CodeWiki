@@ -76,7 +76,12 @@ fn name_in(symbol: &Symbol, subject: &str) -> String {
     match symbol.parent.as_deref() {
         Some(parent) if symbol.kind == SymbolKind::Method && parent != subject => {
             let owner = parent.rsplit("::").next().unwrap_or(parent);
-            let sep = if is_rust(symbol) { "::" } else { "." };
+            // C++ names a member with `::`, as Rust does.
+            let sep = if is_rust(symbol) || Language::from_path(&symbol.file).is_c_family() {
+                "::"
+            } else {
+                "."
+            };
             format!("{owner}{sep}{}", symbol.name)
         }
         _ => symbol.name.clone(),
@@ -370,6 +375,27 @@ pub(crate) fn walk<'a>(ctx: &RenderCtx<'a>, note_id: &str) -> Walk<'a> {
     }
 }
 
+/// Words that stand before the return type of a C# method.
+const CSHARP_MODIFIERS: [&str; 17] = [
+    "public",
+    "private",
+    "protected",
+    "internal",
+    "static",
+    "async",
+    "virtual",
+    "override",
+    "abstract",
+    "sealed",
+    "new",
+    "extern",
+    "unsafe",
+    "partial",
+    "readonly",
+    "required",
+    "file",
+];
+
 /// The type a function returns, as its signature writes it, or `None` when
 /// the signature names none or cannot be read with confidence.
 fn return_type(signature: &str, language: Language) -> Option<String> {
@@ -401,8 +427,119 @@ fn return_type(signature: &str, language: Language) -> Option<String> {
             let rest = &signature[found?..];
             rest.split(" where ").next().unwrap_or(rest)
         }
-        Language::TypeScript | Language::JavaScript => {
-            // After the parameter list: `(x: number): string`.
+        Language::CSharp => {
+            // Before the name, after the modifiers: `public async Task<T> Load<T>(...)`.
+            let head = signature.split('(').next()?;
+            let mut angle = 0usize;
+            let mut cut = None;
+            for (i, c) in head.char_indices() {
+                match c {
+                    '<' => angle += 1,
+                    '>' => angle = angle.saturating_sub(1),
+                    c if c.is_whitespace() && angle == 0 => cut = Some(i),
+                    _ => {}
+                }
+            }
+            let mut rest = head[..cut?].trim();
+            while let Some((word, tail)) = rest.split_once(' ') {
+                if !CSHARP_MODIFIERS.contains(&word) {
+                    break;
+                }
+                rest = tail.trim_start();
+            }
+            if CSHARP_MODIFIERS.contains(&rest) {
+                return None;
+            }
+            rest
+        }
+        Language::Go => {
+            // After the parameter list: `func (s *Store) Get[T any](k T) (Item, error)`.
+            // A method of an interface has no `func`; a method of a type has
+            // a receiver in parentheses before its name.
+            let after = |text: &str| -> Option<usize> {
+                let mut depth = 0usize;
+                for (i, c) in text.char_indices() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth = depth.checked_sub(1)?;
+                            if depth == 0 {
+                                return Some(i + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            };
+            let mut rest = signature
+                .strip_prefix("func")
+                .map_or(signature, str::trim_start);
+            if rest.starts_with('(') {
+                rest = rest[after(rest)?..].trim_start();
+            }
+            // The first `(` outside the type parameters opens the parameters.
+            let mut brackets = 0usize;
+            let open = rest.char_indices().find_map(|(i, c)| match c {
+                '[' => {
+                    brackets += 1;
+                    None
+                }
+                ']' => {
+                    brackets = brackets.saturating_sub(1);
+                    None
+                }
+                '(' if brackets == 0 => Some(i),
+                _ => None,
+            })?;
+            let rest = &rest[open..];
+            &rest[after(rest)?..]
+        }
+        Language::C | Language::Cpp => {
+            // Before the name, after the modifiers: `static const char *name(void)`.
+            let mut text = signature.trim();
+            // A template's parameters come first: `template <class T> T id(T x)`.
+            if let Some(rest) = text.strip_prefix("template") {
+                let mut depth = 0usize;
+                let end = rest.char_indices().find_map(|(i, c)| {
+                    match c {
+                        '<' => depth += 1,
+                        '>' => depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    (depth == 0 && c == '>').then_some(i + 1)
+                })?;
+                text = rest[end..].trim_start();
+            }
+            let head = text.split('(').next()?;
+            let cut = head.rfind(|c: char| c.is_whitespace() || c == '*' || c == '&')? + 1;
+            let mut rest = head[..cut].trim();
+            while let Some((word, tail)) = rest.split_once(' ') {
+                if !matches!(
+                    word,
+                    "static"
+                        | "inline"
+                        | "extern"
+                        | "virtual"
+                        | "constexpr"
+                        | "explicit"
+                        | "friend"
+                ) {
+                    break;
+                }
+                rest = tail.trim_start();
+            }
+            if matches!(
+                rest,
+                "static" | "inline" | "extern" | "virtual" | "constexpr" | "explicit" | "friend"
+            ) {
+                return None;
+            }
+            rest
+        }
+        Language::TypeScript | Language::JavaScript | Language::Kotlin => {
+            // After the parameter list: `(x: number): string`, and Kotlin's
+            // `fun load(path: String): Item?`.
             let open = signature.find('(')?;
             let mut depth = 0usize;
             let close = signature[open..].char_indices().find_map(|(i, c)| {
@@ -419,7 +556,8 @@ fn return_type(signature: &str, language: Language) -> Option<String> {
         _ => return None,
     };
     let text = text.trim().trim_end_matches([':', '{']).trim();
-    let unit = matches!(text, "" | "()" | "None" | "void");
+    let unit = matches!(text, "" | "()" | "None" | "void")
+        || (text == "Unit" && language == Language::Kotlin);
     (!unit && !text.contains('`') && text.chars().count() <= 60).then(|| text.to_string())
 }
 
@@ -570,7 +708,12 @@ pub(crate) fn items(ctx: &RenderCtx, parent: &str, walk: &Walk) -> String {
             if text.is_empty() {
                 format!("- {} — {}", label(s), facts(ctx, s))
             } else {
-                format!("- {} — {}", label(s), lower_first(&text))
+                // A Go comment starts with the name it documents: that word
+                // is a name, never a sentence's first word.
+                let named = Language::from_path(&s.file) == Language::Go
+                    && text.split([' ', ',']).next() == Some(s.name.as_str());
+                let text = if named { text } else { lower_first(&text) };
+                format!("- {} — {text}", label(s))
             }
         })
         .collect();
@@ -623,6 +766,46 @@ mod tests {
         assert_eq!(return_type("name(): void", Language::TypeScript), None);
         assert_eq!(return_type("function f(x)", Language::JavaScript), None);
         assert_eq!(return_type("public String name()", Language::Java), None);
+        let kotlin = |signature| return_type(signature, Language::Kotlin);
+        assert_eq!(
+            kotlin("fun load(path: String): Item?").as_deref(),
+            Some("Item?")
+        );
+        assert_eq!(
+            kotlin("fun <T : Comparable<T>> List<T>.second(): T").as_deref(),
+            Some("T")
+        );
+        assert_eq!(kotlin("fun run()"), None);
+        assert_eq!(kotlin("fun run(): Unit"), None);
+        assert_eq!(kotlin("override fun name() = 1"), None);
+        let csharp = |signature| return_type(signature, Language::CSharp);
+        assert_eq!(
+            csharp("public static async Task<List<Item>> Load<T>(int a)").as_deref(),
+            Some("Task<List<Item>>")
+        );
+        assert_eq!(csharp("protected string Name()").as_deref(), Some("string"));
+        assert_eq!(csharp("public void Run()"), None);
+        assert_eq!(csharp("public App(Label label)"), None);
+        assert_eq!(csharp("T Name()").as_deref(), Some("T"));
+        let go = |signature| return_type(signature, Language::Go);
+        assert_eq!(
+            go("func New(name string) *Store").as_deref(),
+            Some("*Store")
+        );
+        assert_eq!(
+            go("func (s *Store) Get(key string) (Item, error)").as_deref(),
+            Some("(Item, error)")
+        );
+        assert_eq!(
+            go("func Map[T, U any](xs []T, f func(T) U) []U").as_deref(),
+            Some("[]U")
+        );
+        assert_eq!(
+            go("Read(key string) (Item, error)").as_deref(),
+            Some("(Item, error)")
+        );
+        assert_eq!(go("func (s *Set[T]) Add(x T)"), None);
+        assert_eq!(go("func main()"), None);
     }
 
     #[test]
@@ -648,5 +831,29 @@ mod tests {
             in_order(&mixed, 0),
             "`open` in [[Store]], then `check`, then `read`, then `parse` (both in [[Store]]), then `log` in [[Logs]], then `x`, then `y`, then `z` (all in [[Io]])"
         );
+    }
+
+    #[test]
+    fn reads_the_type_a_c_function_returns() {
+        let c = |signature| return_type(signature, Language::C);
+        assert_eq!(c("int add(int a, int b)").as_deref(), Some("int"));
+        assert_eq!(
+            c("static const char *name(void)").as_deref(),
+            Some("const char *")
+        );
+        assert_eq!(c("FT_EXPORT( FT_Error ) FT_Init( void )").as_deref(), None);
+        assert_eq!(c("void run(void)"), None);
+        let cpp = |signature| return_type(signature, Language::Cpp);
+        assert_eq!(
+            cpp("template <typename T> T clamp(T v, T lo, T hi)").as_deref(),
+            Some("T")
+        );
+        assert_eq!(
+            cpp("virtual std::string name() const").as_deref(),
+            Some("std::string")
+        );
+        // A constructor has no type of its own.
+        assert_eq!(cpp("explicit Circle(double radius)"), None);
+        assert_eq!(cpp("Circle(double radius)"), None);
     }
 }

@@ -28,6 +28,11 @@ This module finds three kinds of trouble: code nothing uses, notes that no longe
 - `pub struct DeadSymbol` — public struct; used by `dead_code`.
 - `pub(crate) const PASSIVE_ATTRS: [&str; 12]` — attributes that only describe an item and never make it reachable.
 - `fn is_test_symbol(symbol: &Symbol) -> bool` — private function, returns `bool`; called by `dead_code`.
+- `fn is_kotlin_dispatch(symbol: &Symbol) -> bool` — A Kotlin member the language reaches by itself: one that overrides, which the supertype's callers reach, and an operator, which an expression calls.
+- `fn is_go_entry_point(symbol: &Symbol) -> bool` — the functions the Go runtime calls: `main`, and each `init`.
+- `fn is_go_api(symbol: &Symbol, by_name: &HashMap<&str, &Symbol>) -> bool` — an exported Go name outside `package main` and outside an `internal` folder is the package's API, which code outside the repository may use.
+- `fn is_c_api(symbol: &Symbol) -> bool` — what a C or C++ header declares for others: its API, which code outside the repository may call. `DllMain` and the other entry points a loader calls are never dead either.
+- `fn is_csharp_main(symbol: &Symbol) -> bool` — A C# program's `Main`, which the runtime calls.
 - `pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>>` — symbols nothing refers to. Reported: functions, methods, types, constants and statics with no incoming call, reference or implementation edge. Skipped: entry points, tests, trait items and trait-impl methods (reached by dynamic dispatch), enum and struct members, and anything public in a library crate (it is API).
 - `pub enum DriftKind` — public enum; used by `Drift`.
 - `pub struct Drift` — public struct; used by `DocReport`, `doc_drift`.
@@ -40,22 +45,22 @@ This module finds three kinds of trouble: code nothing uses, notes that no longe
 - `fn parameter_count(signature: &str) -> usize` — number of parameters in a function signature, not counting a receiver. Counts top-level commas of the first parenthesised group, so generic arguments and nested tuples do not inflate it.
 - `pub fn file_health(index: &Index) -> Result<Vec<FileHealth>>` — health score for every source file with symbol support, worst first.
 
-And 7 more private items with no comment.
+And 8 more items.
 
 ## Depends on
 
 - [[Index]] — uses `Index`, `crates`, `edges`, `files`
-- [[Language]] — uses `from_path`, `has_symbol_support`
+- [[Units Module]] — uses `is_csharp_test_attribute`, `is_kotlin_entry`, `is_test_file`
+- [[Language]] — uses `from_path`, `has_symbol_support`, `is_c_family`
+- [[Kotlin Module]] — uses `EXTENSION_ATTR`, `KOTEST_ATTR`
 - [[VaultMeta]] — uses `load`, `registry`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[Error Module]] — uses `Result`
 - [[Model Module]] — uses `FileRecord`
-- [[Lifecycle Module]] — uses `state`
-- [[Note Module]] — uses `parse`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_cycle_is_two_sibling_files_not_a_module_and_its_parent`, `finds_dead_code_without_false_alarms`, `private_items_used_through_receivers_and_constants_are_alive`, `reports_documentation_drift_and_coverage`
+- [[cw-wiki]] — from `a_cycle_is_two_sibling_files_not_a_module_and_its_parent`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `finds_dead_code_without_false_alarms`, `private_items_used_through_receivers_and_constants_are_alive`
 - [[Api Module]] — from `dead_code`, `doc_drift`, `file_health`
 - [[Refactor Module]] — from `extract_types`, `move_functions`, `split_files`
 - [[codewiki]] — from `run`

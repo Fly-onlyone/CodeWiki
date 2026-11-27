@@ -33,6 +33,7 @@ Declared as `pub struct NoteEntry`.
 ## Depends on
 
 - [[Manifest Module]] — uses `Explained`, `Origin`
+- [[Gone]] — uses `Gone`
 - [[SourceRef]] — uses `SourceRef`
 - [[NoteKind]] — uses `NoteKind`
 
@@ -44,6 +45,8 @@ Declared as `pub struct NoteEntry`.
 - [[Query Module]] — from `find_entry`, `info`, `title_of`
 - [[cw-wiki]] — from `entry`, `entry_of`
 - [[Lifecycle Module]] — from `action`, `state`
+- [[Gone Module]] — from `of_adopted`, `of_generated`
+- [[Git]] — from `holds`
 
 ## Gotchas
 

@@ -23,6 +23,9 @@ pub enum Kind {
     Sync,
     /// A coding agent that explained the note.
     Agent,
+    /// A sync that found notes written by hand about code that is gone: one
+    /// proposal to delete them all, with any of them left out.
+    Retire,
 }
 
 impl Kind {
@@ -31,9 +34,13 @@ impl Kind {
         match self {
             Self::Sync => "Sync",
             Self::Agent => "Agent",
+            Self::Retire => "Retire",
         }
     }
 }
+
+/// What the queue calls a retire proposal, which is about no single note.
+pub const RETIRE_NAME: &str = "Notes about code that is gone";
 
 /// One pending proposal, as the queue lists it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,9 +53,39 @@ pub struct Item {
 }
 
 impl Item {
-    /// The note's name: its file name without `.md`.
+    /// The note's name: its file name without `.md`. A retire proposal has
+    /// a name of its own.
     pub fn name(&self) -> &str {
-        note_name(&self.note_path)
+        match self.kind {
+            Kind::Retire => RETIRE_NAME,
+            _ => note_name(&self.note_path),
+        }
+    }
+}
+
+/// The notes a retire proposal would delete, by vault path, from what
+/// `GET /v1/repos/{id}/proposals/{pid}` answered; none for any other
+/// proposal.
+pub fn retire_notes(detail: &Value) -> Vec<String> {
+    detail["proposal"]["retire"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|note| note["path"].as_str())
+        .map(str::to_string)
+        .collect()
+}
+
+/// The label of the button that approves a retire proposal of `notes`
+/// notes, `kept` of which the user left out.
+pub fn retire_label(notes: usize, kept: usize) -> String {
+    let deleted = notes.saturating_sub(kept);
+    match (deleted, kept) {
+        (0, _) => "Keep all as history".to_string(),
+        (1, 0) => "Delete 1 note".to_string(),
+        (n, 0) => format!("Delete {n} notes"),
+        (1, k) => format!("Delete 1 note, keep {k}"),
+        (n, k) => format!("Delete {n} notes, keep {k}"),
     }
 }
 
@@ -70,10 +107,10 @@ pub fn pending(proposals: &Value) -> Vec<Item> {
             Some(Item {
                 id: proposal["id"].as_str()?.to_string(),
                 note_path: proposal["note_path"].as_str()?.to_string(),
-                kind: if proposal["kind"] == "agent" {
-                    Kind::Agent
-                } else {
-                    Kind::Sync
+                kind: match proposal["kind"].as_str() {
+                    Some("agent") => Kind::Agent,
+                    Some("retire") => Kind::Retire,
+                    _ => Kind::Sync,
                 },
                 reason: proposal["reason"].as_str().unwrap_or("").to_string(),
             })
@@ -292,14 +329,17 @@ pub fn counts(items: &[Item], selected: usize) -> Vec<String> {
     if items.is_empty() {
         return vec!["Nothing waits".to_string()];
     }
-    let agents = items.iter().filter(|item| item.kind == Kind::Agent).count();
-    let syncs = items.len() - agents;
+    let of = |kind: Kind| items.iter().filter(|item| item.kind == kind).count();
+    let (syncs, agents, retires) = (of(Kind::Sync), of(Kind::Agent), of(Kind::Retire));
     let mut lines = vec![format!("{} waiting", items.len())];
     if syncs > 0 {
         lines.push(format!("{syncs} from a sync"));
     }
     if agents > 0 {
         lines.push(format!("{agents} from a coding agent"));
+    }
+    if retires > 0 {
+        lines.push(format!("{retires} to retire notes about code that is gone"));
     }
     if selected > 0 {
         lines.push(format!("{selected} selected"));
@@ -331,11 +371,19 @@ pub fn decided_notices(approve: bool, results: &[DecideResult], items: &[Item]) 
         action: None,
         throttle: false,
     };
+    // A retire proposal writes no note: it deletes notes, or keeps them.
+    let retires = |result: &DecideResult| {
+        items
+            .iter()
+            .any(|item| item.id == result.id && item.kind == Kind::Retire)
+    };
     let (done, failed): (Vec<&DecideResult>, Vec<&DecideResult>) =
         results.iter().partition(|result| result.ok);
     let mut notices = Vec::new();
     let title = match (done.as_slice(), approve) {
         ([], _) => None,
+        ([one], true) if retires(one) => Some("Retired the notes about code that is gone".into()),
+        ([one], false) if retires(one) => Some("Kept the notes as history".into()),
         ([one], true) => Some(format!("Written to {}", name(one))),
         ([one], false) => Some(format!("Rejected the proposal for {}", name(one))),
         (several, true) => Some(format!("Approved {}", several.len())),
@@ -344,7 +392,9 @@ pub fn decided_notices(approve: bool, results: &[DecideResult], items: &[Item]) 
     if let Some(title) = title {
         // One note written: the way to it.
         let open = match done.as_slice() {
-            [one] if approve => path(one).map(|path| ("Open note".to_string(), Action::Note(path))),
+            [one] if approve && !retires(one) => {
+                path(one).map(|path| ("Open note".to_string(), Action::Note(path)))
+            }
             _ => None,
         };
         notices.push(Notice {
@@ -476,6 +526,8 @@ pub fn written(approve: bool, results: &[DecideResult], items: &[Item]) -> Vec<S
                 Some(item.note_path.clone())
             })
         })
+        // A retire proposal names no note of its own.
+        .filter(|path| !path.is_empty())
         .collect()
 }
 
@@ -599,6 +651,12 @@ pub struct State {
     pub load_error: Option<String>,
     /// How many new proposals each repository's notice says.
     pub told: Told,
+    /// The notes the open proposal would delete, by vault path, when it is
+    /// a retire proposal; empty for any other.
+    pub retire: Vec<String>,
+    /// The notes of [`State::retire`] the user left out: they stay, as
+    /// history, when the proposal is approved.
+    pub keep: std::collections::BTreeSet<String>,
 }
 
 #[cfg(test)]
@@ -678,6 +736,84 @@ mod tests {
         assert_eq!(note_name("Old.md"), "Old");
         assert_eq!(note_name("a/b/c"), "c");
         assert_eq!((Kind::Sync.label(), Kind::Agent.label()), ("Sync", "Agent"));
+    }
+
+    fn retire_item() -> Item {
+        Item {
+            id: "retire-1".into(),
+            note_path: String::new(),
+            kind: Kind::Retire,
+            reason: "2 notes describe code that is gone".into(),
+        }
+    }
+
+    #[test]
+    fn a_retire_proposal_is_listed_under_a_name_of_its_own() {
+        let queue = pending(&json!([
+            {"id": "retire-1", "note_id": "retire", "note_path": "", "status": "pending",
+             "kind": "retire", "reason": "2 notes describe code that is gone"},
+        ]));
+        assert_eq!(queue, vec![retire_item()]);
+        assert_eq!(queue[0].name(), RETIRE_NAME);
+        assert_eq!(Kind::Retire.label(), "Retire");
+        assert_eq!(
+            counts(&[retire_item(), item("a", "Parser", Kind::Sync)], 0),
+            [
+                "2 waiting",
+                "1 from a sync",
+                "1 to retire notes about code that is gone"
+            ]
+        );
+    }
+
+    #[test]
+    fn the_notes_of_a_retire_proposal_are_read_from_its_detail() {
+        let detail = json!({
+            "proposal": {
+                "id": "retire-1", "kind": "retire",
+                "retire": [
+                    {"note_id": "adopted:06-Notes/A.md", "path": "06-Notes/A.md",
+                     "base_hash": "h", "cited": ["legacy/a.cfg"]},
+                    {"note_id": "adopted:06-Notes/B.md", "path": "06-Notes/B.md",
+                     "base_hash": "h", "cited": ["legacy/b.cfg"]},
+                ]
+            },
+            "proposed": "# Notes about code that is gone\n", "patch": ""
+        });
+        assert_eq!(retire_notes(&detail), ["06-Notes/A.md", "06-Notes/B.md"]);
+        // Any other proposal names none.
+        assert!(retire_notes(&json!({"proposal": {"id": "p", "kind": "sync"}})).is_empty());
+    }
+
+    #[test]
+    fn the_approve_button_of_a_retire_proposal_says_what_goes_and_what_stays() {
+        assert_eq!(retire_label(301, 0), "Delete 301 notes");
+        assert_eq!(retire_label(1, 0), "Delete 1 note");
+        assert_eq!(retire_label(301, 3), "Delete 298 notes, keep 3");
+        assert_eq!(retire_label(2, 1), "Delete 1 note, keep 1");
+        assert_eq!(retire_label(2, 2), "Keep all as history");
+    }
+
+    #[test]
+    fn a_decided_retire_proposal_is_told_in_its_own_words() {
+        let items = [retire_item()];
+        let done = [DecideResult {
+            id: "retire-1".into(),
+            ok: true,
+            note_path: Some(String::new()),
+            error: None,
+        }];
+        let approved = decided_notices(true, &done, &items);
+        assert_eq!(approved.len(), 1);
+        assert_eq!(
+            approved[0].title,
+            "Retired the notes about code that is gone"
+        );
+        assert_eq!(approved[0].action, None, "there is no one note to open");
+        let rejected = decided_notices(false, &done, &items);
+        assert_eq!(rejected[0].title, "Kept the notes as history");
+        // No page of a note is forgotten for it.
+        assert!(written(true, &done, &items).is_empty());
     }
 
     #[test]

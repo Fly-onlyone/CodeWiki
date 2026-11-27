@@ -26,7 +26,7 @@ Declared as `pub(crate) struct Sink<'a>`.
 
 Members:
 
-- `pub fn new(file: &'a str, source: &'a str, module: &str, has_errors: bool) -> Self` — public method, returns `Self`; called by `parse_java`, `parse_python`, `parse_typescript`.
+- `pub fn new(file: &'a str, source: &'a str, module: &str, has_errors: bool) -> Self` — public method, returns `Self`; called by `parse_c`, `parse_csharp`, `parse_go`, `parse_java` and 3 more.
 - `pub fn text(&self, node: Node) -> &'a str` — public method, returns `&'a str`.
 - `pub fn between(&self, start: usize, end: usize) -> &'a str` — public method, returns `&'a str`.
 - `pub fn module_symbol( &mut self, signature: String, doc: String, start_line: u32, end_line: u32, )` — record the module the file defines, spanning `start_line..=end_line`.
@@ -49,9 +49,13 @@ Members:
 
 ## Used by
 
-- [[Typescript Module]] — from `Extractor`, `class`, `enumeration`, `export`
-- [[Java Module]] — from `Extractor`, `enum_constant`, `field`, `method`
-- [[Python Module]] — from `Extractor`, `attribute`, `class`, `function`
+- [[Typescript Module]] — from `Extractor`, `class`, `export`, `field`
+- [[Go Module]] — from `Extractor`, `embeds`, `function`, `interface_body`
+- [[C Module]] — from `Extractor`, `bases`, `block_test`, `function_test`
+- [[Kotlin Module]] — from `Extractor`, `call_by_name`, `parse_kotlin`, `signature`
+- [[Python Module]] — from `Extractor`, `attribute`, `class`, `parse_python`
+- [[Csharp Module]] — from `Extractor`, `base_list`, `parse_csharp`, `signature`
+- [[Java Module]] — from `Extractor`, `parse_java`, `signature`, `type_decl`
 
 ## Gotchas
 

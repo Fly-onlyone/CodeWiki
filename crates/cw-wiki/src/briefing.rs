@@ -145,7 +145,7 @@ pub fn session_start(root: &Path, explain: Explain) -> Result<String> {
     }
     let mut out = format!(
         "CodeWiki: this repository has a maintained wiki of {} notes in `{VAULT_DIR}/`. Its home note is `{VAULT_DIR}/{HOME_NOTE}`.\n",
-        meta.notes.len()
+        meta.live_notes()
     );
     let generated = meta.manifest.last_indexed_commit.as_deref();
     match (generated, head_commit(root)) {

@@ -3,10 +3,13 @@
 //! Turns the per-file facts into graph edges. Resolution is heuristic, so each
 //! edge records how it was matched; see [`cw_core::Confidence`].
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::rc::Rc;
 
 use cw_core::{Confidence, Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility, file_node};
 
+use crate::kotlin::EXTENSION_ATTR;
 use crate::rust::ParsedFile;
 use crate::workspace::CrateInfo;
 
@@ -166,6 +169,325 @@ const COMMON_METHODS: [&str; 64] = [
     "zip",
 ];
 
+/// The same for C#, whose method names are capitalized. The lookup is by
+/// exact name, so `Add` and `add` stay apart.
+const COMMON_CSHARP_METHODS: [&str; 52] = [
+    "Add",
+    "AddRange",
+    "All",
+    "Any",
+    "Append",
+    "AsEnumerable",
+    "Clear",
+    "Clone",
+    "Close",
+    "CompareTo",
+    "Contains",
+    "ContainsKey",
+    "Copy",
+    "Count",
+    "Dispose",
+    "DisposeAsync",
+    "Equals",
+    "Exists",
+    "First",
+    "FirstOrDefault",
+    "ForEach",
+    "Get",
+    "GetHashCode",
+    "GetType",
+    "Insert",
+    "Invoke",
+    "Join",
+    "Last",
+    "Load",
+    "Max",
+    "Min",
+    "Parse",
+    "Read",
+    "ReadAsync",
+    "Remove",
+    "Reverse",
+    "Select",
+    "Send",
+    "Set",
+    "Single",
+    "Skip",
+    "Sort",
+    "Split",
+    "Start",
+    "Stop",
+    "Sum",
+    "Take",
+    "ToArray",
+    "ToList",
+    "ToString",
+    "TryGetValue",
+    "Where",
+];
+
+/// The same for Go, whose exported names are capitalized: methods of the
+/// standard library that nearly every receiver of unknown type has.
+const COMMON_GO_METHODS: [&str; 52] = [
+    "Add",
+    "Append",
+    "Clear",
+    "Clone",
+    "Close",
+    "Contains",
+    "Copy",
+    "Delete",
+    "Do",
+    "Done",
+    "Err",
+    "Error",
+    "Exec",
+    "Flush",
+    "Format",
+    "Get",
+    "Handle",
+    "Info",
+    "Init",
+    "Join",
+    "Len",
+    "Less",
+    "Load",
+    "Lock",
+    "Log",
+    "Marshal",
+    "Next",
+    "Open",
+    "Parse",
+    "Print",
+    "Printf",
+    "Put",
+    "Query",
+    "Read",
+    "Remove",
+    "Reset",
+    "Run",
+    "Scan",
+    "Send",
+    "Set",
+    "Start",
+    "Stop",
+    "Store",
+    "String",
+    "Swap",
+    "Unlock",
+    "Unmarshal",
+    "Update",
+    "Wait",
+    "Write",
+    "WriteString",
+    "Value",
+];
+
+/// The same for Kotlin: the scope functions, the collection and string
+/// extensions and the infix functions of its standard library, which any
+/// receiver of unknown type may be given. They are extension functions of
+/// the platform, so a repository function of the same name is no answer.
+const COMMON_KOTLIN_METHODS: [&str; 81] = [
+    "also",
+    "any",
+    "apply",
+    "associate",
+    "associateBy",
+    "contains",
+    "count",
+    "downTo",
+    "drop",
+    "emptyList",
+    "filter",
+    "filterIsInstance",
+    "filterNot",
+    "filterNotNull",
+    "first",
+    "firstOrNull",
+    "flatMap",
+    "forEach",
+    "forEachIndexed",
+    "getOrDefault",
+    "getOrNull",
+    "getOrPut",
+    "groupBy",
+    "isEmpty",
+    "isNotEmpty",
+    "isNullOrBlank",
+    "isNullOrEmpty",
+    "joinToString",
+    "last",
+    "lastOrNull",
+    "let",
+    "listOf",
+    "map",
+    "mapNotNull",
+    "mapOf",
+    "mapValues",
+    "max",
+    "maxOrNull",
+    "min",
+    "minOrNull",
+    "none",
+    "onEach",
+    "orEmpty",
+    "plus",
+    "reversed",
+    "run",
+    "sorted",
+    "sortedBy",
+    "sortedByDescending",
+    "sortedWith",
+    "split",
+    "step",
+    "substring",
+    "sumOf",
+    "take",
+    "takeIf",
+    "takeUnless",
+    "to",
+    "toInt",
+    "toList",
+    "toLong",
+    "toMap",
+    "toMutableList",
+    "toMutableMap",
+    "toSet",
+    "toString",
+    "trim",
+    "trimIndent",
+    "until",
+    "use",
+    "with",
+    "withIndex",
+    "zip",
+    "launch",
+    "async",
+    "emit",
+    "collect",
+    "lazy",
+    "require",
+    "check",
+    "error",
+];
+
+/// The same for C and C++: the calls of the standard library, the C library
+/// and the usual containers that a receiver of unknown type nearly always
+/// means.
+const COMMON_C_METHODS: &[&str] = &[
+    "abort",
+    "append",
+    "assign",
+    "assert",
+    "at",
+    "atoi",
+    "back",
+    "begin",
+    "c_str",
+    "cbegin",
+    "cend",
+    "clear",
+    "close",
+    "count",
+    "data",
+    "detach",
+    "emplace",
+    "emplace_back",
+    "empty",
+    "end",
+    "eof",
+    "erase",
+    "exit",
+    "fail",
+    "fclose",
+    "fflush",
+    "fgets",
+    "find",
+    "first",
+    "flush",
+    "fopen",
+    "fprintf",
+    "fputs",
+    "fread",
+    "free",
+    "front",
+    "fwrite",
+    "get",
+    "good",
+    "has_value",
+    "init",
+    "insert",
+    "join",
+    "length",
+    "load",
+    "lock",
+    "malloc",
+    "memcmp",
+    "memcpy",
+    "memmove",
+    "memset",
+    "notify_all",
+    "notify_one",
+    "open",
+    "pop",
+    "pop_back",
+    "pop_front",
+    "print",
+    "printf",
+    "push",
+    "push_back",
+    "push_front",
+    "puts",
+    "rbegin",
+    "read",
+    "realloc",
+    "release",
+    "rend",
+    "reserve",
+    "reset",
+    "resize",
+    "run",
+    "second",
+    "set",
+    "size",
+    "snprintf",
+    "sprintf",
+    "start",
+    "stop",
+    "store",
+    "str",
+    "strcat",
+    "strcmp",
+    "strcpy",
+    "strlen",
+    "strncmp",
+    "strncpy",
+    "substr",
+    "swap",
+    "top",
+    "unlock",
+    "update",
+    "value",
+    "value_or",
+    "wait",
+    "what",
+    "write",
+];
+
+/// What a name stands for at the place it is written, in C and C++ code.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Want {
+    /// An `#include`: a module.
+    Module,
+    Type,
+    Call,
+    Value,
+}
+
+fn same_language(a: Language, b: Language) -> bool {
+    a == b || (a.is_c_family() && b.is_c_family())
+}
+
 pub struct Resolver<'a> {
     symbols: HashMap<&'a str, &'a Symbol>,
     by_name: HashMap<&'a str, Vec<&'a Symbol>>,
@@ -174,8 +496,31 @@ pub struct Resolver<'a> {
     /// module -> absolute paths of glob-imported modules
     globs: HashMap<String, Vec<Vec<String>>>,
     crate_names: HashSet<&'a str>,
+    /// Namespaces of C# code. Their `using` lines are no re-exports, so a
+    /// name is never followed through them while a path is resolved.
+    csharp_modules: HashSet<String>,
+    /// Packages of Go code. An import there binds a name in one file and
+    /// re-exports nothing, so a name is never followed through one.
+    go_modules: HashSet<String>,
+    /// Packages that hold Kotlin code. As in Go, an import there binds a
+    /// name in one file and re-exports nothing; Kotlin files also import
+    /// with `*` often, which would make the search through re-exports grow
+    /// with every glob of every package on the way.
+    kotlin_modules: HashSet<String>,
     /// crate -> the crates its manifest lets its code name, itself excluded
     crate_deps: HashMap<&'a str, HashSet<&'a str>>,
+    /// The modules of C and C++ code: a header with its source. A name there
+    /// is found in the module, in what it includes, and in what those
+    /// include, and nowhere else (see `lookup_c`).
+    c_modules: HashSet<String>,
+    /// module -> the modules its files include directly.
+    c_includes: HashMap<String, Vec<String>>,
+    /// Every namespace some symbol was declared in, by segment.
+    c_namespaces: HashSet<String>,
+    /// module -> the modules it sees and how far (0 itself, 1 included
+    /// directly, 2 and more through other headers). Worked out when first
+    /// asked.
+    c_seen: RefCell<HashMap<String, Rc<HashMap<String, u8>>>>,
 }
 
 impl<'a> Resolver<'a> {
@@ -196,8 +541,31 @@ impl<'a> Resolver<'a> {
             imports: HashMap::new(),
             globs: HashMap::new(),
             crate_names: crate_names.into_iter().collect(),
+            csharp_modules: HashSet::new(),
+            go_modules: symbols
+                .iter()
+                .filter(|s| {
+                    s.kind == SymbolKind::Module && Language::from_path(&s.file) == Language::Go
+                })
+                .map(|s| s.qualified.clone())
+                .collect(),
+            // The module symbol stands for a package in the file that came
+            // first, which may be a Java file, so look at every file.
+            kotlin_modules: files
+                .iter()
+                .filter(|(path, _)| Language::from_path(path) == Language::Kotlin)
+                .flat_map(|(_, parsed)| &parsed.symbols)
+                .filter(|s| s.kind == SymbolKind::Module)
+                .map(|s| s.qualified.clone())
+                .collect(),
             crate_deps: HashMap::new(),
+            c_modules: HashSet::new(),
+            c_includes: HashMap::new(),
+            c_namespaces: HashSet::new(),
+            c_seen: RefCell::new(HashMap::new()),
         };
+        this.see_c_modules(symbols, files);
+        this.see_enclosing_namespaces();
         for (_, parsed) in files {
             for u in &parsed.uses {
                 let Some(mut abs) = this.absolutize(&u.path, &u.scope, None) else {
@@ -224,6 +592,224 @@ impl<'a> Resolver<'a> {
             }
         }
         this
+    }
+
+    /// Find the modules of C and C++ code, what each includes, and the
+    /// namespaces that were declared.
+    fn see_c_modules(&mut self, symbols: &[Symbol], files: &[(String, ParsedFile)]) {
+        for s in symbols {
+            if Language::from_path(&s.file).is_c_family() {
+                if s.kind == SymbolKind::Module {
+                    self.c_modules.insert(s.qualified.clone());
+                }
+                for attr in &s.attrs {
+                    if let Some(namespace) = attr.strip_prefix(crate::c::NAMESPACE_ATTR) {
+                        self.c_namespaces
+                            .extend(namespace.split("::").map(str::to_string));
+                    }
+                }
+            }
+        }
+        if self.c_modules.is_empty() {
+            return;
+        }
+        for (_, parsed) in files {
+            for u in &parsed.uses {
+                if u.glob && self.c_modules.contains(&u.scope) {
+                    let included = u.path.join("::");
+                    if included != u.scope && self.c_modules.contains(&included) {
+                        let list = self.c_includes.entry(u.scope.clone()).or_default();
+                        if !list.contains(&included) {
+                            list.push(included);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The modules `module` sees, nearest first: itself, what its files
+    /// include, and what those include. Transitive, as the preprocessor is.
+    fn c_seen(&self, module: &str) -> Rc<HashMap<String, u8>> {
+        if let Some(found) = self.c_seen.borrow().get(module) {
+            return Rc::clone(found);
+        }
+        let mut seen: HashMap<String, u8> = HashMap::new();
+        seen.insert(module.to_string(), 0);
+        let mut frontier = vec![module.to_string()];
+        let mut depth = 0u8;
+        while !frontier.is_empty() && depth < 8 {
+            depth = depth.saturating_add(1);
+            let mut next = Vec::new();
+            for current in frontier {
+                for included in self.c_includes.get(&current).into_iter().flatten() {
+                    if !seen.contains_key(included) {
+                        seen.insert(included.clone(), depth.min(2));
+                        next.push(included.clone());
+                    }
+                }
+            }
+            frontier = next;
+        }
+        let seen = Rc::new(seen);
+        self.c_seen
+            .borrow_mut()
+            .insert(module.to_string(), Rc::clone(&seen));
+        seen
+    }
+
+    /// The module a C or C++ symbol is declared in.
+    fn c_home<'s>(&self, symbol: &'s Symbol) -> Option<&'s str> {
+        let mut end = symbol.qualified.len();
+        loop {
+            let prefix = &symbol.qualified[..end];
+            if self.c_modules.contains(prefix) {
+                return Some(prefix);
+            }
+            end = prefix.rfind("::")?;
+        }
+    }
+
+    /// Whether code in `module` can name `symbol`: it is in the module or in
+    /// a header the module includes, and not private to another file.
+    fn c_sees(&self, module: &str, symbol: &Symbol) -> bool {
+        let Some(home) = self.c_home(symbol) else {
+            return false;
+        };
+        if home == module {
+            return true;
+        }
+        symbol.visibility == Visibility::Public && self.c_seen(module).contains_key(home)
+    }
+
+    /// Resolve a name written in a C or C++ module. The enclosing scopes of
+    /// `from` come first (the class, then the module), then whatever the
+    /// module sees, the nearest header first. A name that two headers at the
+    /// same distance both declare names nothing.
+    fn lookup_c(
+        &self,
+        path: &[String],
+        module: &str,
+        from: Option<&str>,
+        want: Want,
+    ) -> Option<&'a Symbol> {
+        if want == Want::Module {
+            return self
+                .symbols
+                .get(path.join("::").as_str())
+                .filter(|s| s.kind == SymbolKind::Module)
+                .copied();
+        }
+        let mut path = path;
+        // `ns::f` names `f`: namespaces are no part of a symbol's name, but
+        // `std::` is nobody's here.
+        while path.len() > 1 && self.c_namespaces.contains(&path[0]) {
+            path = &path[1..];
+        }
+        let name = path.last()?;
+        let accepts = |s: &Symbol| match want {
+            Want::Type => s.kind.is_type() || s.kind == SymbolKind::TypeAlias,
+            Want::Call => {
+                matches!(
+                    s.kind,
+                    SymbolKind::Function | SymbolKind::Method | SymbolKind::Macro
+                ) || s.kind.is_type()
+            }
+            Want::Value => !matches!(s.kind, SymbolKind::Module),
+            Want::Module => false,
+        };
+        let tail = path.join("::");
+        if let Some(from) = from {
+            let floor = module.split("::").count();
+            let mut scope: Vec<&str> = from.split("::").collect();
+            scope.pop();
+            while scope.len() >= floor {
+                let candidate = format!("{}::{tail}", scope.join("::"));
+                if let Some(found) = self.symbols.get(candidate.as_str())
+                    && accepts(found)
+                {
+                    return Some(found);
+                }
+                scope.pop();
+            }
+        }
+        let suffix = format!("::{tail}");
+        let seen = self.c_seen(module);
+        let mut best: Option<(u8, &'a Symbol)> = None;
+        let mut tie = false;
+        for symbol in self.by_name.get(name.as_str())? {
+            if !Language::from_path(&symbol.file).is_c_family()
+                || !accepts(symbol)
+                || !symbol.qualified.ends_with(&suffix)
+            {
+                continue;
+            }
+            // A bare name is a method only inside its own class.
+            if path.len() == 1 && symbol.kind == SymbolKind::Method {
+                continue;
+            }
+            let Some(home) = self.c_home(symbol) else {
+                continue;
+            };
+            let Some(&depth) = seen.get(home) else {
+                continue;
+            };
+            if home != module && symbol.visibility != Visibility::Public {
+                continue;
+            }
+            match best {
+                Some((d, b)) if d < depth || (d == depth && b.qualified == symbol.qualified) => {}
+                Some((d, _)) if d == depth => tie = true,
+                _ => {
+                    best = Some((depth, symbol));
+                    tie = false;
+                }
+            }
+        }
+        best.filter(|_| !tie).map(|(_, s)| s)
+    }
+
+    /// The function a call of `symbol` runs: a constructor for a type, the
+    /// function or macro itself.
+    fn c_callee(&self, symbol: &'a Symbol) -> Option<&'a Symbol> {
+        if symbol.kind.is_type() {
+            return self
+                .symbols
+                .get(format!("{}::{}", symbol.qualified, symbol.name).as_str())
+                .copied()
+                .filter(|s| s.kind == SymbolKind::Method);
+        }
+        Some(symbol)
+    }
+
+    /// C# code sees the types of the namespaces around its own without a
+    /// `using`: in `A.B.C`, the types of `A.B` and `A`. Each namespace of a
+    /// C# file opens its ancestors as glob imports, nearest first. These are
+    /// no import of any file, so they give no import edge.
+    fn see_enclosing_namespaces(&mut self) {
+        let mut modules: Vec<&str> = self
+            .symbols
+            .values()
+            .filter(|s| {
+                s.kind == SymbolKind::Module && Language::from_path(&s.file) == Language::CSharp
+            })
+            .map(|s| s.qualified.as_str())
+            .collect();
+        modules.sort_unstable();
+        self.csharp_modules = modules.iter().map(|m| m.to_string()).collect();
+        for module in modules {
+            let segments: Vec<&str> = module.split("::").collect();
+            let ancestors: Vec<Vec<String>> = (1..segments.len())
+                .rev()
+                .map(|k| segments[..k].iter().map(|s| s.to_string()).collect())
+                .collect();
+            if !ancestors.is_empty() {
+                self.globs
+                    .entry(module.to_string())
+                    .or_default()
+                    .extend(ancestors);
+            }
+        }
     }
 
     /// Rewrite `crate`, `self`, `super` and `Self` prefixes to absolute form.
@@ -267,6 +853,12 @@ impl<'a> Resolver<'a> {
         }
         for i in (1..segs.len()).rev() {
             let module = segs[..i].join("::");
+            if self.csharp_modules.contains(&module)
+                || self.go_modules.contains(&module)
+                || self.kotlin_modules.contains(&module)
+            {
+                continue;
+            }
             if let Some(target) = self.imports.get(&module).and_then(|m| m.get(&segs[i])) {
                 let mut next = target.clone();
                 next.extend(segs[i + 1..].iter().cloned());
@@ -298,10 +890,18 @@ impl<'a> Resolver<'a> {
         module: &str,
         self_type: Option<&str>,
     ) -> Option<&'a Symbol> {
+        if self.c_modules.contains(module) {
+            return self
+                .lookup_c(path, module, None, Want::Module)
+                .or_else(|| self.lookup_c(path, module, None, Want::Value));
+        }
         let abs = self.absolutize(path, module, self_type)?;
         let explicit = matches!(path[0].as_str(), "crate" | "self" | "super" | "Self");
         if explicit {
             return self.resolve_abs(&abs, 0);
+        }
+        if self.csharp_modules.contains(module) {
+            return self.lookup_csharp(path, module);
         }
         let mut candidates: Vec<Vec<String>> = Vec::new();
         if let Some(target) = self.imports.get(module).and_then(|m| m.get(&path[0])) {
@@ -325,6 +925,41 @@ impl<'a> Resolver<'a> {
         candidates.iter().find_map(|c| self.resolve_abs(c, 0))
     }
 
+    /// [`Self::lookup`] for code in a C# namespace. A name there is a symbol
+    /// at the place its alias, its namespace, a namespace around it or a
+    /// `using` gives, so each candidate is one direct lookup.
+    fn lookup_csharp(&self, path: &[String], module: &str) -> Option<&'a Symbol> {
+        let tail = path.join("::");
+        let direct = |prefix: &str| {
+            let name = if prefix.is_empty() {
+                tail.clone()
+            } else {
+                format!("{prefix}::{tail}")
+            };
+            self.symbols.get(name.as_str()).copied()
+        };
+        if let Some(target) = self.imports.get(module).and_then(|m| m.get(&path[0])) {
+            let mut c = target.clone();
+            c.extend(path[1..].iter().cloned());
+            if let Some(found) = self.symbols.get(c.join("::").as_str()) {
+                return Some(found);
+            }
+        }
+        direct(module)
+            .or_else(|| {
+                self.crate_names
+                    .contains(path[0].as_str())
+                    .then(|| direct(""))
+                    .flatten()
+            })
+            .or_else(|| {
+                self.globs
+                    .get(module)?
+                    .iter()
+                    .find_map(|g| direct(&g.join("::")))
+            })
+    }
+
     /// [`Self::lookup`], then the scopes enclosing `from`: an item declared
     /// inside a function is visible to the code around it.
     pub fn lookup_from(
@@ -334,6 +969,9 @@ impl<'a> Resolver<'a> {
         self_type: Option<&str>,
         from: &str,
     ) -> Option<&'a Symbol> {
+        if self.c_modules.contains(module) {
+            return self.lookup_c(path, module, Some(from), Want::Value);
+        }
         if let Some(found) = self.lookup(path, module, self_type) {
             return Some(found);
         }
@@ -344,18 +982,29 @@ impl<'a> Resolver<'a> {
         let floor = module.split("::").count();
         while scope.len() > floor {
             // A class body is not a scope for the code inside its methods:
-            // a bare name there never means a sibling member.
-            let is_class = self
-                .symbols
-                .get(scope.join("::").as_str())
-                .is_some_and(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Interface));
-            if is_class {
+            // a bare name there never means a sibling member. In C# it does
+            // for the parts of a partial type, which the parser of one file
+            // cannot see, but never for a constructor, which is named like
+            // its class.
+            let class = self.symbols.get(scope.join("::").as_str()).filter(|s| {
+                matches!(s.kind, SymbolKind::Class | SymbolKind::Interface)
+                    // A Go type is no scope either: a bare name in a method is
+                    // a function of the package, never a sibling method.
+                    || (s.kind.is_type() && Language::from_path(&s.file) == Language::Go)
+            });
+            let csharp = class.is_some_and(|s| Language::from_path(&s.file) == Language::CSharp);
+            if class.is_some() && !csharp {
                 scope.pop();
                 continue;
             }
             let mut candidate: Vec<String> = scope.iter().map(|s| s.to_string()).collect();
             candidate.extend(path.iter().cloned());
-            if let Some(found) = self.resolve_abs(&candidate, 0) {
+            let class_name = scope.last().copied();
+            if let Some(found) = self.resolve_abs(&candidate, 0)
+                && !(csharp
+                    && found.kind == SymbolKind::Method
+                    && Some(found.name.as_str()) == class_name)
+            {
                 return Some(found);
             }
             scope.pop();
@@ -405,19 +1054,26 @@ impl<'a> Resolver<'a> {
         name: &str,
         module: &str,
         language: Language,
-        accept: impl Fn(SymbolKind) -> bool,
+        accept: impl Fn(&Symbol) -> bool,
         private_here: bool,
     ) -> Option<(&'a Symbol, Confidence)> {
         let rust = language == Language::Rust;
         let visible = |s: &Symbol| !rust || (visible_from(s, module) && self.reaches(module, s));
         let only = |found: Vec<&'a Symbol>| (found.len() == 1).then(|| found[0]);
-        // A name never matches a symbol written in another language.
+        // A name never matches a symbol written in another language, Java
+        // and Kotlin included: a receiver of unknown type calls `readLine`
+        // or `add` of the platform far more often than a method of the other
+        // language. Paths and imports do cross between the two.
         let all: Vec<&Symbol> = self
             .by_name
             .get(name)?
             .iter()
             .copied()
-            .filter(|s| accept(s.kind) && Language::from_path(&s.file) == language)
+            .filter(|s| {
+                accept(s)
+                    && same_language(Language::from_path(&s.file), language)
+                    && (!language.is_c_family() || self.c_sees(module, s))
+            })
             .collect();
         let here = |found: &[&'a Symbol], private: bool| {
             only(
@@ -527,8 +1183,17 @@ impl<'a> Resolver<'a> {
                 let Some(trait_path) = &i.trait_path else {
                     continue;
                 };
-                let ty = self.lookup(&i.type_path, &i.module, None);
-                let tr = self.lookup(trait_path, &i.module, None);
+                let (ty, tr) = if self.c_modules.contains(&i.module) {
+                    (
+                        self.lookup_c(&i.type_path, &i.module, None, Want::Type),
+                        self.lookup_c(trait_path, &i.module, None, Want::Type),
+                    )
+                } else {
+                    (
+                        self.lookup(&i.type_path, &i.module, None),
+                        self.lookup(trait_path, &i.module, None),
+                    )
+                };
                 if let (Some(ty), Some(tr)) = (ty, tr) {
                     add(
                         ty.qualified.clone(),
@@ -550,12 +1215,20 @@ impl<'a> Resolver<'a> {
                         .or_else(|| {
                             // On a receiver of unknown type, a common name
                             // nearly always means a standard library method.
-                            let common = COMMON_METHODS.contains(&name);
+                            let common = COMMON_METHODS.contains(&name)
+                                || COMMON_CSHARP_METHODS.contains(&name)
+                                || COMMON_GO_METHODS.contains(&name)
+                                || COMMON_KOTLIN_METHODS.contains(&name)
+                                || (language.is_c_family() && COMMON_C_METHODS.contains(&name));
                             self.by_bare_name(
                                 name,
                                 &c.module,
                                 language,
-                                |k| k == SymbolKind::Method,
+                                |s| {
+                                    s.kind == SymbolKind::Method
+                                        || (s.kind == SymbolKind::Function
+                                            && s.attrs.iter().any(|a| a == EXTENSION_ATTR))
+                                },
                                 common,
                             )
                             .map(|(s, _)| (s, Confidence::Low))
@@ -563,9 +1236,15 @@ impl<'a> Resolver<'a> {
                 } else {
                     // A path that does not resolve names something outside the
                     // repository (std, a dependency, a closure); never guess.
-                    self.lookup_from(&c.path, &c.module, self_type, &c.caller)
-                        .filter(|s| callable(s.kind))
-                        .map(|s| (s, Confidence::High))
+                    if self.c_modules.contains(&c.module) {
+                        self.lookup_c(&c.path, &c.module, Some(&c.caller), Want::Call)
+                            .and_then(|s| self.c_callee(s))
+                            .map(|s| (s, Confidence::High))
+                    } else {
+                        self.lookup_from(&c.path, &c.module, self_type, &c.caller)
+                            .filter(|s| callable(s.kind))
+                            .map(|s| (s, Confidence::High))
+                    }
                 };
                 if let Some((target, conf)) = hit {
                     add(
@@ -585,6 +1264,14 @@ impl<'a> Resolver<'a> {
                     continue;
                 };
                 let kind = match target.kind {
+                    // A function-like macro named in code is a call of it.
+                    SymbolKind::Macro if Language::from_path(&target.file).is_c_family() => {
+                        if v.call {
+                            EdgeKind::Calls
+                        } else {
+                            EdgeKind::References
+                        }
+                    }
                     k if callable(k) && v.call => EdgeKind::Calls,
                     // A function named without being called is passed as a
                     // value; a constant or static is read.
@@ -604,10 +1291,13 @@ impl<'a> Resolver<'a> {
             }
 
             for r in &parsed.type_refs {
-                let hit = self
-                    .lookup_from(&r.path, &r.module, None, &r.from)
-                    .filter(|s| s.kind.is_type() || s.kind == SymbolKind::TypeAlias)
-                    .map(|s| (s, Confidence::High));
+                let hit = if self.c_modules.contains(&r.module) {
+                    self.lookup_c(&r.path, &r.module, Some(&r.from), Want::Type)
+                } else {
+                    self.lookup_from(&r.path, &r.module, None, &r.from)
+                }
+                .filter(|s| s.kind.is_type() || s.kind == SymbolKind::TypeAlias)
+                .map(|s| (s, Confidence::High));
                 if let Some((target, conf)) = hit {
                     add(
                         r.from.clone(),

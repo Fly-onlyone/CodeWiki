@@ -33,7 +33,7 @@ With no owning crate, the file path itself becomes the module path.
 
 ## Items
 
-- `pub struct CrateInfo` — one Cargo package found in the repository.
+- [[CrateInfo]] — one Cargo package found in the repository.
 - `const DEPENDENCY_TABLES: [&str; 3]` — the tables of a manifest, or of one of its `[target.*]` tables, that name dependencies.
 - `fn dependency_names(table: Option<&toml::Value>) -> Vec<String>` — the dependency names in one table, as used in paths.
 - `pub fn parse_manifest(dir: &str, text: &str, files: &[String]) -> Result<Option<CrateInfo>>` — parse a `Cargo.toml`. Returns `None` for a virtual workspace manifest.
@@ -51,15 +51,13 @@ With no owning crate, the file path itself becomes the module path.
 
 - [[Error Module]] — uses `Result`
 - [[Error]] — uses `external`
+- [[CrateInfo]] — uses `CrateInfo`
 
 ## Used by
 
 - [[Manifests Module]] — from `Packages`, `cargo`, `read`
-- [[Scan Module]] — from `RepoFacts`, `scan_repo`
-- [[Query Module]] — from `Overview`
+- [[Scan Module]] — from `scan_repo`
 - [[Testmap Module]] — from `command`
-- [[Index]] — from `crates`
-- [[Resolver]] — from `with_crates`
 - [[Machine]] — from `describe`
 
 ## Gotchas

@@ -4,12 +4,13 @@ tags: [moc, core, cw-vault]
 
 # Core / cw-vault — Map of Content
 
-> Notes for `cw-vault`: 14 concepts.
+> Notes for `cw-vault`: 15 concepts.
 
 ## Notes
 
 - [[cw-vault]] — Obsidian vault model for CodeWiki: notes, manifest, name registry, linter, lifecycle and proposals.
 - [[Explanation Module]] — who writes which part of a note, and how the two parts are put together.
+- [[Gone]] — why a note is still in the vault although what it describes is gone from the repository.
 - [[Lifecycle Module]] — note lifecycle: what may be done to a note given its state on disk.
 - [[Lint Module]] — style linter for vault notes.
 - [[Manifest Module]] — machine metadata stored in `obsidian/.codewiki/`.

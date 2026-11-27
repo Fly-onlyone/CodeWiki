@@ -54,7 +54,7 @@ And 1 more private item with no comment.
 
 ## Used by
 
-- [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `an_index_that_was_never_built_is_not_opened`, `apply_writes_both_files_and_preserves_the_authors_text`, `fixture`
+- [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `an_index_that_was_never_built_is_not_opened`, `apply_writes_both_files_and_preserves_the_authors_text`
 - [[Api Module]] — from `approve_proposal`, `decide_proposals`, `index`, `reindex_repo`
 - [[Embed Job Module]] — from `after_update`, `embed_repo`, `resume`
 - [[codewiki]] — from `run`

@@ -4,7 +4,7 @@ Registers the `codewiki` MCP server so Claude Code can read the repository's wik
 
 ## Requirements
 
-`codewiki` and `codewiki-mcp` must be on `PATH`. The release zip's `install.cmd` puts them there (see Install in the root `README.md`); open a new terminal afterwards. To build them from source instead:
+`codewiki` and `codewiki-mcp` must be on `PATH`. The setup program and the release zip's `install.cmd` both put them there (see Install in the root `README.md`); open a new terminal afterwards. To build them from source instead:
 
 ```
 cargo install --path crates/codewiki
@@ -20,7 +20,7 @@ claude plugin marketplace add "%LOCALAPPDATA%\Programs\CodeWiki\plugins"
 claude plugin install codewiki@codewiki
 ```
 
-The first line adds the `plugins` folder of an installation made from the release zip (in PowerShell: `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`). The folder holds the plugin and nothing else. Claude Code reads it where it is, so nothing is downloaded and git is not needed.
+The first line adds the `plugins` folder of an installation made with the setup program or the release zip (in PowerShell: `"$env:LOCALAPPDATA\Programs\CodeWiki\plugins"`). The folder holds the plugin and nothing else. Claude Code reads it where it is, so nothing is downloaded and git is not needed.
 
 Without that installation, add the repository in its place, or the folder of a clone:
 

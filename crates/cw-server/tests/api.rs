@@ -1817,6 +1817,163 @@ async fn the_status_counts_pending_proposals_per_repository() {
     assert_eq!(h.get("/v1/status").await["proposals"][&id], 2);
 }
 
+fn git(root: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["-c", "user.name=Ann", "-c", "user.email=dev@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[tokio::test]
+async fn a_linked_worktree_is_filed_under_its_repository_and_forgotten_when_gone() {
+    let h = Harness::new();
+    let main = h.repo.path();
+    git(main, &["init", "-q", "-b", "main"]);
+    git(main, &["add", "-A"]);
+    git(main, &["commit", "-q", "-m", "first"]);
+    let (main_id, _) = h.register(main).await;
+
+    let side = tempfile::tempdir().unwrap();
+    let linked = side.path().join("ui-port");
+    git(
+        main,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            linked.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    // As when an agent that works in the worktree calls a tool.
+    let entry = h
+        .post(
+            "/v1/repos",
+            Some(json!({ "path": linked.to_string_lossy() })),
+        )
+        .await;
+    assert_eq!(entry["worktree_of"], json!(main_id), "{entry}");
+    let id = entry["id"].as_str().unwrap().to_string();
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    let index = h.data.path().join("index").join(format!("{id}.db"));
+    assert!(index.exists());
+
+    let listed = h.get("/v1/repos").await;
+    let of = |listed: &Value, id: &str| {
+        listed
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["id"] == id)
+            .cloned()
+    };
+    assert_eq!(of(&listed, &id).unwrap()["worktree_of"], json!(main_id));
+    // The repository itself is no worktree, and says nothing of one.
+    assert!(of(&listed, &main_id).unwrap().get("worktree_of").is_none());
+
+    // The worktree is removed: its entry and its index go with it.
+    fs::remove_dir_all(&linked).unwrap();
+    let listed = h.get("/v1/repos").await;
+    assert!(of(&listed, &id).is_none(), "{listed}");
+    assert!(of(&listed, &main_id).is_some());
+    assert!(!index.exists());
+    let (status, _) = h
+        .call("GET", &format!("/v1/repos/{id}"), Some(TOKEN), None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn a_retire_proposal_is_approved_with_notes_left_out() {
+    let h = Harness::new();
+    let root = h.repo.path();
+    let vault = root.join("obsidian");
+    for name in ["Quokka", "Wombat"] {
+        write(
+            root,
+            &format!("legacy/{name}.cfg"),
+            "mode = old\nretries = 3\n",
+        );
+        write(
+            &vault,
+            &format!("06-Notes/{name} Settings.md"),
+            &format!(
+                "---\ntags: [notes]\n---\n\n# {name} Settings\n\n> Mine, about the {name}.\n\n## Source\n\n- `legacy/{name}.cfg`\n"
+            ),
+        );
+    }
+    let (id, _) = h.register(root).await;
+    h.post(&format!("/v1/repos/{id}/update"), None).await;
+    git(root, &["init", "-q", "-b", "main"]);
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "code and wiki"]);
+    fs::remove_dir_all(root.join("legacy")).unwrap();
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", "retire legacy"]);
+
+    let report = h.post(&format!("/v1/repos/{id}/update"), None).await;
+    assert_eq!(
+        report["retire"],
+        json!(["06-Notes/Quokka Settings.md", "06-Notes/Wombat Settings.md"]),
+        "{report}"
+    );
+    let proposals = h.get(&format!("/v1/repos/{id}/proposals")).await;
+    let retire: Vec<&Value> = proposals
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|p| p["kind"] == "retire")
+        .collect();
+    assert_eq!(retire.len(), 1, "{proposals}");
+    assert_eq!(retire[0]["retire"].as_array().unwrap().len(), 2);
+    let pid = retire[0]["id"].as_str().unwrap();
+    let detail = h.get(&format!("/v1/repos/{id}/proposals/{pid}")).await;
+    assert!(
+        detail["proposed"]
+            .as_str()
+            .unwrap()
+            .contains("`legacy/Quokka.cfg` is gone"),
+        "{detail}"
+    );
+
+    // Only a retire proposal takes notes to keep.
+    let done = h
+        .post(
+            &format!("/v1/repos/{id}/proposals/{pid}/approve"),
+            Some(json!({ "keep": ["06-Notes/Wombat Settings.md"] })),
+        )
+        .await;
+    assert_eq!(done["status"], "approved", "{done}");
+    assert!(!vault.join("06-Notes/Quokka Settings.md").exists());
+    assert!(vault.join("06-Notes/Wombat Settings.md").exists());
+    // The index follows: the deleted note is found no more.
+    let hits = h
+        .get(&format!("/v1/repos/{id}/search?q=quokka&kind=note"))
+        .await;
+    assert!(hits.as_array().unwrap().is_empty(), "{hits}");
+    assert_eq!(h.get("/v1/status").await["proposals"][&id], 0);
+
+    let (status, body) = h
+        .call(
+            "POST",
+            &format!("/v1/repos/{id}/proposals/{pid}/approve"),
+            Some(TOKEN),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+}
+
 #[tokio::test]
 async fn a_repository_whose_folder_is_gone_is_left_out_of_the_status() {
     let h = Harness::new();

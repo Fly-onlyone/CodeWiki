@@ -59,6 +59,30 @@ pub struct Facts {
     pub settings_loaded: bool,
 }
 
+/// What still keeps the page that is shown from being the one a launch asked
+/// for.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Holds {
+    /// Work that is running.
+    pub busy: bool,
+    /// A view to open (`settings:`, `health:`, ...) not yet carried out.
+    pub command: bool,
+    /// An editor to open (`edit:<note>`) not yet carried out.
+    pub edit: bool,
+    /// A palette to open (`palette:<query>`) not yet carried out.
+    pub palette: bool,
+    /// One of those was carried out in the frame being built, and its result
+    /// is on screen only once the frame after it is drawn.
+    pub settling: bool,
+}
+
+impl Holds {
+    /// Whether the page must not be announced yet.
+    pub fn any(self) -> bool {
+        self.busy || self.command || self.edit || self.palette || self.settling
+    }
+}
+
 /// The kind of `page`, once the data it shows has arrived. A plain message is
 /// never announced: it stands in for a page that is still to come.
 pub fn kind(page: &Page, facts: Facts) -> Option<Kind> {
@@ -138,7 +162,7 @@ fn stem(path: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{Facts, Fill, Kind, drawn, filled, kind, label, stem};
+    use super::{Facts, Fill, Holds, Kind, drawn, filled, kind, label, stem};
     use crate::Page;
     use crate::settings::Category;
 
@@ -257,5 +281,34 @@ mod tests {
         assert_eq!(stem("01-Core/cw-core/_index.md"), "_index");
         assert_eq!(stem(r"01-Core\cw-core\Logs Module.md"), "Logs Module");
         assert_eq!(stem("_HOME"), "_HOME");
+    }
+
+    #[test]
+    fn a_start_argument_holds_the_line_until_the_frame_after_it() {
+        assert!(!Holds::default().any());
+        for hold in [
+            Holds {
+                busy: true,
+                ..Holds::default()
+            },
+            Holds {
+                command: true,
+                ..Holds::default()
+            },
+            Holds {
+                edit: true,
+                ..Holds::default()
+            },
+            Holds {
+                palette: true,
+                ..Holds::default()
+            },
+            Holds {
+                settling: true,
+                ..Holds::default()
+            },
+        ] {
+            assert!(hold.any(), "{hold:?}");
+        }
     }
 }

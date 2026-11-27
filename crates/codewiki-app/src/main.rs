@@ -426,6 +426,10 @@ struct AppView {
     pending_command: Option<Command>,
     /// Open the editor once the first note has loaded; set by a startup argument.
     pending_edit: bool,
+    /// A start argument was carried out while the last frame was built. Its
+    /// result is on screen only once the frame after it is drawn: a notify
+    /// made while drawing asks for no frame, so one is asked for by hand.
+    start_settling: bool,
     /// The note or view to open on once a repository has loaded: what the
     /// launch named, or the last launch that handed over to this app.
     requested_view: Option<String>,
@@ -755,6 +759,7 @@ impl AppView {
             pending_palette: None,
             pending_command: None,
             pending_edit: false,
+            start_settling: false,
             requested_view: startup::launch().view.clone(),
             asked: Some(ready::label(
                 startup::launch().view.as_deref().unwrap_or_default(),
@@ -2551,11 +2556,14 @@ impl AppView {
         }
         // Work that is running, or a start argument still to be carried out,
         // is about to change the page.
-        if self.busy.is_some()
-            || self.pending_command.is_some()
-            || self.pending_edit
-            || self.pending_palette.is_some()
-        {
+        let holds = ready::Holds {
+            busy: self.busy.is_some(),
+            command: self.pending_command.is_some(),
+            edit: self.pending_edit,
+            palette: self.pending_palette.is_some(),
+            settling: self.start_settling,
+        };
+        if holds.any() {
             return;
         }
         let facts = ready::Facts {
@@ -5979,17 +5987,29 @@ impl Render for AppView {
             });
         }
         self.draw_queued_diagrams(cx);
+        // A start argument carried out in the last frame has been drawn now.
+        self.start_settling = false;
         if let Some(query) = self.pending_palette.take() {
             self.toggle_palette(window, cx);
             self.palette_input
                 .update(cx, |input, cx| input.set_value(query, window, cx));
+            self.start_settling = true;
         }
         if self.pending_edit && matches!(self.page, Page::Note { .. }) {
             self.pending_edit = false;
             self.start_edit(window, cx);
+            self.start_settling = true;
         }
         if let Some(command) = self.pending_command.take() {
             self.run_command(command, window, cx);
+            self.start_settling = true;
+        }
+        if self.start_settling {
+            // The notifies above were made while a frame is built and ask
+            // for no frame. Without one on a window where nothing else
+            // moves (no drift, reduced motion), what they changed, a new
+            // focus included, waited for the next input.
+            doc_view::notify_after_draw(cx.entity_id(), cx);
         }
         // The inputs of the settings take the values that arrived since the
         // last frame; that needs the window.

@@ -346,6 +346,10 @@ function Wait-AppPage {
         # that -TimeoutSec gives for both.
         [ValidateSet("", "diagrams", "models")][string]$AndFilled = "",
         [switch]$Legacy,
+        # The page is the answer to a click or a key in the running app, not to
+        # a start: its line carries no "asked". Take the mark with
+        # Get-AppLogMark before the input and pass it as -Since.
+        [switch]$Navigated,
         [int]$Since = $script:appMark,
         [Parameter(Mandatory)][double]$TimeoutSec,
         [switch]$PassThru
@@ -358,7 +362,7 @@ function Wait-AppPage {
         $pattern = "page filled: $Filled"
         $what = "page filled: $Filled"
     } else {
-        $label = if ($Asked) { $Asked } else { $script:appAsked }
+        $label = if ($Navigated) { "" } elseif ($Asked) { $Asked } else { $script:appAsked }
         $pattern = "page drawn: " + $(if ($Kind) { [regex]::Escape($Kind) } else { "" })
         if ($label) { $pattern += ".*\(asked " + [regex]::Escape($label) + "\)" }
         $what = "page drawn" + $(if ($Kind) { ": $Kind" } else { "" }) + $(if ($label) { " (asked $label)" } else { "" })
@@ -389,9 +393,40 @@ function Start-GuestApp {
 }
 
 
+# End the app by force (not Quit: its backend stays) and wait until it is gone.
 function Stop-GuestApp {
-    Invoke-GuestScript -Script 'Get-Process codewiki-app -ErrorAction SilentlyContinue | Stop-Process -Force' | Out-Null
-    Wait-For 2
+    Invoke-GuestScript -InProcess -Script '$running = @(Get-Process codewiki-app -ErrorAction SilentlyContinue); $running | Stop-Process -Force -ErrorAction SilentlyContinue; foreach ($process in $running) { [void]$process.WaitForExit(5000) }' | Out-Null
+}
+
+# How many processes of these names run in the guest; $null when the guest did
+# not answer (empty output is a failed probe, never "none").
+function Get-GuestProcessCount {
+    param([Parameter(Mandatory)][string[]]$Name)
+    $names = ($Name | ForEach-Object { "'$_'" }) -join ", "
+    $run = Invoke-GuestScript -InProcess -TimeoutSec 60 -Script "`"count=`$(@(Get-Process -Name $names -ErrorAction SilentlyContinue).Count)`""
+    if ($run.Output -match 'count=(\d+)') { [int]$Matches[1] } else { $null }
+}
+
+# Wait until something listens on a port of the guest, in one call with a loop
+# of 200 ms inside it. True once it does, false at the deadline.
+function Wait-GuestPort {
+    param([Parameter(Mandatory)][int]$Port, [Parameter(Mandatory)][double]$TimeoutSec, [string]$What = "")
+    if (-not $What) { $What = "port $Port answers" }
+    $limit = $TimeoutSec * $Pace
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $run = Invoke-GuestScript -InProcess -TimeoutSec ([int]$limit + 30) -Script @"
+`$deadline = (Get-Date).AddSeconds($limit)
+`$open = 0
+do {
+    `$client = New-Object System.Net.Sockets.TcpClient
+    try { if (`$client.ConnectAsync('127.0.0.1', $Port).Wait(300) -and `$client.Connected) { `$open = 1 } } catch { } finally { `$client.Close() }
+    if (-not `$open) { Start-Sleep -Milliseconds 200 }
+} while (-not `$open -and (Get-Date) -lt `$deadline)
+"open=`$open"
+"@
+    $open = $run.Output -match 'open=1'
+    Write-Timing -Kind wait -What $What -Sec $clock.Elapsed.TotalSeconds -Deadline $limit -Met $open
+    $open
 }
 
 # Number of entries in a probe's file list; the list is null when the folder is gone.
@@ -400,14 +435,24 @@ function Get-App { param($Probe) @($Probe.processes | Where-Object { $_.name -eq
 function Get-Backend { param($Probe) @($Probe.processes | Where-Object { $_.name -eq "codewiki" }) }
 
 # Open the Start menu, type the app's name and press Enter, as a user does.
+# -Running: an app is already running (hidden), so the start hands over to it
+# and no page is drawn: the screen standing still is what ends the wait.
 function Start-FromStartMenu {
+    param([switch]$Running)
+    $mark = Get-AppLogMark
     Send-Keys "win"
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4 -MinSec 1 -What "the Start menu opens"
     Send-Text "CodeWiki"
-    Wait-For 6
+    Wait-ScreenSettled -TimeoutSec 6 -MinSec 2 -QuietMs 800 -What "the Start menu lists CodeWiki"
     $found = Shot "start-menu-search"
     Send-Keys "enter"
-    Wait-For 20
+    if ($Running) {
+        Wait-ScreenStill -TimeoutSec 20 -MinSec 2 -QuietMs 1500 -What "the running app is shown again"
+    } else {
+        # The shortcut names no view and no folder.
+        Wait-AppPage -Asked default -Since $mark -TimeoutSec 20
+    }
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $found
 }
 
@@ -481,7 +526,12 @@ if ($guestHome -notmatch '^[A-Za-z]:\\') { throw "could not read the guest's pro
 $guestUnpacked = "$guestHome\Downloads\CodeWiki"
 $guestTarget = "$guestHome\AppData\Local\Programs\CodeWiki"
 $guestRepo = "$guestHome\repos\cw-core"
-Wait-For 30
+# Right after the sign-in Windows is busy by itself for a while; the film and
+# the first measurements should not start in the middle of it.
+Measure-Step "wait for the guest to be quiet" {
+    $quiet = Wait-GuestIdle -BelowPercent 20 -TimeoutSec (30 * $Pace)
+    Write-Timing -Kind wait -What "the guest's processors are quiet before the film" -Sec 0 -Deadline (30 * $Pace) -Met ($quiet -lt 20)
+}
 Start-Recording -Path (Join-Path $Report "recording\session.mp4") | Out-Null
 
 Measure-Step "make the guest folders" {
@@ -710,7 +760,7 @@ $rules = @($events | ForEach-Object { if ($_.Message -match "(?m)^\s*ID:\s*([0-9
         $relaxed = Invoke-GuestExe -Background -TimeoutSec 300 -Exe $powershell -Arguments "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
             "-File", "$($script:Vm.GuestDir)\harden.ps1", "-Audit", ($auditedRules -join ",")
         Set-Content (Join-Path $logs "hardening-after-audit.json") $relaxed.Stdout
-        Wait-For 5
+        Hold-For 5 -Reason "S3: Defender takes the rules that were just set to audit into force"
         $last = (Invoke-GuestScript -TimeoutSec 120 -Script $start).Output
         $log += "`n--- start after setting to audit: $($rules -join ', ')`n$last"
     }
@@ -796,7 +846,7 @@ function Get-Registered {
 # The repository the app shows, from what its log says since it last started.
 # The window's own title is always "CodeWiki"; the name is drawn in the app.
 function Get-OpenedRepo {
-    $run = Invoke-GuestScript -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'started with|repository: ' | ForEach-Object { `$_.Line }"
+    $run = Invoke-GuestScript -InProcess -Script "Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue | Select-String 'started with|repository: ' | ForEach-Object { `$_.Line }"
     $lines = @($run.Output -split "`n" | Where-Object { $_.Trim() })
     $start = -1
     for ($i = 0; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "started with") { $start = $i } }
@@ -854,18 +904,25 @@ Test-Case "P1" "Idle processor use, motion as installed" "an idle window leaves 
 # opens Windows's folder dialog, which takes a typed path.
 Test-Case "E3" "Open a folder from Home" "Open folder… asks for a folder, registers it and opens it" {
     if ($starved) { throw "the guest is too busy to be driven (P1)" }
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "open folder"; Wait-For 2
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "open folder"; Wait-ScreenSettled -TimeoutSec 2
     $a = Shot "palette-open-folder"
-    Send-Keys "enter"; Wait-For 5
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 5 -MinSec 2
     $b = Shot "folder-dialog"
-    Send-Text $guestRepo; Wait-For 1
-    Send-Keys "enter"; Wait-For 10
+    Send-Text $guestRepo; Wait-ScreenSettled -TimeoutSec 1
+    $mark = Get-AppLogMark
+    Send-Keys "enter"
+    # The app opens the repository it was given: its log says so.
+    [void](Wait-AppLog -Pattern "repository: cw-core" -Since $mark -TimeoutSec 10 -What "the app opens the folder that was chosen")
+    Wait-ScreenStill -TimeoutSec 3 -MinSec 1.5 -QuietMs 800 -What "the opened repository is drawn"
     $c = Shot "folder-chosen"
     $probe = Get-Probe "folder-opened" -Quick
     if (-not (Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })) {
         # The dialog may first have gone into the folder; Enter then picks it.
-        Send-Keys "enter"; Wait-For 10
+        $mark = Get-AppLogMark
+        Send-Keys "enter"
+        [void](Wait-AppLog -Pattern "repository: cw-core" -Since $mark -TimeoutSec 10 -What "the app opens the folder that was chosen")
+        Wait-ScreenStill -TimeoutSec 3 -MinSec 1.5 -QuietMs 800 -What "the opened repository is drawn"
         $c = Shot "folder-chosen-again"
         $probe = Get-Probe "folder-opened-again" -Quick
     }
@@ -888,7 +945,7 @@ Test-Case "H1" "Close the window" "Alt+F4 hides it; the app and its backend stay
     $script:windowBeforeHide = Get-GuestWindowInfo "codewiki-app"
     Send-Keys "alt+f4"
     # The notification is on screen for a few seconds only.
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     $closed = Shot "after-alt-f4"
     $probe = Get-ProbeWhenAble "window-hidden" -TimeoutSec 240
     if (-not $probe) { throw "the guest answered no command for four minutes after Alt+F4" }
@@ -953,7 +1010,8 @@ if (-not `$bridge.WaitForExit(10000)) { `$bridge.Kill() }
 "bridge: `$answered"
 `$global:LASTEXITCODE = 0
 "@
-    Wait-For 8
+    # The app asks the backend every five seconds, so the tooltip follows the call.
+    [void](Wait-Until -What "the tray tooltip says MCP: active" -TimeoutSec 8 -IntervalMs 500 { "$((Get-GuestTrayIcons | Select-Object -First 1).Name)" -like "*MCP: active*" })
     $name = "$((Get-GuestTrayIcons | Select-Object -First 1).Name)"
     $answered = $run.Output -match "bridge: answered; an error: False"
     Add-Result -Id "TR2" -Title "The tray icon shows an agent's call" -Expect "the bridge's get_overview is answered; the tooltip then ends in 'MCP: active'" `
@@ -963,7 +1021,7 @@ if (-not `$bridge.WaitForExit(10000)) { `$bridge.Kill() }
 
 Test-Case "TR3" "A click on the tray icon shows the window" "the hidden window is back, in front, where and as large as it was" {
     $icon = Send-GuestTrayClick -Button left
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4
     $info = Get-GuestWindowInfo "codewiki-app"
     $shot = Shot "tray-click-window-back"
     $probe = Get-Probe "tray-click" -Quick
@@ -982,9 +1040,9 @@ Test-Case "TR3" "A click on the tray icon shows the window" "the hidden window i
 # it is photographed (the host does that alone) and judged from the picture.
 Test-Case "TR4" "The tray menu" "a right click opens it: what the app is doing, then the commands, Quit last" {
     $icon = Send-GuestTrayClick -Button right
-    Wait-For 2
+    Wait-ScreenSettled -TimeoutSec 2
     $shot = Shot "tray-menu"
-    Send-Keys "esc"; Wait-For 1
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1
     Add-Result -Id "TR4" -Title "The tray menu" -Expect "ten rows in order; the first four greyed" -Status note -Shots @($shot) `
         -Observed "right-clicked the icon at ($($icon.X),$($icon.Y)); read the screenshot: the menu must show, greyed, the repository (cw-core), the state (Idle), the MCP line and the version, then 'Open CodeWiki', 'Update wiki now', 'Recent repositories', 'Settings', 'Check for updates' and, last, 'Quit'"
 }
@@ -996,16 +1054,16 @@ Test-Case "TR4" "The tray menu" "a right click opens it: what the app is doing, 
 # moves over it, so the pointer is put on it before the icons are counted.
 Test-Case "TR7" "Alt+F4 after the tray menu leaves the icon" "the menu is opened and closed with Escape, then Alt+F4: the icon is still there and the app runs" {
     $icon = Send-GuestTrayClick -Button right
-    Wait-For 2
-    Send-Keys "esc"; Wait-For 1
-    Send-Keys "alt+f4"; Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 2
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "alt+f4"; Wait-ScreenSettled -TimeoutSec 3
     $again = Get-GuestTrayIcon
-    if ($again) { Move-Pointer -X $again.X -Y $again.Y; Wait-For 2 }
+    if ($again) { Move-Pointer -X $again.X -Y $again.Y; Wait-ScreenSettled -TimeoutSec 2 }
     $left = @(Get-GuestTrayIcons).Count
     $shot = Shot "tray-after-menu-alt-f4"
     $probe = Get-Probe "tray-alt-f4" -Quick
     $apps = (Get-App $probe).Count
-    Send-Keys "esc"; Wait-For 1
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1
     Add-Result -Id "TR7" -Title "Alt+F4 after the tray menu leaves the icon" -Expect "one tray icon, one app" `
         -Status $(if ($left -eq 1 -and $apps -eq 1) { "pass" } else { "fail" }) -Shots @($shot) `
         -Observed "right-clicked the icon at ($($icon.X),$($icon.Y)), Escape, Alt+F4, pointer on the icon; tray icons named CodeWiki: $left; app processes: $apps"
@@ -1016,9 +1074,9 @@ Test-Case "SI1" "Starting the app again shows the running one" "with the window 
     # back first, as a click on it would.
     [void](Show-GuestWindow -ProcessName "codewiki-app")
     Send-Keys "alt+f4"
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4
     $hidden = Get-GuestWindowInfo "codewiki-app"
-    $search = Start-FromStartMenu
+    $search = Start-FromStartMenu -Running
     $shot = Shot "second-start-same-app"
     $probe = Get-Probe "second-start" -Quick
     $app = @(Get-App $probe)
@@ -1033,10 +1091,11 @@ Test-Case "SI1" "Starting the app again shows the running one" "with the window 
 
 Test-Case "TR5" "Quit from the tray menu" "the app and its backend end, and the icon goes" {
     $icon = Send-GuestTrayClick -Button right
-    Wait-For 2
+    Wait-ScreenSettled -TimeoutSec 2
     $menu = Shot "tray-menu-before-quit"
     # Up from a menu that has just opened is its last row, and that is Quit.
     Send-Keys "up", "enter"
+    [void](Wait-GuestProcessGone -Name "codewiki-app", "codewiki" -TimeoutSec 40 -What "the app and its backend end after Quit from the tray")
     $deadline = (Get-Date).AddSeconds(40)
     do {
         $probe = Get-Probe "tray-quit" -Quick
@@ -1116,7 +1175,7 @@ function Send-TitleBarClick {
     if (-not $info -or $info.Minimized) { throw "the app has no window on screen to click in: $(Format-Window $info)" }
     $x, $y = Get-TitleBarPoint $info $What
     Send-RestedClick -X $x -Y $y -Double:$Double
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     "($x,$y)"
 }
 
@@ -1147,10 +1206,10 @@ Test-Case "W1" "Minimize button" "a click on it, after the pointer has rested th
 }
 
 Test-Case "W2" "Back from minimized" "Alt+Tab brings the window back at its old size, with its page drawn" {
-    Send-Keys "alt+tab"; Wait-For 4
+    Send-Keys "alt+tab"; Wait-ScreenSettled -TimeoutSec 4
     $info = Get-GuestWindowInfo "codewiki-app"
     if ($info -and $info.Minimized) {
-        Send-Keys "alt+tab"; Wait-For 4
+        Send-Keys "alt+tab"; Wait-ScreenSettled -TimeoutSec 4
         $info = Get-GuestWindowInfo "codewiki-app"
     }
     $same = $info -and -not $info.Minimized -and $windowAtStart -and $info.Width -eq $windowAtStart.Width -and $info.Height -eq $windowAtStart.Height
@@ -1209,8 +1268,8 @@ Test-Case "W7" "Unsaved edits, the close button and Quit" "the X hides the windo
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
-    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-For 1
-    Send-Text "unsavedmarker "; Wait-For 3
+    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-ScreenSettled -TimeoutSec 1
+    Send-Text "unsavedmarker "; Wait-ScreenSettled -TimeoutSec 3
     $typed = Shot "unsaved-edits-typed"
     $at = Send-TitleBarClick "close"
     $hidden = Get-GuestWindowInfo "codewiki-app"
@@ -1221,9 +1280,9 @@ Test-Case "W7" "Unsaved edits, the close button and Quit" "the X hides the windo
     # window comes back as it was, and the screen then stands still.
     Wait-ScreenStill -TimeoutSec 4 -QuietMs 800 -MinSec 1.5 -What "window shown again by the second start"
     $back = Shot "unsaved-edits-back"
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "quit codewiki"; Wait-For 2
-    Send-Keys "enter"; Wait-For 4
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "quit codewiki"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 4
     $refused = Shot "quit-with-unsaved-edits"
     $info = Get-GuestWindowInfo "codewiki-app"
     $probe = Get-Probe "quit-refused" -Quick
@@ -1274,15 +1333,15 @@ foreach ($view in $views) {
 # and its backend must be gone afterwards; one that stays is ended by force.
 # Returns whether Quit ended them by itself. The window must have the focus.
 function Exit-GuestApp {
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "quit codewiki"; Wait-For 2
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "quit codewiki"; Wait-ScreenSettled -TimeoutSec 2
     Send-Keys "enter"
-    $deadline = (Get-Date).AddSeconds(60)
-    do {
-        Start-Sleep -Seconds 3
+    $left = Wait-GuestProcessGone -Name "codewiki-app", "codewiki" -TimeoutSec 60 -What "the app and its backend end after Quit"
+    if ($null -eq $left) {
+        # The guest did not answer: ask the old way, with a probe.
         $probe = Get-Probe "quit" -Quick
         $left = (Get-App $probe).Count + (Get-Backend $probe).Count
-    } while ($left -gt 0 -and (Get-Date) -lt $deadline)
+    }
     if ($left) { Stop-GuestApp }
     $left -eq 0
 }
@@ -1389,17 +1448,23 @@ Set-GuestMotion $(if ($starved) { "reduced" } else { "system" })
 # while the backend is away, a toast for six seconds. The frames go to a
 # folder of their own; the case keeps a contact sheet of them, four to a row.
 # Returns the sheet's file name, or the folder's when ffmpeg is missing.
+# With -Until, the burst ends -TailSec after the condition first holds (the
+# event it is waiting to photograph has happened and has had its time on
+# screen), and at the latest after -Seconds, as it always did.
 function Save-ShotBurst {
-    param([Parameter(Mandatory)][string]$Name, [double]$Seconds = 30, [double]$Every = 2)
+    param([Parameter(Mandatory)][string]$Name, [double]$Seconds = 30, [double]$Every = 2, [scriptblock]$Until, [double]$TailSec = 8)
     $script:shotCount += 1
     $base = "{0:d2}-{1}" -f $script:shotCount, $Name
     $folder = Join-Path $shots $base
     New-Item -ItemType Directory -Force $folder | Out-Null
     $deadline = (Get-Date).AddSeconds($Seconds * $Pace)
+    $tailEnd = $null
     $count = 0
     do {
         $count += 1
         Save-Screenshot (Join-Path $folder ("frame-{0:d2}.png" -f $count)) | Out-Null
+        if ($Until -and -not $tailEnd -and (& $Until)) { $tailEnd = (Get-Date).AddSeconds($TailSec * $Pace) }
+        if ($tailEnd -and (Get-Date) -ge $tailEnd) { break }
         Start-Sleep -Milliseconds ([int]($Every * 1000))
     } while ((Get-Date) -lt $deadline)
     $ffmpeg = Find-Ffmpeg
@@ -1413,14 +1478,14 @@ function Save-ShotBurst {
 # expression without quotes).
 function Get-AppLogSince {
     param([int]$Mark, [string]$Pattern = ".")
-    $run = Invoke-GuestScript -Script "@(Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue) | Select-Object -Skip $Mark | Select-String -Pattern '$Pattern' | ForEach-Object { `$_.Line }"
+    $run = Invoke-GuestScript -InProcess -Script "@(Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue) | Select-Object -Skip $Mark | Select-String -Pattern '$Pattern' | ForEach-Object { `$_.Line }"
     @($run.Output -split "`r?`n" | Where-Object { $_.Trim() })
 }
 
 # The backend that backend.json names: its pid, whether it runs and what its
 # health route answers (0 for no answer). Null without a backend.json.
 function Get-GuestBackendState {
-    $run = Invoke-GuestScript -TimeoutSec 60 -Script @'
+    $run = Invoke-GuestScript -InProcess -TimeoutSec 60 -Script @'
 $file = Join-Path $env:LOCALAPPDATA 'CodeWiki\backend.json'
 if (-not (Test-Path $file)) { 'backend=none'; return }
 $json = Get-Content $file -Raw | ConvertFrom-Json
@@ -1441,7 +1506,7 @@ function Wait-NewBackend {
     do {
         $state = Get-GuestBackendState
         if ($state -and $state.Pid -ne $Not -and $state.Alive -and $state.Health -eq 200) { return $state }
-        Start-Sleep -Seconds 3
+        Start-Sleep -Milliseconds 500
     } while ((Get-Date) -lt $deadline)
     $state
 }
@@ -1461,7 +1526,7 @@ function Start-GuestBackendOutside {
 # End the backend the way a crash would: no request, no clean-up.
 function Stop-GuestBackend {
     Invoke-GuestScript -Script 'Get-Process codewiki -ErrorAction SilentlyContinue | Stop-Process -Force' | Out-Null
-    Wait-For 1
+    Wait-ScreenSettled -TimeoutSec 1
 }
 
 # Where a point of the app's window is on the guest's screen: X and Y are in
@@ -1510,7 +1575,7 @@ Test-Case "BG1" "The background graph, on and off" "with the graph on the window
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
     Move-Pointer -X ($appWindow.Left + 400) -Y ($appWindow.Top + 17)
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     $onShot = Shot "background-graph-on"
     $onLoad = Get-GuestProcessorLoad -Seconds 15
     Stop-GuestApp
@@ -1519,7 +1584,7 @@ Test-Case "BG1" "The background graph, on and off" "with the graph on the window
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
     Move-Pointer -X ($appWindow.Left + 400) -Y ($appWindow.Top + 17)
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     $offShot = Shot "background-graph-off"
     $offLoad = Get-GuestProcessorLoad -Seconds 15
     Stop-GuestApp
@@ -1545,28 +1610,28 @@ Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and lin
     # so that the note's text wraps alike and the link is where it was measured.
     $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
     if (-not $info) { throw "the app has no window" }
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     # In two runs the note's text was shown selected once the pointer passed
     # over it after the start's click on the title bar, with no button down;
     # it did not happen by hand. A click on empty space first leaves no
     # selection to mistake for a hover.
     $x, $y = Get-LayoutPoint -Info $info -Name "detailsBlank"
     Send-RestedClick -X $x -Y $y
-    Wait-For 1
+    Wait-ScreenSettled -TimeoutSec 1
     $taken = @()
     foreach ($target in "neutral", "sidebarRow", "homeIcon", "recentIcon", "tab", "noteLink") {
         $x, $y = Get-LayoutPoint -Info $info -Name $target
         Move-Pointer -X $x -Y $y
-        Start-Sleep -Milliseconds 1200
+        Hold-For 1.2 -Reason "HV1: the pointer rests on the control before its picture (hover)"
         $taken += Shot "hover-$target"
     }
     $pressed = "not taken"
     $x, $y = Get-LayoutPoint -Info $info -Name "sidebarRow"
     Move-Pointer -X $x -Y $y
-    Start-Sleep -Milliseconds 1200
+    Hold-For 1.2 -Reason "HV1: the pointer rests on the row before the button goes down"
     try {
         Set-MouseButton -Down $true
-        Start-Sleep -Milliseconds 400
+        Hold-For 0.4 -Reason "HV1: the button is held a moment before the picture (pressed)"
         $taken += Shot "press-sidebarRow"
         $pressed = "taken"
     } catch {
@@ -1574,7 +1639,7 @@ Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and lin
     } finally {
         try { Set-MouseButton -Down $false } catch { }
     }
-    Start-Sleep -Milliseconds 1500
+    Hold-For 1.5 -Reason "HV1: the open row's mark settles after the button is let go"
     $taken += Shot "selected-row"
     Stop-GuestApp
     Add-Result -Id "HV1" -Title "Hover, press and selection" -Expect "each hovered control differs from the first picture; the pressed row is darker; the open note's row carries the bar" -Status note -Shots $taken `
@@ -1602,7 +1667,7 @@ function Show-NarrowWindow {
     Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
     if (-not $info) { throw "the app has no window" }
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     Shot $Name
 }
 
@@ -1656,7 +1721,7 @@ function Show-TabWindow {
     Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
     if (-not $info) { throw "the app has no window" }
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     $info
 }
 function Set-GuestTabPref {
@@ -1681,10 +1746,10 @@ Test-Case "LK1" "A link by folder path" "a click on the link 'cw-core' of _HOME 
     # space first leaves nothing to select.
     $bx, $by = Get-LayoutPoint -Info $info -Name "detailsBlank"
     Send-RestedClick -X $bx -Y $by
-    Wait-For 1
+    Wait-ScreenSettled -TimeoutSec 1
     $x, $y = Get-LayoutPoint -Info $info -Name "noteLink"
     Send-RestedClick -X $x -Y $y
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4
     $shot = Shot "link-folder-map"
     Stop-GuestApp
     Add-Result -Id "LK1" -Title "A link by folder path" -Expect "the cw-core folder's map opens; no 'not found' banner" -Status note -Shots @($shot) `
@@ -1698,43 +1763,43 @@ Test-Case "TT1" "Tab tools" "right-click menus on a sidebar note and a tab; the 
         Set-GuestTabPref "tabs"; Set-GuestTabPref "new_tab"
         $info = Show-TabWindow
         $x, $y = Get-LayoutPoint -Info $info -Name "sidebarRow"
-        Send-Click -X $x -Y $y -Button right; Wait-For 2
+        Send-Click -X $x -Y $y -Button right; Wait-ScreenSettled -TimeoutSec 2
         $taken += Shot "tabs-sidebar-menu"
-        Send-Keys "esc"; Wait-For 1
+        Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1
         $nx, $ny = Get-LayoutPoint -Info $info -Name "neutral"
-        Move-Pointer -X $nx -Y $ny; Wait-For 2
+        Move-Pointer -X $nx -Y $ny; Wait-ScreenSettled -TimeoutSec 2
         $taken += Shot "tabs-sidebar-menu-closed"
         # A Ctrl+click on Operations > Build and Test, then a middle-click on
         # Core > Overview: two new tabs, the last one shown. (The link
         # 'cw-core' of _HOME is LK1's.)
         $lx, $ly = Get-LayoutPoint -Info $info -Name "sidebarRow2"
-        Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-For 3
-        Send-Click -X $x -Y $y -Button middle; Wait-For 3
-        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-ScreenSettled -TimeoutSec 3
+        Send-Click -X $x -Y $y -Button middle; Wait-ScreenSettled -TimeoutSec 3
+        Move-Pointer -X $nx -Y $ny; Wait-ScreenSettled -TimeoutSec 1
         $taken += Shot "tabs-three-open"
         $tx, $ty = Get-LayoutPoint -Info $info -Name "tab"
-        Send-Click -X $tx -Y $ty -Button right; Wait-For 2
+        Send-Click -X $tx -Y $ty -Button right; Wait-ScreenSettled -TimeoutSec 2
         $taken += Shot "tabs-tab-menu"
         # The menu's second row: Close others.
-        Send-Keys "down"; Wait-For 1
-        Send-Keys "enter"; Wait-For 3
-        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
+        Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 3
+        Move-Pointer -X $nx -Y $ny; Wait-ScreenSettled -TimeoutSec 1
         $taken += Shot "tabs-closed-others"
         Stop-GuestApp
 
         Set-GuestTabPref "tabs" "off"
         $info = Show-TabWindow
-        Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-For 3
-        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        Send-Click -X $lx -Y $ly -Hold "ctrl"; Wait-ScreenSettled -TimeoutSec 3
+        Move-Pointer -X $nx -Y $ny; Wait-ScreenSettled -TimeoutSec 1
         $taken += Shot "tabs-off"
         Stop-GuestApp
         Set-GuestTabPref "tabs"
 
         Set-GuestTabPref "new_tab" "on"
         $info = Show-TabWindow
-        Send-Click -X $x -Y $y; Wait-For 3
-        Send-Click -X $lx -Y $ly; Wait-For 3
-        Move-Pointer -X $nx -Y $ny; Wait-For 1
+        Send-Click -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 3
+        Send-Click -X $lx -Y $ly; Wait-ScreenSettled -TimeoutSec 3
+        Move-Pointer -X $nx -Y $ny; Wait-ScreenSettled -TimeoutSec 1
         $taken += Shot "tabs-new-tab-on"
         Stop-GuestApp
         Start-GuestApp -Arguments $guestRepo, "settings:appearance"
@@ -1826,7 +1891,7 @@ Test-Case "RC1" "The backend ends while the window is open" "a banner says so, t
     if (-not $before) { throw "no backend.json while the app is open" }
     $mark = Get-AppLogMark
     Stop-GuestBackend
-    $sheet = Save-ShotBurst "backend-lost-and-back" -Seconds 40 -Every 2
+    $sheet = Save-ShotBurst "backend-lost-and-back" -Seconds 40 -Every 2 -Until { [bool](Get-AppLogSince $mark "toast backend") }
     $after = Wait-NewBackend -Not $before.Pid
     $lines = Get-AppLogSince $mark "toast|Windows notification|backend"
     $toast = [bool]($lines | Where-Object { $_ -match "toast backend" })
@@ -1845,12 +1910,12 @@ Test-Case "NW1" "A Windows notification while the window is hidden" "the backend
     if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-AppPage -TimeoutSec 15; Hold-For 1.5 -Reason "the page's entrance animation" }
     [void](Show-GuestWindow -ProcessName "codewiki-app")
     Send-Keys "alt+f4"
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4
     $before = Get-GuestBackendState
     $mark = Get-AppLogMark
     Stop-GuestBackend
     $after = Wait-NewBackend -Not $before.Pid
-    Wait-For 3
+    [void](Wait-AppLog -Pattern "Windows notification backend" -Since $mark -TimeoutSec 3 -What "the app sends the Windows notification")
     $lines = Get-AppLogSince $mark "toast|Windows notification|notification was clicked"
     $sent = [bool]($lines | Where-Object { $_ -match "Windows notification backend" })
     # The notification centre closes as soon as another program starts, and
@@ -1860,16 +1925,16 @@ Test-Case "NW1" "A Windows notification while the window is hidden" "the backend
     # so it is photographed and clicked there; the app's log says whether the
     # click reached it.
     Send-Keys "win+n"
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4 -MinSec 1.6 -What "the notification centre opens"
     $centre = Shot "notification-centre"
     $screen = Get-GuestScreenSize
     Send-RestedClick -X ($screen.Width - 181) -Y 150
-    Wait-For 5
+    [void](Wait-AppLog -Pattern "notification was clicked" -Since $mark -TimeoutSec 5 -What "the app logs the click on its notification")
     $clicked = [bool](Get-AppLogSince $mark "notification was clicked")
     $info = Get-GuestWindowInfo "codewiki-app"
     $shot = Shot "after-notification-click"
     # The notification centre stays open when the click missed the card.
-    if (-not $clicked) { Send-Keys "esc"; Wait-For 1 }
+    if (-not $clicked) { Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1 }
     $status = if (-not $sent) { "fail" } elseif (-not $clicked) { "note" } elseif ($info -and $info.Foreground -and -not $info.Minimized) { "pass" } else { "fail" }
     Add-Result -Id "NW1" -Title "A Windows notification while the window is hidden" -Expect "the log says 'Windows notification backend'; a click on the notification in the notification centre reaches the app and shows the window in front" `
         -Status $status -Shots @($centre, $shot) -Output ($lines -join "`n") `
@@ -1896,7 +1961,7 @@ Test-Case "RC2" "A start with no backend, then one appears" "the offline page; t
         Invoke-GuestScript -Script "if (Test-Path -LiteralPath '$held') { Rename-Item -LiteralPath '$held' -NewName 'codewiki.exe' }" | Out-Null
     }
     $started = Start-GuestBackendOutside
-    $sheet = Save-ShotBurst "backend-appears" -Seconds 40 -Every 2
+    $sheet = Save-ShotBurst "backend-appears" -Seconds 40 -Every 2 -Until { [bool](Get-AppLogSince $mark "toast backend") }
     $state = Get-GuestBackendState
     $lines = Get-AppLogSince $mark "toast|backend"
     $toast = [bool]($lines | Where-Object { $_ -match "toast backend" })
@@ -1945,7 +2010,7 @@ do {
 "pending: $($status.proposals.$id)"
 '@).Replace('{{REPO}}', $guestRepo)
     $script:reviewRepoId = if ($run.Output -match "(?m)^repo: (\S+)") { $Matches[1] } else { $null }
-    $sheet = Save-ShotBurst "new-reviews" -Seconds 20 -Every 2
+    $sheet = Save-ShotBurst "new-reviews" -Seconds 20 -Every 2 -Until { [bool](Get-AppLogSince $mark "toast review:") }
     $lines = Get-AppLogSince $mark "toast|Windows notification"
     $toast = [bool]($lines | Where-Object { $_ -match "toast review:" })
     $pending = if ($run.Output -match "(?m)^pending: (\d+)") { [int]$Matches[1] } else { 0 }
@@ -1964,22 +2029,25 @@ Test-Case "RV2" "Approve two proposals at once, reject the third" "the queue's b
     if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "review:"; Wait-AppPage -TimeoutSec 15; Hold-For 1.5 -Reason "the page's entrance animation" }
     else {
         [void](Show-GuestWindow -ProcessName "codewiki-app")
-        Send-Keys "ctrl+k"; Wait-For 2
-        Send-Text "review"; Wait-For 2
-        Send-Keys "enter"; Wait-For 6
+        Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+        Send-Text "review"; Wait-ScreenSettled -TimeoutSec 2
+        $nav = Get-AppLogMark
+        Send-Keys "enter"
+        Wait-AppPage -Navigated -Kind review -Since $nav -TimeoutSec 6
+        Hold-For 1.5 -Reason "the page's entrance animation"
     }
     $info = Get-GuestWindowInfo "codewiki-app"
     $page = Shot "review-page"
     $x, $y = Get-LayoutPoint -Info $info -Name "reviewAll"
-    Send-RestedClick -X $x -Y $y; Wait-For 2
+    Send-RestedClick -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 2
     $x, $y = Get-LayoutPoint -Info $info -Name "reviewRow3"
-    Send-Click -X $x -Y $y -Hold "ctrl"; Wait-For 2
+    Send-Click -X $x -Y $y -Hold "ctrl"; Wait-ScreenSettled -TimeoutSec 2
     $two = Shot "review-two-selected"
     $x, $y = Get-LayoutPoint -Info $info -Name "approve"
-    Send-RestedClick -X $x -Y $y; Wait-For 8
+    Send-RestedClick -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 8
     $approved = Shot "review-approved-two"
     $x, $y = Get-LayoutPoint -Info $info -Name "reject"
-    Send-RestedClick -X $x -Y $y; Wait-For 8
+    Send-RestedClick -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 8
     $rejected = Shot "review-rejected-last"
     $run = Invoke-GuestBackendScript -Script (@'
 $list = Invoke-Backend GET "/v1/repos/{{ID}}/proposals" | ConvertFrom-Json
@@ -2000,12 +2068,15 @@ Test-Case "SG1" "Search suggests while typing" "typing in the toolbar's search f
     else { [void](Show-GuestWindow -ProcessName "codewiki-app") }
     $info = Get-GuestWindowInfo "codewiki-app"
     $x, $y = Get-LayoutPoint -Info $info -Name "searchField"
-    Send-RestedClick -X $x -Y $y; Wait-For 1
+    Send-RestedClick -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 1
     $empty = Shot "search-field"
-    Send-Text "paths"; Wait-For 3
+    Send-Text "paths"; Wait-ScreenSettled -TimeoutSec 3
     $listed = Shot "search-suggestions"
-    Send-Keys "down"; Wait-For 1
-    Send-Keys "enter"; Wait-For 5
+    Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
+    $nav = Get-AppLogMark
+    Send-Keys "enter"
+    Wait-AppPage -Navigated -Kind note -Since $nav -TimeoutSec 5
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $opened = Shot "search-opened"
     $shown = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $listed)
     $moved = Get-ImageChange (Join-Path $shots $listed) (Join-Path $shots $opened)
@@ -2046,25 +2117,28 @@ Test-Case "G1" "Palette by keyboard" "Ctrl+K opens it, typing filters, Enter run
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
     $a = Shot "keys-before"
-    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
     $b = Shot "palette-open"
-    Send-Text "health"; Wait-For 2
+    Send-Text "health"; Wait-ScreenSettled -TimeoutSec 2
     $c = Shot "palette-filtered"
-    Send-Keys "down", "up", "enter"; Wait-For 5
+    $nav = Get-AppLogMark
+    Send-Keys "down", "up", "enter"
+    Wait-AppPage -Navigated -Kind generated -Since $nav -TimeoutSec 5
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $d = Shot "palette-ran"
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Keys "esc"; Wait-For 2
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
     $e = Shot "palette-closed"
     Add-Result -Id "G1" -Title "Palette by keyboard" -Expect "opens, filters, runs, closes" -Status note -Shots @($a, $b, $c, $d, $e) `
         -Observed "keys sent: Ctrl+K, 'health', Down, Up, Enter, Ctrl+K, Escape; read the screenshots"
 }
 
 Test-Case "G2" "Tabs by keyboard" "Ctrl+T opens a tab, Ctrl+Tab switches, Ctrl+W closes" {
-    Send-Keys "ctrl+t"; Wait-For 3
+    Send-Keys "ctrl+t"; Wait-ScreenSettled -TimeoutSec 3
     $a = Shot "tab-new"
-    Send-Keys "ctrl+tab"; Wait-For 3
+    Send-Keys "ctrl+tab"; Wait-ScreenSettled -TimeoutSec 3
     $b = Shot "tab-switched"
-    Send-Keys "ctrl+w"; Wait-For 3
+    Send-Keys "ctrl+w"; Wait-ScreenSettled -TimeoutSec 3
     $c = Shot "tab-closed"
     Add-Result -Id "G2" -Title "Tabs by keyboard" -Expect "new tab, switch, close" -Status note -Shots @($a, $b, $c) `
         -Observed "keys sent: Ctrl+T, Ctrl+Tab, Ctrl+W; read the screenshots"
@@ -2079,12 +2153,12 @@ Test-Case "N1" "Toolbar by mouse" "a click on the Ctrl+K button opens the palett
     if (-not $client) { throw "the app has no window" }
     $paletteX = $client.Right - [int](502 * $client.Scale); $paletteY = $client.Top + [int](61 * $client.Scale)
     $tabX = $client.Right - [int](25 * $client.Scale); $tabY = $client.Top + [int](112 * $client.Scale)
-    Send-Click -X $paletteX -Y $paletteY; Wait-For 2
+    Send-Click -X $paletteX -Y $paletteY; Wait-ScreenSettled -TimeoutSec 2
     $a = Shot "click-palette-button"
-    Send-Keys "esc"; Wait-For 2
-    Send-Click -X $tabX -Y $tabY; Wait-For 3
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Click -X $tabX -Y $tabY; Wait-ScreenSettled -TimeoutSec 3
     $b = Shot "click-new-tab"
-    Send-Keys "ctrl+w"; Wait-For 2
+    Send-Keys "ctrl+w"; Wait-ScreenSettled -TimeoutSec 2
     $c = Shot "click-tab-closed"
     Add-Result -Id "N1" -Title "Toolbar by mouse" -Expect "the palette opens; a tab opens" -Status note -Shots @($a, $b, $c) `
         -Observed "clicked the Ctrl+K button at ($paletteX,$paletteY), pressed Escape, clicked + at ($tabX,$tabY), pressed Ctrl+W; read the screenshots"
@@ -2092,17 +2166,17 @@ Test-Case "N1" "Toolbar by mouse" "a click on the Ctrl+K button opens the palett
 # Tab must walk through the controls, the sidebar's first. It once went to the
 # search box and stayed there: no other control was a tab stop.
 Test-Case "G4" "Focus by keyboard" "Tab moves a visible focus from control to control; Enter and Space press the focused control" {
-    Send-Keys "tab"; Wait-For 1
-    Send-Keys "tab"; Wait-For 1
-    Send-Keys "tab"; Wait-For 2
+    Send-Keys "tab"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "tab"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "tab"; Wait-ScreenSettled -TimeoutSec 2
     $a = Shot "focus-tab-3"
-    Send-Keys "tab"; Wait-For 1
-    Send-Keys "tab"; Wait-For 1
-    Send-Keys "tab"; Wait-For 2
+    Send-Keys "tab"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "tab"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "tab"; Wait-ScreenSettled -TimeoutSec 2
     $b = Shot "focus-tab-6"
-    Send-Keys "enter"; Wait-For 4
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 4
     $c = Shot "focus-enter"
-    Send-Keys "tab"; Send-Keys "space"; Wait-For 4
+    Send-Keys "tab"; Send-Keys "space"; Wait-ScreenSettled -TimeoutSec 4
     $d = Shot "focus-space"
     Add-Result -Id "G4" -Title "Focus by keyboard" -Expect "focus moves and controls fire" -Status note -Shots @($a, $b, $c, $d) `
         -Observed "keys sent: Tab x3, Tab x3, Enter, Tab, Space; read the screenshots: the highlight must be on a different control after three and after six Tabs, and Enter must open what was focused"
@@ -2134,10 +2208,10 @@ Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the p
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
     $a = Shot "panes-both-shown"
-    Send-Keys "ctrl+b"; Wait-For 3
+    Send-Keys "ctrl+b"; Wait-ScreenSettled -TimeoutSec 3
     $b = Shot "panes-sidebar-hidden"
     $afterFirst = Get-GuestPanes
-    Send-Keys "ctrl+alt+b"; Wait-For 3
+    Send-Keys "ctrl+alt+b"; Wait-ScreenSettled -TimeoutSec 3
     $c = Shot "panes-both-hidden"
     $afterKeys = Get-GuestPanes
     Stop-GuestApp
@@ -2150,9 +2224,9 @@ Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the p
     $y = $info.Top + [int](61 * $info.Scale)
     $sidebarX = $info.Left + [int](22 * $info.Scale)
     $detailsX = $info.Right - [int](22 * $info.Scale)
-    Send-RestedClick -X $sidebarX -Y $y; Wait-For 3
+    Send-RestedClick -X $sidebarX -Y $y; Wait-ScreenSettled -TimeoutSec 3
     $e = Shot "panes-sidebar-clicked"
-    Send-RestedClick -X $detailsX -Y $y; Wait-For 3
+    Send-RestedClick -X $detailsX -Y $y; Wait-ScreenSettled -TimeoutSec 3
     $f = Shot "panes-details-clicked"
     $afterClicks = Get-GuestPanes
     $hidden = $afterKeys.Sidebar -eq "hidden" -and $afterKeys.Details -eq "hidden"
@@ -2169,12 +2243,12 @@ Test-Case "L3" "Open the logs folder from the palette" "Explorer opens on the lo
     Start-GuestApp -Arguments $guestRepo, "_HOME"
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
-    Send-Keys "ctrl+k"; Wait-For 2
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
     # The whole name: "logs" alone finds a note named after logs first, when
     # the wiki has one, and Enter then opens the note.
-    Send-Text "open logs folder"; Wait-For 2
+    Send-Text "open logs folder"; Wait-ScreenSettled -TimeoutSec 2
     $a = Shot "palette-logs"
-    Send-Keys "enter"; Wait-For 8
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 8
     $b = Shot "logs-folder-open"
     $run = Invoke-GuestScript -Script @'
 $shell = New-Object -ComObject Shell.Application
@@ -2206,7 +2280,7 @@ Test-Case "ST1" "The Settings page and its categories" "each row of the list ope
         $x = $info.Left + [int](92 * $info.Scale)
         $y = $info.Top + [int]((109 + 36 * $row) * $info.Scale)
         Send-RestedClick -X $x -Y $y -RestSeconds 0.6
-        Wait-For 2
+        Wait-ScreenSettled -TimeoutSec 2
         $taken += Shot "settings-$name"
         $row += 1
     }
@@ -2241,19 +2315,19 @@ Test-Case "Z1" "Zoom the whole app with Ctrl+wheel" "two notches up zoom in, two
     if (-not $info) { throw "the app has no window" }
     # The pointer rests in the middle of the page, where the wheel is read.
     Move-Pointer -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int]($info.Height / 2))
-    Wait-For 1
+    Wait-ScreenSettled -TimeoutSec 1
     $a = Shot "zoom-100"
     $start = (Invoke-GuestScript -Script $read).Output.Trim()
-    Send-CtrlWheel 1; Wait-For 1
-    Send-CtrlWheel 1; Wait-For 3
+    Send-CtrlWheel 1; Wait-ScreenSettled -TimeoutSec 1
+    Send-CtrlWheel 1; Wait-ScreenSettled -TimeoutSec 3
     $zoomed = (Invoke-GuestScript -Script $read).Output.Trim()
     $b = Shot "zoom-in"
-    Send-CtrlWheel -1; Wait-For 1
-    Send-CtrlWheel -1; Wait-For 3
+    Send-CtrlWheel -1; Wait-ScreenSettled -TimeoutSec 1
+    Send-CtrlWheel -1; Wait-ScreenSettled -TimeoutSec 3
     $back = (Invoke-GuestScript -Script $read).Output.Trim()
     $c = Shot "zoom-back"
-    Send-CtrlWheel 1; Wait-For 2
-    Send-Keys "ctrl+0"; Wait-For 3
+    Send-CtrlWheel 1; Wait-ScreenSettled -TimeoutSec 2
+    Send-Keys "ctrl+0"; Wait-ScreenSettled -TimeoutSec 3
     $reset = (Invoke-GuestScript -Script $read).Output.Trim()
     $d = Shot "zoom-reset"
     $level = 0
@@ -2314,10 +2388,10 @@ Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the fi
     $a = Shot "editor-open"
     # The click that gave the window the focus took it from the editor; a
     # click into the text gives it back. The marker lands in line 1.
-    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-For 1
-    Send-Text "vmtestmarker "; Wait-For 3
+    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-ScreenSettled -TimeoutSec 1
+    Send-Text "vmtestmarker "; Wait-ScreenSettled -TimeoutSec 3
     $b = Shot "editor-typed"
-    Send-Keys "ctrl+s"; Wait-For 5
+    Send-Keys "ctrl+s"; Wait-ScreenSettled -TimeoutSec 5
     $c = Shot "editor-saved"
     $run = Invoke-GuestScript -Script "(Get-ChildItem '$guestRepo\obsidian' -Recurse -Filter *.md | Select-String -Pattern 'vmtestmarker' -List | ForEach-Object { `$_.Path }) -join ', '"
     $found = $run.Output.Trim()
@@ -2333,10 +2407,10 @@ Test-Case "H2" "Theme is remembered" "a theme chosen through the palette is stil
     Start-GuestApp -Arguments $guestRepo
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "ember"; Wait-For 3
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "ember"; Wait-ScreenSettled -TimeoutSec 3
     $a = Shot "theme-search"
-    Send-Keys "enter"; Wait-For 5
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 5
     $b = Shot "theme-applied"
     $after = (Invoke-GuestScript -Script $read).Output
     Stop-GuestApp
@@ -2357,12 +2431,12 @@ Test-Case "T1" "Theme menu by keyboard" "the menu hangs under the toolbar's them
     Start-GuestApp -Arguments $guestRepo, "_HOME"
     Wait-AppPage -TimeoutSec 12
     Hold-For 1.5 -Reason "the page's entrance animation"
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "choose theme"; Wait-For 2
-    Send-Keys "enter"; Wait-For 3
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "choose theme"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 3
     $a = Shot "theme-menu-open"
-    Send-Keys "down"; Wait-For 1
-    Send-Keys "enter"; Wait-For 4
+    Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 4
     $b = Shot "theme-menu-chosen"
     $after = (Invoke-GuestScript -Script $readTheme).Output
     Stop-GuestApp
@@ -2376,12 +2450,12 @@ Test-Case "T2" "Theme menu on Home" "Home has no toolbar; the menu hangs from th
     Start-GuestApp -Arguments $guestRepo
     Wait-AppPage -TimeoutSec 12
     Hold-For 1.5 -Reason "the page's entrance animation"
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "choose theme"; Wait-For 2
-    Send-Keys "enter"; Wait-For 3
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "choose theme"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 3
     $a = Shot "theme-menu-on-home"
-    Send-Keys "down"; Wait-For 1
-    Send-Keys "enter"; Wait-For 4
+    Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 4
     $b = Shot "theme-menu-on-home-chosen"
     $after = (Invoke-GuestScript -Script $readTheme).Output
     Stop-GuestApp
@@ -2419,7 +2493,7 @@ Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes
     if (-not $info) { throw "the app has no window" }
     $x = $info.Right - [int](284 * $info.Scale); $y = $info.Top + [int](566 * $info.Scale)
     Send-RestedClick -X $x -Y $y
-    Wait-For 5
+    Wait-ScreenSettled -TimeoutSec 5
     $shot = Shot "home-project-removed"
     $probe = Get-Probe "home-project-removed" -Quick
     $left = @(Get-Registered $probe | Where-Object { $_.name -eq "gone-demo" })
@@ -2500,12 +2574,12 @@ $global:LASTEXITCODE = 0
         for ($y = $info.Top + [int]($info.Height * 0.25); $y -lt $info.Bottom - $step; $y += $step) {
             Send-Click -X $x -Y $y
             $attempts += 1
-            Wait-For 2.5
+            Wait-ScreenSettled -TimeoutSec 2.5
             Save-Screenshot $probeShot | Out-Null
             if ((Get-ImageChange $base $probeShot) -gt 0.02) {
                 # Something opened. The viewer closes with Escape and leaves
                 # the note as it was; a page that was navigated to does not.
-                Send-Keys "esc"; Wait-For 2.5
+                Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2.5
                 Save-Screenshot $probeShot | Out-Null
                 if ((Get-ImageChange $base $probeShot) -lt 0.005) { $found = @($x, $y); break }
                 # A link of the note was followed: start the note again.
@@ -2523,9 +2597,9 @@ $global:LASTEXITCODE = 0
             -Observed "$attempts clicks down the note's column found nothing that opens over the window and closes with Escape; read the screenshot: whether the note shows a drawn diagram (a placeholder or the source means it was not drawn in time)"
     } else {
         Send-Click -X $found[0] -Y $found[1]
-        Wait-For 8
+        Wait-ScreenSettled -TimeoutSec 8
         $open = Shot "diagram-viewer-open"
-        Send-Keys "esc"; Wait-For 3
+        Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 3
         $closed = Shot "diagram-viewer-closed"
         $after = Get-ImageChange $base (Join-Path $shots $closed)
         Add-Result -Id "DV1" -Title "Open a diagram in the viewer, and close it" -Expect "the viewer opens over the note and Escape closes it" `
@@ -2574,7 +2648,7 @@ Test-Case "I1" "Restart Windows" "nothing of CodeWiki starts by itself; PATH kep
     # Shut down and start again; the recording repeats its last picture meanwhile.
     Restart-Guest
     Wait-Guest -TimeoutSec 900
-    Wait-For 40
+    Hold-For 40 -Reason "I1: nothing of CodeWiki may start by itself, which only a window of this length that is watched can show"
     $a = Shot "after-reboot"
     $probe = Get-Probe "after-reboot"
     $running = $probe.processes.Count
@@ -2592,10 +2666,10 @@ Test-Case "I1" "Restart Windows" "nothing of CodeWiki starts by itself; PATH kep
 # I1 has just shown that nothing starts by itself. The setting is reached
 # through the palette, which lists it for an installed copy.
 function Set-GuestAutostart {
-    Send-Keys "ctrl+k"; Wait-For 2
-    Send-Text "start with windows"; Wait-For 2
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "start with windows"; Wait-ScreenSettled -TimeoutSec 2
     $listed = Shot "autostart-in-palette"
-    Send-Keys "enter"; Wait-For 4
+    Send-Keys "enter"; Wait-ScreenSettled -TimeoutSec 4
     $listed
 }
 $autostartCommand = "`"$guestTarget\codewiki-app.exe`" --tray"
@@ -2610,9 +2684,15 @@ Test-Case "AS1" "Turn on the start with Windows" "the palette's setting writes t
 }
 
 Test-Case "AS2" "Windows starts the app in the tray" "after a restart of Windows the app runs with no window and its backend is up; a click on the tray icon shows the window" {
+    $mark = Get-AppLogMark
     Restart-Guest
     Wait-Guest -TimeoutSec 900
-    Wait-For 60
+    # Windows starts the app at sign-in, some seconds after the desktop is there.
+    [void](Wait-Until -What "the autostarted app and its backend are up" -TimeoutSec 60 -IntervalMs 1000 {
+            (Get-GuestProcessCount "codewiki-app") -ge 1 -and ($state = Get-GuestBackendState) -and $state.Alive -and $state.Health -eq 200
+        })
+    [void](Wait-AppLog -Pattern "repository: cw-core" -Since $mark -TimeoutSec 20 -What "the autostarted app opens cw-core")
+    Hold-For 3 -Reason "the tray icon follows the app by a moment"
     $a = Shot "after-reboot-autostart"
     $probe = Get-Probe "autostart-boot" -Quick
     $app = @(Get-App $probe)
@@ -2620,7 +2700,7 @@ Test-Case "AS2" "Windows starts the app in the tray" "after a restart of Windows
     $backendAlive = [bool]($probe.backend -and $probe.backend.pidAlive -and $probe.backend.health -eq 200)
     $name = "$((Get-GuestTrayIcons | Select-Object -First 1).Name)"
     $icon = Send-GuestTrayClick -Button left
-    Wait-For 5
+    Wait-ScreenSettled -TimeoutSec 5
     $info = Get-GuestWindowInfo "codewiki-app"
     $b = Shot "autostart-window-shown"
     # A window never shown before must still land inside the screen (W0).
@@ -2650,8 +2730,9 @@ Test-Case "AS3" "Turn the start with Windows off, and on again" "off removes the
 # put its icon back, or the app is running with no way to reach it.
 Test-Case "TR6" "The tray icon comes back when Explorer restarts" "Explorer is ended and starts again; the app's icon is there again" {
     $before = @(Get-GuestTrayIcons).Count
-    Invoke-GuestScript -Script 'Stop-Process -Name explorer -Force; Start-Sleep 12; if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }' | Out-Null
-    Wait-For 10
+    # Windows starts Explorer again by itself; if it has not within 12 seconds, the script does.
+    Invoke-GuestScript -Script 'Stop-Process -Name explorer -Force; $deadline = (Get-Date).AddSeconds(12); while (-not (Get-Process explorer -ErrorAction SilentlyContinue) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }; if (-not (Get-Process explorer -ErrorAction SilentlyContinue)) { Start-Process explorer.exe }' | Out-Null
+    [void](Wait-Until -What "the app's tray icon is back after Explorer restarted" -TimeoutSec 10 -IntervalMs 500 { @(Get-GuestTrayIcons).Count -ge 1 })
     $after = @(Get-GuestTrayIcons)
     $shot = Shot "explorer-restarted"
     Add-Result -Id "TR6" -Title "The tray icon comes back when Explorer restarts" -Expect "one icon before, one after" `
@@ -3266,7 +3347,7 @@ function Start-EmbedStub {
     Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\embed-server.ps1") -GuestDirectory $script:Vm.GuestDir
     Invoke-GuestScript -Script "Remove-Item '$stubFolder\requests.log' -ErrorAction SilentlyContinue" | Out-Null
     Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\embed-server.ps1", "-Folder", $stubFolder, "-Port", "$stubPort", "-Model", $stubModel
-    Wait-For 6
+    [void](Wait-GuestPort -Port $stubPort -TimeoutSec 6 -What "the stand-in embedding server listens")
     $script:stubUp = $true
     (Invoke-GuestScript -Script "try { (Invoke-WebRequest -UseBasicParsing '$stubUrl/v1/models').Content } catch { 'no answer: ' + `$_.Exception.Message }").Output
 }
@@ -3376,7 +3457,7 @@ Test-Case "SR1" "The embedding server comes back by itself" "with the stand-in s
     $down = Shot "settings-search-server-down"
     $mark = Get-AppLogMark
     $listing = Start-EmbedStub
-    $sheet = Save-ShotBurst "settings-search-server-back" -Seconds 40 -Every 2
+    $sheet = Save-ShotBurst "settings-search-server-back" -Seconds 40 -Every 2 -Until { [bool](Get-AppLogSince $mark "toast embed-server") }
     $lines = Get-AppLogSince $mark "toast|Windows notification"
     $toast = [bool]($lines | Where-Object { $_ -match "toast embed-server" })
     $models = Invoke-GuestBackendScript -Script "'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')"
@@ -3681,7 +3762,7 @@ function Measure-RealEmbedder {
     Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\sampler.ps1") -GuestDirectory $script:Vm.GuestDir
     Invoke-GuestScript -Script "Remove-Item '$embedSamples\*' -Force -ErrorAction SilentlyContinue" | Out-Null
     Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\sampler.ps1", "-Folder", $embedSamples, "-Pattern", $ServerProcess
-    Wait-For 4
+    Wait-ScreenSettled -TimeoutSec 4
 
     $queriesB64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((ConvertTo-Json -InputObject ([string[]]$embedQueries) -Compress)))
     # Each server's own embeddings route, as cw-embed calls it: Ollama's
@@ -3883,7 +3964,7 @@ function Get-OllamaVersion {
 function Start-OllamaServe {
     if (-not (Get-OllamaVersion)) {
         Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $ollamaExe, "serve"
-        Wait-For 15
+        Hold-For 15 -Reason "Ollama's server starts"
     }
 }
 
@@ -3936,7 +4017,7 @@ $signature = Get-AuthenticodeSignature $setup
     $version = ""
     $deadline = (Get-Date).AddSeconds(120)
     while (-not $version -and (Get-Date) -lt $deadline) {
-        Wait-For 10
+        Hold-For 10 -Reason "the Ollama installer is still at work"
         $version = Get-OllamaVersion
     }
     $facts = (Invoke-GuestScript -TimeoutSec 120 -Script (@'
@@ -4230,7 +4311,7 @@ $home1 = Split-Path -Parent (Split-Path -Parent $lms)
 Test-Case "LS2" "lms get and load nomic-embed-text" "lms downloads an embedding model and loads it" {
     if (-not (Test-Path (Join-Path $PSScriptRoot "guest\serve-logged.ps1"))) { throw "guest\serve-logged.ps1 is missing" }
     Start-GuestExe -Exe $lmsExe -Arguments "daemon", "up"
-    Wait-For 20
+    Hold-For 20 -Reason "LM Studio's daemon starts"
     $run = Invoke-GuestScript -TimeoutSec 3600 -Script ((Get-GuestFreeDiskText 3) + "`n" + (@'
 $lms = '{{LMS}}'
 $log = '{{LOG}}'
@@ -4362,7 +4443,7 @@ $signature = Get-AuthenticodeSignature '{{HOME}}\Downloads\lemonade\lemonade.msi
         $installed = $state -match "msi running: 0" -and $state -match "exe: True"
     }
     $seconds = [int]((Get-Date) - $watch).TotalSeconds
-    Wait-For 10
+    Hold-For 10 -Reason "the server settles before its facts are read"
     $facts = (Invoke-GuestScript -TimeoutSec 180 -Script (@'
 $exe = '{{EXE}}'
 $ErrorActionPreference = 'Continue'
@@ -4391,7 +4472,7 @@ Test-Case "LM2" "lemonade pull nomic-embed-text-v1-GGUF" "the model is pulled as
     if ($up -notmatch "status exit: 0") {
         # The installer's own start did not happen or did not last.
         Start-GuestExe -Exe $lemonadeServerExe
-        Wait-For 25
+        Hold-For 25 -Reason "Lemonade's server starts"
     }
     $run = Invoke-GuestScript -Background -TimeoutSec 3000 -Script (@'
 $ErrorActionPreference = 'Continue'
@@ -4532,7 +4613,7 @@ Test-Case "K1" "Uninstall while the app runs" "processes stopped; programs, PATH
     $before = Get-Probe "before-uninstall" -Quick
     $exe = Invoke-GuestExe -Exe "C:\Windows\System32\cmd.exe" -TimeoutSec 120 -Arguments "/c", "$guestTarget\uninstall.cmd"
     $run = [pscustomobject]@{ ExitCode = $exe.ExitCode; Output = ($exe.Stdout + "`n" + $exe.Stderr).Trim() }
-    Wait-For 3
+    Wait-ScreenSettled -TimeoutSec 3
     $shot = Shot "after-uninstall"
     $probe = Get-Probe "uninstalled"
     $left = @($probe.install.files | Where-Object { $_ } | ForEach-Object { $_.path })
@@ -4714,7 +4795,16 @@ foreach ($root in 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall', '
 # Back to no installation, by whatever means: end the programs and the file
 # holder, uninstall with the installed script, delete what is left, the data
 # and settings folders, the Run value, the Apps entry and the PATH entry.
+# True while the guest is known to hold no installation: a case's reset at its
+# end set it, and nothing has installed since. The next case then need not
+# reset again at its start; a case run alone still does (-IfDirty).
+$script:setupClean = $false
 function Reset-SetupGuest {
+    param([switch]$IfDirty, [switch]$Final)
+    if ($IfDirty -and $script:setupClean) {
+        $script:setupClean = $false
+        return
+    }
     $run = Invoke-GuestScript -TimeoutSec 280 -Script (@'
 $t = '{{TARGET}}'
 $key = '{{KEY}}'
@@ -4724,7 +4814,9 @@ Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object { $_.
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'codewiki*' } | Stop-Process -Force -ErrorAction SilentlyContinue
 # An uninstaller a case left waiting on one of its questions (IS9).
 Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -match '^_?unins|^_iu' } | Stop-Process -Force -ErrorAction SilentlyContinue
-Start-Sleep -Seconds 2
+# Until what was ended has ended, at most two seconds.
+$until = (Get-Date).AddSeconds(2)
+while ((Get-Date) -lt $until -and @(Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -like 'codewiki*' -or $_.ProcessName -match '^_?unins|^_iu' }).Count) { Start-Sleep -Milliseconds 100 }
 if (Test-Path -LiteralPath (Join-Path $t 'uninstall.cmd')) {
     & "$env:SystemRoot\System32\cmd.exe" /c (Join-Path $t 'uninstall.cmd') -PurgeData | Out-Null
 }
@@ -4744,6 +4836,8 @@ Remove-Item -LiteralPath (Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\P
     # A reset that leaves CodeWiki behind would show up as a failure of the next case.
     if ($run.Output -notmatch 'left: folder (True|False), entry (True|False)') { throw "could not reset the guest's installation: $($run.Output) $($run.Stderr)" }
     if ($Matches[1] -eq 'True' -or $Matches[2] -eq 'True') { throw "the guest was not put back to no installation; left: $($Matches[0]) ($($run.Output))" }
+    # Only the reset that ends a case (-Final) says the guest is clean for the next.
+    $script:setupClean = [bool]$Final
 }
 
 # Hold a file open with no sharing, in a PowerShell that stays alive until a
@@ -4892,7 +4986,7 @@ if ($Setup) {
     $setupSilent = "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART"
 
     Test-Case "IS1" "Silent install with the setup program" "exit 0; the three programs, plugins, uninstall.ps1 and unins000.exe in the folder, no install.ps1; the PATH entry once; the shortcut; the Apps entry (CodeWiki, the package's version, CodeWiki); codewiki --version answers; the shortcut starts one window" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             $log = "C:\Users\Public\cwvm-is1.log"
             $run = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=$log")
@@ -4901,9 +4995,12 @@ if ($Setup) {
             if ($run.ExitCode -ne 0) { $problems += "setup exited with $($run.ExitCode)" }
             $setupLog = Get-GuestLog $log
             # The shortcut, as the Start menu would run it.
+            $script:appMark = Get-AppLogMark
+            $script:appAsked = "default"
             Start-GuestExe -Exe "C:\Windows\explorer.exe" -Arguments $setupShortcut
             $window = Show-GuestWindow -ProcessName "codewiki-app"
-            Wait-For 8
+            Wait-AppPage -TimeoutSec 8
+            Hold-For 1.5 -Reason "the page's entrance animation"
             $shot = Shot "setup-silent-app"
             $probe = Get-Probe "setup-silent" -Quick
             $windows = @(Get-App $probe | Where-Object { $_.hasWindow })
@@ -4912,12 +5009,12 @@ if ($Setup) {
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + $setupLog + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
                 -Observed "setup.exe $($setupSilent -join ' ') /LOG: exit $($run.ExitCode); $(Format-SetupState $state); codewiki --version: '$($state.version)'; $(if ($problems) { $problems -join '; ' } else { 'all in place' }); app started from the shortcut: $(@(Get-App $probe).Count) app process, $($windows.Count) window"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
     Test-Case "IS2" "Uninstall from the Apps entry" "exit 0 with the app running; the folder, PATH entry, shortcut, Run value and Apps entry gone; the data and settings folders stay" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             $install = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is2-install.log")
             if ($install.ExitCode -ne 0) { throw "the silent install failed first: exit $($install.ExitCode)" }
@@ -4944,7 +5041,7 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
             $running = Shot "setup-uninstall-app-running"
             $log = "C:\Users\Public\cwvm-is2.log"
             $run = Invoke-GuestUninstall -Log $log -Quiet
-            Wait-For 3
+            Wait-ScreenSettled -TimeoutSec 3
             $shot = Shot "setup-uninstalled"
             $after = Get-SetupState
             $problems = @()
@@ -4965,18 +5062,18 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($running, $shot) -Output ("$($run.Command) $($run.Arguments)`n" + $run.Log).Trim() `
                 -Observed "ran QuietUninstallString '$($run.Command)' plus $($run.Arguments) with the app running (processes before: $($before.procs)): exit $($run.ExitCode); after: $(Format-SetupState $after); $(if ($problems) { $problems -join '; ' } else { 'removed, data and settings kept' })"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
     Test-Case "IS3" "Uninstall refused while a program is held" "a non-zero exit, and the entry, PATH entry, shortcut and programs stay; after the file is released the uninstall succeeds" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             $install = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is3-install.log")
             if ($install.ExitCode -ne 0) { throw "the silent install failed first: exit $($install.ExitCode)" }
             Start-GuestFileHold "$guestTarget\codewiki-app.exe"
             $refusedRun = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is3-refused.log"
-            Wait-For 2
+            Wait-ScreenSettled -TimeoutSec 2
             $refusedShot = Shot "setup-uninstall-refused"
             $kept = Get-SetupState
             $problems = @()
@@ -4990,7 +5087,7 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
             # Let go; the same command must now work.
             Stop-GuestFileHold
             $doneRun = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is3-done.log"
-            Wait-For 3
+            Wait-ScreenSettled -TimeoutSec 3
             $gone = Get-SetupState
             if ($doneRun.ExitCode -ne 0) { $problems += "the uninstall after the release exited with $($doneRun.ExitCode)" }
             if ($gone.folder -eq "True" -or $gone.entry -eq "True" -or $gone.pathcount -ne "0" -or $gone.lnk -eq "True") { $problems += "after the release: $(Format-SetupState $gone)" }
@@ -4999,17 +5096,17 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
                 -Output ("--- while held: $($refusedRun.Command) $($refusedRun.Arguments)`n" + $refusedRun.Log + "`n--- after the release`n" + $doneRun.Log).Trim() `
                 -Observed "codewiki-app.exe held open with no sharing: uninstall exit $($refusedRun.ExitCode); then $(Format-SetupState $kept); released, uninstall exit $($doneRun.ExitCode); then $(Format-SetupState $gone); $(if ($problems) { $problems -join '; ' } else { 'refused and kept while held, removed after' }); read the screenshot for what, if anything, the uninstaller showed"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
     Test-Case "IS4" "The setup wizard by mouse" "Ready to Install, a click on Install, the progress, the finish page with Start CodeWiki, a click on Finish; the app's window appears and the folder is as after a silent install" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             Start-GuestExe -Exe $guestSetup
             $install = $null
             for ($try = 0; $try -lt 15 -and -not $install; $try++) {
-                Wait-For 4
+                Wait-ScreenSettled -TimeoutSec 4
                 $install = Find-SetupButton '^&?Install$'
             }
             $ready = Shot "setup-wizard-ready"
@@ -5022,11 +5119,11 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
             $readyUia = @(Get-GuestElements -Class $wizardClass | Where-Object { $_.Name })
             $readyText += "`nUI Automation under class '$wizardClass': $($readyUia.Count) named elements: $(($readyUia | ForEach-Object { "$($_.Kind) '$($_.Name)'$(if (-not $_.OnScreen) { ' (off screen)' })" }) -join ', ')"
             Send-RestedClick -X $install.X -Y $install.Y
-            Wait-For 1
+            Wait-ScreenSettled -TimeoutSec 1
             $progress = Shot "setup-wizard-progress"
             $finish = $null
             for ($try = 0; $try -lt 40 -and -not $finish; $try++) {
-                Wait-For 4
+                Wait-ScreenSettled -TimeoutSec 4
                 $finish = Find-SetupButton '^&?Finish$'
             }
             $done = Shot "setup-wizard-finish"
@@ -5038,6 +5135,8 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
             $finishElements = @(Get-GuestElements -Class $wizardClass | Where-Object { $_.OnScreen -and $_.Name })
             $finishText += "`nUI Automation under class '$wizardClass': $(($finishElements | ForEach-Object { "$($_.Kind) '$($_.Name)'" }) -join ', ')"
             $startBox = @($finishElements | Where-Object { $_.Name -like "*Start CodeWiki*" }).Count
+            $script:appMark = Get-AppLogMark
+            $script:appAsked = "default"
             Send-RestedClick -X $finish.X -Y $finish.Y
             $problems = @()
             try {
@@ -5045,7 +5144,8 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
             } catch {
                 $problems += "no app window appeared after Finish"
             }
-            Wait-For 8
+            Wait-AppPage -TimeoutSec 8
+            Hold-For 1.5 -Reason "the page's entrance animation"
             $shot = Shot "setup-wizard-app"
             $state = Get-SetupState
             $problems += @(Test-SetupInstalled $state $setupVersion)
@@ -5056,12 +5156,12 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
                 -Output ("ready page: $readyText`nfinish page: $finishText") `
                 -Observed "run with no switches; clicked Install at $($install.X),$($install.Y) and Finish at $($finish.X),$($finish.Y); Start CodeWiki box named by UI Automation on the finish page: $($startBox -gt 0) (it was left as it came: the app's window appearing shows it was checked); $(Format-SetupState $state); $(if ($problems) { $problems -join '; ' } else { 'all in place' }); read the four screenshots for the page order, the wording and the box"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
     Test-Case "IS5" "Silent install over an install.cmd installation, app running" "exit 0 within 120 s with no prompt; the PATH entry once; the settings folder's marker and the Run value stay; the Apps entry appears; codewiki --version answers" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             $first = Install-GuestWithCmd
             if ($first.ExitCode -ne 0) { throw "install.cmd failed first: exit $($first.ExitCode)" }
@@ -5092,12 +5192,12 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + (Get-GuestLog $log) + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
                 -Observed "install.cmd first (exit $($first.ExitCode)), the app running ($($before.procs) processes), no Apps entry ($($before.entry)); then setup silent: exit $($run.ExitCode) after $seconds s; $(Format-SetupState $state); app processes after: $($state.procs); codewiki --version: '$($state.version)'; $(if ($problems) { $problems -join '; ' } else { 'all in place' })"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
     Test-Case "IS6" "A failing install says why" "exit 7; the setup log holds 'CodeWiki could not be installed'; no Apps entry is written" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             $first = Install-GuestWithCmd
             if ($first.ExitCode -ne 0) { throw "install.cmd failed first: exit $($first.ExitCode)" }
@@ -5116,7 +5216,7 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots @($shot) -Output ("setup log $log`n" + $text + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim()).Trim() `
                 -Observed "install.cmd first (exit $($first.ExitCode)), codewiki.exe held open with no sharing, then setup silent: exit $($run.ExitCode); log says 'could not be installed': $($text -match 'CodeWiki could not be installed'); Apps entry: $($state.entry); $(if ($problems) { $problems -join '; ' } else { 'failed as it should' })"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
@@ -5163,7 +5263,7 @@ $user = [Environment]::GetEnvironmentVariable('Path', 'User')
     }
 
     Test-Case "IS8" "Setup over a setup installation" "the second silent run exits 0; the PATH entry once; one Apps entry, with the version; codewiki --version answers; then the uninstall from the entry exits 0 and leaves nothing" {
-        Reset-SetupGuest
+        Reset-SetupGuest -IfDirty
         try {
             $first = Invoke-GuestSetup -Arguments ($setupSilent + "/LOG=C:\Users\Public\cwvm-is8-first.log")
             if ($first.ExitCode -ne 0) { throw "the first silent install failed: exit $($first.ExitCode)" }
@@ -5177,7 +5277,7 @@ $user = [Environment]::GetEnvironmentVariable('Path', 'User')
             $problems += @(Test-SetupInstalled $state $setupVersion)
             if ($entries.Count -ne 1 -or $entries[0] -ne $setupEntryKey) { $problems += "Apps entries named CodeWiki: $($entries.Count) ($($entries -join ', '))" }
             $uninstall = Invoke-GuestUninstall -Log "C:\Users\Public\cwvm-is8-uninstall.log" -Quiet
-            Wait-For 3
+            Wait-ScreenSettled -TimeoutSec 3
             $gone = Get-SetupState
             $left = @(Get-SetupEntryKey)
             if ($uninstall.ExitCode -ne 0) { $problems += "the uninstall exited with $($uninstall.ExitCode)" }
@@ -5191,7 +5291,7 @@ $user = [Environment]::GetEnvironmentVariable('Path', 'User')
                 -Output ("setup log $log`n" + (Get-GuestLog $log) + "`n--- stdout/stderr`n" + ($run.Stdout + "`n" + $run.Stderr).Trim() + "`n--- uninstall: $($uninstall.Command) $($uninstall.Arguments)`n" + $uninstall.Log).Trim() `
                 -Observed "setup silent twice: exit $($first.ExitCode), then $($run.ExitCode); then $(Format-SetupState $state); Apps entries named CodeWiki: $($entries.Count); codewiki --version: '$($state.version)'; uninstall from QuietUninstallString: exit $($uninstall.ExitCode); then $(Format-SetupState $gone), Apps entries $($left.Count); $(if ($problems) { $problems -join '; ' } else { 'one installation, removed' })"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
@@ -5252,7 +5352,7 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Shots $pictures `
                 -Observed "ran UninstallString '$command' as Settings > Apps does; $($answered -join '; '); after: $(Format-SetupState $after), data folder $($after.datadir), settings folder $($after.prefsdir); $(if ($problems) { $problems -join '; ' } else { 'all removed' })"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 
@@ -5273,7 +5373,7 @@ Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'setting
                 -Status $(if ($problems) { "fail" } else { "pass" }) -Output ("$($run.Command) $($run.Arguments)`n" + $run.Log).Trim() `
                 -Observed "ran QuietUninstallString plus $($run.Arguments): exit $($run.ExitCode); after: $(Format-SetupState $after), data folder $($after.datadir), settings folder $($after.prefsdir); $(if ($problems) { $problems -join '; ' } else { 'all removed' })"
         } finally {
-            Reset-SetupGuest
+            Reset-SetupGuest -Final
         }
     }
 }
@@ -5350,7 +5450,7 @@ New-ItemProperty -LiteralPath '{{KEY}}' -Name 'DisplayVersion' -Value '{{OLD}}' 
 [Environment]::SetEnvironmentVariable('CODEWIKI_UPDATE_URL', 'http://localhost:8765', 'User')
 "@ | Out-Null
             Start-GuestExe -Exe "C:\Windows\System32\conhost.exe" -Arguments "--headless", $powershell, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "$($script:Vm.GuestDir)\update-server.ps1", "-Folder", $serve
-            Wait-For 6
+            [void](Wait-GuestPort -Port 8765 -TimeoutSec 6 -What "the stand-in update server listens")
         }
         # The app checks when it starts; Home then offers the update.
         Start-GuestApp -Arguments $guestRepo
@@ -5358,11 +5458,16 @@ New-ItemProperty -LiteralPath '{{KEY}}' -Name 'DisplayVersion' -Value '{{OLD}}' 
         Wait-AppPage -Legacy -TimeoutSec 25
         Hold-For 1.5 -Reason "the page's entrance animation"
         $a = Shot "update-offered"
-        Send-Keys "ctrl+k"; Wait-For 2
-        Send-Text "update codewiki"; Wait-For 3
+        Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+        Send-Text "update codewiki"; Wait-ScreenSettled -TimeoutSec 3
         $b = Shot "update-in-palette"
+        $mark = Get-AppLogMark
         Send-Keys "enter"
-        Wait-For 75
+        # The new app writes its start into the log, then its first page.
+        $budget = [System.Diagnostics.Stopwatch]::StartNew()
+        [void](Wait-AppLog -Pattern "codewiki-app $([regex]::Escape($newVersion)) started with" -Since $mark -TimeoutSec 75 -What "the updated app starts")
+        [void](Wait-AppLog -Pattern "page drawn:" -Since $mark -TimeoutSec ([math]::Max(3, 75 - $budget.Elapsed.TotalSeconds / $Pace)) -What "the updated app draws its page")
+        Hold-For 1.5 -Reason "the page's entrance animation"
         $c = Shot "update-done"
         $now = (Invoke-GuestScript -Script $version).Output.Trim()
         $probe = Get-Probe "updated" -Quick

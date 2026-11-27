@@ -708,7 +708,7 @@ function Send-RestedClick {
         [switch]$Double
     )
     Move-Pointer -X $X -Y $Y
-    Start-Sleep -Milliseconds ([int]($RestSeconds * 1000))
+    Hold-For $RestSeconds -Reason "the pointer rests on the control before the press" -Exact
     Invoke-Device Mouse ClickButton @{ ButtonIndex = [uint32]1 }
     if ($Double) {
         Start-Sleep -Milliseconds 80
@@ -1374,6 +1374,53 @@ function Wait-ScreenChange {
     if ($PassThru) { $met }
 }
 
+# What most waits after an input come to: the screen has reacted (the menu
+# opened, the page changed) and stands still again. -TimeoutSec is what the
+# fixed sleep it replaces was; at least 40 percent of it (and 0.5 s) always
+# passes first, so that a reaction that has not begun yet is not mistaken for
+# none, and the screen then has to stand still for -QuietMs. The deadline is
+# the old time: at it the case goes on, as it did after the sleep.
+function Wait-ScreenSettled {
+    param(
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        [double]$MinSec = -1,
+        [int]$QuietMs = 600,
+        [int[]]$Region = @(0, 0, 480, 270),
+        [string]$What = ""
+    )
+    if (-not $What) { $What = "screen settled after input, line $((Get-PSCallStack)[1].ScriptLineNumber)" }
+    if ($MinSec -lt 0) { $MinSec = [math]::Min($TimeoutSec, [math]::Max(0.5, 0.4 * $TimeoutSec)) }
+    Wait-ScreenStill -TimeoutSec $TimeoutSec -MinSec $MinSec -QuietMs $QuietMs -Region $Region -What $What
+}
+
+# Wait until no process of these names runs in the guest, in one call with a
+# loop of 200 ms inside it. Returns how many were left when it stopped (0: all
+# gone), or $null when the guest did not answer: empty output is a failed
+# probe, never "nothing is running".
+function Wait-GuestProcessGone {
+    param(
+        [Parameter(Mandatory)][string[]]$Name,
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        [string]$What = ""
+    )
+    if (-not $What) { $What = "processes gone: $($Name -join ', ')" }
+    $limit = $TimeoutSec * $script:Timing.Pace
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $names = ($Name | ForEach-Object { "'$_'" }) -join ", "
+    $run = Invoke-GuestScript -InProcess -TimeoutSec ([int]$limit + 30) -Script @"
+`$deadline = (Get-Date).AddSeconds($limit)
+do {
+    `$left = @(Get-Process -Name $names -ErrorAction SilentlyContinue).Count
+    if (`$left -eq 0) { break }
+    Start-Sleep -Milliseconds 200
+} while ((Get-Date) -lt `$deadline)
+"left=`$left"
+"@
+    $left = if ($run.Output -match 'left=(\d+)') { [int]$Matches[1] } else { $null }
+    Write-Timing -Kind wait -What $What -Sec $clock.Elapsed.TotalSeconds -Deadline $limit -Met ($left -eq 0)
+    $left
+}
+
 # Save the guest's screen as a PNG at its own size. Colors come from the
 # host as 16 bits per pixel, so smooth gradients show faint bands.
 function Save-Screenshot {
@@ -1569,7 +1616,7 @@ function Get-GuestTrayArrow {
     foreach ($try in 1..3) {
         $arrow = Get-GuestElements -Class "Shell_TrayWnd" -Like "*Hidden Icons*" | Where-Object { $_.OnScreen } | Select-Object -First 1
         if ($arrow) { return $arrow }
-        Start-Sleep -Seconds 2
+        Hold-For 2 -Reason "UI Automation lists no taskbar while Windows draws a notification; ask again"
     }
 }
 
@@ -1578,7 +1625,7 @@ function Open-GuestTrayFlyout {
     $arrow = Get-GuestTrayArrow
     if (-not $arrow -or $arrow.Name -match "Hide") { return $false }
     Send-Click -X $arrow.X -Y $arrow.Y
-    Start-Sleep -Milliseconds 1500
+    Wait-ScreenSettled -TimeoutSec 1.5 -MinSec 0.6 -QuietMs 400 -Region 300, 130, 480, 270 -What "the tray flyout opens"
     $true
 }
 
@@ -1587,7 +1634,7 @@ function Close-GuestTrayFlyout {
     $arrow = Get-GuestTrayArrow
     if ($arrow -and $arrow.Name -match "Hide") {
         Send-Click -X $arrow.X -Y $arrow.Y
-        Start-Sleep -Milliseconds 800
+        Wait-ScreenSettled -TimeoutSec 0.8 -MinSec 0.4 -QuietMs 300 -Region 300, 130, 480, 270 -What "the tray flyout closes"
     }
 }
 
@@ -1626,7 +1673,7 @@ function Send-GuestTrayClick {
     $icon = Get-GuestTrayIcon $Like
     if (-not $icon) { throw "no tray icon named like '$Like' can be reached" }
     Send-Click -X $icon.X -Y $icon.Y -Button $Button
-    Start-Sleep -Milliseconds 1500
+    Wait-ScreenSettled -TimeoutSec 1.5 -MinSec 0.6 -QuietMs 400 -What "the tray icon's click is answered"
     $icon
 }
 

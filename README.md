@@ -84,7 +84,7 @@ Closing the app's window does not end the app. CodeWiki stays in the notificatio
 
 Windows 11 puts a new icon behind the `^` arrow of the taskbar; drag it onto the taskbar to keep it in view. Starting CodeWiki while it runs opens the window of the running app, on the folder you named if you named one.
 
-Settings → Startup → "Start with Windows" starts CodeWiki in the tray when you sign in, with no window. It is off until you turn it on, and `uninstall.cmd` removes it.
+Settings → Appearance → Startup → "Start with Windows" starts CodeWiki in the tray when you sign in, with no window. It is off until you turn it on, and `uninstall.cmd` removes it.
 
 ## Use
 
@@ -97,7 +97,7 @@ codewiki status
 codewiki check         # findings for CI; --format sarif or junit
 ```
 
-`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Ctrl+K opens the command palette. The search box lists matching notes, symbols and files as you type: the arrow keys and Enter open one, and Enter with none chosen shows every hit. A note that an agent explained shows its pictures inside the sections they explain: boxes joined by arrows, and marked key points. "Agent view" in the toolbar shows the note as a coding agent reads it. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Behind the glass, beside the page, a sky of notes and links drifts in the theme's colors; light runs along the links, more often while a wiki is being written, and the nodes near the pointer brighten. It stands still when the window is not in front or animations are off, and Settings → Appearance → "Background graph" turns it off. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
+`codewiki --help` lists every command. Start `codewiki-app` with a repository folder as its first argument, or from inside one. It opens on Home: "Open folder…" and the projects opened before, the latest first; a project whose folder is not found stays listed, with a Remove button. Once you have opened a project, a search field above "Open folder…" suggests up to 8 projects opened before as you type: Up and Down choose one, Enter opens it and Escape clears the field. The "Open recent" button in the toolbar, after Back, lists up to 8 projects opened before, without the open one, and "Open folder…". With Settings → Appearance → Startup → "Open the last repository" on, the app starts on the wiki map of the repository it opened last, not on Home. Ctrl+K opens the command palette. The search box lists matching notes, symbols and files as you type: the arrow keys and Enter open one, and Enter with none chosen shows every hit. A note that an agent explained shows its pictures inside the sections they explain: boxes joined by arrows, and marked key points. "Agent view" in the toolbar shows the note as a coding agent reads it. The outline in the details pane lists the note's `##` headings: a click glides the note to that heading, and the entry of the section you are reading is lit. While you edit a note, the outline follows the editor's preview. The details pane scrolls when its content is longer than the window. Ctrl+B hides or shows the sidebar and Ctrl+Alt+B the details pane. Ctrl+wheel, Ctrl+= and Ctrl+- zoom the whole window in and out, and Ctrl+0 goes back to 100%; Settings → Appearance → Zoom sets the level, and the app keeps it. Settings → Keyboard lists every shortcut. A click on a diagram in a note opens it over the window, where the wheel zooms it and a drag moves it. Controls follow Material UI and move on springs; reports are pages of tiles, tables and cards. Behind the glass, beside the page, a sky of notes and links drifts in the theme's colors; light runs along the links, more often while a wiki is being written, and the nodes near the pointer brighten. It stands still when the window is not in front or animations are off, and Settings → Appearance → "Background graph" turns it off. Settings fills the window and has a category for each kind of setting: the theme and animations (by default the app follows the Windows animation setting), semantic search, the backend, repositories, updates, the keyboard shortcuts and diagnostics. It opens from the "Settings" row at the foot of the sidebar and of Home, with Ctrl+, , or from the palette.
 
 Closing the app also stops the local backend it used; one named by `CODEWIKI_URL` is left running. The app, the backend and the MCP bridge write their logs to `%LOCALAPPDATA%\CodeWiki\logs` (`app.log`, `backend.log`, `mcp.log`). "Open logs folder", in the palette or in Settings, shows them in Explorer. Attach them to a bug report; they name the folders you open. For more in `app.log`, choose a level in Settings → Diagnostics; `CODEWIKI_LOG=debug` does the same for any of the programs and wins over that choice. Set `CODEWIKI_LOG_DIR` to write the logs elsewhere.
 
@@ -155,7 +155,7 @@ A note about a package from outside the repository (an integration) says what th
 
 Without git, nothing that holds written work is ever deleted.
 
-**Git worktrees.** A linked git worktree, such as the ones a coding agent makes for a task, gets its answers from CodeWiki like any folder. It is not listed as a project on Home: the row of its repository says how many worktrees it has. When a worktree's folder is removed, CodeWiki forgets it and deletes its index.
+**Git worktrees.** A linked git worktree, such as the ones a coding agent makes for a task, gets its answers from CodeWiki like any folder. It is not listed as a project on Home, and Home's search does not suggest it: the row of its repository says how many worktrees it has. While you have a worktree open, Home lists it, with the repository it belongs to. When a worktree's folder is removed, CodeWiki forgets it and deletes its index.
 
 ### Search
 
@@ -360,14 +360,14 @@ A debug build keeps its own data, in `%LOCALAPPDATA%\CodeWiki-Dev` and `%APPDATA
 
 CI runs these four on every push and pull request. It also runs `codewiki check` on this repository and reports the findings to code scanning, and gitleaks scans new commits for secrets. Dependabot opens update pull requests weekly.
 
-To release, set `version` in the root `Cargo.toml`, merge it, and push a matching tag:
+To release, set the version in the root `Cargo.toml`, in the `version = "<old>", path` requirements of `crates/*/Cargo.toml`, and in `plugins/claude-code/.claude-plugin/plugin.json` and `plugins/codex/.codex-plugin/plugin.json`. Write `docs/releases/<version>.md`, which goes on top of the release notes. Merge, and push a matching tag:
 
 ```
-git tag v0.3.1
-git push origin v0.3.1
+git tag v0.6.0
+git push origin v0.6.0
 ```
 
-The tag publishes the Windows zip as a GitHub Release and pushes the Docker image. A tag that does not match the `Cargo.toml` version fails the release.
+The tag publishes a GitHub Release with the Windows zip, the setup program and a `.sha256` file for each, and pushes the Docker image. A tag that does not match the `Cargo.toml` version fails the release.
 
 ### Test a package in a clean Windows
 

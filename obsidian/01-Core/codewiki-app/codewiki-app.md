@@ -12,6 +12,8 @@ This is the Windows desktop app of CodeWiki. It shows the wiki notes and the liv
 
 All wiki data comes from the backend over HTTP through `cw-client`. The app links none of the engine crates (the indexer and the wiki writer). It uses `cw-core` for paths, names and the small files it reads itself, such as the list of folders kept from agents and the auto explain switch. It draws pictures and diagrams with `cw-illustrate`, `cw-mermaid` and `openui-lang`, sends error reports through `cw-telemetry`, and updates its own installation through `cw-update`. The crate root file holds `AppView`, the one big view that owns the pages, the tabs, the tray and the backend connection.
 
+The app also owns the text view of the note on show (`Reader`) and the one of the editor's preview. That lets the details pane list the note's `##` headings as an outline, scroll the body to one, and light the section being read; the rules are in [[Outline Module]]. Home has a search field over the recent projects, and the toolbar has an Open recent menu.
+
 ## Source
 
 - `crates/codewiki-app/Cargo.toml` — package manifest
@@ -21,15 +23,15 @@ All wiki data comes from the backend over HTTP through `cw-client`. The app link
 
 `main` runs these steps before any window opens: it reads the log level and starts logging and, if the user allowed it, error reports (`cw_telemetry::init`). It makes the channel for events from outside GPUI. `instance::acquire` decides whether this launch is the main app; a second launch hands its request over and returns with no window. `win32::on_console_stop` sends `Event::Quit` on Ctrl+C. Inside the GPUI run come the module inits, the key bindings and the window with its `Shell`. The [[codewiki-app Startup Flow]] shows the order.
 
-After that, `AppView` runs the app. `AppView::new` starts four jobs: `connect` reaches the backend, `start_updates` looks for new releases, `start_tray` puts the icon in the notification area, and `start_status_poll` asks the backend every 5 seconds what it does.
+After that, `AppView` runs the app. `AppView::new` starts four jobs: `connect` reaches the backend, `start_updates` looks for new releases, `start_tray` puts the icon in the notification area, and `start_status_poll` asks the backend every 5 seconds what it does. The poll feeds the tray, the backdrop and the toolbar, re-reads the waiting notes when the note revision changes, and drives `supervise`, which tries to reach a lost backend again. While an update installs, nothing is asked.
 
-The status poll feeds the tray, the backdrop and the toolbar. It also reads the waiting notes again when the backend's note revision changes, and it drives `supervise`, which tries to reach a lost backend again. While an update installs, nothing is asked, because the update stops the backend.
+`AppView::listen` is the one task that takes events from the channel. It hides or shows the window between two GPUI updates, then calls `handle_event`.
 
-`AppView::listen` is the one task that takes events from the channel. It hides or shows the window with the Win32 calls between two GPUI updates, then calls `handle_event`. Closing the window sends `Event::Hide` when a tray icon exists; without a tray, closing ends the app unless there are unsaved edits.
+The details pane's outline works each frame. `sync_reader` keeps one `Reader` for the note, and `body_state` picks it or the editor's preview. `outline_entries` lights an entry. `jump_to_heading` starts a glide, and `step_outline` moves it one frame.
 
-`notify_user` shows a toast in the window's corner while the window is on screen. While it is hidden or minimized it sends a Windows notification, and the click comes back as `Event::Notification`.
+Open recent is a toolbar menu. `recent_menu_entries` lists the registered projects of the recent list, newest first, without the open one, and no more than the tray's Recent menu. Home's search field filters the same projects; `choose_recent` opens the chosen one.
 
-On quit, `on_app_quit` releases the single-instance lock, flushes error reports, and asks the backend to stop on a background task. That happens only when this app started it: `stops_backend_on_quit` is false for a backend named by `CODEWIKI_URL` and while an update installs.
+On quit, `on_app_quit` releases the instance lock, flushes error reports, and asks the backend to stop, unless `stops_backend_on_quit` says no (a backend from `CODEWIKI_URL`, or an update in progress).
 
 ## Items
 

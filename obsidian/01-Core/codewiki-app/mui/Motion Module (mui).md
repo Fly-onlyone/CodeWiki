@@ -22,11 +22,11 @@ GPUI cannot scale an element, so entrances keep Framer's fade and travel and dro
 
 The spring presets are `SNAPPY`, `BOUNCY`, `GENTLE` and `PAGE`. `Enter` describes an entrance: a start offset, a spring and a delay. `Enter::PAGE`, `DIALOG`, `MENU` and `TOAST` are fixed ones. `Enter::card` rises from below and `Enter::row` slides in from the left. Both add a stagger from `stagger_delay`, which stops growing after `STAGGER_CAP` (12) items. `EnterExt::enter` runs two animations: a hold for the delay, then the spring. It runs again whenever the element's id changes. `Enter::at` turns progress into offset and opacity. Opacity is clamped, but the offset follows an overshoot.
 
-`drawer` gives a side pane's openness from 0 to 1: ease-out over the entering duration, sharp over the leaving duration. `count_up` shows a figure such as `62.5%` part way up from zero, keeping decimals and the text after the number.
+`drawer` gives a side pane's openness from 0 to 1: ease-out over the entering duration, sharp over the leaving duration. `count_up` shows a figure such as `62.5%` part way up from zero.
 
-`PRESS_IN` (50 ms) and `PRESS_OUT` (250 ms) are not MUI motions. They set how fast a pressed look arrives and how slowly it leaves, which [[Base Module]] uses. `BOUNCY` is also the selected row bar's spring in [[Interaction Module]].
+`glide` is the clock of the outline's scroll. The caller passes the time since the glide began, and gets back a number from 0 to 1 over MUI's standard duration, stretched by `scaled`, on an ease-in-out curve. It returns exactly 1 once the time is up, so the caller can tell the glide has arrived. It holds no state: the app's `step_outline` asks it each frame and maps the result onto the scroll position (see [[Outline Module]]).
 
-Three holds are times, not motions. `NOTE_HOLD` (2.5 s) keeps the word "Saved" beside a setting. `LEVEL_HOLD` (1.5 s) keeps the zoom level in the title bar. `TOAST_HOLD` (6 s) keeps a toast on screen.
+`PRESS_IN` (50 ms) and `PRESS_OUT` (250 ms) set how fast a pressed look arrives and leaves, which [[Base Module]] uses. `BOUNCY` is also the selected row bar's spring in [[Interaction Module]]. `NOTE_HOLD`, `LEVEL_HOLD` and `TOAST_HOLD` are times, not motions: how long "Saved", the zoom level and a toast stay.
 
 ## Items
 
@@ -77,6 +77,8 @@ And 7 more items.
 - `CODEWIKI_MOTION_SCALE` is read once at first use. Changing it later in the same run has no effect.
 - A value below 1 is ignored, not honored.
 - A spring may overshoot past 1. The entrance offset follows it but opacity does not, and `count_up` clamps so a figure never exceeds its target.
+- `glide` does not overshoot: it is eased, not a spring, and it never goes past 1.
+- `glide` ignores the reduced motion setting. The caller checks it and skips the glide.
 - Under reduced motion an entrance is simply there.
 - `count_up` returns text that does not start with a digit unchanged.
 - `NOTE_HOLD` and `LEVEL_HOLD` are the app's own, not from MUI or TradingAgent. `TOAST_HOLD` is the 6 seconds of MUI's Snackbar docs example.

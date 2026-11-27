@@ -24,11 +24,11 @@ How a row answers the pointer follows TradingAgent's sidebar, at the strengths i
 
 - Fill: `fill` picks an opacity of the primary color from the selected and hovered state. A transition eases it, then `pressed` raises it toward `row_pressed` by the press progress that `Base` keeps (see [[Base Module]]).
 - Hover: a spring runs from 0 to 1 and drives the right shift, the icon growth and the icon lift. While pressed, its target drops by the recoil share, so the row gives part of the shift back.
-- Bar: a second spring, with the knob's `bar_spring`, runs to 1 when selected. `bar_place` turns its value into the bar's left edge and height, so the bar grows from its middle while it slides in. The bar is drawn only while the spring is above 0.001, and its glow scales with the spring.
+- Bar: a second spring, with the knob's `bar_spring`, runs to 1 when selected. `bar_place` turns its value into the bar's left edge and height, so the bar grows from its middle while it slides in. It is drawn only while the spring is above 0.001.
 
-The selected label's color is the theme's link color put through `lift` by `label_lift`. `icon_color` picks the icon color. A tinted icon keeps its hue and is only lightened by `lift`. An untinted icon is muted at rest, primary when hovered, and the selected label's color when selected.
+The selected label's color is the theme's link color put through `lift`. `icon_color` picks the icon color. A tinted icon keeps its hue and is only lightened. An untinted icon is muted at rest, primary when hovered, and the label's color when selected.
 
-After the row is built, `base.attach` wires pointer, focus and ripple, and `on_secondary` adds the right and middle button handlers. If the caller passed a `Placed` cell, a canvas child writes the row's window bounds into it on every frame. The app's sidebar uses this: `offset_to_show` turns such bounds into the least scroll that brings a row into view, and the app follows the row briefly while its folder opens.
+After the row is built, `base.attach` wires pointer, focus and ripple, and `on_secondary` adds the right and middle button handlers. If the caller passed a `Placed` cell, a canvas child writes the row's window bounds into it each frame. The app's sidebar uses this: `follow_reveal` in [[codewiki-app]] calls `offset_to_show` to get the least scroll that brings a row into view. `ROW_START` tells other pages, such as the review queue, where a row's content begins.
 
 `ListFolder` keeps its open state under its id and eases a `shown` value. That value turns the arrow half a turn and drives `MotionReveal` for the rows. Closed and at rest, the rows are not built.
 

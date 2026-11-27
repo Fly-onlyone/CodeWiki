@@ -30,9 +30,9 @@ Imported by 29 source files. Main users:
 
 ## Wire-up
 
-The app asks the backend over HTTP and gets a `Value`. A page function then reads fields by name, for example `value["nodes"].as_array()`. The functions in `live.rs`, `pages.rs`, `review.rs` and `settings_pages.rs` all take a `&Value` and return a page or a list of rows. The graph module builds `GraphData` this way in `from_json`. The settings pages read the settings answer by path, such as the embed provider's `value`, and show a key's state (saved, unreadable) from it.
+The app asks the backend over HTTP and gets a `Value`. A page function then reads fields by name, for example `value["nodes"].as_array()`. The functions in `live.rs`, `pages.rs`, `review.rs` and `settings_pages.rs` all take a `&Value` and return a page or a list of rows. The graph module builds `GraphData` this way in `from_json`. The settings pages read the settings answer by path and show a key's state (saved, unreadable) from it.
 
-The crate root keeps several answers as loose `Value`s. `parse_repos` splits the repository list into present and missing folders. `take_status` parses the status poll with `status::parse`. The queue of waiting notes, from `GET /v1/repos/{id}/explanations?all=true`, is stored as a `Value` in `AppView::waiting`. `live::waiting_page` and `waiting_count` read it, and `None` means it has not been read yet. Search hits reach `hit_groups` the same way.
+The crate root keeps several answers as loose `Value`s. `parse_repos` splits the repository list into present and missing folders. The Open recent menu and Home's search list then pick from that list by path (`recent_menu_entries`). `take_status` parses the status poll with `status::parse`. The queue of waiting notes is stored as a `Value` in `AppView::waiting`; `None` means it has not been read yet. Search hits reach `hit_groups` the same way.
 
 The [[Instance Module]] uses `json!` to write one line of JSON per launch request. `encode` adds a protocol number, a token, the repo, the view and a tray flag. `decode` parses a line and accepts it only when the number matches and the token matches. The review view builds a request body with `json!` too.
 

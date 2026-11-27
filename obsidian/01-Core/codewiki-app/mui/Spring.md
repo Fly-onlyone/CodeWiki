@@ -20,6 +20,8 @@ A spring described the way Framer Motion does it: stiffness, damping and mass. T
 
 `config` applies the global motion scale through `slowed` and returns a GPUI `SpringConfig`. `animation` samples that config from rest at 0 to rest at 1 into an `Animation`. Entrances (`Enter`, such as the menu's and the toast's) use it, and so does a figure that counts up: the doc view's stat tile runs `GENTLE.animation()`. `policy` makes a gpui-kit spring from the response time (scaled) and damping ratio, with an epsilon for when it counts as arrived. Controls use `policy` for springs that chase a changing target, such as a row's or a button's hover (`SNAPPY`), the selected row's bar (the knob's bouncy spring) or the tab bar's place.
 
+Not every motion in the module is a spring. The scroll glide to an outline heading (`glide`) is a timed ease-in-out curve, so that it ends exactly on its target.
+
 ## Items
 
 Declared as `pub struct Spring`.

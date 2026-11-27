@@ -23,7 +23,7 @@ A vault note is Obsidian Markdown: it has frontmatter, `[[wikilinks]]` and Merma
 - `link_line` turns `[[Target|Label]]` in prose into an ordinary link to `codewiki://note/<encoded target>`. The part after `#` is dropped, and a trailing `/` on the label is trimmed.
 - Under each `## ` heading named in `figures`, it puts a code block in the language `codewiki-figure` that holds the picture's number. The viewer replaces it with the drawn picture, read back by `figure_index`.
 
-`follow_link` calls `decode` to read the note name from a clicked link. `outline` lists the `##` headings for the outline pane.
+`follow_link` calls `decode` to read the note name from a clicked link. The module no longer lists headings: the outline in the details pane is built from the headings the text view reports for this prepared text, in [[Outline Module]]. `prepare_note`, the version with no diagrams or pictures, exists for tests only; the app calls `prepare_note_with`.
 
 ## Items
 
@@ -51,12 +51,13 @@ A vault note is Obsidian Markdown: it has frontmatter, `[[wikilinks]]` and Merma
 ## Gotchas
 
 - Wikilinks inside inline code or fenced blocks are left alone, so `[[not a link]]` in backticks stays as text.
-- A `## ` line inside a code block is code. It does not get a picture and is not in the outline.
+- A `## ` line inside a code block is code. It does not get a picture. The outline does not list it either, since the text view does not draw it as a heading.
 - A heading that appears twice gets its picture only once, under the first.
 - A heading in `figures` that the note lacks gets no picture.
 - `decode` only reads `%XX` escapes. Text from `encode` round-trips, and a bad escape is kept as it is.
 - A Mermaid block must close with a line that starts with three backticks. An unclosed block swallows the rest of the note.
 - A leading byte order mark is removed before frontmatter is read.
+- The inserted picture block and tag row add blocks to the text view, so the block numbers the outline uses depend on this preparation.
 
 ## See also
 

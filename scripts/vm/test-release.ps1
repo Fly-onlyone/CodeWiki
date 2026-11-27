@@ -84,6 +84,7 @@ if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," } | ForEach-Object
 if ($Skip) { $Skip = @($Skip | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 . (Join-Path $PSScriptRoot "Vm.ps1")
 Initialize-Vm -Name $VmName -User $User -Password $Password
+$script:Vm.Gpu = [bool]$Gpu
 # The host must not fall asleep under a run nobody is watching.
 Start-KeepAwake
 
@@ -241,13 +242,147 @@ function Set-GuestMotion {
     Invoke-GuestScript -Script "New-Item -ItemType Directory -Force `"`$env:APPDATA\CodeWiki`" | Out-Null; Set-Content `"`$env:APPDATA\CodeWiki\motion.txt`" '$Value' -NoNewline" | Out-Null
 }
 
+# The app's log in the guest. The line count of it before a start is the mark
+# that Wait-AppPage and Wait-AppLog read from.
+function Get-AppLogPath { "$guestHome\AppData\Local\CodeWiki\logs\app.log" }
+
+# The number of lines in the app's log, as a mark. A direct call: it needs no
+# desktop, and the file is read with sharing so that the running app is not in
+# the way.
+function Get-AppLogMark {
+    $run = Invoke-InGuest -TimeoutSec 60 -ArgumentList (Get-AppLogPath) -ScriptBlock {
+        param($path)
+        $text = ''
+        try {
+            $stream = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite,Delete')
+            $reader = New-Object System.IO.StreamReader($stream)
+            $text = $reader.ReadToEnd()
+            $reader.Dispose()
+        } catch { }
+        if ($text -eq '') { 'mark=0' } else { 'mark=' + @($text.TrimEnd([char]13, [char]10) -split "\r?\n").Count }
+    }
+    if ($run.Output -match 'mark=(\d+)') { [int]$Matches[1] } else { 0 }
+}
+
+# Wait for a line of the app's log after a mark that matches a regular
+# expression, in one loop inside the guest (every 200 ms). Returns the line, or
+# null at the deadline. When the log was rotated since the mark (it is shorter
+# than the mark), the mark counts in app.old.log and the new file is read whole.
+function Wait-AppLog {
+    param(
+        [Parameter(Mandatory)][string]$Pattern,
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        [int]$Since = $script:appMark,
+        [string]$What = "line in the app's log"
+    )
+    $limit = $TimeoutSec * $Pace
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $log = Get-AppLogPath
+    $line = $null
+    try {
+        $run = Invoke-InGuest -TimeoutSec ([int]$limit + 60) -ArgumentList $log, ($log -replace 'app\.log$', 'app.old.log'), $Since, $Pattern, [int]($limit * 1000) -ScriptBlock {
+            param($log, $old, $mark, $pattern, $timeoutMs)
+            function Read-Lines($path) {
+                try {
+                    $stream = [System.IO.File]::Open($path, 'Open', 'Read', 'ReadWrite,Delete')
+                    $reader = New-Object System.IO.StreamReader($stream)
+                    $text = $reader.ReadToEnd()
+                    $reader.Dispose()
+                } catch { return @() }
+                if ($text -eq '') { return @() }
+                @($text.TrimEnd([char]13, [char]10) -split "\r?\n")
+            }
+            $deadline = [DateTime]::UtcNow.AddMilliseconds($timeoutMs)
+            do {
+                $now = @(Read-Lines $log)
+                $lines = if ($now.Count -lt $mark) { @(@(Read-Lines $old) | Select-Object -Skip $mark) + $now } else { @($now | Select-Object -Skip $mark) }
+                $hit = $lines | Where-Object { $_ -match $pattern } | Select-Object -First 1
+                if ($hit) { 'hit=' + $hit; return }
+                Start-Sleep -Milliseconds 200
+            } while ([DateTime]::UtcNow -lt $deadline)
+            'timeout'
+        }
+        $found = @($run.Output | Where-Object { "$_" -like 'hit=*' })
+        if ($found) { $line = "$($found[0])".Substring(4) }
+    } catch {
+        # The guest did not answer; sleep out what is left, as the fixed sleep did.
+        $left = $limit - $clock.Elapsed.TotalSeconds
+        if ($left -gt 0) { Start-Sleep -Milliseconds ([int]($left * 1000)) }
+    }
+    Write-Timing -Kind wait -What $What -Sec $clock.Elapsed.TotalSeconds -Deadline $limit -Met ([bool]$line)
+    $line
+}
+
+# The label the app puts after "asked" in its ready line for a start's
+# arguments (ready.rs, label): the view argument as given, "palette:" and
+# "file:" without what follows, "default" when only the repository is named.
+function Get-AppAsked {
+    param([string[]]$Arguments = @())
+    $views = @($Arguments | Where-Object { $_ -and $_ -notmatch '^[A-Za-z]:\\' })
+    if (-not $views) { return "default" }
+    $view = $views[-1]
+    foreach ($form in "palette:", "file:") { if ($view.StartsWith($form)) { return $form } }
+    $view
+}
+
+# Wait until the app has drawn a page with its data, after the mark that
+# Start-GuestApp took: the line "page drawn: <kind> (asked <label>)" in its log.
+# -Asked names the label (default: what the last start asked), -Kind the page
+# ("note", "settings:search"), -Filled waits for what arrives after a page
+# ("diagrams", "models"). -Legacy is for the old package, which has no such
+# line: the screen standing still. At the deadline it returns null and the
+# case goes on, as it did after the fixed sleep; the timing log lists it.
+function Wait-AppPage {
+    param(
+        [string]$Asked,
+        [string]$Kind,
+        [ValidateSet("", "diagrams", "models")][string]$Filled = "",
+        # Wait for the page and then for what fills it, within the one time
+        # that -TimeoutSec gives for both.
+        [ValidateSet("", "diagrams", "models")][string]$AndFilled = "",
+        [switch]$Legacy,
+        [int]$Since = $script:appMark,
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        [switch]$PassThru
+    )
+    if ($Legacy) {
+        Wait-ScreenStill -TimeoutSec $TimeoutSec -QuietMs 1500 -MinSec 3 -What "page of the old package" -PassThru:$PassThru
+        return
+    }
+    if ($Filled) {
+        $pattern = "page filled: $Filled"
+        $what = "page filled: $Filled"
+    } else {
+        $label = if ($Asked) { $Asked } else { $script:appAsked }
+        $pattern = "page drawn: " + $(if ($Kind) { [regex]::Escape($Kind) } else { "" })
+        if ($label) { $pattern += ".*\(asked " + [regex]::Escape($label) + "\)" }
+        $what = "page drawn" + $(if ($Kind) { ": $Kind" } else { "" }) + $(if ($label) { " (asked $label)" } else { "" })
+    }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $line = Wait-AppLog -Pattern $pattern -Since $Since -TimeoutSec $TimeoutSec -What $what
+    if ($AndFilled) {
+        $left = [math]::Max(1, $TimeoutSec - $clock.Elapsed.TotalSeconds / $Pace)
+        $filled = Wait-AppLog -Pattern "page filled: $AndFilled" -Since $Since -TimeoutSec $left -What "page filled: $AndFilled"
+        if (-not $filled) { $line = $null }
+    }
+    if ($PassThru) { $line }
+}
+
+$script:appMark = 0
+$script:appAsked = ""
+
 # Start the desktop app with arguments in the logged-in user's desktop.
 function Start-GuestApp {
     param([string[]]$Arguments = @())
+    # The mark comes first: the page's line may be written before this
+    # returns, and Wait-AppPage then finds it at once.
+    $script:appAsked = Get-AppAsked $Arguments
+    $script:appMark = Get-AppLogMark
     Start-GuestExe -Exe "$guestTarget\codewiki-app.exe" -Arguments $Arguments | Out-Null
     # Gives the window the keyboard focus and remembers where it is.
     $script:appWindow = Show-GuestWindow -ProcessName "codewiki-app"
 }
+
 
 function Stop-GuestApp {
     Invoke-GuestScript -Script 'Get-Process codewiki-app -ErrorAction SilentlyContinue | Stop-Process -Force' | Out-Null
@@ -984,7 +1119,8 @@ $windowAtStart = $null
 Test-Case "W0" "The window opens clear of the taskbar" "the whole window is inside the part of the screen the taskbar leaves free" {
     if ($starved) { throw "the guest is too busy to be driven (P1)" }
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Get-GuestWindowInfo "codewiki-app"
     if (-not $info) { throw "the app has no window" }
     $script:windowAtStart = $info
@@ -1066,7 +1202,8 @@ Test-Case "W6" "Close button" "a click on it hides the window; the app and its b
 Test-Case "W7" "Unsaved edits, the close button and Quit" "the X hides the window with the edits in it; a second start shows them again; Quit says to save or discard" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-For 1
     Send-Text "unsavedmarker "; Wait-For 3
     $typed = Shot "unsaved-edits-typed"
@@ -1075,7 +1212,9 @@ Test-Case "W7" "Unsaved edits, the close button and Quit" "the X hides the windo
     # A second start, with nothing to open, hands over to the hidden app,
     # which shows its window as it was.
     Start-GuestApp
-    Wait-For 4
+    # The hidden app draws no new page, so there is no line to wait for: the
+    # window comes back as it was, and the screen then stands still.
+    Wait-ScreenStill -TimeoutSec 4 -QuietMs 800 -MinSec 1.5 -What "window shown again by the second start"
     $back = Shot "unsaved-edits-back"
     Send-Keys "ctrl+k"; Wait-For 2
     Send-Text "quit codewiki"; Wait-For 2
@@ -1112,7 +1251,8 @@ foreach ($view in $views) {
     Test-Case $id "Open $($view.name)" "the window opens on that page" {
         if ($view.name -eq "note" -and -not $noteName) { throw "D2 produced no note to open" }
         Start-GuestApp -Arguments $view.args
-        Wait-For 15
+        Wait-AppPage -TimeoutSec 15
+        Hold-For 1.5 -Reason "the page's entrance animation"
         $shot = Shot "view-$($view.name)"
         $probe = Get-Probe "view-$($view.name)" -Quick
         $app = Get-App $probe
@@ -1208,7 +1348,8 @@ function Invoke-GuestBackendScript {
 Test-Case "AV1" "The agent view of a note" "the window opens on the note's agent view, with the page drawn" {
     if (-not $noteName) { throw "D2 produced no note to open" }
     Start-GuestApp -Arguments $guestRepo, "agent:$noteName"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $shot = Shot "view-agent"
     $probe = Get-Probe "view-agent" -Quick
     $app = Get-App $probe
@@ -1228,7 +1369,7 @@ foreach ($mode in "reduced", "system") {
         if ($starved -and $mode -eq "system") { throw "the guest is too busy to be driven with default motion (P1)" }
         Set-GuestMotion $mode
         Start-GuestExe -Exe "$guestTarget\codewiki-app.exe" -Arguments $guestRepo, "health:"
-        Wait-For 25
+        Hold-For 25 -Reason "F2: the app is started and left alone; a page that waits for input to draw shows only after this time"
         $shot = Shot "no-input-health-$mode"
         Add-Result -Id "F2-$mode" -Title "A page appears without input, motion $mode" -Expect "the health table is drawn" -Status note -Shots @($shot) `
             -Observed "started without the focus and given no input for 25 s; read the screenshot: a table of files is the page, a lone 'CodeWiki' heading is the defect"
@@ -1263,12 +1404,8 @@ function Save-ShotBurst {
     if (Test-Path (Join-Path $shots "$base.png")) { "$base.png" } else { $base }
 }
 
-# The number of lines in the app's log, and the lines after such a mark that
-# match a pattern (a regular expression without quotes).
-function Get-AppLogMark {
-    $run = Invoke-GuestScript -Script "@(Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue).Count"
-    if ($run.Output -match '(\d+)') { [int]$Matches[1] } else { 0 }
-}
+# The lines after a mark (Get-AppLogMark) that match a pattern (a regular
+# expression without quotes).
 function Get-AppLogSince {
     param([int]$Mark, [string]$Pattern = ".")
     $run = Invoke-GuestScript -Script "@(Get-Content `"`$env:LOCALAPPDATA\CodeWiki\logs\app.log`" -ErrorAction SilentlyContinue) | Select-Object -Skip $Mark | Select-String -Pattern '$Pattern' | ForEach-Object { `$_.Line }"
@@ -1365,7 +1502,8 @@ function Get-LayoutPoint {
 Test-Case "BG1" "The background graph, on and off" "with the graph on the window shows notes and links behind the glass; off it does not; neither keeps the processors busy" {
     Invoke-GuestScript -Script "Remove-Item `"`$env:APPDATA\CodeWiki\backdrop.txt`" -ErrorAction SilentlyContinue" | Out-Null
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Move-Pointer -X ($appWindow.Left + 400) -Y ($appWindow.Top + 17)
     Wait-For 3
     $onShot = Shot "background-graph-on"
@@ -1373,7 +1511,8 @@ Test-Case "BG1" "The background graph, on and off" "with the graph on the window
     Stop-GuestApp
     Invoke-GuestScript -Script "Set-Content `"`$env:APPDATA\CodeWiki\backdrop.txt`" 'off' -NoNewline" | Out-Null
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Move-Pointer -X ($appWindow.Left + 400) -Y ($appWindow.Top + 17)
     Wait-For 3
     $offShot = Shot "background-graph-off"
@@ -1395,7 +1534,8 @@ Test-Case "BG1" "The background graph, on and off" "with the graph on the window
 # from these pictures: each is taken after the pointer has rested a second.
 Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and link each look different from at rest; a pressed row darkens; the open note's row is marked" {
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     # The same window on both checkpoints' screens (1024x768 and 1600x900),
     # so that the note's text wraps alike and the link is where it was measured.
     $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
@@ -1453,7 +1593,8 @@ function Set-GuestZoom {
 function Show-NarrowWindow {
     param([string[]]$Arguments, [string]$Name)
     Start-GuestApp -Arguments $Arguments
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
     if (-not $info) { throw "the app has no window" }
     Wait-For 3
@@ -1506,7 +1647,8 @@ Test-Case "WT1" "The window title on Home" "a note of the repository shows 'Code
 # The window is placed as in HV1, so the layout points hold.
 function Show-TabWindow {
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
     if (-not $info) { throw "the app has no window" }
     Wait-For 3
@@ -1591,7 +1733,8 @@ Test-Case "TT1" "Tab tools" "right-click menus on a sidebar note and a tab; the 
         $taken += Shot "tabs-new-tab-on"
         Stop-GuestApp
         Start-GuestApp -Arguments $guestRepo, "settings:appearance"
-        Wait-For 12
+        Wait-AppPage -TimeoutSec 12
+        Hold-For 1.5 -Reason "the page's entrance animation"
         $taken += Shot "tabs-settings"
     } finally {
         Stop-GuestApp
@@ -1625,7 +1768,8 @@ $waiting = (Invoke-Backend GET "/v1/repos/$id/explanations?all=true" | ConvertFr
         Invoke-GuestScript -Script "New-Item -ItemType Directory -Force `"`$env:LOCALAPPDATA\CodeWiki`" | Out-Null; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" '50' -NoNewline" | Out-Null
         Stop-GuestApp
         Start-GuestApp -Arguments $guestRepo, "settings:repositories"
-        Wait-For 12
+        Wait-AppPage -TimeoutSec 12
+        Hold-For 1.5 -Reason "the page's entrance animation"
         $shot = Shot "notes-per-session"
         Stop-GuestApp
         $run = Invoke-GuestScript -TimeoutSec 300 -Script (@'
@@ -1671,7 +1815,8 @@ Remove-Item $file -ErrorAction SilentlyContinue
 # hidden, a Windows notification (connection.rs, main.rs take_attempt).
 Test-Case "RC1" "The backend ends while the window is open" "a banner says so, the app starts a new backend by itself, and a toast says 'Reconnected'" {
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 20
+    Wait-AppPage -TimeoutSec 20
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $before = Get-GuestBackendState
     if (-not $before) { throw "no backend.json while the app is open" }
     $mark = Get-AppLogMark
@@ -1692,7 +1837,7 @@ Test-Case "RC1" "The backend ends while the window is open" "a banner says so, t
 # is clicked in the notification centre (Win+N), as a user who missed it does;
 # the click brings the window back in front.
 Test-Case "NW1" "A Windows notification while the window is hidden" "the backend is lost and found with the window in the tray: a Windows notification 'Reconnected'; a click on it in the notification centre shows the window in front" {
-    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-For 15 }
+    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-AppPage -TimeoutSec 15; Hold-For 1.5 -Reason "the page's entrance animation" }
     [void](Show-GuestWindow -ProcessName "codewiki-app")
     Send-Keys "alt+f4"
     Wait-For 4
@@ -1738,7 +1883,8 @@ Test-Case "RC2" "A start with no backend, then one appears" "the offline page; t
     Invoke-GuestScript -Script "Rename-Item -LiteralPath '$guestTarget\codewiki.exe' -NewName 'codewiki.exe.vmhold'" | Out-Null
     try {
         Start-GuestApp -Arguments $guestRepo, "_HOME"
-        Wait-For 20
+        Wait-AppPage -TimeoutSec 20
+        Hold-For 1.5 -Reason "the page's entrance animation"
         $offline = Shot "offline-page"
         $mark = Get-AppLogMark
     } finally {
@@ -1766,7 +1912,8 @@ Test-Case "RC2" "A start with no backend, then one appears" "the offline page; t
 $reviewRepoId = $null
 Test-Case "RV1" "New reviews arrive while the window is open" "three notes edited by hand, the code under them changed and a sync run from outside: the toast '3 new reviews in cw-core'" {
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 20
+    Wait-AppPage -TimeoutSec 20
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $mark = Get-AppLogMark
     $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
 $id = Get-RepoId 'cw-core'
@@ -1809,7 +1956,7 @@ do {
 # third is opened alone and rejected.
 Test-Case "RV2" "Approve two proposals at once, reject the third" "the queue's boxes select several; 'Approve 2' writes both notes; the last one is rejected; nothing waits afterwards" {
     if (-not $reviewRepoId) { throw "RV1 made no proposals" }
-    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "review:"; Wait-For 15 }
+    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "review:"; Wait-AppPage -TimeoutSec 15; Hold-For 1.5 -Reason "the page's entrance animation" }
     else {
         [void](Show-GuestWindow -ProcessName "codewiki-app")
         Send-Keys "ctrl+k"; Wait-For 2
@@ -1844,7 +1991,7 @@ foreach ($state in 'pending', 'approved', 'rejected') { "${state}: $(@($all | Wh
 # Search suggests while the user types: the field under the toolbar lists
 # notes, symbols and files; Down and Enter open the first.
 Test-Case "SG1" "Search suggests while typing" "typing in the toolbar's search field lists hits under it; Down and Enter open the first note" {
-    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-For 15 }
+    if (-not (Get-GuestWindowInfo "codewiki-app")) { Start-GuestApp -Arguments $guestRepo, "_HOME"; Wait-AppPage -TimeoutSec 15; Hold-For 1.5 -Reason "the page's entrance animation" }
     else { [void](Show-GuestWindow -ProcessName "codewiki-app") }
     $info = Get-GuestWindowInfo "codewiki-app"
     $x, $y = Get-LayoutPoint -Info $info -Name "searchField"
@@ -1891,7 +2038,8 @@ Get-Content "$env:LOCALAPPDATA\CodeWiki\logs\app.log" -ErrorAction SilentlyConti
 Test-Case "G1" "Palette by keyboard" "Ctrl+K opens it, typing filters, Enter runs, Escape closes" {
     # On the wiki map, which has the toolbar and tabs that G2 and N1 use; Home has neither.
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $a = Shot "keys-before"
     Send-Keys "ctrl+k"; Wait-For 2
     $b = Shot "palette-open"
@@ -1978,7 +2126,8 @@ foreach ($pane in "sidebar", "details") {
 # hidden the toolbar starts at the window's left edge.
 Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the panes, a restart keeps them hidden, and the toolbar's two end buttons show them again" {
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $a = Shot "panes-both-shown"
     Send-Keys "ctrl+b"; Wait-For 3
     $b = Shot "panes-sidebar-hidden"
@@ -1988,7 +2137,8 @@ Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the p
     $afterKeys = Get-GuestPanes
     Stop-GuestApp
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $d = Shot "panes-hidden-after-restart"
     $info = Get-GuestWindowInfo "codewiki-app"
     if (-not $info) { throw "the app has no window" }
@@ -2012,7 +2162,8 @@ Test-Case "PN1" "Hide and show the side panes" "Ctrl+B and Ctrl+Alt+B hide the p
 # asked for from the user's desktop; the one on the logs folder is then closed.
 Test-Case "L3" "Open the logs folder from the palette" "Explorer opens on the logs folder under the data folder" {
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Send-Keys "ctrl+k"; Wait-For 2
     # The whole name: "logs" alone finds a note named after logs first, when
     # the wiki has one, and Enter then opens the note.
@@ -2040,7 +2191,8 @@ foreach ($window in $open) { "path: $($window.Document.Folder.Self.Path)"; $wind
 # keys are left alone, so nothing is sent anywhere.
 Test-Case "ST1" "The Settings page and its categories" "each row of the list opens its category" {
     Start-GuestApp -Arguments $guestRepo, "settings:"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Get-GuestWindowInfo "codewiki-app"
     if (-not $info) { throw "the app has no window" }
     $taken = @()
@@ -2078,7 +2230,8 @@ Test-Case "Z1" "Zoom the whole app with Ctrl+wheel" "two notches up zoom in, two
     $read = "if (Test-Path `$env:APPDATA\CodeWiki\zoom.txt) { (Get-Content `$env:APPDATA\CodeWiki\zoom.txt -Raw).Trim() } else { '(not set)' }"
     Invoke-GuestScript -Script 'Remove-Item (Join-Path $env:APPDATA "CodeWiki\zoom.txt") -ErrorAction SilentlyContinue' | Out-Null
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Get-GuestWindowInfo "codewiki-app"
     if (-not $info) { throw "the app has no window" }
     # The pointer rests in the middle of the page, where the wheel is read.
@@ -2118,23 +2271,27 @@ Test-Case "LR1" "Open the last repository, on and off" "off: a plain start shows
     Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
     # Starting with the folder makes it the last repository.
     Start-GuestApp -Arguments $guestRepo, "settings:appearance"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $a = Shot "open-last-switch-off"
     $ended = Exit-GuestApp
     Invoke-GuestScript -Script "New-Item -ItemType Directory -Force (Split-Path $file) | Out-Null; Set-Content $file 'on' -NoNewline" | Out-Null
     Start-GuestApp -Arguments $guestRepo, "settings:appearance"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $b = Shot "open-last-switch-on"
     $endedOn = Exit-GuestApp
     # A plain start: no folder, no view, a working folder that is no repository.
     Start-GuestApp
-    Wait-For 25
+    Wait-AppPage -TimeoutSec 25
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $c = Shot "open-last-on-plain-start"
     $opened = Get-OpenedRepo
     $exitedAgain = Exit-GuestApp
     Invoke-GuestScript -Script "Remove-Item $file -ErrorAction SilentlyContinue" | Out-Null
     Start-GuestApp
-    Wait-For 25
+    Wait-AppPage -TimeoutSec 25
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $d = Shot "open-last-off-plain-start"
     $openedOff = Get-OpenedRepo
     Stop-GuestApp
@@ -2147,7 +2304,8 @@ Test-Case "LR1" "Open the last repository, on and off" "off: a plain start shows
 Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the file" {
     if (-not $noteName) { throw "D2 produced no note to edit" }
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $a = Shot "editor-open"
     # The click that gave the window the focus took it from the editor; a
     # click into the text gives it back. The marker lands in line 1.
@@ -2168,7 +2326,8 @@ Test-Case "H2" "Theme is remembered" "a theme chosen through the palette is stil
     $read = "if (Test-Path `$env:APPDATA\CodeWiki\theme.txt) { Get-Content `$env:APPDATA\CodeWiki\theme.txt -Raw } else { '(no file)' }"
     $before = (Invoke-GuestScript -Script $read).Output
     Start-GuestApp -Arguments $guestRepo
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Send-Keys "ctrl+k"; Wait-For 2
     Send-Text "ember"; Wait-For 3
     $a = Shot "theme-search"
@@ -2177,7 +2336,8 @@ Test-Case "H2" "Theme is remembered" "a theme chosen through the palette is stil
     $after = (Invoke-GuestScript -Script $read).Output
     Stop-GuestApp
     Start-GuestApp -Arguments $guestRepo
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $c = Shot "theme-after-restart"
     Stop-GuestApp
     Add-Result -Id "H2" -Title "Theme is remembered" -Expect "theme.txt changes and the restart shows the theme" `
@@ -2190,7 +2350,8 @@ $readTheme = "if (Test-Path `$env:APPDATA\CodeWiki\theme.txt) { Get-Content `$en
 Test-Case "T1" "Theme menu by keyboard" "the menu hangs under the toolbar's theme button; Down and Enter choose the next theme" {
     $before = (Invoke-GuestScript -Script $readTheme).Output
     Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Send-Keys "ctrl+k"; Wait-For 2
     Send-Text "choose theme"; Wait-For 2
     Send-Keys "enter"; Wait-For 3
@@ -2208,7 +2369,8 @@ Test-Case "T1" "Theme menu by keyboard" "the menu hangs under the toolbar's them
 Test-Case "T2" "Theme menu on Home" "Home has no toolbar; the menu hangs from the window's top right corner and still chooses" {
     $before = (Invoke-GuestScript -Script $readTheme).Output
     Start-GuestApp -Arguments $guestRepo
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Send-Keys "ctrl+k"; Wait-For 2
     Send-Text "choose theme"; Wait-For 2
     Send-Keys "enter"; Wait-For 3
@@ -2230,11 +2392,13 @@ Test-Case "HM1" "A project whose folder is gone stays on Home" "it is still regi
     $gone = "$guestHome\repos\gone-demo"
     Invoke-GuestScript -Script "New-Item -ItemType Directory -Force '$gone\.git' | Out-Null; Set-Content '$gone\lib.rs' 'pub fn demo() {}'" | Out-Null
     Start-GuestApp -Arguments $gone
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Stop-GuestApp
     Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$gone'" | Out-Null
     Start-GuestApp -Arguments $guestRepo
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $shot = Shot "home-folder-not-found"
     $probe = Get-Probe "home-folder-not-found" -Quick
     $entry = @(Get-Registered $probe | Where-Object { $_.name -eq "gone-demo" })
@@ -2314,8 +2478,10 @@ $global:LASTEXITCODE = 0
     # closed viewer looked like a link that had been followed.
     Invoke-GuestScript -Script 'New-Item -ItemType Directory -Force "$env:APPDATA\CodeWiki" | Out-Null; Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" hidden -NoNewline; Set-Content "$env:APPDATA\CodeWiki\backdrop.txt" off -NoNewline' | Out-Null
     Start-GuestApp -Arguments $demo, $flowName
-    # The diagram is drawn off the UI thread: a placeholder shows first.
-    Wait-For 25
+    # The diagram is drawn off the UI thread: a placeholder shows first, and
+    # the app writes a line when the drawn diagrams have arrived.
+    Wait-AppPage -TimeoutSec 25 -AndFilled diagrams
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $info = Get-GuestWindowInfo "codewiki-app"
     if (-not $info) { throw "the app has no window" }
     $note = Shot "diagram-note"
@@ -2340,7 +2506,8 @@ $global:LASTEXITCODE = 0
                 # A link of the note was followed: start the note again.
                 Stop-GuestApp
                 Start-GuestApp -Arguments $demo, $flowName
-                Wait-For 25
+                Wait-AppPage -TimeoutSec 25 -AndFilled diagrams
+                Hold-For 1.5 -Reason "the page's entrance animation"
                 Save-Screenshot $base | Out-Null
             }
         }
@@ -2365,7 +2532,8 @@ $global:LASTEXITCODE = 0
     # cw-core the last repository, the demo not registered.
     Invoke-GuestScript -Script 'Set-Content "$env:APPDATA\CodeWiki\sidebar.txt" shown -NoNewline; Set-Content "$env:APPDATA\CodeWiki\details.txt" shown -NoNewline; Remove-Item "$env:APPDATA\CodeWiki\backdrop.txt" -ErrorAction SilentlyContinue' | Out-Null
     Start-GuestApp -Arguments $guestRepo
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     Invoke-GuestBackendScript -Script (@'
 $id = Get-RepoId 'diagram-demo'
 if ($id) { Invoke-Backend DELETE "/v1/repos/$id" | Out-Null }
@@ -2595,7 +2763,8 @@ $global:LASTEXITCODE = 0
 Test-Case "ER2" "The switch in Settings" "Settings > Diagnostics shows 'Send error reports', off, and can be turned on" {
     Invoke-GuestScript -Script 'Remove-Item (Join-Path $env:APPDATA "CodeWiki\error_reports.txt") -ErrorAction SilentlyContinue' | Out-Null
     Start-GuestApp -Arguments $guestRepo, "settings:diagnostics"
-    Wait-For 15
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $shot = Shot "settings-error-reports"
     Add-Result -Id "ER2" -Title "The switch in Settings" -Expect "a card 'Error reports' with the switch 'Send error reports' off and not locked, and the text that says what is sent" -Status note -Shots @($shot) `
         -Observed "started on 'settings:diagnostics'; read the screenshot: the card 'Error reports' must show the switch off, with no lock note under it in a package that carries a DSN ('This build has no error reporting' in one that does not)"
@@ -3117,7 +3286,8 @@ function Set-GuestEmbedder {
     param([Parameter(Mandatory)][string]$Provider, [string]$Model, [string]$Url)
     Stop-GuestApp
     Start-GuestApp -Arguments $guestRepo, "settings:search"
-    Wait-For 20
+    Wait-AppPage -TimeoutSec 20
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $body = @{ embed = @{ provider = $Provider } }
     if ($Model) { $body.embed.model = $Model }
     if ($Url) { $body[$Provider] = @{ url = $Url } }
@@ -3128,7 +3298,9 @@ Invoke-Backend PUT '/v1/settings' $body
 '@).Replace('{{BODY}}', $encoded)
     Stop-GuestApp
     Start-GuestApp -Arguments $guestRepo, "settings:search"
-    Wait-For 20
+    # The page lists the server's models once they arrive, after the page.
+    Wait-AppPage -TimeoutSec 20 -AndFilled models
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $set.Output
 }
 
@@ -3194,7 +3366,8 @@ Test-Case "SR1" "The embedding server comes back by itself" "with the stand-in s
     Stop-EmbedStub
     Stop-GuestApp
     Start-GuestApp -Arguments $guestRepo, "settings:search"
-    Wait-For 12
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
     $down = Shot "settings-search-server-down"
     $mark = Get-AppLogMark
     $listing = Start-EmbedStub
@@ -4760,7 +4933,8 @@ New-ItemProperty -Path $key -Name 'DisplayName' -Value 'CodeWiki' -PropertyType 
 New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandString -Force | Out-Null
 '@).Replace('{{RUN}}', $autostartCommand).Replace('{{TARGET}}', $guestTarget) | Out-Null
             Start-GuestApp -Arguments $guestRepo
-            Wait-For 15
+            Wait-AppPage -TimeoutSec 15
+            Hold-For 1.5 -Reason "the page's entrance animation"
             $before = Get-SetupState
             $running = Shot "setup-uninstall-app-running"
             $log = "C:\Users\Public\cwvm-is2.log"
@@ -4892,7 +5066,8 @@ New-Item -ItemType Directory -Force (Join-Path $env:APPDATA 'CodeWiki') | Out-Nu
 Set-Content -Path (Join-Path $env:APPDATA 'CodeWiki\marker.txt') -Value 'settings'
 '@).Replace('{{RUN}}', $autostartCommand) | Out-Null
             Start-GuestApp -Arguments $guestRepo
-            Wait-For 15
+            Wait-AppPage -TimeoutSec 15
+            Hold-For 1.5 -Reason "the page's entrance animation"
             $before = Get-SetupState
             $log = "C:\Users\Public\cwvm-is5.log"
             $clock = [System.Diagnostics.Stopwatch]::StartNew()
@@ -5174,7 +5349,9 @@ New-ItemProperty -LiteralPath '{{KEY}}' -Name 'DisplayVersion' -Value '{{OLD}}' 
         }
         # The app checks when it starts; Home then offers the update.
         Start-GuestApp -Arguments $guestRepo
-        Wait-For 25
+        # The old package writes no ready line: the screen standing still.
+        Wait-AppPage -Legacy -TimeoutSec 25
+        Hold-For 1.5 -Reason "the page's entrance animation"
         $a = Shot "update-offered"
         Send-Keys "ctrl+k"; Wait-For 2
         Send-Text "update codewiki"; Wait-For 3
@@ -5252,7 +5429,8 @@ Set-Content (Join-Path $data 'models\.partial\download.bin') 'not a model'
 Set-Content (Join-Path $data 'models\keep.txt') 'a file the built-in store did not write'
 '@).Replace('{{JSON}}', $encodedBuiltin) | Out-Null
             Start-GuestApp -Arguments $guestRepo
-            Wait-For 25
+            Wait-AppPage -TimeoutSec 25
+            Hold-For 1.5 -Reason "the page's entrance animation"
             $shot = Shot "after-builtin-migration"
             $after = (Invoke-GuestScript -Script @'
 $data = Join-Path $env:LOCALAPPDATA 'CodeWiki'

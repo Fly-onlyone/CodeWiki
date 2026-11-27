@@ -54,6 +54,9 @@ function Initialize-Vm {
         Recorder   = $null
         # When the recording began, for the timing log's "rec" column.
         RecStart   = $null
+        # Whether the guest draws on a shared graphics card; widens the screen
+        # compare's tolerance (Get-ScreenTolerance). The caller sets it.
+        Gpu        = $false
         # WMI objects of the running VM; cleared whenever the VM stops.
         Devices    = $null
     }
@@ -982,6 +985,119 @@ function Get-GuestScreenBytes {
         $bytes = $picture
     }
     , $bytes
+}
+
+# ------------------------------------------------------------ waiting on the screen
+# What a program that has no log line to wait for shows on the screen is read
+# from the host's thumbnail (480x270, as the film is), compared in C# that is
+# compiled once. A region is given in thumbnail pixels: left, top, right,
+# bottom. The recorder reads the same WMI service; the film must still hold
+# about four frames a second after these run (check with ffprobe).
+function Initialize-ScreenCompare {
+    if ('VmTest.ScreenDiff' -as [type]) { return }
+    Add-Type -Namespace VmTest -Name ScreenDiff -MemberDefinition @'
+public static double Share(byte[] a, byte[] b, int width, int left, int top, int right, int bottom, int threshold) {
+    long differing = 0;
+    long area = (long)(right - left) * (bottom - top);
+    if (area <= 0 || a == null || b == null || a.Length != b.Length) { return 1.0; }
+    for (int y = top; y < bottom; y++) {
+        for (int x = left; x < right; x++) {
+            int i = (y * width + x) * 2;
+            int p = a[i] | (a[i + 1] << 8);
+            int q = b[i] | (b[i + 1] << 8);
+            if (p == q) { continue; }
+            int dr = Math.Abs(((p >> 11) & 31) - ((q >> 11) & 31)) << 3;
+            int dg = Math.Abs(((p >> 5) & 63) - ((q >> 5) & 63)) << 2;
+            int db = Math.Abs((p & 31) - (q & 31)) << 3;
+            if (Math.Max(dr, Math.Max(dg, db)) > threshold) { differing++; }
+        }
+    }
+    return (double)differing / area;
+}
+'@
+}
+
+$script:ThumbnailWidth = 480
+$script:ThumbnailHeight = 270
+
+# The screen as a small picture to compare; null when the VM shows nothing.
+function Get-ScreenFrame {
+    Get-GuestScreenBytes -Width $script:ThumbnailWidth -Height $script:ThumbnailHeight
+}
+
+# The share (0 to 1) of a region's pixels that differ clearly between two frames.
+function Get-ScreenShare {
+    param($A, $B, [int[]]$Region = @(0, 0, 480, 270))
+    Initialize-ScreenCompare
+    if (-not $A -or -not $B) { return 1.0 }
+    [VmTest.ScreenDiff]::Share([byte[]]$A, [byte[]]$B, $script:ThumbnailWidth, $Region[0], $Region[1], $Region[2], $Region[3], 24)
+}
+
+# Share of a region that may differ between two frames and still count as the
+# same picture. With a graphics card the backdrop drifts in a few percent of
+# the pixels all the time (Vm.Gpu, set by Initialize-Vm's caller).
+function Get-ScreenTolerance {
+    param([double]$Tolerance = -1)
+    if ($Tolerance -ge 0) { return $Tolerance }
+    if ($script:Vm.Gpu) { 0.05 } else { 0.005 }
+}
+
+# Wait until the screen (or a region of it) has stood still for -QuietMs, and
+# at least -MinSec has passed. $false at the deadline: the caller goes on, as it
+# did after the fixed sleep this replaces.
+function Wait-ScreenStill {
+    param(
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        [int]$QuietMs = 400,
+        [double]$MinSec = 0,
+        [int[]]$Region = @(0, 0, 480, 270),
+        [double]$Tolerance = -1,
+        [string]$What = "screen still",
+        [switch]$PassThru
+    )
+    $tolerance = Get-ScreenTolerance $Tolerance
+    $limit = $TimeoutSec * $script:Timing.Pace
+    $floor = $MinSec * $script:Timing.Pace
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $previous = Get-ScreenFrame
+    $lastChange = 0.0
+    $met = $false
+    while ($true) {
+        Start-Sleep -Milliseconds 150
+        $frame = Get-ScreenFrame
+        $now = $clock.Elapsed.TotalSeconds
+        if ((Get-ScreenShare $previous $frame $Region) -gt $tolerance) { $lastChange = $now }
+        $previous = $frame
+        if ($now -ge $floor -and ($now - $lastChange) * 1000 -ge $QuietMs) { $met = $true; break }
+        if ($now -ge $limit) { break }
+    }
+    Write-Timing -Kind wait -What $What -Sec $clock.Elapsed.TotalSeconds -Deadline $limit -Met $met
+    if ($PassThru) { $met }
+}
+
+# Wait until the screen (or a region) differs from -Since, a frame taken before
+# the input. $false at the deadline.
+function Wait-ScreenChange {
+    param(
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        $Since,
+        [int[]]$Region = @(0, 0, 480, 270),
+        [double]$Tolerance = -1,
+        [string]$What = "screen change",
+        [switch]$PassThru
+    )
+    $tolerance = Get-ScreenTolerance $Tolerance
+    $limit = $TimeoutSec * $script:Timing.Pace
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    if (-not $Since) { $Since = Get-ScreenFrame }
+    $met = $false
+    while ($true) {
+        if ((Get-ScreenShare $Since (Get-ScreenFrame) $Region) -gt $tolerance) { $met = $true; break }
+        if ($clock.Elapsed.TotalSeconds -ge $limit) { break }
+        Start-Sleep -Milliseconds 150
+    }
+    Write-Timing -Kind wait -What $What -Sec $clock.Elapsed.TotalSeconds -Deadline $limit -Met $met
+    if ($PassThru) { $met }
 }
 
 # Save the guest's screen as a PNG at its own size. Colors come from the

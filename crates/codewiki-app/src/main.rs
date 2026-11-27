@@ -29,6 +29,7 @@ mod live;
 mod markdown;
 mod motion;
 mod mui;
+mod outline;
 mod pages;
 mod palette;
 mod panes;
@@ -58,7 +59,7 @@ use std::rc::Rc;
 
 use cw_client::{Backend, encode};
 use gpui_kit::base::motion::{Presence, Transition};
-use gpui_kit::base::{MarkdownNode, TextView, markdown_ast};
+use gpui_kit::base::{MarkdownNode, TextView, TextViewState, markdown_ast};
 use gpui_kit::component::input::{
     Editor, EditorState, Escape, InputEvent, InputState, MoveDown, MoveUp,
 };
@@ -286,8 +287,20 @@ struct Editing {
     /// The note's text when editing began, with its own line endings.
     original: String,
     state: Entity<EditorState>,
+    /// The preview beside the editor. Kept here, so that it keeps its scroll
+    /// position while typing and the outline can scroll it.
+    preview: Entity<TextViewState>,
     dirty: bool,
     _subscription: Subscription,
+}
+
+/// The note's text view, kept by the app so that the outline can read its
+/// headings and scroll it.
+struct Reader {
+    /// The `page_serial` of the page it shows: a new page gets a new view,
+    /// at its top and with nothing selected.
+    serial: usize,
+    state: Entity<TextViewState>,
 }
 
 /// What the centre pane shows.
@@ -428,6 +441,16 @@ struct AppView {
     reveal: Option<Reveal>,
     /// Set while the current note is open in the editor.
     editing: Option<Editing>,
+    /// The text view of the note on show; `None` on other pages.
+    reader: Option<Reader>,
+    /// The glide to the heading an outline entry was clicked for, which keeps
+    /// the entry lit until the user scrolls.
+    outline_jump: Option<outline::Jump>,
+    /// The outline entry lit in the last frame that could tell, for the
+    /// body it was lit in: kept for a frame whose blocks are not laid out.
+    outline_lit: std::cell::Cell<Option<(EntityId, Option<usize>)>>,
+    /// Where the details pane is scrolled to.
+    details_scroll: ScrollHandle,
     busy: Option<String>,
     error: Option<String>,
     /// Where the app stands with updates.
@@ -637,6 +660,10 @@ impl AppView {
             sidebar_scroll: ScrollHandle::new(),
             reveal: None,
             editing: None,
+            reader: None,
+            outline_jump: None,
+            outline_lit: std::cell::Cell::new(None),
+            details_scroll: ScrollHandle::new(),
             busy: Some("Connecting".into()),
             error: None,
             update: update::State::NotInstalled,
@@ -2156,6 +2183,8 @@ impl AppView {
         };
         let (path, original) = (path.clone(), text.clone());
         let value = original.replace("\r\n", "\n");
+        let shown = markdown::prepare_note_with(&value, &[], |_| markdown::Diagram::Source);
+        let preview = cx.new(|cx| TextViewState::markdown(&shown, cx));
         let state = cx.new(|cx| {
             EditorState::new(window, cx)
                 .language("markdown")
@@ -2175,10 +2204,163 @@ impl AppView {
             path,
             original,
             state,
+            preview,
             dirty: false,
             _subscription: subscription,
         });
         cx.notify();
+    }
+
+    /// Give the note on show a text view of its own, or keep the one it has
+    /// and hand it the note's text as it is now: a diagram drawn since the
+    /// last frame changes the text, not the place it is scrolled to.
+    fn sync_reader(&mut self, cx: &mut Context<Self>) {
+        if !matches!(self.page, Page::Note { .. }) {
+            self.reader = None;
+            return;
+        }
+        match &self.reader {
+            Some(reader) if reader.serial == self.page_serial => {
+                let text = &self.rendered;
+                reader
+                    .state
+                    .update(cx, |state, cx| state.set_text(text, cx));
+            }
+            _ => {
+                let state = cx.new(|cx| TextViewState::markdown(&self.rendered, cx));
+                self.reader = Some(Reader {
+                    serial: self.page_serial,
+                    state,
+                });
+            }
+        }
+    }
+
+    /// The text view the outline is about: the preview while the note is
+    /// edited, else the note.
+    fn body_state(&self) -> Option<&Entity<TextViewState>> {
+        match &self.editing {
+            Some(editing) => Some(&editing.preview),
+            None => self.reader.as_ref().map(|reader| &reader.state),
+        }
+    }
+
+    /// Start the glide of the body to the heading in block `block_ix`. It
+    /// does not go into the history: Back leaves the note, not the place.
+    fn jump_to_heading(&mut self, block_ix: usize, cx: &mut Context<Self>) {
+        let Some(body) = self.body_state() else {
+            return;
+        };
+        let state = body.read(cx);
+        let Some(top) = state.block_top(block_ix) else {
+            return;
+        };
+        let list = state.list_state();
+        let from = -list.scroll_px_offset_for_scrollbar().y / px(1.);
+        let max = list.max_offset_for_scrollbar().y / px(1.);
+        self.outline_jump = Some(outline::Jump {
+            body: body.entity_id(),
+            block_ix,
+            from,
+            to: outline::target(top / px(1.), max),
+            started: std::time::Instant::now(),
+            written: None,
+            landed: false,
+        });
+        cx.notify();
+    }
+
+    /// Move the body one frame further on its glide to a heading. The glide
+    /// ends, and its entry is no longer held lit, when the body is not where
+    /// the glide put it: the user scrolled. The heading's place is read again
+    /// each frame, since a picture above it may still be coming in.
+    fn step_outline(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let body = match &self.editing {
+            Some(editing) => Some(editing.preview.clone()),
+            None => self.reader.as_ref().map(|reader| reader.state.clone()),
+        };
+        let Some(jump) = self.outline_jump.as_mut() else {
+            return;
+        };
+        let Some(body) = body.filter(|body| body.entity_id() == jump.body) else {
+            self.outline_jump = None;
+            return;
+        };
+        let state = body.read(cx);
+        let list = state.list_state();
+        let now = list.logical_scroll_top();
+        if outline::user_moved(jump.written, (now.item_ix, now.offset_in_item / px(1.))) {
+            self.outline_jump = None;
+            return;
+        }
+        if jump.landed {
+            return;
+        }
+        let max = list.max_offset_for_scrollbar().y / px(1.);
+        if let Some(top) = state.block_top(jump.block_ix) {
+            jump.to = outline::target(top / px(1.), max);
+        }
+        let progress = if cx.reduce_motion() {
+            1.0
+        } else {
+            mui::motion::glide(jump.started.elapsed())
+        };
+        let y = outline::glide_to(jump.from, jump.to, progress);
+        list.set_offset_from_scrollbar(point(px(0.), px(-y)));
+        let written = list.logical_scroll_top();
+        jump.written = Some((written.item_ix, written.offset_in_item / px(1.)));
+        if progress >= 1.0 {
+            jump.landed = true;
+        } else {
+            window.request_animation_frame();
+        }
+    }
+
+    /// The outline of the body on show: its body's id, its entries and the
+    /// one that is lit. The entry a glide goes to is lit; else the section
+    /// being read is.
+    fn outline_entries(
+        &self,
+        cx: &App,
+    ) -> Option<(
+        EntityId,
+        Vec<gpui_kit::base::text::DocumentHeading>,
+        Option<usize>,
+    )> {
+        let body = self.body_state()?;
+        let id = body.entity_id();
+        let state = body.read(cx);
+        let entries = outline::entries(state.headings());
+        let pinned = self
+            .outline_jump
+            .as_ref()
+            .filter(|jump| jump.body == id)
+            .and_then(|jump| entries.iter().position(|e| e.block_ix == jump.block_ix));
+        let lit = match pinned {
+            Some(index) => Some(index),
+            None => {
+                let tops: Option<Vec<f32>> = entries
+                    .iter()
+                    .map(|entry| state.block_top(entry.block_ix).map(|top| top / px(1.)))
+                    .collect();
+                match tops {
+                    Some(tops) => {
+                        let list = state.list_state();
+                        let scroll = -list.scroll_px_offset_for_scrollbar().y / px(1.);
+                        let max = list.max_offset_for_scrollbar().y / px(1.);
+                        outline::spy(&tops, scroll, max, outline::SPY_LINE)
+                    }
+                    // Not laid out with these blocks yet: as in the last frame.
+                    None => self
+                        .outline_lit
+                        .get()
+                        .filter(|(body, _)| *body == id)
+                        .and_then(|(_, lit)| lit),
+                }
+            }
+        };
+        self.outline_lit.set(Some((id, lit)));
+        Some((id, entries, lit))
     }
 
     fn discard_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -2237,6 +2419,10 @@ impl AppView {
         // another tab does not carry it along.
         self.error = None;
         self.page_serial += 1;
+        // A glide belongs to the page it was asked on, and the details of
+        // the next page start at their top.
+        self.outline_jump = None;
+        self.details_scroll.set_offset(point(px(0.), px(0.)));
         self.figures = match &self.page {
             Page::Note { figures, .. } => figures.clone(),
             _ => Vec::new(),
@@ -4468,6 +4654,9 @@ impl AppView {
             .get(cursor..)
             .is_some_and(|rest| rest.starts_with("]]"));
         let preview = markdown::prepare_note_with(&value, &[], |_| markdown::Diagram::Source);
+        editing
+            .preview
+            .update(cx, |state, cx| state.set_text(&preview, cx));
         let (border, muted, mono, mono_size) = {
             let theme = cx.theme();
             (
@@ -4536,8 +4725,9 @@ impl AppView {
                     .child(strip),
             )
             .child(div().w_1_2().h_full().py_4().child(reading::frame(
-                // A stable id keeps the preview's scroll position while typing.
-                TextView::markdown("preview", preview).scrollable(true),
+                // A state of its own keeps the preview's scroll position while
+                // typing, and lets the outline scroll it.
+                TextView::new(&editing.preview).scrollable(true),
                 self.pane_width / 2.0,
                 reading::NOTE_MEASURE,
                 cx,
@@ -4649,15 +4839,19 @@ impl AppView {
     /// The page itself: a note as Markdown with its illustration in it, or
     /// a generated page drawn from its own model.
     fn page_content(&self, cx: &mut Context<Self>) -> AnyElement {
-        let source = self.rendered.clone();
         let diagrams = self.diagrams.clone();
         let view = cx.entity().downgrade();
         let measure = reading_measure(&self.page);
         let content = {
             match &self.page {
                 Page::Note { .. } => {
-                    // A fresh id per page resets scroll position and selection.
-                    let mut note = TextView::markdown(("page", self.page_serial), source)
+                    // `sync_reader` gave the note its view before this frame
+                    // was drawn; a fresh one per page resets scroll position
+                    // and selection.
+                    let Some(reader) = &self.reader else {
+                        return div().into_any_element();
+                    };
+                    let mut note = TextView::new(&reader.state)
                         .scrollable(true)
                         .image_source(move |uri| {
                             uri.strip_prefix(markdown::DIAGRAM_SCHEME)
@@ -5076,20 +5270,11 @@ impl AppView {
         let heading = move |text: &str| {
             surfaces::text(Variant::Overline, text.to_string()).text_color(accent)
         };
-        let mut pane = v_flex()
-            .w(px(DETAILS_WIDTH))
-            .h_full()
-            .flex_shrink_0()
-            .gap_3()
-            .p_3()
-            .border_l_1()
-            .border_color(glass::tinted_border(cx))
-            .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
-            .overflow_hidden();
+        // What the pane holds; it scrolls when that is more than fits.
+        let mut pane = v_flex().gap_3().p_3();
         match &self.page {
             Page::Note {
                 path,
-                text,
                 sources,
                 state,
                 explanation,
@@ -5130,20 +5315,32 @@ impl AppView {
                         theme.chart_5,
                     ]
                 };
-                for (index, section) in markdown::outline(text).into_iter().enumerate() {
-                    pane = pane.child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(
-                                div()
-                                    .size(px(OUTLINE_DOT))
-                                    .flex_shrink_0()
-                                    .rounded_full()
-                                    .bg(markers[index % markers.len()]),
-                            )
-                            .child(div().flex_1().min_w_0().text_sm().child(section)),
-                    );
+                // The body's own `##` headings: a click glides the body to
+                // one, and the section being read is lit.
+                if let Some((body, entries, lit)) = self.outline_entries(cx) {
+                    let mut rows = v_flex().mx(px(-list::ROW_START));
+                    for (index, entry) in entries.into_iter().enumerate() {
+                        let block_ix = entry.block_ix;
+                        rows =
+                            rows.child(
+                                ListItemButton::new(
+                                    SharedString::from(format!("outline-{body}-{index}")),
+                                    entry.text,
+                                )
+                                .leading(
+                                    div()
+                                        .size(px(OUTLINE_DOT))
+                                        .flex_shrink_0()
+                                        .rounded_full()
+                                        .bg(markers[index % markers.len()]),
+                                )
+                                .selected(lit == Some(index))
+                                .on_click(cx.listener(
+                                    move |this, _, _, cx| this.jump_to_heading(block_ix, cx),
+                                )),
+                            );
+                    }
+                    pane = pane.child(rows);
                 }
                 if !sources.is_empty() {
                     pane = pane.child(heading("SOURCE"));
@@ -5204,7 +5401,29 @@ impl AppView {
                 );
             }
         }
-        pane
+        v_flex()
+            .w(px(DETAILS_WIDTH))
+            .h_full()
+            .flex_shrink_0()
+            .border_l_1()
+            .border_color(glass::tinted_border(cx))
+            .bg(self.glass.chrome(glass::tinted(cx.theme().background, cx)))
+            .overflow_hidden()
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .relative()
+                    .child(
+                        div()
+                            .id("details")
+                            .size_full()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.details_scroll)
+                            .child(pane),
+                    )
+                    .vertical_scrollbar(&self.details_scroll),
+            )
     }
 }
 
@@ -5380,6 +5599,9 @@ impl Render for AppView {
         // The inputs of the settings take the values that arrived since the
         // last frame; that needs the window.
         self.sync_settings_fields(window, cx);
+        // The note's view and the outline's glide, before either is drawn.
+        self.sync_reader(cx);
+        self.step_outline(window, cx);
         // A menu hangs from where its button was when it opened; a new zoom
         // level moved the button.
         let zoom = zoom::percent(cx);

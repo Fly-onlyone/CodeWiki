@@ -173,6 +173,18 @@ pub fn drawer(
     kit::transition(id, target, policy, window, cx)
 }
 
+/// How far a glide, such as the note's scroll to a heading the outline
+/// names, has gone after `elapsed`: from 0 to exactly 1 over MUI's
+/// `standard` duration, eased in and out.
+pub fn glide(elapsed: Duration) -> f32 {
+    let total = scaled(duration::STANDARD).as_secs_f32();
+    let progress = elapsed.as_secs_f32() / total;
+    if progress >= 1.0 {
+        return 1.0;
+    }
+    easing(curve::EASE_IN_OUT)(progress.max(0.0)).clamp(0.0, 1.0)
+}
+
 /// A figure such as `286`, `62.5%` or `1,204 lines`, `progress` of the way
 /// up from zero: TradingAgent's `RollingDigits`. Text that does not start
 /// with a number is returned as it is.
@@ -294,6 +306,19 @@ impl<E: Styled + IntoElement + 'static> EnterExt for E {}
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_glide_eases_out_of_rest_and_lands_in_the_standard_time() {
+        let at = |ms: u64| glide(Duration::from_millis(ms));
+        assert_eq!(at(0), 0.0);
+        assert_eq!(at(300), 1.0);
+        assert_eq!(at(1_000), 1.0);
+        let samples: Vec<f32> = (0..=30).map(|step| at(step * 10)).collect();
+        assert!(samples.windows(2).all(|pair| pair[0] <= pair[1]));
+        // It leaves rest slowly: the first tenth of the time covers less
+        // than a tenth of the way.
+        assert!(at(30) < 0.1);
+    }
 
     #[test]
     fn the_springs_are_the_trading_agent_presets() {

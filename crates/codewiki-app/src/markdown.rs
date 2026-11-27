@@ -184,20 +184,6 @@ fn link_line(line: &str) -> String {
     out
 }
 
-/// `##` headings of a note, for the outline pane.
-pub fn outline(text: &str) -> Vec<String> {
-    let mut in_fence = false;
-    let mut out = Vec::new();
-    for line in text.lines() {
-        if line.trim_start().starts_with("```") {
-            in_fence = !in_fence;
-        } else if !in_fence && let Some(heading) = line.strip_prefix("## ") {
-            out.push(heading.trim().to_string());
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -278,11 +264,5 @@ mod tests {
         for name in ["Scan Module", "01-Core/x/_index", "Ünï ✓", "a%b"] {
             assert_eq!(decode(&encode(name)), name);
         }
-    }
-
-    #[test]
-    fn extracts_outline_skipping_code() {
-        let text = "# T\n\n## Source\n\n```\n## not a heading\n```\n\n## See also\n";
-        assert_eq!(outline(text), ["Source", "See also"]);
     }
 }

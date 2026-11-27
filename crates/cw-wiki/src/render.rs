@@ -158,8 +158,9 @@ impl<'a> RenderCtx<'a> {
                     .or(doc.filter(|d| !d.is_empty()))
                     .unwrap_or_else(|| match unit.filter(|u| !u.is_rust()) {
                         Some(unit) => format!(
-                            "{} {} `{}` with {}.",
+                            "{} {}{} `{}` with {}.",
                             language_name(unit.language),
+                            if unit.tests { "test " } else { "" },
                             unit_noun(unit.language),
                             note.title,
                             count(repo.module_count(unit), "module")
@@ -393,7 +394,8 @@ impl<'a> RenderCtx<'a> {
     }
 
     /// How a reader names the entry point `entry`: `main` in Rust, the file
-    /// for a script, `Class.main` in Java.
+    /// for a script or for the top-level statements of a C# file,
+    /// `Class.main` in Java.
     fn entry_label(&self, entry: &str) -> String {
         let Some(symbol) = self.repo.symbols.get(entry) else {
             return "main".into();
@@ -401,8 +403,16 @@ impl<'a> RenderCtx<'a> {
         if Language::from_path(&symbol.file) == Language::Rust {
             return "main".into();
         }
+        let top_level = symbol.kind == SymbolKind::Function
+            && Language::from_path(&symbol.file) == Language::CSharp;
         match symbol.kind {
             SymbolKind::Module => symbol
+                .file
+                .rsplit('/')
+                .next()
+                .unwrap_or(&symbol.file)
+                .to_string(),
+            _ if top_level => symbol
                 .file
                 .rsplit('/')
                 .next()
@@ -760,8 +770,11 @@ impl<'a> RenderCtx<'a> {
         };
         let foundations = names(&|n| !internal_deps.contains_key(n) && dependents.contains_key(n));
         let tops = names(&|n| !dependents.contains_key(n) && internal_deps.contains_key(n));
+        let csharp = crates.iter().any(|c| c.language == Language::CSharp);
         let mut prose = vec![if rust {
             "An arrow points from a crate to a crate it depends on.".to_string()
+        } else if csharp {
+            "An arrow points from a package to a package it depends on. Rust crates and C# projects declare their dependencies; for other languages they are read from imports.".to_string()
         } else {
             "An arrow points from a package to a package it depends on. Rust crates declare their dependencies; for other languages they are read from imports.".to_string()
         }];
@@ -1058,6 +1071,28 @@ impl<'a> RenderCtx<'a> {
                 code.push('}');
                 ("java", code)
             }
+            Language::CSharp => {
+                let mut code = format!("class NewType : {} {{\n", symbol.name);
+                for m in methods
+                    .iter()
+                    .filter(|m| m.visibility != Visibility::Private && m.name != symbol.name)
+                    // A class is extended through what it lets be overridden.
+                    .filter(|m| {
+                        symbol.kind != SymbolKind::Class
+                            || m.signature
+                                .split_whitespace()
+                                .any(|w| matches!(w, "abstract" | "virtual"))
+                    })
+                    .take(MAX_LISTED)
+                {
+                    code.push_str(&format!(
+                        "    {} {{\n        throw new NotImplementedException();\n    }}\n",
+                        csharp_override(&m.signature)
+                    ));
+                }
+                code.push('}');
+                ("csharp", code)
+            }
             Language::TypeScript | Language::JavaScript => {
                 let mut code = format!("class NewType {keyword} {} {{\n", symbol.name);
                 for m in methods
@@ -1266,6 +1301,47 @@ impl<'a> RenderCtx<'a> {
                     if unit.scripts.iter().any(|s| s == script) {
                         out.push(format!("{npm} run {script}"));
                     }
+                }
+            }
+            Language::CSharp => {
+                // One solution builds and tests every project; without one
+                // each project does.
+                let solution = repo
+                    .facts
+                    .files
+                    .iter()
+                    .map(|f| f.path.as_str())
+                    .filter(|p| p.ends_with(".sln") || p.ends_with(".slnx"))
+                    .filter(|p| {
+                        let dir = dir_of(p);
+                        dir.is_empty()
+                            || unit.dir == dir
+                            || unit.dir.starts_with(&format!("{dir}/"))
+                    })
+                    .min_by_key(|p| (p.matches('/').count(), p.len()));
+                let project = unit
+                    .manifests
+                    .first()
+                    .filter(|m| m.path.ends_with(".csproj"));
+                match (solution, project) {
+                    (Some(solution), _) => {
+                        out.push(format!("dotnet build {}", quote(solution)));
+                        if repo.units.list.iter().any(|u| u.tests) {
+                            out.push(format!("dotnet test {}", quote(solution)));
+                        }
+                    }
+                    (None, Some(project)) => {
+                        out.push(format!("dotnet build {}", quote(&project.path)));
+                        if unit.tests {
+                            out.push(format!("dotnet test {}", quote(&project.path)));
+                        }
+                    }
+                    (None, None) => {}
+                }
+                if let Some(project) = project
+                    && !unit.entries.is_empty()
+                {
+                    out.push(format!("dotnet run --project {}", quote(&project.path)));
                 }
             }
             Language::Java => {
@@ -1638,6 +1714,7 @@ fn language_name(language: Language) -> &'static str {
         Language::TypeScript => "TypeScript",
         Language::JavaScript => "JavaScript",
         Language::Java => "Java",
+        Language::CSharp => "C#",
         _ => "source",
     }
 }
@@ -1647,6 +1724,7 @@ fn unit_noun(language: Language) -> &'static str {
     match language {
         Language::Rust => "crate",
         Language::Java => "module",
+        Language::CSharp => "project",
         _ => "package",
     }
 }
@@ -1663,6 +1741,32 @@ fn external_noun(files: &BTreeSet<&str>) -> &'static str {
     }
 }
 
+/// A C# member as a stub in a type that extends or implements it: an
+/// interface member has no modifier and becomes public, an abstract or
+/// virtual one is overridden.
+fn csharp_override(signature: &str) -> String {
+    let words: Vec<&str> = signature.split_whitespace().collect();
+    let has = |w: &str| words.contains(&w);
+    if has("abstract") || has("virtual") {
+        return words
+            .iter()
+            .map(|w| {
+                if matches!(*w, "abstract" | "virtual") {
+                    "override"
+                } else {
+                    w
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+    }
+    if has("public") || has("protected") || has("internal") {
+        signature.to_string()
+    } else {
+        format!("public {signature}")
+    }
+}
+
 /// What a build file outside Cargo is for.
 fn build_role(path: &str) -> &'static str {
     let name = path.rsplit('/').next().unwrap_or(path);
@@ -1673,6 +1777,12 @@ fn build_role(path: &str) -> &'static str {
         "package.json" => "package manifest",
         "pom.xml" => "Maven build",
         "build.gradle" | "build.gradle.kts" => "Gradle build",
+        "Directory.Packages.props" => "central NuGet package versions",
+        "Directory.Build.props" | "Directory.Build.targets" => "shared MSBuild properties",
+        "global.json" => ".NET SDK version",
+        "nuget.config" | "NuGet.Config" => "NuGet sources",
+        _ if name.ends_with(".csproj") => "C# project",
+        _ if name.ends_with(".sln") || name.ends_with(".slnx") => "solution",
         _ if name.starts_with("requirements") => "Python dependencies",
         _ => "build file",
     }
@@ -1706,6 +1816,31 @@ const PROPER_NOUNS: [&str; 17] = [
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn stubs_a_csharp_member_for_the_type_that_takes_it_on() {
+        assert_eq!(csharp_override("string Name()"), "public string Name()");
+        assert_eq!(
+            csharp_override("public string Name()"),
+            "public string Name()"
+        );
+        assert_eq!(
+            csharp_override("protected abstract void Run(int a)"),
+            "protected override void Run(int a)"
+        );
+        assert_eq!(
+            csharp_override("public virtual Task<int> Load()"),
+            "public override Task<int> Load()"
+        );
+        assert_eq!(build_role("src/App/App.Core.csproj"), "C# project");
+        assert_eq!(
+            build_role("Directory.Packages.props"),
+            "central NuGet package versions"
+        );
+        assert_eq!(build_role("a/b/App.slnx"), "solution");
+        assert_eq!(language_name(Language::CSharp), "C#");
+        assert_eq!(unit_noun(Language::CSharp), "project");
+    }
 
     #[test]
     fn formats_lists_and_labels() {

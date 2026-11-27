@@ -1,5 +1,6 @@
 //! Source parsing and symbol extraction for CodeWiki.
 
+pub mod csharp;
 pub mod java;
 pub mod lang;
 pub mod python;
@@ -9,6 +10,7 @@ pub mod scan;
 pub mod typescript;
 pub mod workspace;
 
+pub use csharp::parse_csharp;
 pub use java::parse_java;
 pub use lang::{python_module, resolve_ts_import, ts_module};
 pub use python::{MAIN_GUARD_ATTR, parse_python};

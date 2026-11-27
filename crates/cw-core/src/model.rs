@@ -13,6 +13,7 @@ pub enum Language {
     TypeScript,
     JavaScript,
     Java,
+    CSharp,
     Markdown,
     Toml,
     Json,
@@ -30,6 +31,7 @@ impl Language {
             "ts" | "tsx" | "mts" | "cts" => Self::TypeScript,
             "js" | "jsx" | "mjs" | "cjs" => Self::JavaScript,
             "java" => Self::Java,
+            "cs" => Self::CSharp,
             "md" | "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -45,6 +47,7 @@ impl Language {
             Self::TypeScript => "typescript",
             Self::JavaScript => "javascript",
             Self::Java => "java",
+            Self::CSharp => "csharp",
             Self::Markdown => "markdown",
             Self::Toml => "toml",
             Self::Json => "json",
@@ -60,6 +63,7 @@ impl Language {
             "typescript" => Self::TypeScript,
             "javascript" => Self::JavaScript,
             "java" => Self::Java,
+            "csharp" => Self::CSharp,
             "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -72,7 +76,12 @@ impl Language {
     pub fn has_symbol_support(self) -> bool {
         matches!(
             self,
-            Self::Rust | Self::Python | Self::TypeScript | Self::JavaScript | Self::Java
+            Self::Rust
+                | Self::Python
+                | Self::TypeScript
+                | Self::JavaScript
+                | Self::Java
+                | Self::CSharp
         )
     }
 
@@ -96,7 +105,6 @@ impl Language {
         let file = path.rsplit('/').next().unwrap_or(path);
         let (_, ext) = file.rsplit_once('.')?;
         Some(match ext.to_ascii_lowercase().as_str() {
-            "cs" => "C#",
             "go" => "Go",
             "kt" | "kts" => "Kotlin",
             "c" | "h" => "C",
@@ -167,9 +175,10 @@ pub enum SymbolKind {
     Static,
     TypeAlias,
     Macro,
-    /// A class in Python, TypeScript or Java; also a Java record.
+    /// A class in Python, TypeScript, Java or C#; also a Java record and a C#
+    /// record (a C# record struct is a [`SymbolKind::Struct`]).
     Class,
-    /// An interface in TypeScript or Java; also a Java annotation type.
+    /// An interface in TypeScript, Java or C#; also a Java annotation type.
     Interface,
 }
 
@@ -383,13 +392,15 @@ mod tests {
         assert!(Language::Python.has_symbol_support());
         assert!(Language::from_path("web/App.TSX").has_symbol_support());
         assert!(Language::Java.has_symbol_support());
+        assert_eq!(Language::from_path("src/App/Program.CS"), Language::CSharp);
+        assert_eq!(Language::parse(Language::CSharp.as_str()), Language::CSharp);
+        assert!(Language::CSharp.has_symbol_support());
         assert!(Language::JavaScript.has_symbol_support());
     }
 
     #[test]
     fn names_the_language_of_a_file_without_a_parser() {
         for (path, name) in [
-            ("src/App/Program.cs", "C#"),
             ("main.go", "Go"),
             ("a/B.KT", "Kotlin"),
             ("lib/x.c", "C"),
@@ -398,7 +409,6 @@ mod tests {
             ("src/x.cpp", "C++"),
             ("ui/Main.axaml", "AXAML"),
             ("ui/Main.xaml", "XAML"),
-            ("ui/Main.axaml.cs", "C#"),
             ("run.sh", "Shell"),
             ("run.ps1", "PowerShell"),
             ("db/schema.sql", "SQL"),
@@ -418,6 +428,8 @@ mod tests {
             "a.py",
             "web/App.tsx",
             "A.java",
+            "src/App/Program.cs",
+            "ui/Main.axaml.cs",
             "README.md",
             "a.json",
             "a.yaml",

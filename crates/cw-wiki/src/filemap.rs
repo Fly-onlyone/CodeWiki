@@ -796,16 +796,16 @@ mod tests {
     fn projects_under_a_container_are_units() {
         let map = map(
             &[
-                ("src/A/a1.cs", 1),
-                ("src/A/a2.cs", 1),
-                ("src/A/a3.cs", 1),
-                ("src/B/b1.cs", 1),
-                ("src/B/b2.cs", 1),
-                ("src/B/b3.cs", 1),
-                ("tests/A/t1.cs", 1),
-                ("tests/A/t2.cs", 1),
-                ("tests/A/t3.cs", 1),
-                ("build.cs", 1),
+                ("src/A/a1.go", 1),
+                ("src/A/a2.go", 1),
+                ("src/A/a3.go", 1),
+                ("src/B/b1.go", 1),
+                ("src/B/b2.go", 1),
+                ("src/B/b3.go", 1),
+                ("tests/A/t1.go", 1),
+                ("tests/A/t2.go", 1),
+                ("tests/A/t3.go", 1),
+                ("build.go", 1),
             ],
             false,
         );
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn a_small_unit_folds_into_the_root_and_a_mapped_repository_needs_three() {
-        let paths = [("src/A/a1.cs", 1), ("src/A/a2.cs", 1), ("x.cs", 1)];
+        let paths = [("src/A/a1.go", 1), ("src/A/a2.go", 1), ("x.go", 1)];
         let map_of = |mapped| map(&paths, mapped);
         let alone = map_of(false);
         assert_eq!(alone.units.len(), 1);
@@ -931,15 +931,15 @@ mod tests {
     #[test]
     fn language_sentences() {
         let two = map(
-            &[("a.cs", 1), ("b.cs", 1), ("c.axaml", 1), ("d/e.cs", 1)],
+            &[("a.go", 1), ("b.go", 1), ("c.axaml", 1), ("d/e.go", 1)],
             false,
         );
-        assert_eq!(two.total.language_names(), "C# and AXAML");
+        assert_eq!(two.total.language_names(), "Go and AXAML");
         assert_eq!(two.total.folders(), 2);
         let home = two.home_summary("ta", "Tail.");
         assert_eq!(
             home,
-            "**ta** is a C# and AXAML codebase of 2 folders and 4 source files, mapped at file level: CodeWiki has no parser for C# and AXAML yet. Tail."
+            "**ta** is a Go and AXAML codebase of 2 folders and 4 source files, mapped at file level: CodeWiki has no parser for Go and AXAML yet. Tail."
         );
         let many = map(
             &[

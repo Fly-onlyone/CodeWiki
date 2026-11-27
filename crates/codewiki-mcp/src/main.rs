@@ -1186,7 +1186,7 @@ impl Bridge {
     }
 
     #[tool(
-        description = "Tests to run after a change. With no `files`, uses the uncommitted changes in the working tree. Lists the test files that can reach the changed files through the dependency graph, nearest first, with the test names and the `cargo test` commands that run them, plus changed files no test reaches. Call after editing and before reporting work as done."
+        description = "Tests to run after a change. With no `files`, uses the uncommitted changes in the working tree. Lists the test files that can reach the changed files through the dependency graph, nearest first, with the test names and the commands that run them (`cargo test` for Rust, `dotnet test` for C#), plus changed files no test reaches. Call after editing and before reporting work as done."
     )]
     async fn get_impacted_tests(
         &self,

@@ -18,7 +18,7 @@ use cw_parse::workspace::{dependency_specs, locked_versions, package_description
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Repo;
-use crate::units::{Manifest, Unit};
+use crate::units::{Manifest, Unit, xml_attribute, xml_element, xml_elements};
 
 /// File under the vault's manifest folder that keeps the descriptions.
 const SAVED: &str = "packages.json";
@@ -170,6 +170,9 @@ fn cargo(unit: &Unit, package: &str, packages: &Packages) -> Option<Declared> {
 }
 
 fn other(unit: &Unit, package: &str) -> Vec<Declared> {
+    if unit.language == Language::CSharp {
+        return nuget(unit, package);
+    }
     let named = unit.declares(package);
     unit.manifests
         .iter()
@@ -197,6 +200,114 @@ fn asked_in(manifest: &Manifest, package: &str) -> Option<(String, Vec<String>)>
         }
         _ => python(&manifest.text, package),
     }
+}
+
+/// The NuGet package a C# namespace root names, from the ids a build file
+/// references: the id equal to it, else the id that continues it
+/// (`Serilog.Sinks` is `Serilog.Sinks.File`), else the id it continues
+/// (`Avalonia.Controls` is part of `Avalonia`). Case does not matter.
+fn nuget_id<'a>(ids: &[&'a str], package: &str) -> Option<&'a str> {
+    let wanted = package.to_lowercase();
+    let lower = |id: &str| id.to_lowercase();
+    let continues = |long: &str, short: &str| {
+        long.strip_prefix(short)
+            .is_some_and(|rest| rest.starts_with('.'))
+    };
+    ids.iter()
+        .find(|id| lower(id) == wanted)
+        .or_else(|| ids.iter().find(|id| continues(&lower(id), &wanted)))
+        .or_else(|| {
+            ids.iter()
+                .filter(|id| continues(&wanted, &lower(id)))
+                .max_by_key(|id| id.len())
+        })
+        .copied()
+}
+
+/// The `PackageReference` lines of a project or props file: id and the
+/// version written there, empty when the version is not.
+fn package_references(text: &str) -> Vec<(String, String)> {
+    xml_elements(text, "PackageReference")
+        .into_iter()
+        .filter_map(|(attributes, inner)| {
+            let id = xml_attribute(attributes, "Include")
+                .or_else(|| xml_attribute(attributes, "Update"))?;
+            let version = xml_attribute(attributes, "Version")
+                .or_else(|| xml_attribute(attributes, "VersionOverride"))
+                .or_else(|| xml_element(inner, "Version").map(str::to_string))
+                .unwrap_or_default();
+            Some((id, version))
+        })
+        .collect()
+}
+
+/// The version `Directory.Packages.props` gives package `id` (central
+/// package management).
+fn central_version(unit: &Unit, id: &str) -> Option<String> {
+    unit.manifests
+        .iter()
+        .filter(|m| m.path.ends_with("Directory.Packages.props"))
+        .flat_map(|m| xml_elements(&m.text, "PackageVersion"))
+        .find_map(|(attributes, _)| {
+            let named = xml_attribute(attributes, "Include")?;
+            named
+                .eq_ignore_ascii_case(id)
+                .then(|| xml_attribute(attributes, "Version"))
+                .flatten()
+        })
+}
+
+/// The version of package `id` that the unit's `packages.lock.json` pins.
+fn locked_nuget(unit: &Unit, id: &str) -> Option<String> {
+    let value: serde_json::Value = serde_json::from_str(&unit.lock.as_ref()?.text).ok()?;
+    value
+        .get("dependencies")?
+        .as_object()?
+        .values()
+        .find_map(|framework| {
+            framework
+                .as_object()?
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case(id))?
+                .1
+                .get("resolved")?
+                .as_str()
+                .map(str::to_string)
+        })
+}
+
+/// What the project files of a C# unit ask of `package`: the version written
+/// beside the reference or, for a reference with none, the central one, and
+/// the version the lock file pins.
+fn nuget(unit: &Unit, package: &str) -> Vec<Declared> {
+    let mut out = Vec::new();
+    for manifest in &unit.manifests {
+        let name = manifest.path.rsplit('/').next().unwrap_or(&manifest.path);
+        if !(name.ends_with(".csproj") || name == "Directory.Build.props") {
+            continue;
+        }
+        let references = package_references(&manifest.text);
+        let ids: Vec<&str> = references.iter().map(|(id, _)| id.as_str()).collect();
+        let Some(id) = nuget_id(&ids, package) else {
+            continue;
+        };
+        let written = references
+            .iter()
+            .find(|(named, _)| named == id)
+            .map(|(_, version)| version.clone())
+            .unwrap_or_default();
+        let requirement = if written.is_empty() {
+            central_version(unit, id).unwrap_or_default()
+        } else {
+            written
+        };
+        out.push(Declared {
+            requirement,
+            locked: locked_nuget(unit, id).unwrap_or_default(),
+            ..Declared::bare(&manifest.path)
+        });
+    }
+    out
 }
 
 fn npm(text: &str, package: &str) -> Option<String> {
@@ -332,6 +443,8 @@ pub struct Machine {
     root: PathBuf,
     /// The folders of `<cargo home>/registry/src`, one for each registry.
     registries: Vec<PathBuf>,
+    /// The folder NuGet unpacks packages into, when the machine has one.
+    nuget: Option<PathBuf>,
 }
 
 impl Machine {
@@ -345,7 +458,20 @@ impl Machine {
                     .or_else(|| std::env::var_os("HOME"))
                     .map(|home| PathBuf::from(home).join(".cargo"))
             });
-        Self::with_cargo_home(root, home.as_deref())
+        let nuget = std::env::var_os("NUGET_PACKAGES")
+            .map(PathBuf::from)
+            .or_else(|| {
+                std::env::var_os("USERPROFILE")
+                    .or_else(|| std::env::var_os("HOME"))
+                    .map(|home| PathBuf::from(home).join(".nuget").join("packages"))
+            });
+        Self::with_cargo_home(root, home.as_deref()).with_nuget(nuget)
+    }
+
+    /// The same machine with NuGet's package folder given.
+    pub fn with_nuget(mut self, folder: Option<PathBuf>) -> Self {
+        self.nuget = folder.filter(|f| f.is_dir());
+        self
     }
 
     /// As [`Machine::new`], with the cargo home given.
@@ -361,7 +487,50 @@ impl Machine {
         Self {
             root: root.to_path_buf(),
             registries,
+            nuget: None,
         }
+    }
+
+    /// The `description` of the NuGet package a namespace root names, from
+    /// the `.nuspec` NuGet unpacked next to the package. NuGet names its
+    /// folders by the lowercase id, so the package is the folder named like
+    /// `package`, else the first one that continues it.
+    fn nuget_description(&self, package: &str, version: Option<&str>) -> Option<String> {
+        let folder = self.nuget.as_ref()?;
+        let wanted = package.to_lowercase();
+        let mut ids: Vec<String> = std::fs::read_dir(folder)
+            .ok()?
+            .filter_map(|entry| entry.ok()?.file_name().into_string().ok())
+            .filter(|name| name == &wanted || name.starts_with(&format!("{wanted}.")))
+            .collect();
+        ids.sort();
+        let id = ids
+            .iter()
+            .find(|id| **id == wanted)
+            .or_else(|| ids.first())?;
+        let package_dir = folder.join(id);
+        let version_dir = match version {
+            Some(version) if package_dir.join(version).is_dir() => package_dir.join(version),
+            _ => {
+                let mut versions: Vec<PathBuf> = std::fs::read_dir(&package_dir)
+                    .ok()?
+                    .filter_map(|entry| Some(entry.ok()?.path()))
+                    .filter(|path| path.is_dir())
+                    .collect();
+                versions.sort();
+                versions.pop()?
+            }
+        };
+        let nuspec = std::fs::read_dir(&version_dir)
+            .ok()?
+            .filter_map(|entry| Some(entry.ok()?.path()))
+            .find(|path| path.extension().is_some_and(|e| e == "nuspec"))?;
+        let text = std::fs::read_to_string(nuspec).ok()?;
+        let line = xml_element(&text, "description")?
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        (!line.is_empty()).then_some(line)
     }
 
     fn crate_manifest(&self, package: &str, version: Option<&str>) -> Option<String> {
@@ -410,6 +579,7 @@ impl PackageInfo for Machine {
                     .join(" ");
                 (!line.is_empty()).then_some(line)
             }
+            Language::CSharp => self.nuget_description(package, version),
             _ => None,
         }
     }
@@ -684,5 +854,144 @@ mod tests {
         // No cargo home at all.
         let bare = Machine::with_cargo_home(dir.path(), None);
         assert_eq!(bare.describe(Language::Rust, "tree-sitter", None), None);
+    }
+
+    fn csharp_unit(manifests: &[(&str, &str)], lock: Option<&str>) -> Unit {
+        Unit {
+            name: "core".into(),
+            package: "Core".into(),
+            slug: "core".into(),
+            dir: "src/Core".into(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: false,
+            has_bin: false,
+            language: Language::CSharp,
+            manifests: manifests
+                .iter()
+                .map(|(path, text)| Manifest {
+                    path: path.to_string(),
+                    text: text.to_string(),
+                })
+                .collect(),
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            lock: lock.map(|text| Manifest {
+                path: "src/Core/packages.lock.json".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_nuget_requirements_from_the_project_the_props_and_the_lock() {
+        let project = r#"<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <PackageReference Include="Serilog" Version="4.2.0" />
+    <PackageReference Include="Serilog.Sinks.File" />
+    <PackageReference Include="Avalonia" />
+    <PackageReference Include="xunit.v3">
+      <Version>3.2.2</Version>
+    </PackageReference>
+  </ItemGroup>
+</Project>"#;
+        let central = r#"<Project><ItemGroup>
+  <PackageVersion Include="Serilog.Sinks.File" Version="6.0.0" />
+  <PackageVersion Include="Avalonia" Version="11.3.0" />
+</ItemGroup></Project>"#;
+        let lock = r#"{"version": 2, "dependencies": {"net10.0": {
+  "Serilog.Sinks.File": {"type": "Direct", "requested": "[6.0.0, )", "resolved": "6.0.1"},
+  "Avalonia": {"type": "Direct", "requested": "[11.3.0, )", "resolved": "11.3.2"}
+}}}"#;
+        let unit = csharp_unit(
+            &[
+                ("src/Core/Core.csproj", project),
+                ("Directory.Packages.props", central),
+            ],
+            Some(lock),
+        );
+        let asked = |package: &str| -> Vec<(String, String, String)> {
+            nuget(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement, d.locked))
+                .collect()
+        };
+        let csproj = "src/Core/Core.csproj".to_string();
+        // A version beside the reference; no lock entry for it.
+        assert_eq!(
+            asked("Serilog"),
+            [(csproj.clone(), "4.2.0".into(), "".into())]
+        );
+        // A namespace root two segments long names the package that continues
+        // it, and the central file gives the version the reference lacks.
+        assert_eq!(
+            asked("Serilog.Sinks"),
+            [(csproj.clone(), "6.0.0".into(), "6.0.1".into())]
+        );
+        assert_eq!(
+            asked("Avalonia.Controls"),
+            [(csproj.clone(), "11.3.0".into(), "11.3.2".into())]
+        );
+        // The id and the namespace differ in case and in shape.
+        assert_eq!(
+            asked("Xunit"),
+            [(csproj.clone(), "3.2.2".into(), "".into())]
+        );
+        assert!(asked("Newtonsoft.Json").is_empty());
+        // The central file and the lock are no declarations of their own.
+        assert!(
+            nuget(&unit, "Avalonia")
+                .iter()
+                .all(|d| d.manifest == csproj)
+        );
+    }
+
+    #[test]
+    fn a_nuget_description_comes_from_the_unpacked_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |rel: &str, text: &str| {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "nuget/serilog.sinks.file/6.0.0/serilog.sinks.file.nuspec",
+            "<package><metadata><id>Serilog.Sinks.File</id><description>Write log events\n  to files.</description></metadata></package>",
+        );
+        write(
+            "nuget/serilog.sinks.file/5.0.0/serilog.sinks.file.nuspec",
+            "<package><metadata><description>Old.</description></metadata></package>",
+        );
+        write(
+            "nuget/avalonia/11.3.2/avalonia.nuspec",
+            "<package><metadata><description>Cross-platform UI.</description></metadata></package>",
+        );
+        let machine =
+            Machine::with_cargo_home(dir.path(), None).with_nuget(Some(dir.path().join("nuget")));
+        let describe = |package, version| machine.describe(Language::CSharp, package, version);
+        assert_eq!(
+            describe("Serilog.Sinks", Some("6.0.0")).as_deref(),
+            Some("Write log events to files.")
+        );
+        // The locked version, else the newest unpacked.
+        assert_eq!(
+            describe("Serilog.Sinks", Some("5.0.0")).as_deref(),
+            Some("Old.")
+        );
+        assert_eq!(
+            describe("Serilog.Sinks", None).as_deref(),
+            Some("Write log events to files.")
+        );
+        assert_eq!(
+            describe("Avalonia", None).as_deref(),
+            Some("Cross-platform UI.")
+        );
+        assert_eq!(describe("Newtonsoft.Json", None), None);
+        // A machine with no NuGet folder knows nothing.
+        let bare = Machine::with_cargo_home(dir.path(), None).with_nuget(None);
+        assert_eq!(bare.describe(Language::CSharp, "Avalonia", None), None);
     }
 }

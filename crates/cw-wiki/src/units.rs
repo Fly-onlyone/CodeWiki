@@ -4,8 +4,8 @@
 //! A Cargo package is a unit. Code in other languages has no manifest the
 //! scanner understands, so its units are derived here from the layout: a
 //! Python top-level package, a JavaScript or TypeScript package directory, a
-//! Java build module. Every unit has the same shape, so planning and
-//! rendering treat them alike.
+//! Java build module, a C# project. Every unit has the same shape, so
+//! planning and rendering treat them alike.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -24,6 +24,33 @@ const PYTHON_MANIFESTS: [&str; 5] = [
     "Pipfile",
 ];
 const JAVA_MANIFESTS: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"];
+/// Files a C# project shares with its neighbours: package versions, and
+/// properties every project below the folder takes.
+const CSHARP_SHARED: [&str; 2] = ["Directory.Packages.props", "Directory.Build.props"];
+/// The lock file a C# project writes beside itself.
+const CSHARP_LOCK: &str = "packages.lock.json";
+/// Attributes that make a C# method a test, under any test framework.
+const CSHARP_TEST_ATTRIBUTES: [&str; 11] = [
+    "Fact",
+    "Theory",
+    "Test",
+    "TestCase",
+    "TestCaseSource",
+    "TestMethod",
+    "DataTestMethod",
+    "TestFixture",
+    "TestClass",
+    "SkippableFact",
+    "SkippableTheory",
+];
+/// Packages whose reference makes a C# project a test project.
+const CSHARP_TEST_PACKAGES: [&str; 5] = [
+    "xunit",
+    "nunit",
+    "mstest",
+    "microsoft.net.test.sdk",
+    "tunit",
+];
 
 /// A build or dependency file that belongs to a unit.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,6 +98,12 @@ pub struct Unit {
     pub entries: Vec<Entry>,
     /// Script names from `package.json`.
     pub scripts: Vec<String>,
+    /// True when the unit is a project of tests, which has no notes about
+    /// its code.
+    pub tests: bool,
+    /// The lock file of the unit's packages, kept out of `manifests` so that
+    /// a lock does not count among the files a note describes.
+    pub lock: Option<Manifest>,
 }
 
 impl Unit {
@@ -104,6 +137,9 @@ pub struct Units {
     rust: HashMap<String, usize>,
     /// Source file of another language -> unit.
     by_file: HashMap<String, usize>,
+    /// Files outside Rust whose code is test code, by their contents and
+    /// their project, not by their name alone.
+    tests: HashSet<String>,
 }
 
 impl Units {
@@ -123,6 +159,17 @@ impl Units {
             .copied()
     }
 
+    /// True for a source file the units found to be test code: one that
+    /// holds a test, or sits in a project of tests.
+    pub fn is_test(&self, file: &str) -> bool {
+        self.tests.contains(file)
+    }
+
+    /// Unit of a source file outside Rust.
+    pub fn of_file(&self, file: &str) -> Option<&Unit> {
+        self.by_file.get(file).map(|i| &self.list[*i])
+    }
+
     pub fn by_name(&self, name: &str) -> Option<&Unit> {
         self.list.iter().find(|u| u.name == name)
     }
@@ -139,6 +186,7 @@ enum Family {
     Python,
     Js,
     Java,
+    CSharp,
 }
 
 impl Family {
@@ -147,6 +195,7 @@ impl Family {
             Language::Python => Some(Self::Python),
             Language::TypeScript | Language::JavaScript => Some(Self::Js),
             Language::Java => Some(Self::Java),
+            Language::CSharp => Some(Self::CSharp),
             _ => None,
         }
     }
@@ -156,6 +205,7 @@ impl Family {
             Self::Python => "python",
             Self::Js => "js",
             Self::Java => "java",
+            Self::CSharp => "csharp",
         }
     }
 }
@@ -173,6 +223,16 @@ pub fn is_test_file(path: &str) -> bool {
         return true;
     }
     let stem = file.split('.').next().unwrap_or(file);
+    // A C# test project is a folder named for what it tests: `Core.Tests`.
+    if file.ends_with(".cs")
+        && dirs.iter().any(|d| {
+            ["Tests", "Test", "UnitTests", "IntegrationTests"]
+                .iter()
+                .any(|suffix| d.len() > suffix.len() && d.ends_with(&format!(".{suffix}")))
+        })
+    {
+        return true;
+    }
     file.starts_with("test_")
         || file == "conftest.py"
         || file.contains(".test.")
@@ -180,6 +240,98 @@ pub fn is_test_file(path: &str) -> bool {
         || stem.ends_with("_test")
         || (file.ends_with(".java")
             && (stem.ends_with("Test") || stem.ends_with("Tests") || stem.ends_with("IT")))
+        || (file.ends_with(".cs") && (stem.ends_with("Test") || stem.ends_with("Tests")))
+}
+
+/// True when `attribute` (as written: `Fact`, `Xunit.Fact`, `FactAttribute`)
+/// marks a C# test.
+pub(crate) fn is_csharp_test_attribute(attribute: &str) -> bool {
+    let name = attribute.rsplit('.').next().unwrap_or(attribute);
+    let name = name.strip_suffix("Attribute").unwrap_or(name);
+    CSHARP_TEST_ATTRIBUTES.contains(&name)
+}
+
+/// Text of the first `<tag>` element of `xml`, trimmed.
+pub(crate) fn xml_element<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&format!("</{tag}>"))?;
+    Some(xml[start..start + end].trim())
+}
+
+/// Every element named `tag` in `xml` with its attribute text and, for one
+/// that is not self-closing, its inner text.
+pub(crate) fn xml_elements<'a>(xml: &'a str, tag: &str) -> Vec<(&'a str, &'a str)> {
+    let open = format!("<{tag}");
+    let mut out = Vec::new();
+    let mut rest = xml;
+    while let Some(at) = rest.find(&open) {
+        let after = &rest[at + open.len()..];
+        // `<PackageReferenceX` is another element.
+        if !after.starts_with([' ', '\t', '\r', '\n', '/', '>']) {
+            rest = after;
+            continue;
+        }
+        let Some(end) = after.find('>') else {
+            break;
+        };
+        let head = &after[..end];
+        if let Some(attributes) = head.strip_suffix('/') {
+            out.push((attributes, ""));
+            rest = &after[end + 1..];
+            continue;
+        }
+        let body = &after[end + 1..];
+        let close = format!("</{tag}>");
+        match body.find(&close) {
+            Some(stop) => {
+                out.push((head, &body[..stop]));
+                rest = &body[stop + close.len()..];
+            }
+            None => {
+                out.push((head, ""));
+                rest = body;
+            }
+        }
+    }
+    out
+}
+
+/// The value of attribute `name` in the attribute text of an element.
+pub(crate) fn xml_attribute(attributes: &str, name: &str) -> Option<String> {
+    let mut rest = attributes;
+    while let Some(at) = rest.find(name) {
+        let before_ok = rest[..at]
+            .chars()
+            .next_back()
+            .is_none_or(|c| c.is_whitespace());
+        let after = rest[at + name.len()..].trim_start();
+        if before_ok && let Some(value) = after.strip_prefix('=') {
+            let value = value.trim_start();
+            let quote = value.chars().next().filter(|c| matches!(c, '"' | '\''))?;
+            let inner = &value[1..];
+            return inner.find(quote).map(|end| inner[..end].to_string());
+        }
+        rest = &rest[at + name.len()..];
+    }
+    None
+}
+
+/// The repo-relative path that the relative `target` names from `dir`, with
+/// its `..` and `.` segments resolved and either slash accepted; `None`
+/// when it climbs out of the repository.
+pub(crate) fn resolve_relative(dir: &str, target: &str) -> Option<String> {
+    let mut parts: Vec<&str> = dir.split('/').filter(|p| !p.is_empty()).collect();
+    for segment in target.split(['/', '\\']) {
+        match segment {
+            "" | "." => {}
+            ".." => {
+                parts.pop()?;
+            }
+            other => parts.push(other),
+        }
+    }
+    Some(parts.join("/"))
 }
 
 /// Lowercase name safe as a folder and as a tag.
@@ -197,6 +349,53 @@ pub(crate) fn slug(name: &str) -> String {
         "code".to_string()
     } else {
         out
+    }
+}
+
+/// True for a C# project or folder named for its tests: `Core.Tests`.
+fn is_test_name(name: &str) -> bool {
+    ["Tests", "Test", "UnitTests", "IntegrationTests", "Specs"]
+        .iter()
+        .any(|suffix| name.len() > suffix.len() && name.ends_with(&format!(".{suffix}")))
+}
+
+/// True when a project file references a test framework or says it is a test
+/// project.
+pub(crate) fn references_a_test_framework(project: &str) -> bool {
+    project.to_lowercase().contains("<istestproject>true")
+        || xml_elements(project, "PackageReference")
+            .iter()
+            .filter_map(|(attributes, _)| xml_attribute(attributes, "Include"))
+            .any(|id| {
+                let id = id.to_lowercase();
+                CSHARP_TEST_PACKAGES.iter().any(|p| id.starts_with(p))
+            })
+}
+
+/// True for a C# program's way in: a static `Main` method that takes no
+/// arguments or the command line, or the top-level statements of a file.
+fn is_csharp_entry(symbol: &Symbol) -> bool {
+    match symbol.kind {
+        SymbolKind::Function => symbol.name == "Main" && symbol.signature == "top-level statements",
+        SymbolKind::Method => {
+            if symbol.name != "Main" || !symbol.signature.split_whitespace().any(|w| w == "static")
+            {
+                return false;
+            }
+            let params = symbol
+                .signature
+                .split_once("Main(")
+                .and_then(|(_, rest)| rest.split_once(')'))
+                .map_or("", |(inside, _)| inside)
+                .trim();
+            params.is_empty()
+                || !params.contains(',')
+                    && params
+                        .strip_prefix("string")
+                        .or_else(|| params.strip_prefix("String"))
+                        .is_some_and(|rest| rest.trim_start().starts_with("[]"))
+        }
+        _ => false,
     }
 }
 
@@ -382,6 +581,8 @@ pub fn discover(
                 .into_iter()
                 .collect(),
             scripts: Vec::new(),
+            tests: false,
+            lock: None,
         });
     }
 
@@ -398,6 +599,23 @@ pub fn discover(
         any_of.entry(s.file.as_str()).or_insert(s);
         in_file.entry(s.file.as_str()).or_default().push(s);
     }
+
+    // The C# projects of the repository, by folder.
+    let mut projects: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for path in &files {
+        if path.ends_with(".csproj") {
+            projects.entry(parent_dir(path)).or_default().push(path);
+        }
+    }
+    for found in projects.values_mut() {
+        found.sort_unstable();
+    }
+    let nearest_project = |dir: &str| -> Option<String> {
+        ancestors(dir)
+            .into_iter()
+            .find(|d| projects.contains_key(d))
+            .map(str::to_string)
+    };
 
     let mut groups: BTreeMap<(Family, String), Group> = BTreeMap::new();
     for file in &facts.files {
@@ -430,6 +648,10 @@ pub fn discover(
                 Some(dir) => (format!("dir:{dir}"), Some(dir.to_string())),
                 None => (format!("pkg:{first}"), None),
             },
+            Family::CSharp => match nearest_project(parent_dir(path)) {
+                Some(dir) => (format!("dir:{dir}"), Some(dir)),
+                None => (format!("pkg:{first}"), None),
+            },
         };
         let group = groups.entry((family, key)).or_default();
         group.manifest_dir = manifest_dir;
@@ -448,11 +670,11 @@ pub fn discover(
             .flatten()
             .copied()
             .collect();
-        // Configuration files and test suites alone do not make a unit.
-        if !members
-            .iter()
-            .any(|s| s.kind != SymbolKind::Module && !is_test_file(&s.file))
-        {
+        // Configuration files and test suites alone do not make a unit. A C#
+        // project of tests is a project all the same.
+        if !members.iter().any(|s| {
+            s.kind != SymbolKind::Module && (*family == Family::CSharp || !is_test_file(&s.file))
+        }) {
             continue;
         }
         let modules: Vec<&Symbol> = members
@@ -506,6 +728,22 @@ pub fn discover(
                 .flat_map(|d| JAVA_MANIFESTS.iter().map(move |name| join(d, name)))
                 .filter(|p| files.contains(p.as_str()))
                 .collect(),
+            Family::CSharp => {
+                let mut found: Vec<String> = group
+                    .manifest_dir
+                    .iter()
+                    .flat_map(|d| projects.get(d.as_str()).into_iter().flatten())
+                    .map(|p| p.to_string())
+                    .collect();
+                if !found.is_empty() {
+                    for shared in CSHARP_SHARED {
+                        if let Some(at) = nearest_with(&files, &dir, &[shared]) {
+                            found.push(join(at, shared));
+                        }
+                    }
+                }
+                found
+            }
             Family::Python => nearest_with(&files, &dir, &PYTHON_MANIFESTS)
                 .map(|d| {
                     let mut found: Vec<String> = PYTHON_MANIFESTS
@@ -547,7 +785,15 @@ pub fn discover(
         };
 
         let dir_name = dir.rsplit('/').next().unwrap_or("");
+        let project_file = manifests
+            .first()
+            .filter(|m| m.path.ends_with(".csproj"))
+            .map(|m| m.path.rsplit('/').next().unwrap_or(&m.path).to_string());
         let own_name = match family {
+            Family::CSharp => match &project_file {
+                Some(file) => file.strip_suffix(".csproj").unwrap_or(file).to_string(),
+                None => prefix.replace("::", "."),
+            },
             Family::Python => key.clone(),
             Family::Js if !package_json.name.is_empty() => package_json.name.clone(),
             Family::Js if group.manifest_dir.is_none() => {
@@ -557,6 +803,24 @@ pub fn discover(
             Family::Java if group.manifest_dir.is_some() => dir_name.to_string(),
             Family::Java => prefix.replace("::", "."),
         };
+        let lock = match family {
+            Family::CSharp => group
+                .manifest_dir
+                .as_deref()
+                .map(|d| join(d, CSHARP_LOCK))
+                .filter(|p| files.contains(p.as_str()))
+                .map(|path| Manifest {
+                    text: read(&path).unwrap_or_default(),
+                    path,
+                }),
+            _ => None,
+        };
+        let test_project = *family == Family::CSharp
+            && (is_test_name(&own_name)
+                || is_test_name(dir_name)
+                || manifests
+                    .iter()
+                    .any(|m| m.path.ends_with(".csproj") && references_a_test_framework(&m.text)));
         let is_repo = own_name.is_empty();
         let package = if is_repo {
             repo_name.to_string()
@@ -617,6 +881,15 @@ pub fn discover(
                 }
                 declared = entries.len();
             }
+            Family::CSharp => {
+                entries.extend(
+                    members
+                        .iter()
+                        .filter(|s| is_csharp_entry(s) && !is_test_file(&s.file) && !test_project)
+                        .map(|s| s.qualified.clone()),
+                );
+                entries.sort();
+            }
             Family::Java => {
                 entries.extend(
                     members
@@ -635,7 +908,7 @@ pub fn discover(
         }
         // A lone `main` is the module's way in; a lone script is still
         // just a script and keeps its own name.
-        if *family == Family::Java && entries.len() == 1 {
+        if matches!(family, Family::Java | Family::CSharp) && entries.len() == 1 {
             declared = 1;
         }
 
@@ -653,12 +926,44 @@ pub fn discover(
         for file in &group.files {
             units.by_file.insert(file.to_string(), index);
         }
+        if *family == Family::CSharp {
+            let holds_test = |file: &str| {
+                test_project
+                    || is_test_file(file)
+                    || in_file.get(file).is_some_and(|symbols| {
+                        symbols
+                            .iter()
+                            .any(|s| s.attrs.iter().any(|a| is_csharp_test_attribute(a)))
+                    })
+            };
+            units.tests.extend(
+                group
+                    .files
+                    .iter()
+                    .filter(|f| holds_test(f))
+                    .map(|f| f.to_string()),
+            );
+        }
+        let description = match family {
+            Family::CSharp => manifests
+                .iter()
+                .filter(|m| m.path.ends_with(".csproj"))
+                .find_map(|m| {
+                    xml_element(&m.text, "Description")
+                        .or_else(|| xml_element(&m.text, "PackageDescription"))
+                })
+                .unwrap_or("")
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" "),
+            _ => package_json.description,
+        };
         units.list.push(Unit {
             name,
             package,
             slug,
             dir,
-            description: package_json.description,
+            description,
             deps: Vec::new(),
             has_lib: false,
             has_bin: !entries.is_empty(),
@@ -675,7 +980,53 @@ pub fn discover(
                 })
                 .collect(),
             scripts: package_json.scripts,
+            tests: test_project,
+            lock,
         });
+    }
+
+    // A C# project depends on the projects it references. One that names
+    // none, or whose file was not read, is read from its imports like the
+    // units of other languages.
+    let by_project: HashMap<String, usize> = units
+        .list
+        .iter()
+        .enumerate()
+        .filter_map(|(i, u)| Some((u.manifests.first()?.path.clone(), i)))
+        .filter(|(path, _)| path.ends_with(".csproj"))
+        .collect();
+    let mut referencing: HashSet<usize> = HashSet::new();
+    let mut project_deps: Vec<(usize, Vec<String>)> = Vec::new();
+    for (index, unit) in units.list.iter().enumerate() {
+        let Some(project) = unit
+            .manifests
+            .first()
+            .filter(|m| m.path.ends_with(".csproj"))
+        else {
+            continue;
+        };
+        let dir = parent_dir(&project.path);
+        let mut names: Vec<String> = Vec::new();
+        for (attributes, _) in xml_elements(&project.text, "ProjectReference") {
+            let Some(target) = xml_attribute(attributes, "Include")
+                .and_then(|include| resolve_relative(dir, &include))
+            else {
+                continue;
+            };
+            if let Some(&to) = by_project.get(&target)
+                && to != index
+                && !names.contains(&units.list[to].name)
+            {
+                names.push(units.list[to].name.clone());
+            }
+        }
+        if !names.is_empty() {
+            referencing.insert(index);
+            project_deps.push((index, names));
+        }
+    }
+    for (index, names) in project_deps {
+        units.list[index].deps = names;
     }
 
     // A unit depends on the units whose files its own files import.
@@ -688,6 +1039,7 @@ pub fn discover(
         };
         if let (Some(from), Some(to)) = (unit(&edge.src), unit(&edge.dst))
             && from != to
+            && !referencing.contains(&from)
         {
             deps.insert((from, to));
         }
@@ -769,11 +1121,228 @@ mod tests {
             strip: 0,
             entries: Vec::new(),
             scripts: Vec::new(),
+            tests: false,
+            lock: None,
         };
         assert_eq!(
             unit("Requests>=2\n").declares("requests"),
             ["requirements.txt"]
         );
         assert!(unit("requests-oauthlib\n").declares("requests").is_empty());
+    }
+
+    #[test]
+    fn recognises_csharp_test_files() {
+        for path in [
+            "tests/Core.Tests/EngineTests.cs",
+            "src/Core.Tests/Engine.cs",
+            "src/Core.UnitTests/Sub/Engine.cs",
+            "src/Core/EngineTest.cs",
+            "src/Core/EngineTests.cs",
+        ] {
+            assert!(is_test_file(path), "{path}");
+        }
+        for path in [
+            "src/Core/Engine.cs",
+            "src/Core.Testing/Engine.cs",
+            "src/Tests.cs.txt",
+            "src/Latest/Engine.cs",
+        ] {
+            assert!(!is_test_file(path), "{path}");
+        }
+        for name in [
+            "Fact",
+            "Xunit.Fact",
+            "TheoryAttribute",
+            "TestMethod",
+            "Test",
+        ] {
+            assert!(is_csharp_test_attribute(name), "{name}");
+        }
+        for name in ["Obsolete", "Factory", "TestData"] {
+            assert!(!is_csharp_test_attribute(name), "{name}");
+        }
+    }
+
+    #[test]
+    fn reads_the_xml_of_project_files() {
+        let xml = r#"<Project><ItemGroup>
+  <PackageReference Include="Serilog" Version="4.2.0" />
+  <PackageReferenceGroup Include="no" />
+  <PackageReference Include='xunit.v3'>
+    <Version>3.2.2</Version>
+  </PackageReference>
+</ItemGroup><Description> A  thing. </Description></Project>"#;
+        let found = xml_elements(xml, "PackageReference");
+        assert_eq!(found.len(), 2, "{found:?}");
+        assert_eq!(
+            xml_attribute(found[0].0, "Include").as_deref(),
+            Some("Serilog")
+        );
+        assert_eq!(
+            xml_attribute(found[0].0, "Version").as_deref(),
+            Some("4.2.0")
+        );
+        assert_eq!(
+            xml_attribute(found[1].0, "Include").as_deref(),
+            Some("xunit.v3")
+        );
+        assert_eq!(xml_element(found[1].1, "Version"), Some("3.2.2"));
+        assert_eq!(xml_element(xml, "Description"), Some("A  thing."));
+        // `Include` is not `IncludeAssets`.
+        assert_eq!(
+            xml_attribute(r#" IncludeAssets="all" Include="X""#, "Include").as_deref(),
+            Some("X")
+        );
+        assert_eq!(
+            resolve_relative("tests/Core.Tests", r"..\..\src\Core\Core.csproj").as_deref(),
+            Some("src/Core/Core.csproj")
+        );
+        assert_eq!(resolve_relative("a", "../../b"), None);
+    }
+
+    fn csharp_discovery(files: &[(&str, &str)]) -> Units {
+        let dir = tempfile::tempdir().unwrap();
+        for (rel, text) in files {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let facts = cw_parse::scan_repo(dir.path()).unwrap();
+        let root = dir.path().to_path_buf();
+        discover(&facts, "repo", &|path| {
+            std::fs::read_to_string(root.join(path)).ok()
+        })
+    }
+
+    #[test]
+    fn a_csharp_project_is_a_unit() {
+        let units = csharp_discovery(&[
+            (
+                "Directory.Packages.props",
+                "<Project><ItemGroup><PackageVersion Include=\"Serilog\" Version=\"4.2.0\" /></ItemGroup></Project>",
+            ),
+            (
+                "src/Core/Core.csproj",
+                "<Project><PropertyGroup><Description>The core.</Description></PropertyGroup><ItemGroup><PackageReference Include=\"Serilog\" /></ItemGroup></Project>",
+            ),
+            ("src/Core/packages.lock.json", "{}"),
+            (
+                "src/Core/Engine.cs",
+                "namespace Acme.Core;\n\npublic class Engine { public void Run() { } }\n",
+            ),
+            (
+                "src/App/App.csproj",
+                "<Project><ItemGroup><ProjectReference Include=\"..\\Core\\Core.csproj\" /></ItemGroup></Project>",
+            ),
+            (
+                "src/App/Program.cs",
+                "using Acme.Core;\n\nnamespace Acme.App;\n\ninternal static class Program\n{\n    public static int Main(string[] args)\n    {\n        new Engine().Run();\n        return 0;\n    }\n}\n",
+            ),
+            ("src/Other/Other.csproj", "<Project />"),
+            (
+                "src/Other/Program.cs",
+                "using Acme.Core;\nnew Engine().Run();\n",
+            ),
+            ("src/Many/Many.csproj", "<Project />"),
+            (
+                "src/Many/Entries.cs",
+                "namespace Acme.Many;\n\npublic class A { static void Main() { } }\npublic class B { public static async Task<int> Main(string[] args) => 0; }\npublic class C { private static void Main(string[] a, int b) { } }\n",
+            ),
+            (
+                "tests/Core.Tests/Core.Tests.csproj",
+                "<Project><ItemGroup><ProjectReference Include=\"..\\..\\src\\Core\\Core.csproj\" /><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>",
+            ),
+            (
+                "tests/Core.Tests/EngineTests.cs",
+                "namespace Acme.Core.Tests;\n\npublic class EngineTests\n{\n    [Fact]\n    public void Runs() { new Acme.Core.Engine().Run(); }\n}\n",
+            ),
+            (
+                "src/Core/Spec.cs",
+                "namespace Acme.Core;\n\npublic class Spec { [Fact] public void Holds() { } }\n",
+            ),
+        ]);
+        let names: Vec<&str> = units.list.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(names, ["app", "core", "many", "other", "core-tests"]);
+
+        let core = units.by_name("core").unwrap();
+        assert_eq!(core.language, Language::CSharp);
+        assert_eq!(core.package, "Core");
+        assert_eq!(core.dir, "src/Core");
+        assert_eq!(core.description, "The core.");
+        assert!(!core.tests && core.entries.is_empty() && !core.has_bin);
+        let manifests: Vec<&str> = core.manifests.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(
+            manifests,
+            ["src/Core/Core.csproj", "Directory.Packages.props"]
+        );
+        assert_eq!(
+            core.lock.as_ref().unwrap().path,
+            "src/Core/packages.lock.json"
+        );
+
+        // A project depends on the projects it references.
+        assert_eq!(units.by_name("app").unwrap().deps, ["core"]);
+        assert_eq!(units.by_name("core-tests").unwrap().deps, ["core"]);
+        assert!(core.deps.is_empty());
+
+        // A static `Main` of either shape, or top-level statements.
+        let app = units.by_name("app").unwrap();
+        assert_eq!(
+            app.entries,
+            [Entry {
+                symbol: "Acme::App::Program::Main".into(),
+                declared: true
+            }]
+        );
+        let other = units.by_name("other").unwrap();
+        assert_eq!(other.entries[0].symbol, "src::Other::Main");
+        let many = units.by_name("many").unwrap();
+        let many_entries: Vec<&str> = many.entries.iter().map(|e| e.symbol.as_str()).collect();
+        assert_eq!(many_entries, ["Acme::Many::A::Main", "Acme::Many::B::Main"]);
+        assert!(!many.entries[0].declared);
+
+        // A project of tests is a unit, and its code is test code, so is the
+        // file of a test in a project that is no test project.
+        assert!(units.by_name("core-tests").unwrap().tests);
+        assert!(units.by_name("core-tests").unwrap().entries.is_empty());
+        assert!(units.is_test("tests/Core.Tests/EngineTests.cs"));
+        assert!(units.is_test("src/Core/Spec.cs"));
+        assert!(!units.is_test("src/Core/Engine.cs"));
+        assert_eq!(units.of_file("src/App/Program.cs").unwrap().name, "app");
+    }
+
+    #[test]
+    fn csharp_files_without_a_project_are_grouped_by_namespace() {
+        let units = csharp_discovery(&[
+            (
+                "a/One.cs",
+                "namespace Acme.Util;\n\npublic class One { void Go() { } }\n",
+            ),
+            (
+                "b/Two.cs",
+                "namespace Acme.Util;\n\npublic class Two { void Go() { } }\n",
+            ),
+        ]);
+        assert_eq!(units.list.len(), 1);
+        assert_eq!(units.list[0].package, "Acme.Util");
+        assert!(units.list[0].manifests.is_empty());
+    }
+
+    #[test]
+    fn a_project_that_names_no_reference_depends_on_what_it_imports() {
+        let units = csharp_discovery(&[
+            ("src/Core/Core.csproj", "<Project />"),
+            (
+                "src/Core/Engine.cs",
+                "namespace Acme.Core;\n\npublic class Engine { public void Run() { } }\n",
+            ),
+            ("src/App/App.csproj", "<Project />"),
+            (
+                "src/App/Use.cs",
+                "using Acme.Core;\nnamespace Acme.App;\n\npublic class Use { void Go() { new Engine().Run(); } }\n",
+            ),
+        ]);
+        assert_eq!(units.by_name("app").unwrap().deps, ["core"]);
     }
 }

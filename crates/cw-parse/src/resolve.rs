@@ -166,6 +166,63 @@ const COMMON_METHODS: [&str; 64] = [
     "zip",
 ];
 
+/// The same for C#, whose method names are capitalized. The lookup is by
+/// exact name, so `Add` and `add` stay apart.
+const COMMON_CSHARP_METHODS: [&str; 52] = [
+    "Add",
+    "AddRange",
+    "All",
+    "Any",
+    "Append",
+    "AsEnumerable",
+    "Clear",
+    "Clone",
+    "Close",
+    "CompareTo",
+    "Contains",
+    "ContainsKey",
+    "Copy",
+    "Count",
+    "Dispose",
+    "DisposeAsync",
+    "Equals",
+    "Exists",
+    "First",
+    "FirstOrDefault",
+    "ForEach",
+    "Get",
+    "GetHashCode",
+    "GetType",
+    "Insert",
+    "Invoke",
+    "Join",
+    "Last",
+    "Load",
+    "Max",
+    "Min",
+    "Parse",
+    "Read",
+    "ReadAsync",
+    "Remove",
+    "Reverse",
+    "Select",
+    "Send",
+    "Set",
+    "Single",
+    "Skip",
+    "Sort",
+    "Split",
+    "Start",
+    "Stop",
+    "Sum",
+    "Take",
+    "ToArray",
+    "ToList",
+    "ToString",
+    "TryGetValue",
+    "Where",
+];
+
 pub struct Resolver<'a> {
     symbols: HashMap<&'a str, &'a Symbol>,
     by_name: HashMap<&'a str, Vec<&'a Symbol>>,
@@ -174,6 +231,9 @@ pub struct Resolver<'a> {
     /// module -> absolute paths of glob-imported modules
     globs: HashMap<String, Vec<Vec<String>>>,
     crate_names: HashSet<&'a str>,
+    /// Namespaces of C# code. Their `using` lines are no re-exports, so a
+    /// name is never followed through them while a path is resolved.
+    csharp_modules: HashSet<String>,
     /// crate -> the crates its manifest lets its code name, itself excluded
     crate_deps: HashMap<&'a str, HashSet<&'a str>>,
 }
@@ -196,8 +256,10 @@ impl<'a> Resolver<'a> {
             imports: HashMap::new(),
             globs: HashMap::new(),
             crate_names: crate_names.into_iter().collect(),
+            csharp_modules: HashSet::new(),
             crate_deps: HashMap::new(),
         };
+        this.see_enclosing_namespaces();
         for (_, parsed) in files {
             for u in &parsed.uses {
                 let Some(mut abs) = this.absolutize(&u.path, &u.scope, None) else {
@@ -224,6 +286,36 @@ impl<'a> Resolver<'a> {
             }
         }
         this
+    }
+
+    /// C# code sees the types of the namespaces around its own without a
+    /// `using`: in `A.B.C`, the types of `A.B` and `A`. Each namespace of a
+    /// C# file opens its ancestors as glob imports, nearest first. These are
+    /// no import of any file, so they give no import edge.
+    fn see_enclosing_namespaces(&mut self) {
+        let mut modules: Vec<&str> = self
+            .symbols
+            .values()
+            .filter(|s| {
+                s.kind == SymbolKind::Module && Language::from_path(&s.file) == Language::CSharp
+            })
+            .map(|s| s.qualified.as_str())
+            .collect();
+        modules.sort_unstable();
+        self.csharp_modules = modules.iter().map(|m| m.to_string()).collect();
+        for module in modules {
+            let segments: Vec<&str> = module.split("::").collect();
+            let ancestors: Vec<Vec<String>> = (1..segments.len())
+                .rev()
+                .map(|k| segments[..k].iter().map(|s| s.to_string()).collect())
+                .collect();
+            if !ancestors.is_empty() {
+                self.globs
+                    .entry(module.to_string())
+                    .or_default()
+                    .extend(ancestors);
+            }
+        }
     }
 
     /// Rewrite `crate`, `self`, `super` and `Self` prefixes to absolute form.
@@ -267,6 +359,9 @@ impl<'a> Resolver<'a> {
         }
         for i in (1..segs.len()).rev() {
             let module = segs[..i].join("::");
+            if self.csharp_modules.contains(&module) {
+                continue;
+            }
             if let Some(target) = self.imports.get(&module).and_then(|m| m.get(&segs[i])) {
                 let mut next = target.clone();
                 next.extend(segs[i + 1..].iter().cloned());
@@ -303,6 +398,9 @@ impl<'a> Resolver<'a> {
         if explicit {
             return self.resolve_abs(&abs, 0);
         }
+        if self.csharp_modules.contains(module) {
+            return self.lookup_csharp(path, module);
+        }
         let mut candidates: Vec<Vec<String>> = Vec::new();
         if let Some(target) = self.imports.get(module).and_then(|m| m.get(&path[0])) {
             let mut c = target.clone();
@@ -325,6 +423,41 @@ impl<'a> Resolver<'a> {
         candidates.iter().find_map(|c| self.resolve_abs(c, 0))
     }
 
+    /// [`Self::lookup`] for code in a C# namespace. A name there is a symbol
+    /// at the place its alias, its namespace, a namespace around it or a
+    /// `using` gives, so each candidate is one direct lookup.
+    fn lookup_csharp(&self, path: &[String], module: &str) -> Option<&'a Symbol> {
+        let tail = path.join("::");
+        let direct = |prefix: &str| {
+            let name = if prefix.is_empty() {
+                tail.clone()
+            } else {
+                format!("{prefix}::{tail}")
+            };
+            self.symbols.get(name.as_str()).copied()
+        };
+        if let Some(target) = self.imports.get(module).and_then(|m| m.get(&path[0])) {
+            let mut c = target.clone();
+            c.extend(path[1..].iter().cloned());
+            if let Some(found) = self.symbols.get(c.join("::").as_str()) {
+                return Some(found);
+            }
+        }
+        direct(module)
+            .or_else(|| {
+                self.crate_names
+                    .contains(path[0].as_str())
+                    .then(|| direct(""))
+                    .flatten()
+            })
+            .or_else(|| {
+                self.globs
+                    .get(module)?
+                    .iter()
+                    .find_map(|g| direct(&g.join("::")))
+            })
+    }
+
     /// [`Self::lookup`], then the scopes enclosing `from`: an item declared
     /// inside a function is visible to the code around it.
     pub fn lookup_from(
@@ -344,18 +477,27 @@ impl<'a> Resolver<'a> {
         let floor = module.split("::").count();
         while scope.len() > floor {
             // A class body is not a scope for the code inside its methods:
-            // a bare name there never means a sibling member.
-            let is_class = self
+            // a bare name there never means a sibling member. In C# it does
+            // for the parts of a partial type, which the parser of one file
+            // cannot see, but never for a constructor, which is named like
+            // its class.
+            let class = self
                 .symbols
                 .get(scope.join("::").as_str())
-                .is_some_and(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Interface));
-            if is_class {
+                .filter(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Interface));
+            let csharp = class.is_some_and(|s| Language::from_path(&s.file) == Language::CSharp);
+            if class.is_some() && !csharp {
                 scope.pop();
                 continue;
             }
             let mut candidate: Vec<String> = scope.iter().map(|s| s.to_string()).collect();
             candidate.extend(path.iter().cloned());
-            if let Some(found) = self.resolve_abs(&candidate, 0) {
+            let class_name = scope.last().copied();
+            if let Some(found) = self.resolve_abs(&candidate, 0)
+                && !(csharp
+                    && found.kind == SymbolKind::Method
+                    && Some(found.name.as_str()) == class_name)
+            {
                 return Some(found);
             }
             scope.pop();
@@ -550,7 +692,8 @@ impl<'a> Resolver<'a> {
                         .or_else(|| {
                             // On a receiver of unknown type, a common name
                             // nearly always means a standard library method.
-                            let common = COMMON_METHODS.contains(&name);
+                            let common = COMMON_METHODS.contains(&name)
+                                || COMMON_CSHARP_METHODS.contains(&name);
                             self.by_bare_name(
                                 name,
                                 &c.module,

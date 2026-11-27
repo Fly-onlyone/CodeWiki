@@ -275,7 +275,8 @@ impl<'a> Repo<'a> {
     /// True for test code, which gets no notes of its own.
     pub fn is_test(&self, symbol: &Symbol) -> bool {
         is_test_path(&symbol.qualified)
-            || (Language::from_path(&symbol.file) != Language::Rust && is_test_file(&symbol.file))
+            || (Language::from_path(&symbol.file) != Language::Rust
+                && (is_test_file(&symbol.file) || self.units.is_test(&symbol.file)))
     }
 
     pub fn rank_of(&self, qualified: &str) -> f64 {
@@ -298,6 +299,23 @@ impl<'a> Repo<'a> {
                 .map(|c| self.subtree_rank(&c.qualified))
                 .sum::<f64>()
     }
+}
+
+/// A file that builds or configures a .NET solution: the solution itself,
+/// the files every project below a folder takes, the SDK pin.
+fn is_dotnet_build_file(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    name.ends_with(".sln")
+        || name.ends_with(".slnx")
+        || matches!(
+            name,
+            "Directory.Build.props"
+                | "Directory.Build.targets"
+                | "Directory.Packages.props"
+                | "global.json"
+                | "nuget.config"
+                | "NuGet.Config"
+        )
 }
 
 /// Title of the note about `module`. A TypeScript `index` file is named
@@ -725,6 +743,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
                         .is_some_and(|n| n.starts_with("Dockerfile"))
                     || *p == "rust-toolchain.toml"
                     || *p == "deny.toml"
+                    || is_dotnet_build_file(p)
                     || manifests.contains(p)
             })
             .map(str::to_string)

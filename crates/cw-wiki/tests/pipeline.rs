@@ -2239,32 +2239,32 @@ fn lines_of(n: usize) -> String {
     (1..=n).map(|i| format!("// line {i}\n")).collect()
 }
 
-/// A C# repository in the layout of a .NET solution with an Avalonia front.
-fn csharp_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+/// A Go repository with an AXAML front, laid out like a .NET solution.
+fn go_axaml_repo() -> (tempfile::TempDir, std::path::PathBuf) {
     named_repo(
         "tradingagent",
         &[
             ("TradingAgent.slnx", "<Solution />\n"),
             ("README.md", "# Trading agent\n"),
-            ("src/App/Program.cs", &lines_of(12)),
-            ("src/App/ViewModels/MainVm.cs", &lines_of(7)),
+            ("src/App/Program.go", &lines_of(12)),
+            ("src/App/ViewModels/MainVm.go", &lines_of(7)),
             ("src/App/Views/Main.axaml", &lines_of(30)),
-            ("src/App/Views/Main.axaml.cs", &lines_of(9)),
+            ("src/App/Views/Main.axaml.go", &lines_of(9)),
             ("src/App/Views/Settings.axaml", &lines_of(21)),
-            ("src/Core/Engine.cs", &lines_of(40)),
-            ("src/Core/Models/Order.cs", &lines_of(15)),
-            ("src/Core/Models/Trade.cs", &lines_of(11)),
-            ("src/Core/Models/Fill.cs", &lines_of(5)),
-            ("tests/Core.Tests/EngineTests.cs", &lines_of(20)),
-            ("tests/Core.Tests/OrderTests.cs", &lines_of(10)),
-            ("tests/Core.Tests/TradeTests.cs", &lines_of(8)),
+            ("src/Core/Engine.go", &lines_of(40)),
+            ("src/Core/Models/Order.go", &lines_of(15)),
+            ("src/Core/Models/Trade.go", &lines_of(11)),
+            ("src/Core/Models/Fill.go", &lines_of(5)),
+            ("tests/Core.Tests/EngineTests.go", &lines_of(20)),
+            ("tests/Core.Tests/OrderTests.go", &lines_of(10)),
+            ("tests/Core.Tests/TradeTests.go", &lines_of(8)),
         ],
     )
 }
 
 #[test]
-fn a_csharp_repository_is_mapped_at_file_level() {
-    let (_dir, root) = csharp_repo();
+fn a_go_axaml_repository_is_mapped_at_file_level() {
+    let (_dir, root) = go_axaml_repo();
     run_settled(&root);
     assert_notes(
         &root,
@@ -2296,7 +2296,7 @@ fn a_csharp_repository_is_mapped_at_file_level() {
     let home = read(&vault, "_HOME.md");
     assert!(
         home.contains(
-            "**tradingagent** is a C# and AXAML codebase of 6 folders and 12 source files, mapped at file level: CodeWiki has no parser for C# and AXAML yet."
+            "**tradingagent** is a Go and AXAML codebase of 6 folders and 12 source files, mapped at file level: CodeWiki has no parser for Go and AXAML yet."
         ),
         "{home}"
     );
@@ -2306,7 +2306,7 @@ fn a_csharp_repository_is_mapped_at_file_level() {
     let views = read(&vault, "01-Core/app/views/Views Folder.md");
     assert!(
         views.contains("- `Main.axaml` — AXAML, 30 lines\n")
-            && views.contains("- `Main.axaml.cs` — C#, 9 lines\n")
+            && views.contains("- `Main.axaml.go` — Go, 9 lines\n")
             && views.contains("- `Settings.axaml` — AXAML, 21 lines\n"),
         "{views}"
     );
@@ -2331,7 +2331,7 @@ fn a_csharp_repository_is_mapped_at_file_level() {
         sources,
         [
             "src/App/Views/Main.axaml",
-            "src/App/Views/Main.axaml.cs",
+            "src/App/Views/Main.axaml.go",
             "src/App/Views/Settings.axaml"
         ]
     );
@@ -2340,8 +2340,8 @@ fn a_csharp_repository_is_mapped_at_file_level() {
     let app = read(&vault, "01-Core/app/App.md");
     assert!(app.contains("[[Views Folder]]"), "{app}");
     assert!(
-        app.contains("- `Program.cs` — C#, 12 lines\n")
-            && app.contains("- `ViewModels/MainVm.cs` — C#, 7 lines\n"),
+        app.contains("- `Program.go` — Go, 12 lines\n")
+            && app.contains("- `ViewModels/MainVm.go` — Go, 7 lines\n"),
         "{app}"
     );
     let core_index = read(&vault, "01-Core/_index.md");
@@ -2460,8 +2460,8 @@ fn small_folders_roll_up_into_the_note_of_their_parent() {
             ("src/App/Views/Side.axaml", &lines_of(3)),
             ("src/App/Views/Controls/Button.axaml", &lines_of(3)),
             ("src/App/Views/Controls/Deep/Knob.axaml", &lines_of(3)),
-            ("src/App/Program.cs", &lines_of(3)),
-            ("src/App/Other/One.cs", &lines_of(3)),
+            ("src/App/Program.go", &lines_of(3)),
+            ("src/App/Other/One.go", &lines_of(3)),
         ],
     );
     run_settled(&root);
@@ -2481,7 +2481,7 @@ fn small_folders_roll_up_into_the_note_of_their_parent() {
         "{views}"
     );
     let app = read(&vault, "01-Core/app/App.md");
-    assert!(app.contains("- `Other/One.cs` — C#, 3 lines\n"), "{app}");
+    assert!(app.contains("- `Other/One.go` — Go, 3 lines\n"), "{app}");
 }
 
 #[test]
@@ -2559,4 +2559,188 @@ fn a_repository_of_documents_alone_keeps_the_old_sentence() {
     );
     let meta = VaultMeta::load(&root.join("obsidian")).unwrap();
     assert!(!meta.notes.keys().any(|id| id.starts_with("unit:")));
+}
+
+#[test]
+fn a_csharp_solution_gets_a_full_vault() {
+    let (_dir, root) = named_repo(
+        "ledger",
+        &[
+            ("Ledger.slnx", "<Solution />\n"),
+            (
+                "global.json",
+                "{ \"sdk\": { \"version\": \"10.0.100\" } }\n",
+            ),
+            (
+                "Directory.Packages.props",
+                "<Project><ItemGroup>\n  <PackageVersion Include=\"Serilog\" Version=\"4.2.0\" />\n  <PackageVersion Include=\"xunit.v3\" Version=\"3.2.2\" />\n  <PackageVersion Include=\"Microsoft.NET.Test.Sdk\" Version=\"18.0.0\" />\n</ItemGroup></Project>\n",
+            ),
+            (
+                "src/Ledger/Ledger.csproj",
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><Description>Double-entry bookkeeping.</Description></PropertyGroup>\n  <ItemGroup><PackageReference Include=\"Serilog\" /></ItemGroup>\n</Project>\n",
+            ),
+            (
+                "src/Ledger/packages.lock.json",
+                "{\"version\": 2, \"dependencies\": {\"net10.0\": {\"Serilog\": {\"type\": \"Direct\", \"resolved\": \"4.2.1\"}}}}\n",
+            ),
+            (
+                "src/Ledger/Accounts/INamed.cs",
+                "namespace Acme.Ledger.Accounts;\n\n/// <summary>Anything with a display name.</summary>\npublic interface INamed\n{\n    /// <summary>The name shown to people.</summary>\n    string Name();\n}\n",
+            ),
+            (
+                "src/Ledger/Accounts/Account.cs",
+                "using Serilog;\n\nnamespace Acme.Ledger.Accounts;\n\n/// <summary>A place where money is kept.</summary>\npublic partial class Account : INamed\n{\n    private readonly string _name;\n\n    public Account(string name)\n    {\n        _name = name;\n    }\n\n    public string Name() => _name;\n\n    public string Describe()\n    {\n        Log.Information(\"describing\");\n        return Name().ToUpperInvariant();\n    }\n}\n",
+            ),
+            (
+                "src/Ledger/Accounts/Account.Totals.cs",
+                "namespace Acme.Ledger.Accounts;\n\npublic partial class Account\n{\n    public decimal Total() => 0m;\n}\n",
+            ),
+            (
+                "src/Ledger/Accounts/Vault.cs",
+                "using Serilog;\n\nnamespace Acme.Ledger.Accounts;\n\npublic class Vault : INamed\n{\n    public string Name() => \"vault\";\n\n    public void Open()\n    {\n        Log.Information(\"open\");\n    }\n}\n",
+            ),
+            (
+                "src/Ledger.Cli/Ledger.Cli.csproj",
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <PropertyGroup><OutputType>Exe</OutputType></PropertyGroup>\n  <ItemGroup><ProjectReference Include=\"..\\Ledger\\Ledger.csproj\" /></ItemGroup>\n</Project>\n",
+            ),
+            (
+                "src/Ledger.Cli/Program.cs",
+                "using Acme.Ledger.Accounts;\n\nnamespace Acme.Ledger.Cli;\n\ninternal static class Program\n{\n    public static int Main(string[] args)\n    {\n        var account = new Account(\"cash\");\n        System.Console.WriteLine(account.Describe());\n        new Vault().Open();\n        return 0;\n    }\n}\n",
+            ),
+            (
+                "tests/Ledger.Tests/Ledger.Tests.csproj",
+                "<Project Sdk=\"Microsoft.NET.Sdk\">\n  <ItemGroup>\n    <ProjectReference Include=\"..\\..\\src\\Ledger\\Ledger.csproj\" />\n    <PackageReference Include=\"Microsoft.NET.Test.Sdk\" />\n    <PackageReference Include=\"xunit.v3\" />\n  </ItemGroup>\n</Project>\n",
+            ),
+            (
+                "tests/Ledger.Tests/AccountTests.cs",
+                "using Acme.Ledger.Accounts;\nusing Xunit;\n\nnamespace Acme.Ledger.Tests;\n\npublic class AccountTests\n{\n    [Fact]\n    public void Describes() => Assert.Equal(\"CASH\", new Account(\"cash\").Describe());\n}\n",
+            ),
+        ],
+    );
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/ledger/Ledger.md",
+            "01-Core/ledger-cli/Ledger.Cli.md",
+            "01-Core/ledger-tests/Ledger.Tests.md",
+            "01-Core/ledger/Account.md",
+            "03-Integrations/Serilog.md",
+            "04-Patterns/Implementing INamed Pattern.md",
+            "05-Operations/Build and Test.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("**ledger** is a C# codebase of 3 projects and 13 source files."),
+        "{home}"
+    );
+    assert!(
+        home.contains("C# project `Ledger` with 1 module.")
+            || home.contains("Double-entry bookkeeping."),
+        "{home}"
+    );
+
+    // A partial class is one type, with the comment of the part that has one.
+    let account = read(&vault, "01-Core/ledger/Account.md");
+    assert!(
+        account.contains("> A place where money is kept.")
+            && account.contains("`public partial class Account : INamed`")
+            && account.contains("`public decimal Total()`"),
+        "{account}"
+    );
+    assert_eq!(account.matches("# Account\n").count(), 1);
+
+    // The project's description, its package with the version it asked for
+    // and the version the lock file pins, and its test project told apart.
+    let ledger = read(&vault, "01-Core/ledger/Ledger.md");
+    assert!(ledger.contains("> Double-entry bookkeeping."), "{ledger}");
+    assert!(
+        ledger.contains("- `src/Ledger/Ledger.csproj` — C# project")
+            && ledger.contains("- `Directory.Packages.props` — central NuGet package versions"),
+        "{ledger}"
+    );
+    let tests = read(&vault, "01-Core/ledger-tests/Ledger.Tests.md");
+    assert!(
+        tests.contains("> C# test project `Ledger.Tests` with"),
+        "{tests}"
+    );
+    let serilog = read(&vault, "03-Integrations/Serilog.md");
+    assert!(
+        serilog.contains("version `4.2.0`, locked `4.2.1`")
+            && serilog.contains("`src/Ledger/Ledger.csproj`"),
+        "{serilog}"
+    );
+    assert!(serilog.contains("imported by 2 source files"), "{serilog}");
+
+    // The pattern stub is C#, an interface member made public.
+    let pattern = read(&vault, "04-Patterns/Implementing INamed Pattern.md");
+    assert!(
+        pattern.contains(
+            "```csharp\nclass NewType : INamed {\n    public string Name() {\n        throw new NotImplementedException();\n    }\n}\n```"
+        ),
+        "{pattern}"
+    );
+
+    // The commands of the solution, and the entry that runs.
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains("- `Ledger.slnx` — solution")
+            && ops.contains("- `global.json` — .NET SDK version")
+            && ops.contains("- `src/Ledger/Ledger.csproj` — C# project"),
+        "{ops}"
+    );
+    assert!(
+        ops.contains(
+            "```sh\ndotnet build Ledger.slnx\ndotnet test Ledger.slnx\ndotnet run --project src/Ledger.Cli/Ledger.Cli.csproj\n```"
+        ),
+        "{ops}"
+    );
+    assert!(
+        ops.contains("[[Ledger.Cli]] — runs from `Program.Main`"),
+        "{ops}"
+    );
+
+    // Code of a test project has no note of its own.
+    assert!(
+        !meta
+            .notes
+            .contains_key("type:Acme::Ledger::Tests::AccountTests")
+    );
+    let flow = read(&vault, "00-Architecture/Package Dependency Flow.md");
+    assert!(
+        flow.contains("Rust crates and C# projects declare their dependencies"),
+        "{flow}"
+    );
+}
+
+#[test]
+fn csharp_notes_of_a_repository_with_a_global_namespace_file_name_it_by_its_folder() {
+    let (_dir, root) = named_repo(
+        "tool",
+        &[
+            ("Tool.csproj", "<Project Sdk=\"Microsoft.NET.Sdk\" />\n"),
+            (
+                "Program.cs",
+                "var greeting = Greeter.Hello(\"world\");\nSystem.Console.WriteLine(greeting);\n",
+            ),
+            (
+                "Greeter.cs",
+                "public static class Greeter\n{\n    public static string Hello(string who) => $\"hello {who}\";\n}\n",
+            ),
+        ],
+    );
+    run_settled(&root);
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+    assert!(
+        meta.notes.contains_key("crate:tool"),
+        "{:?}",
+        meta.notes.keys().collect::<Vec<_>>()
+    );
+    let unit = read(&vault, "01-Core/tool/Tool.md");
+    assert!(unit.contains("Runs from `Program.cs`"), "{unit}");
 }

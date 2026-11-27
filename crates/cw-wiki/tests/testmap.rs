@@ -163,3 +163,182 @@ fn lists_the_tests_a_change_can_break() {
     let none = testmap::impacted_tests(dir.path(), &index, &[]).unwrap();
     assert!(none.test_files.is_empty() && none.commands.is_empty());
 }
+
+/// Two test projects over one library: `Core.Tests` runs under VSTest, where
+/// `--filter` names classes, `Mtp.Tests` has no VSTest host and runs whole.
+fn csharp_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "Acme.slnx", "<Solution />\n");
+    write(
+        r,
+        "src/Core/Core.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\" />\n",
+    );
+    write(
+        r,
+        "src/Core/Helper.cs",
+        "namespace Acme.Core;\n\npublic static class Helper\n{\n    public static int Twice(int x) => x * 2;\n}\n",
+    );
+    write(
+        r,
+        "src/Core/Engine.cs",
+        "namespace Acme.Core;\n\npublic class Engine\n{\n    public int Run() => Helper.Twice(2);\n}\n",
+    );
+    write(
+        r,
+        "src/Core/Lonely.cs",
+        "namespace Acme.Core;\n\npublic class Lonely\n{\n    public void Nobody() { }\n}\n",
+    );
+    write(
+        r,
+        "tests/Core.Tests/Core.Tests.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"..\\..\\src\\Core\\Core.csproj\" /><PackageReference Include=\"Microsoft.NET.Test.Sdk\" /><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>\n",
+    );
+    write(
+        r,
+        "tests/Core.Tests/EngineTests.cs",
+        "using Acme.Core;\n\nnamespace Acme.Core.Tests;\n\npublic class EngineTests\n{\n    [Fact]\n    public void Runs() { Assert.Equal(4, new Engine().Run()); }\n\n    [Theory]\n    [InlineData(1)]\n    public void Repeats(int n) { new Engine().Run(); }\n\n    public void NotATest() { }\n}\n",
+    );
+    write(
+        r,
+        "tests/Core.Tests/HelperTests.cs",
+        "using Acme.Core;\n\nnamespace Acme.Core.Tests;\n\npublic class HelperTests\n{\n    [Fact]\n    public void Doubles() { Assert.Equal(4, Helper.Twice(2)); }\n}\n",
+    );
+    write(
+        r,
+        "tests/Mtp.Tests/Mtp.Tests.csproj",
+        "<Project Sdk=\"Microsoft.NET.Sdk\"><ItemGroup><ProjectReference Include=\"..\\..\\src\\Core\\Core.csproj\" /><PackageReference Include=\"xunit.v3\" /></ItemGroup></Project>\n",
+    );
+    write(
+        r,
+        "tests/Mtp.Tests/EngineMtpTests.cs",
+        "using Acme.Core;\n\nnamespace Acme.Mtp.Tests;\n\npublic class EngineMtpTests\n{\n    [Fact]\n    public void Runs() { new Engine().Run(); }\n}\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_csharp_tests_and_the_command_that_runs_them() {
+    let (dir, index) = csharp_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+
+    assert_eq!(map.tests_total, 4);
+    let found: Vec<(&str, TestKind, Vec<&str>)> = map
+        .test_files
+        .iter()
+        .map(|t| {
+            (
+                t.path.as_str(),
+                t.kind,
+                t.tests.iter().map(|c| c.name.as_str()).collect(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            (
+                "tests/Core.Tests/EngineTests.cs",
+                TestKind::Integration,
+                vec!["EngineTests.Runs", "EngineTests.Repeats"]
+            ),
+            (
+                "tests/Core.Tests/HelperTests.cs",
+                TestKind::Integration,
+                vec!["HelperTests.Doubles"]
+            ),
+            (
+                "tests/Mtp.Tests/EngineMtpTests.cs",
+                TestKind::Integration,
+                vec!["EngineMtpTests.Runs"]
+            ),
+        ]
+    );
+    assert_eq!(map.test_files[0].tests[0].line, 7);
+    // VSTest: the class of the file; no VSTest host: the whole project.
+    assert_eq!(
+        map.test_files[0].command,
+        "dotnet test tests/Core.Tests/Core.Tests.csproj --filter \"FullyQualifiedName~Acme.Core.Tests.EngineTests\""
+    );
+    assert_eq!(
+        map.test_files[2].command,
+        "dotnet test tests/Mtp.Tests/Mtp.Tests.csproj"
+    );
+
+    // Test files are no source files; the library files are.
+    let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "src/Core/Engine.cs",
+            "src/Core/Helper.cs",
+            "src/Core/Lonely.cs"
+        ]
+    );
+    let helper = map
+        .files
+        .iter()
+        .find(|f| f.path.ends_with("Helper.cs"))
+        .unwrap();
+    assert_eq!(helper.direct, ["tests/Core.Tests/HelperTests.cs"]);
+    assert_eq!(
+        helper.indirect,
+        [
+            "tests/Core.Tests/EngineTests.cs",
+            "tests/Mtp.Tests/EngineMtpTests.cs"
+        ]
+    );
+    assert_eq!(map.untested, ["src/Core/Lonely.cs"]);
+}
+
+#[test]
+fn lists_the_csharp_tests_a_change_can_break() {
+    let (dir, index) = csharp_fixture();
+    let changed = ["src\\Core\\Helper.cs".to_string()];
+    let impact = testmap::impacted_tests(dir.path(), &index, &changed).unwrap();
+
+    assert_eq!(impact.changed, ["src/Core/Helper.cs"]);
+    let rows: Vec<(&str, u32)> = impact
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.distance))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("tests/Core.Tests/HelperTests.cs", 1),
+            ("tests/Core.Tests/EngineTests.cs", 2),
+            ("tests/Mtp.Tests/EngineMtpTests.cs", 2),
+        ],
+        "nearest first"
+    );
+    assert_eq!(impact.tests_total, 4);
+    // One run for each project, over the classes of every file it holds.
+    assert_eq!(
+        impact.commands,
+        [
+            "dotnet test tests/Core.Tests/Core.Tests.csproj --filter \"FullyQualifiedName~Acme.Core.Tests.HelperTests|FullyQualifiedName~Acme.Core.Tests.EngineTests\"",
+            "dotnet test tests/Mtp.Tests/Mtp.Tests.csproj",
+        ]
+    );
+    assert!(impact.untested_changes.is_empty());
+
+    // A change nothing depends on, and a changed test file of a project with
+    // no class filter: its run is the project.
+    let changed = [
+        "src/Core/Lonely.cs".to_string(),
+        "tests/Mtp.Tests/EngineMtpTests.cs".to_string(),
+    ];
+    let impact = testmap::impacted_tests(dir.path(), &index, &changed).unwrap();
+    assert_eq!(impact.test_files.len(), 1);
+    assert_eq!(impact.test_files[0].distance, 0);
+    assert_eq!(impact.untested_changes, ["src/Core/Lonely.cs"]);
+    assert_eq!(
+        impact.commands,
+        ["dotnet test tests/Mtp.Tests/Mtp.Tests.csproj"]
+    );
+}

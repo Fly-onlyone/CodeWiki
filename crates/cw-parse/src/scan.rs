@@ -9,8 +9,9 @@ use cw_core::{
 };
 use ignore::WalkBuilder;
 
+use crate::csharp::parse_csharp;
 use crate::java::parse_java;
-use crate::lang::{link_imports, python_module, resolve_ts_import, ts_module};
+use crate::lang::{link_imports, nuget_ids, python_module, resolve_ts_import, ts_module};
 use crate::python::parse_python;
 use crate::resolve::{ExternalUse, Resolver};
 use crate::rust::{ParsedFile, parse_rust};
@@ -88,6 +89,42 @@ fn inner_doc(source: &str) -> String {
         .to_string()
 }
 
+/// The parts of a C# partial type are one symbol. The part that says most
+/// about it stands for it: the one with the documentation comment, then the
+/// one that lists the base types. What another part carries, its attributes
+/// and a comment the first lacks, is added.
+fn merge_partial(symbols: &mut [Symbol], part: &Symbol) {
+    if !part.kind.is_type() {
+        return;
+    }
+    let Some(first) = symbols
+        .iter_mut()
+        .rev()
+        .find(|s| s.qualified == part.qualified)
+    else {
+        return;
+    };
+    let says = |s: &Symbol| (!s.doc.is_empty(), s.signature.len());
+    let mut attrs = first.attrs.clone();
+    for attr in &part.attrs {
+        if !attrs.contains(attr) {
+            attrs.push(attr.clone());
+        }
+    }
+    if says(part) > says(first) {
+        let doc = if part.doc.is_empty() {
+            first.doc.clone()
+        } else {
+            part.doc.clone()
+        };
+        *first = part.clone();
+        first.doc = doc;
+    } else if first.doc.is_empty() {
+        first.doc.clone_from(&part.doc);
+    }
+    first.attrs = attrs;
+}
+
 /// Scan the whole repository at `root`.
 pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
     let paths = list_files(root)?;
@@ -158,16 +195,19 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
                     parse_typescript(path, &ts_module(path), &source, &resolve)?
                 }
                 Language::Java => parse_java(path, &source)?,
+                Language::CSharp => parse_csharp(path, &source)?,
                 _ => continue,
             };
             if file_parsed.has_errors {
                 facts.files_with_errors.push(path.clone());
             }
             for symbol in &file_parsed.symbols {
-                // Overloads, stubs and the files of one Java package share a
-                // name; keep the first.
+                // Overloads, stubs, the files of one Java package and the
+                // parts of a C# partial type share a name; keep the first.
                 if seen.insert(symbol.qualified.clone()) {
                     facts.symbols.push(symbol.clone());
+                } else if language == Language::CSharp {
+                    merge_partial(&mut facts.symbols, symbol);
                 }
             }
             parsed.push((path.clone(), file_parsed));
@@ -204,8 +244,21 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
         parsed.push((path.clone(), file_parsed));
     }
 
-    link_imports(&mut parsed);
-    // The first segment of every Python, TypeScript and Java module is a
+    // The packages the repository's projects reference tell which package a
+    // C# namespace outside the repository belongs to.
+    let mut nuget: Vec<String> = Vec::new();
+    for path in paths
+        .iter()
+        .filter(|p| p.ends_with(".csproj") || p.ends_with(".props"))
+    {
+        if let Ok(text) = std::fs::read_to_string(root.join(path)) {
+            nuget.extend(nuget_ids(&text));
+        }
+    }
+    nuget.sort();
+    nuget.dedup();
+    link_imports(&mut parsed, &nuget);
+    // The first segment of every Python, TypeScript, Java and C# module is a
     // root that paths may start at, as crate names are for Rust.
     let mut roots: Vec<&str> = facts.crates.iter().map(|c| c.name.as_str()).collect();
     roots.extend(
@@ -777,6 +830,262 @@ mod tests {
                 krate: "org.slf4j".into(),
                 names: vec!["Logger".into()],
             }]
+        );
+    }
+
+    #[test]
+    fn scans_csharp_namespaces() {
+        let facts = scan_files(&[
+            (
+                "src/Text/Words.cs",
+                "using System;
+using Microsoft.Win32;
+
+namespace Acme.Text;
+
+/// <summary>Word helpers.</summary>
+public static class Words
+{
+    public static string Shout(string s) => s.ToUpperInvariant();
+}
+",
+            ),
+            (
+                "src/Text/Named.cs",
+                "namespace Acme.Text;
+
+public interface INamed
+{
+    string Name();
+}
+",
+            ),
+            (
+                "src/Text/Label.cs",
+                "namespace Acme.Text;
+
+public partial class Label : INamed
+{
+    public string Name() => Words.Shout(\"x\");
+}
+",
+            ),
+            (
+                "src/Text/Label.Extra.cs",
+                "namespace Acme.Text;
+
+/// <summary>A label.</summary>
+[Serializable]
+public partial class Label
+{
+    public string Extra() => Name();
+}
+",
+            ),
+            (
+                "src/App/Settings.cs",
+                "namespace Acme.App;
+
+public class Settings
+{
+    public int Level => 1;
+}
+",
+            ),
+            (
+                "src/App/Sub/Deep.cs",
+                "using Acme.Text;
+using static Acme.Text.Words;
+using Microsoft.Extensions.Logging;
+using Serilog.Sinks.File;
+using Alias = Newtonsoft.Json.JsonConvert;
+
+namespace Acme.App.Sub;
+
+public class Deep : Settings
+{
+    public string Run(Label label)
+    {
+        var s = new Settings();
+        label.Extra();
+        return Shout(label.Name()) + label.ToString() + Name();
+    }
+
+    public string Name() => \"deep\";
+
+    public override string ToString() => \"d\";
+}
+",
+            ),
+            (
+                "src/App/Globals.cs",
+                "global using Acme.Text;
+global using Xunit;
+",
+            ),
+            (
+                "src/App/Other.cs",
+                "namespace Acme.App;
+
+public class Other
+{
+    public string Go() => Words.Shout(\"y\");
+}
+",
+            ),
+        ]);
+        assert!(facts.files_with_errors.is_empty());
+
+        assert_eq!(kind_of(&facts, "Acme::Text"), Some(SymbolKind::Module));
+        assert_eq!(
+            kind_of(&facts, "Acme::Text::Label"),
+            Some(SymbolKind::Class)
+        );
+        assert_eq!(
+            kind_of(&facts, "Acme::Text::INamed"),
+            Some(SymbolKind::Interface)
+        );
+        assert_eq!(
+            kind_of(&facts, "Acme::Text::Words::Shout"),
+            Some(SymbolKind::Method)
+        );
+        // The parts of a partial type are one symbol, which keeps what any
+        // part says about it.
+        let labels: Vec<&Symbol> = facts
+            .symbols
+            .iter()
+            .filter(|s| s.qualified == "Acme::Text::Label")
+            .collect();
+        assert_eq!(labels.len(), 1);
+        assert_eq!(labels[0].file, "src/Text/Label.Extra.cs");
+        assert_eq!(labels[0].doc, "A label.");
+        assert_eq!(labels[0].attrs, ["Serializable"]);
+        assert_eq!(
+            kind_of(&facts, "Acme::Text::Label::Extra"),
+            Some(SymbolKind::Method)
+        );
+
+        let edge = |src: &str, dst: &str, kind| edge_of(&facts, src, dst, kind);
+        // A class of the same namespace needs no using.
+        assert_eq!(
+            edge(
+                "Acme::Text::Label::Name",
+                "Acme::Text::Words::Shout",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "Acme::Text::Label",
+                "Acme::Text::INamed",
+                EdgeKind::Implements
+            ),
+            Some(Confidence::High)
+        );
+        // A member of the other part, through `this`.
+        assert!(
+            edge(
+                "Acme::Text::Label::Extra",
+                "Acme::Text::Label::Name",
+                EdgeKind::Calls
+            )
+            .is_some()
+        );
+        // The namespaces around one's own are visible without a using.
+        assert_eq!(
+            edge(
+                "Acme::App::Sub::Deep",
+                "Acme::App::Settings",
+                EdgeKind::Implements
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "Acme::App::Sub::Deep::Run",
+                "Acme::App::Settings",
+                EdgeKind::References
+            ),
+            Some(Confidence::High)
+        );
+        // `using static` and a bare call.
+        assert_eq!(
+            edge(
+                "Acme::App::Sub::Deep::Run",
+                "Acme::Text::Words::Shout",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "Acme::App::Sub::Deep::Run",
+                "Acme::App::Sub::Deep::Name",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // `label.ToString()` is the object's own, not `Deep.ToString`.
+        assert!(
+            !facts
+                .edges
+                .iter()
+                .any(|e| e.dst == "Acme::App::Sub::Deep::ToString" && e.kind == EdgeKind::Calls)
+        );
+        // A `global using` reaches the other namespaces.
+        assert_eq!(
+            edge(
+                "Acme::App::Other::Go",
+                "Acme::Text::Words::Shout",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert!(
+            edge(
+                "file:src/App/Sub/Deep.cs",
+                "file:src/Text/Label.cs",
+                EdgeKind::Imports
+            )
+            .is_some()
+                || edge(
+                    "file:src/App/Sub/Deep.cs",
+                    "file:src/Text/Words.cs",
+                    EdgeKind::Imports
+                )
+                .is_some()
+        );
+
+        // `System` and `Microsoft.Win32` are the platform; the rest of
+        // `Microsoft` is a package.
+        let uses: Vec<(&str, &str, Vec<&str>)> = facts
+            .external_uses
+            .iter()
+            .map(|u| {
+                (
+                    u.file.as_str(),
+                    u.krate.as_str(),
+                    u.names.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            uses,
+            vec![
+                ("src/App/Globals.cs", "Xunit", vec!["*"]),
+                (
+                    "src/App/Sub/Deep.cs",
+                    "Microsoft.Extensions.Logging",
+                    vec!["*"]
+                ),
+                (
+                    "src/App/Sub/Deep.cs",
+                    "Newtonsoft.Json",
+                    vec!["JsonConvert"]
+                ),
+                ("src/App/Sub/Deep.cs", "Serilog.Sinks", vec!["File.*"]),
+            ]
         );
     }
 

@@ -14,6 +14,7 @@ use cw_vault::{Gone, Note, VaultMeta};
 use serde::{Deserialize, Serialize};
 
 use crate::analyze::DEPENDENCY_KINDS;
+use crate::units::{is_csharp_test_attribute, is_test_file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -51,16 +52,40 @@ pub(crate) const PASSIVE_ATTRS: [&str; 12] = [
     "repr",
 ];
 
+/// Attributes of C# code that only describe an item.
+const PASSIVE_CSHARP_ATTRS: [&str; 10] = [
+    "Obsolete",
+    "Serializable",
+    "Flags",
+    "SuppressMessage",
+    "ExcludeFromCodeCoverage",
+    "DebuggerDisplay",
+    "MethodImpl",
+    "Conditional",
+    "NonSerialized",
+    "CLSCompliant",
+];
+
 fn is_test_symbol(symbol: &Symbol) -> bool {
     symbol
         .attrs
         .iter()
-        .any(|a| a == "test" || a.ends_with("::test"))
+        .any(|a| a == "test" || a.ends_with("::test") || is_csharp_test_attribute(a))
         || symbol
             .file
             .split('/')
             .any(|s| matches!(s, "tests" | "benches" | "examples"))
         || symbol.file.ends_with("build.rs")
+        || (symbol.file.ends_with(".cs") && is_test_file(&symbol.file))
+}
+
+/// A C# program's `Main`, which the runtime calls.
+fn is_csharp_main(symbol: &Symbol) -> bool {
+    symbol.file.ends_with(".cs")
+        && symbol.name == "Main"
+        && (symbol.kind == SymbolKind::Function
+            || (symbol.kind == SymbolKind::Method
+                && symbol.signature.split_whitespace().any(|w| w == "static")))
 }
 
 /// Symbols nothing refers to.
@@ -108,6 +133,7 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
             || used_parents.contains(symbol.qualified.as_str())
             || is_test_symbol(symbol)
             || (symbol.kind == SymbolKind::Function && symbol.name == "main")
+            || is_csharp_main(symbol)
         {
             continue;
         }
@@ -127,18 +153,29 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
         if exported {
             continue;
         }
+        let csharp = symbol.file.ends_with(".cs");
         let wiring: Vec<&String> = symbol
             .attrs
             .iter()
-            .filter(|a| !PASSIVE_ATTRS.contains(&a.as_str()))
+            .filter(|a| {
+                if csharp {
+                    !PASSIVE_CSHARP_ATTRS.contains(&a.as_str())
+                } else {
+                    !PASSIVE_ATTRS.contains(&a.as_str())
+                }
+            })
             .collect();
         let (certainty, reason) = if !wiring.is_empty() {
+            let (open, close) = if csharp { ("[", "]") } else { ("#[", "]") };
             (
                 Certainty::Possible,
-                format!("no reference found, but `#[{}]` may register it", wiring[0]),
+                format!(
+                    "no reference found, but `{open}{}{close}` may register it",
+                    wiring[0]
+                ),
             )
         } else if cw_core::Language::from_path(&symbol.file) != cw_core::Language::Rust {
-            // Python, TypeScript, JavaScript and Java reach code through
+            // Python, TypeScript, JavaScript, Java and C# reach code through
             // reflection, decorators, frameworks and duck typing that a
             // static index cannot follow.
             (
@@ -449,7 +486,11 @@ fn parameter_count(signature: &str) -> usize {
         .filter(|p| !p.is_empty())
         .filter(|p| {
             let name = p.trim_start_matches('&').trim_start_matches("mut ").trim();
-            !(name == "self" || name == "cls" || name.starts_with("self:"))
+            // The `this` of a C# extension method is its receiver.
+            !(name == "self"
+                || name == "cls"
+                || name.starts_with("self:")
+                || name.starts_with("this "))
         })
         .count()
 }
@@ -684,6 +725,11 @@ mod tests {
             ("fn f(a: HashMap<String, u8>, b: (u8, u8), c: [u8; 2])", 3),
             ("fn f<T: Into<String>>(a: T, b: impl Fn(u8, u8) -> u8,)", 2),
             ("def f(self, a, b=(1, 2))", 2),
+            ("public static string Cut(this string s, int n)", 1),
+            (
+                "public Task<Map<string, int>> Load<T>(Dictionary<string, T> by)",
+                1,
+            ),
             ("struct S", 0),
         ] {
             assert_eq!(parameter_count(signature), expected, "{signature}");

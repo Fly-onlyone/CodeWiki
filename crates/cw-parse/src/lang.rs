@@ -1,4 +1,4 @@
-//! Plumbing shared by the Python, TypeScript and Java extractors: the fact
+//! Plumbing shared by the Python, TypeScript, Java and C# extractors: the fact
 //! sink, text helpers, the file-to-module mapping and import classification.
 //!
 //! Qualified names use `::` between segments in every language, so one
@@ -134,6 +134,17 @@ const PYTHON_STDLIB: [&str; 112] = [
 
 /// Root packages of the Java platform.
 const JAVA_PLATFORM: [&str; 4] = ["java", "javax", "jdk", "sun"];
+
+/// Namespaces the .NET platform ships. `System` is the platform's root;
+/// `Microsoft` holds platform namespaces and NuGet packages alike, so only
+/// the namespaces the runtime itself carries are listed here, and every
+/// other `Microsoft.*` namespace is a package (see [`link_csharp`]).
+const CSHARP_PLATFORM: [&str; 4] = [
+    "System",
+    "Microsoft.CSharp",
+    "Microsoft.Win32",
+    "Microsoft.VisualBasic",
+];
 
 /// Modules built into Node.js, importable with or without the `node:` prefix.
 const NODE_BUILTINS: [&str; 34] = [
@@ -606,6 +617,17 @@ pub(crate) fn java_default_package(path: &str) -> String {
     dirs.join("::")
 }
 
+/// Module used for a C# file with no `namespace` declaration (the global
+/// namespace): its directory.
+pub(crate) fn csharp_default_namespace(path: &str) -> String {
+    let mut dirs: Vec<String> = path.split('/').map(sanitize).collect();
+    dirs.pop();
+    if dirs.is_empty() {
+        return "global_namespace".to_string();
+    }
+    dirs.join("::")
+}
+
 /// True when the first `k` segments of `path` name a module, for some
 /// `k >= min_len`.
 fn has_module_prefix(modules: &HashSet<String>, path: &[String], min_len: usize) -> bool {
@@ -681,13 +703,159 @@ fn link_java(import: UseImport, packages: &HashSet<String>) -> Option<UseImport>
     Some(external(import, package, keep))
 }
 
-/// Decide, for every Python and Java import, whether it names repository
+/// The NuGet package ids a project or props file names, in a
+/// `PackageReference` or a `PackageVersion`.
+pub(crate) fn nuget_ids(xml: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for tag in ["<PackageReference", "<PackageVersion"] {
+        let mut rest = xml;
+        while let Some(at) = rest.find(tag) {
+            let after = &rest[at + tag.len()..];
+            rest = after;
+            if !after.starts_with(char::is_whitespace) {
+                continue;
+            }
+            let head = &after[..after.find('>').unwrap_or(after.len())];
+            for key in ["Include", "Update"] {
+                let Some(start) = head.find(&format!("{key}=")) else {
+                    continue;
+                };
+                let value = &head[start + key.len() + 1..];
+                let Some(quote) = value.chars().next().filter(|c| matches!(c, '"' | '\'')) else {
+                    continue;
+                };
+                if let Some(end) = value[1..].find(quote) {
+                    out.push(value[1..=end].to_string());
+                    break;
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The package an import outside the repository names, from the namespace
+/// it opens, or `None` for a namespace the platform ships.
+///
+/// The repository's own package ids come first: a namespace is the package
+/// whose id equals it, else the longest id that starts it (`Avalonia.Controls`
+/// is in `Avalonia`), else the first id it starts (`Xunit` is in `xunit.v3`).
+/// With no id that fits, the namespace root names it: two segments
+/// (`Serilog.Sinks`), and three below `Microsoft.Extensions`, whose packages
+/// are each one namespace down. Case does not matter.
+fn csharp_package(path: &[String], glob: bool, ids: &[String]) -> Option<(String, usize)> {
+    let starts = |n: usize, names: &[&str]| {
+        path.len() >= n
+            && names
+                .iter()
+                .any(|name| name.split('.').eq(path[..n].iter().map(String::as_str)))
+    };
+    if CSHARP_PLATFORM
+        .iter()
+        .any(|platform| starts(platform.split('.').count(), &[platform]))
+    {
+        return None;
+    }
+    // `using Alias = Xunit.Assert;` names a type last; a namespace is all
+    // package.
+    let len = path.len();
+    let namespace_len = if glob { len } else { len - 1 }.max(1);
+    let namespace = path[..namespace_len].join(".").to_lowercase();
+    let continues = |long: &str, short: &str| {
+        long.strip_prefix(short)
+            .is_some_and(|rest| rest.starts_with('.'))
+    };
+    let lower: Vec<(String, &String)> = ids.iter().map(|id| (id.to_lowercase(), id)).collect();
+    let found = lower
+        .iter()
+        .find(|(id, _)| *id == namespace)
+        .or_else(|| {
+            lower
+                .iter()
+                .filter(|(id, _)| continues(&namespace, id))
+                .max_by_key(|(id, _)| id.len())
+        })
+        .or_else(|| {
+            lower
+                .iter()
+                .filter(|(id, _)| continues(id, &namespace))
+                .min_by_key(|(id, _)| id.len())
+        });
+    if let Some((lower_id, id)) = found {
+        // An id that starts the namespace leaves the rest of it as what the
+        // import takes; a namespace that starts the id is all package.
+        let own = if *lower_id == namespace || continues(&namespace, lower_id) {
+            id.split('.').count().min(namespace_len)
+        } else {
+            namespace_len
+        };
+        return Some(((*id).clone(), own));
+    }
+    let limit = if starts(2, &["Microsoft.Extensions"]) {
+        3
+    } else {
+        2
+    };
+    let keep = namespace_len.clamp(1, limit);
+    Some((path[..keep].join("."), keep))
+}
+
+fn link_csharp(
+    import: UseImport,
+    namespaces: &HashSet<String>,
+    ids: &[String],
+) -> Option<UseImport> {
+    if has_module_prefix(namespaces, &import.path, 1) {
+        return Some(import);
+    }
+    let (package, keep) = csharp_package(&import.path, import.glob, ids)?;
+    Some(external(import, package, keep))
+}
+
+/// Give every namespace the `global using` lines of the repository that name
+/// repository code; the parser leaves them with an empty scope. The line
+/// stays in the file that holds it. A `global using` of a package takes the
+/// file's own namespace: it only says the file uses the package.
+fn spread_global_usings(
+    uses: Vec<UseImport>,
+    namespaces: &HashSet<String>,
+    home: &str,
+) -> Vec<UseImport> {
+    let mut sorted: Vec<&String> = namespaces.iter().collect();
+    sorted.sort();
+    let mut out = Vec::with_capacity(uses.len());
+    for import in uses {
+        if !import.scope.is_empty() {
+            out.push(import);
+            continue;
+        }
+        if !has_module_prefix(namespaces, &import.path, 1) {
+            out.push(UseImport {
+                scope: home.to_string(),
+                ..import
+            });
+            continue;
+        }
+        for scope in &sorted {
+            out.push(UseImport {
+                scope: (*scope).clone(),
+                ..import.clone()
+            });
+        }
+    }
+    out
+}
+
+/// Decide, for every Python, Java and C# import, whether it names repository
 /// code, an outside package, or the language's own library. Imports of the
 /// last kind are dropped. Also records which Python package holds which
 /// module.
-pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)]) {
+pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String]) {
     let python = modules_of(parsed, Language::Python);
     let java = modules_of(parsed, Language::Java);
+    let csharp = modules_of(parsed, Language::CSharp);
     for (file, facts) in parsed.iter_mut() {
         let uses = std::mem::take(&mut facts.uses);
         match Language::from_path(file) {
@@ -715,6 +883,18 @@ pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)]) {
                 facts.uses = uses
                     .into_iter()
                     .filter_map(|u| link_java(u, &java))
+                    .collect();
+            }
+            Language::CSharp => {
+                let home = facts
+                    .symbols
+                    .iter()
+                    .find(|s| s.kind == SymbolKind::Module)
+                    .map(|s| s.qualified.clone())
+                    .unwrap_or_default();
+                facts.uses = spread_global_usings(uses, &csharp, &home)
+                    .into_iter()
+                    .filter_map(|u| link_csharp(u, &csharp, nuget))
                     .collect();
             }
             _ => facts.uses = uses,
@@ -777,6 +957,85 @@ mod tests {
         assert_eq!(ts_package("node:fs"), None);
         assert_eq!(ts_package("path"), None);
         assert_eq!(ts_package("@/components/x"), None);
+    }
+
+    #[test]
+    fn names_the_package_of_a_csharp_namespace() {
+        let ids = nuget_ids(
+            r#"<Project><ItemGroup>
+  <PackageReference Include="Avalonia" />
+  <PackageReference Include="Avalonia.Headless.XUnit" Version="12.1.6" />
+  <PackageVersion Include="xunit.runner.visualstudio" Version="3.1.5" />
+  <PackageVersion Include="xunit.v3" Version="3.2.2" />
+  <PackageVersion Include='CommunityToolkit.Mvvm' Version="8.4.0"/>
+  <PackageReferenceGroup Include="no" />
+</ItemGroup></Project>"#,
+        );
+        assert_eq!(
+            ids,
+            [
+                "Avalonia",
+                "Avalonia.Headless.XUnit",
+                "CommunityToolkit.Mvvm",
+                "xunit.runner.visualstudio",
+                "xunit.v3"
+            ]
+        );
+        let package = |namespace: &str, glob: bool, ids: &[String]| {
+            let path: Vec<String> = namespace.split('.').map(str::to_string).collect();
+            csharp_package(&path, glob, ids).map(|(name, _)| name)
+        };
+        // An id that starts the namespace, or one the namespace starts.
+        assert_eq!(
+            package("Avalonia.Controls", true, &ids).as_deref(),
+            Some("Avalonia")
+        );
+        assert_eq!(package("Avalonia", true, &ids).as_deref(), Some("Avalonia"));
+        assert_eq!(package("Xunit", true, &ids).as_deref(), Some("xunit.v3"));
+        assert_eq!(
+            package("CommunityToolkit.Mvvm.ComponentModel", true, &ids).as_deref(),
+            Some("CommunityToolkit.Mvvm")
+        );
+        // Without a matching id the namespace root names the package.
+        assert_eq!(
+            package("Serilog.Sinks.File", true, &ids).as_deref(),
+            Some("Serilog.Sinks")
+        );
+        assert_eq!(package("Serilog", true, &[]).as_deref(), Some("Serilog"));
+        assert_eq!(
+            package("Microsoft.Extensions.Logging.Abstractions", true, &[]).as_deref(),
+            Some("Microsoft.Extensions.Logging")
+        );
+        assert_eq!(
+            package("Microsoft.Data.Sqlite", true, &[]).as_deref(),
+            Some("Microsoft.Data")
+        );
+        // An alias names a type last, which is no part of the package.
+        assert_eq!(
+            package("Newtonsoft.Json.JsonConvert", false, &[]).as_deref(),
+            Some("Newtonsoft.Json")
+        );
+        // `System` is the platform. Of `Microsoft`, only what the runtime
+        // carries is; the rest is a package.
+        for platform in [
+            "System",
+            "System.Linq",
+            "Microsoft.CSharp.RuntimeBinder",
+            "Microsoft.Win32",
+            "Microsoft.Win32.SafeHandles",
+            "Microsoft.VisualBasic",
+        ] {
+            assert_eq!(package(platform, true, &ids), None, "{platform}");
+        }
+        for not_platform in [
+            "Microsoft.AspNetCore.Mvc",
+            "Microsoft.CodeAnalysis",
+            "Microsoft",
+        ] {
+            assert!(package(not_platform, true, &[]).is_some(), "{not_platform}");
+        }
+        // `Systematic` is no `System`.
+        assert!(package("Systematic.Core", true, &[]).is_some());
     }
 
     #[test]

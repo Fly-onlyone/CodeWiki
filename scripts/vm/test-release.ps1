@@ -186,6 +186,78 @@ function Shot {
 }
 
 
+# ---------------------------------------------------------------- pictures for the user guide (-GuideShots)
+# The guide's screenshots are the app's window alone, 1536x820 (the client area,
+# title bar included), in the default theme "CodeWiki Violet" (dark), saved as
+# PNG under screenshots\guide\. They are cropped from a screenshot of the
+# guest's screen: the rig has System.Drawing on the host, which is all a crop
+# needs. The cases that photograph a state another case makes take the picture
+# inside that case when -GuideShots is set (Save-GuideShot with that case's
+# screenshot as -Frame); GS1 to GS4 are the ones that stand alone.
+$guideDir = Join-Path $shots "guide"
+$guideLog = [System.Collections.Generic.List[string]]::new()
+
+# Crop the app's window out of a full-screen screenshot (-Frame, else one taken now) and save it as
+# screenshots\guide\<Name>. -Info is the window as Get-GuestWindowInfo reports it (else read now).
+# Never fails a case: what could not be taken is in the guide log, with why.
+function Save-GuideShot {
+    param([Parameter(Mandatory)][string]$Name, [string]$Frame, $Info, [int[]]$Rect)
+    try {
+        New-Item -ItemType Directory -Force $guideDir | Out-Null
+        $temporary = $false
+        if (-not $Frame) {
+            $Frame = Join-Path $guideDir "_frame.png"
+            Save-Screenshot $Frame | Out-Null
+            $temporary = $true
+        }
+        if (-not $Info -and -not $Rect) { $Info = Get-GuestWindowInfo "codewiki-app" }
+        Add-Type -AssemblyName System.Drawing
+        $source = New-Object System.Drawing.Bitmap $Frame
+        try {
+            if ($Rect) {
+                # A part of the screen that is not the app's window (the tray menu): left, top, width, height.
+                $box = New-Object System.Drawing.Rectangle ([math]::Max(0, $Rect[0])), ([math]::Max(0, $Rect[1])), ([math]::Min($Rect[2], $source.Width - [math]::Max(0, $Rect[0]))), ([math]::Min($Rect[3], $source.Height - [math]::Max(0, $Rect[1])))
+            } elseif ($Info -and -not $Info.Minimized) {
+                $left = [math]::Max(0, $Info.Left); $top = [math]::Max(0, $Info.Top)
+                $box = New-Object System.Drawing.Rectangle $left, $top, ([math]::Min($Info.Width, $source.Width - $left)), ([math]::Min($Info.Height, $source.Height - $top))
+            } else {
+                $box = New-Object System.Drawing.Rectangle 0, 0, $source.Width, $source.Height
+            }
+            $crop = $source.Clone($box, $source.PixelFormat)
+            try { $crop.Save((Join-Path $guideDir $Name), [System.Drawing.Imaging.ImageFormat]::Png) } finally { $crop.Dispose() }
+        } finally { $source.Dispose() }
+        if ($temporary) { Remove-Item $Frame -Force -ErrorAction SilentlyContinue }
+        $guideLog.Add("taken: $Name ($($box.Width)x$($box.Height)$(if ($box.Width -ne 1536 -or $box.Height -ne 820) { ', NOT 1536x820' }))")
+    } catch {
+        $guideLog.Add("not taken: $Name ($($_.Exception.Message))")
+    }
+}
+
+# A frame of the last Save-ShotBurst as a guide picture: the one taken when the burst's event
+# was first seen, moved by -Offset frames (the banner is up before it, the toast after).
+function Save-GuideBurstFrame {
+    param([Parameter(Mandatory)][string]$Name, [int]$Offset = 0)
+    $frames = @($script:BurstFrames)
+    if ($script:BurstHit -lt 0 -or $frames.Count -eq 0) { $guideLog.Add("not taken: $Name (the event the burst waited for was not seen)"); return }
+    $at = [math]::Min([math]::Max($script:BurstHit + $Offset, 0), $frames.Count - 1)
+    Save-GuideShot -Name $Name -Frame $frames[$at]
+}
+
+# Start the app on a page for a guide picture: the default theme, 100% zoom, the window at
+# 1536x820 (client area) near the top left of the screen. Returns the window.
+function Start-GuidePage {
+    param([Parameter(Mandatory)][string[]]$Arguments)
+    Stop-GuestApp
+    Invoke-GuestScript -Script 'Remove-Item "$env:APPDATA\CodeWiki\theme.txt", "$env:APPDATA\CodeWiki\zoom.txt" -ErrorAction SilentlyContinue' | Out-Null
+    Start-GuestApp -Arguments $Arguments
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 8 -Width 1536 -Height 820
+    if (-not $info) { throw "the app has no window" }
+    Wait-ScreenSettled -TimeoutSec 3
+    $info
+}
+
 function Add-Result {
     param(
         [string]$Id, [string]$Title, [string]$Expect,
@@ -1091,6 +1163,11 @@ Test-Case "TR4" "The tray menu" "a right click opens it: what the app is doing, 
     $icon = Send-GuestTrayClick -Button right
     Wait-ScreenSettled -TimeoutSec 2
     $shot = Shot "tray-menu"
+    if ($GuideShots) {
+        # The menu is Windows', above the taskbar at the screen's bottom right: that corner.
+        $screen = Get-GuestScreenSize
+        Save-GuideShot -Name "tray-menu.png" -Frame (Join-Path $shots $shot) -Rect @(($screen.Width - 440), ($screen.Height - 460), 440, 460)
+    }
     Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1
     Add-Result -Id "TR4" -Title "The tray menu" -Expect "ten rows in order; the first four greyed" -Status note -Shots @($shot) `
         -Observed "right-clicked the icon at ($($icon.X),$($icon.Y)); read the screenshot: the menu must show, greyed, the repository (cw-core), the state (Idle), the MCP line and the version, then 'Open CodeWiki', 'Update wiki now', 'Recent repositories', 'Settings', 'Check for updates' and, last, 'Quit'"
@@ -1471,6 +1548,7 @@ Test-Case "AV1" "The agent view of a note" "the window opens on the note's agent
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
     $shot = Shot "view-agent"
+    if ($GuideShots) { Save-GuideShot -Name "agent-view.png" -Frame (Join-Path $shots $shot) }
     $probe = Get-Probe "view-agent" -Quick
     $app = Get-App $probe
     $window = @($app | Where-Object { $_.hasWindow })
@@ -1516,10 +1594,15 @@ function Save-ShotBurst {
     $deadline = (Get-Date).AddSeconds($Seconds * $Pace)
     $tailEnd = $null
     $count = 0
+    # For the guide's pictures (Save-GuideBurstFrame): the frames, and the one taken just before
+    # the event was seen.
+    $script:BurstFrames = @()
+    $script:BurstHit = -1
     do {
         $count += 1
         Save-Screenshot (Join-Path $folder ("frame-{0:d2}.png" -f $count)) | Out-Null
-        if ($Until -and -not $tailEnd -and (& $Until)) { $tailEnd = (Get-Date).AddSeconds($TailSec * $Pace) }
+        $script:BurstFrames += (Join-Path $folder ("frame-{0:d2}.png" -f $count))
+        if ($Until -and -not $tailEnd -and (& $Until)) { $tailEnd = (Get-Date).AddSeconds($TailSec * $Pace); $script:BurstHit = $count - 1 }
         if ($tailEnd -and (Get-Date) -ge $tailEnd) { break }
         Start-Sleep -Milliseconds ([int]($Every * 1000))
     } while ((Get-Date) -lt $deadline)
@@ -1619,6 +1702,9 @@ $layout = @{
     # screen (1356,475), so 212 px left of the client area's right edge and 463 below its top.
     # The first entry's height depends on the lines of the note's summary above the outline.
     outlineItems = @(-205, 463)
+    # The wiki map's third outline entry, "Operations" (32-view-wiki-map.png of the same run: its
+    # text at screen (1392,392)): 176 px left of the right edge, 380 down.
+    outlineOperations = @(-176, 380)
     # The first row of the toolbar's Open recent menu, under its button (recentIcon). A guess
     # until a screenshot of the menu is read; the case photographs the menu first.
     recentRow1  = @(440, 108)
@@ -1957,6 +2043,7 @@ Test-Case "RC1" "The backend ends while the window is open" "a banner says so, t
     $mark = Get-AppLogMark
     Stop-GuestBackend
     $sheet = Save-ShotBurst "backend-lost-and-back" -Seconds 40 -Every 2 -Until { [bool](Get-AppLogSince $mark "toast backend") }
+    if ($GuideShots) { Save-GuideBurstFrame -Name "reconnect-banner.png" -Offset -1 }
     $after = Wait-NewBackend -Not $before.Pid
     $lines = Get-AppLogSince $mark "toast|Windows notification|backend"
     $toast = [bool]($lines | Where-Object { $_ -match "toast backend" })
@@ -2021,6 +2108,7 @@ Test-Case "RC2" "A start with no backend, then one appears" "the offline page; t
         Wait-AppPage -TimeoutSec 20
         Hold-For 1.5 -Reason "the page's entrance animation"
         $offline = Shot "offline-page"
+        if ($GuideShots) { Save-GuideShot -Name "offline-page.png" -Frame (Join-Path $shots $offline) }
         $mark = Get-AppLogMark
     } finally {
         Invoke-GuestScript -Script "if (Test-Path -LiteralPath '$held') { Rename-Item -LiteralPath '$held' -NewName 'codewiki.exe' }" | Out-Null
@@ -2080,6 +2168,19 @@ do {
 '@).Replace('{{REPO}}', $guestRepo)
     $script:reviewRepoId = if ($run.Output -match "(?m)^repo: (\S+)") { $Matches[1] } else { $null }
     $sheet = Save-ShotBurst "new-reviews" -Seconds 20 -Every 2 -Until { [bool](Get-AppLogSince $mark "toast review:") }
+    if ($GuideShots) {
+        Save-GuideBurstFrame -Name "toast-new-reviews.png" -Offset 1
+        # The wiki map with a lit outline entry, the toolbar showing Open recent, Review (n) and To explain (N).
+        $info = Get-GuestWindowInfo "codewiki-app"
+        if ($info) {
+            $x, $y = Get-LayoutPoint -Info $info -Name "outlineOperations"
+            Send-RestedClick -X $x -Y $y
+            Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the outline entry is lit"
+            Move-Pointer -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int](17 * $info.Scale))
+            Wait-ScreenSettled -TimeoutSec 2
+            Save-GuideShot -Name "wiki-map.png" -Info $info
+        }
+    }
     $lines = Get-AppLogSince $mark "toast|Windows notification"
     $toast = [bool]($lines | Where-Object { $_ -match "toast review:" })
     $pending = if ($run.Output -match "(?m)^pending: (\d+)") { [int]$Matches[1] } else { 0 }
@@ -2112,6 +2213,10 @@ Test-Case "RV2" "Approve two proposals at once, reject the third" "the queue's b
     $x, $y = Get-LayoutPoint -Info $info -Name "reviewRow3"
     Send-Click -X $x -Y $y -Hold "ctrl"; Wait-ScreenSettled -TimeoutSec 2
     $two = Shot "review-two-selected"
+    if ($GuideShots) {
+        Save-GuideShot -Name "review.png" -Frame (Join-Path $shots $two)
+        $guideLog.Add("note: review.png shows three proposals of one kind (a sync's, from RV1) with two rows checked; no second kind is made in this pass")
+    }
     $x, $y = Get-LayoutPoint -Info $info -Name "approve"
     Send-RestedClick -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 8
     $approved = Shot "review-approved-two"
@@ -2770,6 +2875,68 @@ Test-Case "OU1" "The outline in the details pane is clickable" "a click on an en
     }
 }
 
+# ---------------------------------------------------------------- GS, pictures for the user guide (-GuideShots)
+# Off unless asked for. These four stand alone (they need the wiki of cw-core
+# and an installed app); the pictures of states other cases make are taken
+# inside those cases (RV1, RV2, RC1, RC2, TT1, DV1, AV1, WK1, SE1, TR4, IS4).
+# The scroll of a settings page is a guess until a picture has been read.
+if ($GuideShots) {
+    function Save-GuideSettingsPage {
+        param([string]$Id, [string]$Category, [string]$Name, [int]$Notches)
+        $info = Start-GuidePage -Arguments $guestRepo, "settings:$Category"
+        Move-Pointer -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int]($info.Height / 2))
+        Wait-ScreenSettled -TimeoutSec 1
+        if ($Notches) { Send-Scroll (-$Notches); Wait-ScreenSettled -TimeoutSec 3 }
+        $shot = Shot "guide-$Category"
+        Save-GuideShot -Name $Name -Frame (Join-Path $shots $shot) -Info $info
+        Stop-GuestApp
+        $shot
+    }
+
+    Test-Case "GS1" "Guide picture: Settings, Appearance" "settings-appearance.png shows the Tabs, Zoom and Startup cards" {
+        $shot = Save-GuideSettingsPage -Id "GS1" -Category "appearance" -Name "settings-appearance.png" -Notches 4
+        Add-Result -Id "GS1" -Title "Guide picture: Settings, Appearance" -Expect "screenshots\guide\settings-appearance.png" -Status note -Shots @($shot) `
+            -Observed "Settings > Appearance at 1536x820, scrolled four notches; read the picture: the Zoom, Tabs and Startup cards are in view"
+    }
+
+    Test-Case "GS2" "Guide picture: Settings, Repositories" "settings-repositories.png shows Auto explaining with Notes per session, and Kept from coding agents" {
+        $before = (Invoke-GuestScript -Script "if (Test-Path `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`") { (Get-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" -Raw).Trim() } else { '(none)' }").Output.Trim()
+        try {
+            Invoke-GuestScript -Script "New-Item -ItemType Directory -Force `"`$env:LOCALAPPDATA\CodeWiki`" | Out-Null; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline" | Out-Null
+            $shot = Save-GuideSettingsPage -Id "GS2" -Category "repositories" -Name "settings-repositories.png" -Notches 0
+        } finally {
+            if ($before -eq "(none)") {
+                Invoke-GuestScript -Script "Remove-Item `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" -ErrorAction SilentlyContinue" | Out-Null
+            } else {
+                Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" '$before' -NoNewline" | Out-Null
+            }
+        }
+        Add-Result -Id "GS2" -Title "Guide picture: Settings, Repositories" -Expect "screenshots\guide\settings-repositories.png" -Status note -Shots @($shot) `
+            -Observed "Settings > Repositories at 1536x820 with auto explaining on (the switch is back to '$before' afterwards); read the picture: Auto explaining with Notes per session, and the Kept from coding agents card"
+    }
+
+    Test-Case "GS3" "Guide picture: Waiting notes" "waiting-notes.png shows the Waiting notes page" {
+        $info = Start-GuidePage -Arguments $guestRepo, "waiting:"
+        $shot = Shot "guide-waiting"
+        Save-GuideShot -Name "waiting-notes.png" -Frame (Join-Path $shots $shot) -Info $info
+        Stop-GuestApp
+        Add-Result -Id "GS3" -Title "Guide picture: Waiting notes" -Expect "screenshots\guide\waiting-notes.png" -Status note -Shots @($shot) `
+            -Observed "the Waiting notes page of cw-core at 1536x820; read the picture: the list of notes that wait for an explanation"
+    }
+
+    Test-Case "GS4" "Guide picture: the command palette" "palette.png shows the palette open over a note" {
+        if (-not $noteName) { throw "D2 produced no note to open" }
+        $info = Start-GuidePage -Arguments $guestRepo, $noteName
+        Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+        $shot = Shot "guide-palette"
+        Save-GuideShot -Name "palette.png" -Frame (Join-Path $shots $shot) -Info $info
+        Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 1
+        Stop-GuestApp
+        Add-Result -Id "GS4" -Title "Guide picture: the command palette" -Expect "screenshots\guide\palette.png" -Status note -Shots @($shot) `
+            -Observed "the note '$noteName' at 1536x820 with the palette opened by Ctrl+K; read the picture: the palette's box over the note"
+    }
+}
+
 # ---------------------------------------------------------------- DV1, the diagram viewer
 # A drawn Mermaid diagram in a note is a link, and a click on it opens the
 # diagram viewer over the window; Escape closes it (main.rs, open_diagram). The
@@ -2866,6 +3033,7 @@ $global:LASTEXITCODE = 0
         Send-Click -X $found[0] -Y $found[1]
         Wait-ScreenSettled -TimeoutSec 8
         $open = Shot "diagram-viewer-open"
+        if ($GuideShots) { Save-GuideShot -Name "diagram-viewer.png" -Frame (Join-Path $shots $open) }
         Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 3
         $closed = Shot "diagram-viewer-closed"
         $after = Get-ImageChange $base (Join-Path $shots $closed)
@@ -3988,6 +4156,7 @@ foreach ($repo in @($list)) { "repo: $($repo.id) name=$($repo.name) worktree_of=
     Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
     Send-Text "wk-"; Wait-ScreenSettled -TimeoutSec 3
     $one = Shot "home-search-main-only"
+    if ($GuideShots) { Save-GuideShot -Name "home.png" -Frame (Join-Path $shots $one) }
     Stop-GuestApp
     Remove-GuestProjects "wk-main-tree", "wk-main"
     Add-Result -Id "WK1" -Title "A git worktree on Home" -Expect "the backend marks wk-main-tree as a worktree of wk-main; Home lists wk-main with '1 worktree' and no row for the worktree; its search suggests wk-main and not the worktree" `
@@ -4147,6 +4316,18 @@ Test-Case "SE1" "A stand-in embedding server: models and vectors" "Settings show
     $listing = Start-EmbedStub
     $set = Set-GuestEmbedder -Provider "llamacpp" -Model $stubModel -Url $stubUrl
     $shot = Shot "settings-search-stand-in"
+    if ($GuideShots) {
+        # A Test result under the model list. The provider is Llama / llama.cpp, served by the
+        # stand-in guest\embed-server.ps1: no real model server runs in this pass.
+        $info = Get-GuestWindowInfo "codewiki-app"
+        if ($info) {
+            $x, $y = Get-AppPoint -Info $info -X 320 -Y 746
+            Send-RestedClick -X $x -Y $y
+            Wait-ScreenSettled -TimeoutSec 8
+            Save-GuideShot -Name "settings-search.png" -Info $info
+            $guideLog.Add("note: settings-search.png shows the provider Llama / llama.cpp, answered by the stand-in server guest\embed-server.ps1 (model vm-embed-stub); no real model server")
+        }
+    }
     $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
 'models: ' + (Invoke-Backend GET '/v1/settings/embed/models')
 'test: ' + (Invoke-Backend POST '/v1/settings/test/embed')
@@ -5847,6 +6028,11 @@ New-ItemProperty -Path $key -Name 'IconUri' -Value $icon -PropertyType ExpandStr
                 $install = Find-SetupButton '^&?Install$'
             }
             $ready = Shot "setup-wizard-ready"
+            if ($GuideShots) {
+                # Best effort: the whole screen, the wizard is a window of its own on it.
+                $screen = Get-GuestScreenSize
+                Save-GuideShot -Name "setup-wizard.png" -Frame (Join-Path $shots $ready) -Rect @(0, 0, $screen.Width, $screen.Height)
+            }
             if (-not $install) { throw "the wizard showed no Install button within a minute; read the screenshot; $(Format-SetupWizard $script:setupWizardSeen)" }
             $readyText = Format-SetupWizard $script:setupWizardSeen
             # What UI Automation sees of the same window, by the class Windows
@@ -6345,6 +6531,14 @@ Test-Case "M1" "Windows event log" "no crash of a CodeWiki program was logged" {
     Add-Result -Id "M1" -Title "Windows event log" -Expect "no crash of a CodeWiki program was logged" `
         -Status $(if ($events.Count) { "fail" } else { "pass" }) -Shots @(Shot "final") `
         -Observed "$($events.Count) Application-log entries name CodeWiki" -Output (($events | ForEach-Object { "$($_.time) $($_.provider) $($_.id): $($_.message)" }) -join "`n`n")
+}
+
+# The last case: what the guide cases took, and what they could not.
+if ($GuideShots) {
+    Test-Case "GS99" "Guide pictures: what was taken" "every picture of the guide's list is taken or says why not" {
+        Add-Result -Id "GS99" -Title "Guide pictures: what was taken" -Expect "the list below" -Status note -Output ($guideLog -join "`n") `
+            -Observed "$(if ($guideLog.Count) { $guideLog -join '; ' } else { 'no picture was taken: the cases that take them were not run' }); the pictures are under screenshots\guide\"
+    }
 }
 
 # ---------------------------------------------------------------- wrap up

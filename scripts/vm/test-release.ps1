@@ -76,14 +76,19 @@ param(
     [double]$Pace = 1.0,
     # The report folder of an earlier run: logs\timing.md then compares this
     # run's total, setup and cases with it.
-    [string]$Previous
+    [string]$Previous,
+    # Run every guest script the old way, as a scheduled task of its own, and
+    # not through the helper in the guest (guest\agent.ps1). For telling a
+    # fault of the helper from a fault of the app, and as the baseline when
+    # timing the helper.
+    [switch]$NoGuestAgent
 )
 $ErrorActionPreference = "Stop"
 # "pwsh -File ... -Only A1,C1" hands the list over as one text.
 if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 if ($Skip) { $Skip = @($Skip | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 . (Join-Path $PSScriptRoot "Vm.ps1")
-Initialize-Vm -Name $VmName -User $User -Password $Password
+Initialize-Vm -Name $VmName -User $User -Password $Password -NoAgent:$NoGuestAgent
 $script:Vm.Gpu = [bool]$Gpu
 # The host must not fall asleep under a run nobody is watching.
 Start-KeepAwake
@@ -5482,9 +5487,13 @@ foreach ($kind in $kinds.Keys) { "$($kinds[$kind])x $kind" }
         $audited = @($ours | Where-Object { $_ -match "event 1122:" })
         # A block of CodeWiki that S3 did not already record is new.
         $new = @($ours | Where-Object { $line = $_; $line -notmatch "event 1122:" -and -not ($auditedRules | Where-Object { $line -match [regex]::Escape($_) }) })
+        # The rig's own helper in the guest (guest\agent.ps1) runs under the same
+        # protection and is excluded from nothing. A line that names it says what
+        # Defender made of it.
+        $helperLines = @($run.Output -split "`n" | Where-Object { $_ -match "event \d+:" -and $_ -match "agent\.ps1|vmtest-agent" })
         Add-Result -Id "S2" -Title "What Windows protection stopped" -Expect "nothing of CodeWiki beyond what S3 recorded" `
             -Status $(if ($new) { "fail" } elseif ($count) { "note" } else { "pass" }) -Output $run.Output `
-            -Observed "Defender recorded $count events in this run. Kinds that name CodeWiki: $($ours.Count), of which $($audited.Count) are rules in audit (what they would have stopped) and $($new.Count) are blocks that S3 did not record. See the output for each"
+            -Observed "Defender recorded $count events in this run. Kinds that name CodeWiki: $($ours.Count), of which $($audited.Count) are rules in audit (what they would have stopped) and $($new.Count) are blocks that S3 did not record. See the output for each. Events that name the rig's helper in the guest (agent.ps1): $($helperLines.Count)$(if ($helperLines) { ', see the output' })"
     }
 }
 

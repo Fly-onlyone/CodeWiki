@@ -34,7 +34,10 @@ function Initialize-Vm {
         [string]$User = "tester",
         [string]$Password = "codewiki",
         # Folder in the guest that holds everything the test copies in.
-        [string]$GuestDir = "C:\vmtest"
+        [string]$GuestDir = "C:\vmtest",
+        # Run every guest script the old way, as a scheduled task of its own,
+        # and not through the helper (guest\agent.ps1).
+        [switch]$NoAgent
     )
     if (-not (Get-Command Get-VM -ErrorAction SilentlyContinue)) {
         throw "the Hyper-V PowerShell module is missing; turn on the Windows feature 'Hyper-V'"
@@ -56,6 +59,11 @@ function Initialize-Vm {
         RecStart   = $null
         # The one PowerShell Direct session that calls with -Reuse share.
         Session    = $null
+        # The helper that runs guest scripts (Start-GuestAgent): its folder in
+        # the guest. AgentFailedAt: when it last failed to start.
+        Agent         = $null
+        AgentFailedAt = $null
+        NoAgent       = [bool]$NoAgent
         # Whether the guest draws on a shared graphics card; widens the screen
         # compare's tolerance (Get-ScreenTolerance). The caller sets it.
         Gpu        = $false
@@ -347,6 +355,14 @@ function Get-GuestSession {
 function Clear-GuestSession {
     if ($script:Vm -and $script:Vm.Session) { Remove-PSSession $script:Vm.Session -ErrorAction SilentlyContinue }
     if ($script:Vm) { $script:Vm.Session = $null }
+}
+
+# What the host holds of a running guest: the shared session and the link to
+# the helper. Dropped whenever the guest stops, starts or is restored; the
+# next call opens them again.
+function Clear-GuestLinks {
+    Clear-GuestSession
+    if ($script:Vm) { $script:Vm.Agent = $null; $script:Vm.AgentFailedAt = $null }
 }
 
 # Run a script block in the guest. By default in a session of its own, so
@@ -752,29 +768,11 @@ function Copy-FromGuest {
     }
 }
 
-# Run PowerShell code in the guest as a new Windows PowerShell 5.1 process,
-# which is what a clean Windows has. The code travels as a file, so it needs
-# no quoting. Returns the output, the exit code the code left in
-# $LASTEXITCODE (0 when it ran no program), and Completed, which is false
-# when the code did not run to its end.
-#
-# By default the code runs where the user's own programs run: in the
-# logged-in desktop session, with the user's everyday rights, without a
-# window of its own. It can see the windows on the desktop, and a dialog it
-# raises shows in a screenshot. With -Background it runs in the PowerShell
-# Direct session instead: elevated and without a desktop. Use that for
-# housekeeping, not for what a user would do.
-function Invoke-GuestScript {
-    param(
-        [Parameter(Mandatory)][string]$Script,
-        [int]$TimeoutSec = 300,
-        [switch]$Background
-    )
-    $script:Vm.Sequence += 1
-    $task = "vmtest-{0:d3}" -f $script:Vm.Sequence
-    $callClock = [System.Diagnostics.Stopwatch]::StartNew()
-    $file = Join-Path $script:Vm.GuestDir "$task.ps1"
-    $body = @"
+# What a guest script runs: the code, wrapped so that its output, its errors
+# and the exit code it leaves land in "<file>.out", one line "__EXIT=<code>" last.
+function Get-GuestScriptBody {
+    param([Parameter(Mandatory)][string]$Script)
+    @"
 # This file runs with -ExecutionPolicy Bypass, which travels to every child
 # process in this variable. Without it, what the code starts sees the policy
 # the guest really has.
@@ -792,6 +790,193 @@ $Script
 Write-Output "__EXIT=`$__code"
 } 2>&1 | ForEach-Object { "`$_" } | Out-File -FilePath "`$PSCommandPath.out" -Encoding utf8 -Width 8192
 "@
+}
+
+# The result of a guest script from the lines the guest sent back: the code
+# after "__EXIT=" and the rest as output.
+function ConvertTo-GuestScriptResult {
+    param($Lines, $Errors)
+    $code = $null
+    $text = foreach ($line in $Lines) {
+        if ("$line" -match '^__EXIT=(-?\d+)$') { $code = [int]$Matches[1] } else { "$line" }
+    }
+    [pscustomobject]@{
+        ExitCode  = $code
+        Output    = ($text -join "`n").Trim()
+        Stderr    = (@($Errors) -join "`n").Trim()
+        Completed = $null -ne $code
+    }
+}
+
+# Run PowerShell code in the guest as a new Windows PowerShell 5.1 process,
+# which is what a clean Windows has. The code travels as a file, so it needs
+# no quoting. Returns the output, the exit code the code left in
+# $LASTEXITCODE (0 when it ran no program), and Completed, which is false
+# when the code did not run to its end.
+#
+# By default the code runs where the user's own programs run: in the
+# logged-in desktop session, with the user's everyday rights, without a
+# window of its own. It can see the windows on the desktop, and a dialog it
+# raises shows in a screenshot. With -Background it runs in the PowerShell
+# Direct session instead: elevated and without a desktop. Use that for
+# housekeeping, not for what a user would do.
+#
+# The desktop lane goes through the helper in the guest (guest\agent.ps1),
+# which starts the script's own powershell.exe at once; it falls back to the
+# scheduled task of Invoke-GuestScriptByTask when the helper cannot be had,
+# and with -NoAgent (Initialize-Vm's too) goes that way throughout.
+function Invoke-GuestScript {
+    param(
+        [Parameter(Mandatory)][string]$Script,
+        [int]$TimeoutSec = 300,
+        [switch]$Background,
+        [switch]$NoAgent
+    )
+    if (-not $Background -and -not $NoAgent -and -not $script:Vm.NoAgent) {
+        $answer = Invoke-GuestAgent -Script $Script -TimeoutSec $TimeoutSec
+        if ($answer) { return $answer }
+    }
+    Invoke-GuestScriptByTask -Script $Script -TimeoutSec $TimeoutSec -Background:$Background
+}
+
+# Start the helper in the guest: guest\agent.ps1 as the scheduled task
+# "vmtest-agent", in the desktop session, with the same principal and settings
+# as the task of a script. It has no logon trigger: nothing may start by
+# itself at boot (I1 and AS2 judge what does). Returns false when it did not
+# come up; that is remembered for a minute so that each call does not pay for
+# it again.
+function Start-GuestAgent {
+    if ($script:Vm.AgentFailedAt -and ((Get-Date) - $script:Vm.AgentFailedAt).TotalSeconds -lt 60) { return $false }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $source = Get-Content (Join-Path $PSScriptRoot "guest\agent.ps1") -Raw
+    $dir = Join-Path (Join-Path $script:Vm.GuestDir "agent") ([guid]::NewGuid().ToString("N").Substring(0, 8))
+    $ready = $false
+    try {
+        $run = Invoke-InGuest -Reuse -Lane none -TimeoutSec 120 -ArgumentList $source, $dir, $script:Vm.GuestDir -ScriptBlock {
+            param($source, $dir, $base)
+            New-Item -ItemType Directory -Force (Join-Path $dir "in") | Out-Null
+            $file = Join-Path $base "agent.ps1"
+            [System.IO.File]::WriteAllText($file, $source, (New-Object System.Text.UTF8Encoding $true))
+            $shell = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
+            $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\conhost.exe" `
+                -Argument "--headless `"$shell`" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$file`" -Dir `"$dir`""
+            $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$env:USERNAME" -LogonType Interactive -RunLevel Limited
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -Priority 4 -ExecutionTimeLimit ([TimeSpan]::Zero)
+            Register-ScheduledTask -TaskName "vmtest-agent" -Action $action -Principal $principal -Settings $settings -Force | Out-Null
+            Start-ScheduledTask -TaskName "vmtest-agent"
+            $deadline = (Get-Date).AddSeconds(40)
+            while ((Get-Date) -lt $deadline) {
+                if (Test-Path (Join-Path $dir "pid")) { "agent=ready"; return }
+                Start-Sleep -Milliseconds 100
+            }
+            "agent=not-ready"
+        }
+        $ready = [bool]($run.Output -contains "agent=ready")
+    } catch {
+        $ready = $false
+    }
+    Write-Timing -Kind guest -What $(if ($ready) { "agent start" } else { "fallback: the helper did not start" }) -Sec $clock.Elapsed.TotalSeconds -Lane agent
+    if ($ready) {
+        $script:Vm.Agent = @{ Dir = $dir }
+    } else {
+        $script:Vm.AgentFailedAt = Get-Date
+    }
+    $ready
+}
+
+# Run a script through the helper. Returns the result of Invoke-GuestScript,
+# or $null when the script was not run and the caller should run it the old
+# way: the helper is not there, never took the request, or could not start the
+# script. A request the helper took is never run a second time.
+function Invoke-GuestAgent {
+    param(
+        [Parameter(Mandatory)][string]$Script,
+        [int]$TimeoutSec = 300
+    )
+    if (-not $script:Vm.Agent -and -not (Start-GuestAgent)) { return $null }
+    $dir = $script:Vm.Agent.Dir
+    $script:Vm.Sequence += 1
+    $id = "vmtest-{0:d3}" -f $script:Vm.Sequence
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $request = @{ kind = "script"; timeoutSec = $TimeoutSec } | ConvertTo-Json -Compress
+    try {
+        $run = Invoke-InGuest -Reuse -Lane none -TimeoutSec ($TimeoutSec + 90) -ArgumentList $dir, $id, (Get-GuestScriptBody $Script), $request, $TimeoutSec -ScriptBlock {
+            param($dir, $id, $body, $request, $timeout)
+            $in = Join-Path $dir "in"
+            $file = Join-Path $in "$id.ps1"
+            $json = Join-Path $in "$id.json"
+            $done = Join-Path $in "$id.done"
+            $alive = Join-Path $dir "alive"
+            # A call that is made again (a broken session is opened once more)
+            # must not hand the helper the same request twice.
+            $known = ($json, "$json.run", "$json.cancelled", $done | Where-Object { [System.IO.File]::Exists($_) })
+            if (-not $known) {
+                [System.IO.File]::WriteAllText($file, $body, (New-Object System.Text.UTF8Encoding $true))
+                [System.IO.File]::WriteAllText("$json.tmp", $request)
+                [System.IO.File]::Move("$json.tmp", $json)
+            }
+            $started = [DateTime]::UtcNow
+            $deadline = $started.AddSeconds($timeout + 60)
+            $checked = [System.Diagnostics.Stopwatch]::StartNew()
+            $status = $null
+            while ([DateTime]::UtcNow -lt $deadline) {
+                if ([System.IO.File]::Exists($done)) { $status = "done"; break }
+                if ($checked.ElapsedMilliseconds -ge 1000) {
+                    $checked.Restart()
+                    $silent = try { ([DateTime]::UtcNow - [System.IO.File]::GetLastWriteTimeUtc($alive)).TotalSeconds } catch { 999 }
+                    $taken = [System.IO.File]::Exists("$json.run")
+                    if (-not $taken -and $silent -gt 5) {
+                        # Never taken, and the helper is quiet: cancel by rename. If
+                        # that fails the helper took it just now; go on waiting.
+                        try { [System.IO.File]::Move($json, "$json.cancelled"); $status = "cancelled"; break } catch { }
+                    }
+                    if ($taken -and $silent -gt 15) { $status = "lost"; break }
+                }
+                Start-Sleep -Milliseconds 20
+            }
+            if (-not $status) { $status = "timeout" }
+            "__STATUS=$status"
+            if ($status -eq "done") {
+                $first = @([System.IO.File]::ReadAllLines($done))
+                "__DONE=" + $first[0]
+                if (Test-Path "$file.out") { Get-Content "$file.out" }
+            }
+            Remove-Item "$in\$id.*" -Force -ErrorAction SilentlyContinue
+        }
+    } catch {
+        $run = $null
+    }
+    $lines = @($run.Output | ForEach-Object { "$_" })
+    $status = ($lines | Where-Object { $_ -like "__STATUS=*" } | Select-Object -First 1)
+    $finished = ($lines | Where-Object { $_ -like "__DONE=*" } | Select-Object -First 1)
+    if ($status -eq "__STATUS=cancelled" -or ($finished -and $finished -like "__DONE=notstarted*")) {
+        # The script never ran: the old way runs it, once.
+        $why = if ($finished) { $finished.Substring(7) } else { "the helper did not take the request" }
+        Write-Timing -Kind guest -What "fallback: $why" -Sec $clock.Elapsed.TotalSeconds -Lane agent
+        if (-not $finished) { $script:Vm.Agent = $null }
+        return $null
+    }
+    $text = @($lines | Where-Object { $_ -notlike "__STATUS=*" -and $_ -notlike "__DONE=*" })
+    $result = ConvertTo-GuestScriptResult -Lines $text -Errors $(if ($run) { $run.Errors } else { "the call to the guest failed" })
+    if ($status -eq "__STATUS=lost") { $script:Vm.Agent = $null }
+    Write-Timing -Kind guest -What $id -Sec $clock.Elapsed.TotalSeconds -Lane agent -Exit $result.ExitCode
+    $result
+}
+
+# Run a guest script as a scheduled task of its own: a new conhost and
+# powershell.exe each time, with the output polled every half second. This is
+# how every script ran before the helper, and what -NoAgent and the fallback do.
+function Invoke-GuestScriptByTask {
+    param(
+        [Parameter(Mandatory)][string]$Script,
+        [int]$TimeoutSec = 300,
+        [switch]$Background
+    )
+    $script:Vm.Sequence += 1
+    $task = "vmtest-{0:d3}" -f $script:Vm.Sequence
+    $callClock = [System.Diagnostics.Stopwatch]::StartNew()
+    $file = Join-Path $script:Vm.GuestDir "$task.ps1"
+    $body = Get-GuestScriptBody $Script
     $inBackground = [bool]$Background
     # The transport may share a session; a background script runs as a child of
     # it and so needs one of its own, with a fresh environment.
@@ -828,19 +1013,10 @@ Write-Output "__EXIT=`$__code"
         }
         if (Test-Path $out) { Get-Content $out }
     }
-    $code = $null
-    $lines = foreach ($line in $run.Output) {
-        if ("$line" -match '^__EXIT=(-?\d+)$') { $code = [int]$Matches[1] } else { "$line" }
-    }
-    Write-Timing -Kind guest -What $task -Sec $callClock.Elapsed.TotalSeconds -Lane $(if ($inBackground) { "background" } else { "task" }) -Exit $code
-    [pscustomobject]@{
-        ExitCode  = $code
-        Output    = ($lines -join "`n").Trim()
-        Stderr    = ($run.Errors -join "`n").Trim()
-        Completed = $null -ne $code
-    }
+    $result = ConvertTo-GuestScriptResult -Lines $run.Output -Errors $run.Errors
+    Write-Timing -Kind guest -What $task -Sec $callClock.Elapsed.TotalSeconds -Lane $(if ($inBackground) { "background" } else { "task" }) -Exit $result.ExitCode
+    $result
 }
-
 # ------------------------------------------------------------ power
 
 # Wait until the guest user is logged in at the desktop and commands answer.
@@ -917,7 +1093,7 @@ function Clear-HostMemory {
 # and try once more when the start still fails.
 function Start-Guest {
     $script:Vm.Devices = $null
-    Clear-GuestSession
+    Clear-GuestLinks
     if ((Get-VmState) -eq "Running") { return }
     $needed = [int]((Get-VM -Name $script:Vm.Name).MemoryStartup / 1MB) + 512
     if ((Get-HostFreeMemoryMb) -lt $needed) { Clear-HostMemory }
@@ -934,7 +1110,7 @@ function Start-Guest {
 function Stop-Guest {
     param([int]$TimeoutSec = 180)
     $script:Vm.Devices = $null
-    Clear-GuestSession
+    Clear-GuestLinks
     if ((Get-VmState) -eq "Off") { return }
     try {
         Stop-VM -Name $script:Vm.Name -Force -AsJob | Out-Null
@@ -958,7 +1134,7 @@ function Restart-Guest {
 function Restore-Guest {
     param([string]$Snapshot = "clean")
     $script:Vm.Devices = $null
-    Clear-GuestSession
+    Clear-GuestLinks
     if ((Get-VmState) -ne "Off") {
         Stop-VM -Name $script:Vm.Name -TurnOff -Force
         Wait-VmState -State "Off" -TimeoutSec 60 | Out-Null

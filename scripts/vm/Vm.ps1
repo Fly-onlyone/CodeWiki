@@ -52,9 +52,256 @@ function Initialize-Vm {
         GuestDir   = $GuestDir
         Sequence   = 0
         Recorder   = $null
+        # When the recording began, for the timing log's "rec" column.
+        RecStart   = $null
         # WMI objects of the running VM; cleared whenever the VM stops.
         Devices    = $null
     }
+}
+
+# ------------------------------------------------------------ timing and waits
+# What takes the time in a run is written down as it happens, one JSON line per
+# event, in logs\timing.jsonl: t (host time, UTC), rec (seconds into the film,
+# null before it), case, kind (case, step, wait, hold, guest), what, sec,
+# deadline and met for a wait, lane and exit for a guest call. Never the text
+# of a script: it can hold a token.
+$script:Timing = @{ Path = $null; Pace = 1.0; Case = "" }
+
+function Initialize-Timing {
+    param([string]$Path, [double]$Pace = 1.0)
+    $script:Timing = @{ Path = $Path; Pace = $Pace; Case = "" }
+    if ($Path) { Remove-Item $Path -Force -ErrorAction SilentlyContinue }
+}
+
+function Write-Timing {
+    param(
+        [Parameter(Mandatory)][string]$Kind,
+        [Parameter(Mandatory)][string]$What,
+        [double]$Sec = 0,
+        $Deadline = $null,
+        $Met = $null,
+        [string]$Lane = "",
+        $Exit = $null
+    )
+    if (-not $script:Timing.Path) { return }
+    $record = [ordered]@{
+        t    = [DateTime]::UtcNow.ToString("o")
+        rec  = if ($script:Vm -and $script:Vm.RecStart) { [math]::Round(([DateTime]::UtcNow - $script:Vm.RecStart).TotalSeconds, 1) } else { $null }
+        case = $script:Timing.Case
+        kind = $Kind
+        what = $What
+        sec  = [math]::Round($Sec, 2)
+    }
+    if ($null -ne $Deadline) { $record.deadline = [math]::Round([double]$Deadline, 2) }
+    if ($null -ne $Met) { $record.met = [bool]$Met }
+    if ($Lane) { $record.lane = $Lane }
+    if ($null -ne $Exit) { $record.exit = $Exit }
+    try {
+        [System.IO.File]::AppendAllText($script:Timing.Path, ((ConvertTo-Json $record -Compress) + "`n"))
+    } catch {
+        # A log that cannot be written must not stop the run.
+    }
+}
+
+# Run a block and write down how long it took. For the steps of the setup:
+# restore, boot, copies, install. The block runs in a scope of its own, so it
+# sets what it hands on with $script:.
+function Measure-Step {
+    param([Parameter(Mandatory, Position = 0)][string]$Name, [Parameter(Mandatory, Position = 1)][scriptblock]$Block)
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    try {
+        & $Block
+    } finally {
+        Write-Timing -Kind step -What $Name -Sec $clock.Elapsed.TotalSeconds
+    }
+}
+
+# Wait until the condition gives a value, and return that value; $null when
+# -TimeoutSec has passed. It does not throw by default: the fixed sleep it
+# replaces went on after its time, and the case's own checks judge what is
+# there. -Pace multiplies the deadline, never -IntervalMs.
+function Wait-Until {
+    param(
+        [Parameter(Mandatory)][string]$What,
+        [Parameter(Mandatory)][double]$TimeoutSec,
+        [int]$IntervalMs = 250,
+        [switch]$Throw,
+        [Parameter(Mandatory, Position = 0)][scriptblock]$Condition
+    )
+    $limit = $TimeoutSec * $script:Timing.Pace
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $value = $null
+    while ($true) {
+        $value = & $Condition
+        if ($value) { break }
+        $left = $limit - $clock.Elapsed.TotalSeconds
+        if ($left -le 0) { $value = $null; break }
+        Start-Sleep -Milliseconds ([int][math]::Max(1, [math]::Min($IntervalMs, $left * 1000)))
+    }
+    Write-Timing -Kind wait -What $What -Sec $clock.Elapsed.TotalSeconds -Deadline $limit -Met ([bool]$value)
+    if ($Throw -and -not $value) { throw "gave up waiting for '$What' after $([math]::Round($limit, 1)) seconds" }
+    $value
+}
+
+# A pause that is part of the test: a window that must stay quiet while it is
+# watched, a pointer that rests, an animation that must have finished. It says
+# why, and it stays as long as it is. -Exact is not stretched by -Pace.
+function Hold-For {
+    param(
+        [Parameter(Mandatory)][double]$Seconds,
+        [Parameter(Mandatory)][string]$Reason,
+        [switch]$Exact
+    )
+    $length = if ($Exact) { $Seconds } else { $Seconds * $script:Timing.Pace }
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    Start-Sleep -Milliseconds ([int]($length * 1000))
+    Write-Timing -Kind hold -What $Reason -Sec $clock.Elapsed.TotalSeconds -Deadline $length
+}
+
+# Read logs\timing.jsonl of a report folder; an empty list when there is none.
+function Read-TimingLog {
+    param([Parameter(Mandatory)][string]$Report)
+    $file = Join-Path $Report "logs\timing.jsonl"
+    if (-not (Test-Path $file)) { return @() }
+    @(Get-Content $file | Where-Object { $_.Trim() } | ForEach-Object { $_ | ConvertFrom-Json })
+}
+
+# What a timing log says about the run, in minutes: from its first event's
+# start to its last event, and how long the setup before the film took.
+function Get-TimingTotal {
+    param($Events)
+    $events = @($Events)
+    if (-not $events.Count) { return $null }
+    $first = $events | Sort-Object { [DateTime]$_.t } | Select-Object -First 1
+    $last = $events | Sort-Object { [DateTime]$_.t } | Select-Object -Last 1
+    $begin = ([DateTime]$first.t).AddSeconds(-[double]$first.sec)
+    $end = [DateTime]$last.t
+    $filmed = $events | Where-Object { $null -ne $_.rec -and $_.rec -ge 0 } | Select-Object -First 1
+    $setup = $null
+    if ($filmed) { $setup = (([DateTime]$filmed.t).AddSeconds(-[double]$filmed.rec) - $begin).TotalMinutes }
+    [pscustomobject]@{ Total = ($end - $begin).TotalMinutes; Setup = $setup; Film = if ($null -ne $setup) { ($end - $begin).TotalMinutes - $setup } else { $null } }
+}
+
+# Write logs\timing.md for a finished run: the total, the slowest cases and
+# waits, what each kind of wait added up to, the waits that gave up at their
+# deadline, the fallbacks taken, and each case against an earlier run's.
+function Write-TimingSummary {
+    param(
+        [Parameter(Mandatory)][string]$Report,
+        # The report folder of an earlier run to compare with.
+        [string]$Previous
+    )
+    $events = @(Read-TimingLog $Report)
+    if (-not $events.Count) { return }
+    $text = [System.Collections.Generic.List[string]]::new()
+    $minutes = { param($value) if ($null -eq $value) { "n/a" } else { "{0:n1} min" -f $value } }
+    $totals = Get-TimingTotal $events
+    $text.Add("# Timing")
+    $text.Add("")
+    $text.Add("- Run: $(& $minutes $totals.Total) from the first step to the end; setup before the film: $(& $minutes $totals.Setup); the film: $(& $minutes $totals.Film).")
+    if ($Previous) {
+        $before = @(Read-TimingLog $Previous)
+        if ($before.Count) {
+            $old = Get-TimingTotal $before
+            $text.Add("- Earlier run ($(Split-Path -Leaf $Previous)): $(& $minutes $old.Total), setup $(& $minutes $old.Setup), film $(& $minutes $old.Film).")
+        } else {
+            $film = Join-Path $Previous "recording\session.mp4"
+            $length = $null
+            if ((Test-Path $film) -and (Get-Command ffprobe -ErrorAction SilentlyContinue)) {
+                $length = [double](& ffprobe -v error -show_entries format=duration -of csv=p=0 $film) / 60
+            }
+            $text.Add("- Earlier run ($(Split-Path -Leaf $Previous)) has no timing log; its film is $(& $minutes $length).")
+        }
+    }
+    $text.Add("")
+
+    $text.Add("## Slowest cases")
+    $text.Add("")
+    $text.Add("| Case | Seconds |")
+    $text.Add("|---|---|")
+    foreach ($row in @($events | Where-Object { $_.kind -eq "case" } | Sort-Object sec -Descending | Select-Object -First 15)) {
+        $text.Add("| $($row.what) | $($row.sec) |")
+    }
+    $text.Add("")
+
+    $text.Add("## Slowest waits and pauses")
+    $text.Add("")
+    $text.Add("| Case | Kind | What | Seconds | Deadline | Met |")
+    $text.Add("|---|---|---|---|---|---|")
+    foreach ($row in @($events | Where-Object { $_.kind -in "wait", "hold" } | Sort-Object sec -Descending | Select-Object -First 15)) {
+        $text.Add("| $($row.case) | $($row.kind) | $($row.what) | $($row.sec) | $($row.deadline) | $(if ($null -eq $row.met) { '' } else { $row.met }) |")
+    }
+    $text.Add("")
+
+    $text.Add("## Time by kind")
+    $text.Add("")
+    $text.Add("| Kind | Events | Seconds |")
+    $text.Add("|---|---|---|")
+    foreach ($group in $events | Group-Object { if ($_.kind -eq "wait" -and $null -eq $_.met) { "fixed sleep" } elseif ($_.kind -eq "guest") { "guest call, $($_.lane)" } else { $_.kind } } | Sort-Object Name) {
+        $sum = ($group.Group | Measure-Object sec -Sum).Sum
+        $text.Add("| $($group.Name) | $($group.Count) | $([math]::Round($sum, 1)) |")
+    }
+    $text.Add("")
+
+    $text.Add("## Steps before the film")
+    $text.Add("")
+    $text.Add("| Step | Seconds |")
+    $text.Add("|---|---|")
+    foreach ($row in @($events | Where-Object { $_.kind -eq "step" })) { $text.Add("| $($row.what) | $($row.sec) |") }
+    $text.Add("")
+
+    $text.Add("## Waits that gave up at their deadline")
+    $text.Add("")
+    $gaveUp = @($events | Where-Object { $_.kind -eq "wait" -and $_.met -eq $false })
+    if ($gaveUp) {
+        $text.Add("| Case | What | Seconds |")
+        $text.Add("|---|---|---|")
+        foreach ($row in $gaveUp) { $text.Add("| $($row.case) | $($row.what) | $($row.sec) |") }
+    } else {
+        $text.Add("None.")
+    }
+    $text.Add("")
+
+    $text.Add("## Fallbacks taken")
+    $text.Add("")
+    $fallbacks = @($events | Where-Object { $_.kind -eq "guest" -and $_.what -like "fallback*" })
+    if ($fallbacks) {
+        foreach ($row in $fallbacks) { $text.Add("- $($row.case): $($row.what)") }
+    } else {
+        $text.Add("None.")
+    }
+    $text.Add("")
+
+    $text.Add("## Guest calls by lane")
+    $text.Add("")
+    $text.Add("| Lane | Calls | Seconds | Mean |")
+    $text.Add("|---|---|---|---|")
+    foreach ($group in $events | Where-Object { $_.kind -eq "guest" -and $_.what -notlike "fallback*" } | Group-Object lane | Sort-Object Name) {
+        $sum = ($group.Group | Measure-Object sec -Sum).Sum
+        $text.Add("| $($group.Name) | $($group.Count) | $([math]::Round($sum, 1)) | $([math]::Round($sum / $group.Count, 2)) |")
+    }
+    $text.Add("")
+
+    if ($Previous) {
+        $oldResults = Join-Path $Previous "logs\results.json"
+        $oldCases = @{}
+        if (Test-Path $oldResults) {
+            foreach ($row in @(Get-Content $oldResults -Raw | ConvertFrom-Json)) { if ($null -ne $row.seconds) { $oldCases[$row.id] = [double]$row.seconds } }
+        }
+        $text.Add("## Cases against the earlier run")
+        $text.Add("")
+        if ($oldCases.Count) {
+            $text.Add("| Case | Now | Earlier | Difference |")
+            $text.Add("|---|---|---|---|")
+            foreach ($row in @($events | Where-Object { $_.kind -eq "case" -and $oldCases.ContainsKey($_.what) })) {
+                $text.Add("| $($row.what) | $($row.sec) | $($oldCases[$row.what]) | $([math]::Round($row.sec - $oldCases[$row.what], 1)) |")
+            }
+        } else {
+            $text.Add("The earlier run has no per-case times; only the totals compare.")
+        }
+        $text.Add("")
+    }
+    Set-Content -Path (Join-Path $Report "logs\timing.md") -Value $text
 }
 
 function Get-VmState {
@@ -89,8 +336,12 @@ function Invoke-InGuest {
         [object[]]$ArgumentList = @(),
         [int]$TimeoutSec = 300,
         # How often to try to open the session; 1 while Windows may not be up yet.
-        [int]$Attempts = 4
+        [int]$Attempts = 4,
+        # What the timing log calls this call; "none" for a call that a caller
+        # of its own writes down (Invoke-GuestScript).
+        [string]$Lane = "direct"
     )
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
     $session = New-GuestSession -Attempts $Attempts
     $job = $null
     try {
@@ -113,6 +364,7 @@ function Invoke-InGuest {
         # Closing the session first ends a command that is still running.
         Remove-PSSession $session -ErrorAction SilentlyContinue
         if ($job) { Remove-Job $job -Force -ErrorAction SilentlyContinue }
+        if ($Lane -ne "none") { Write-Timing -Kind guest -What "in-guest" -Sec $clock.Elapsed.TotalSeconds -Lane $Lane }
     }
 }
 
@@ -472,6 +724,7 @@ function Invoke-GuestScript {
     )
     $script:Vm.Sequence += 1
     $task = "vmtest-{0:d3}" -f $script:Vm.Sequence
+    $callClock = [System.Diagnostics.Stopwatch]::StartNew()
     $file = Join-Path $script:Vm.GuestDir "$task.ps1"
     $body = @"
 # This file runs with -ExecutionPolicy Bypass, which travels to every child
@@ -492,7 +745,7 @@ Write-Output "__EXIT=`$__code"
 } 2>&1 | ForEach-Object { "`$_" } | Out-File -FilePath "`$PSCommandPath.out" -Encoding utf8 -Width 8192
 "@
     $inBackground = [bool]$Background
-    $run = Invoke-InGuest -TimeoutSec ($TimeoutSec + 60) -ArgumentList $file, $body, $TimeoutSec, $inBackground, $task -ScriptBlock {
+    $run = Invoke-InGuest -TimeoutSec ($TimeoutSec + 60) -Lane none -ArgumentList $file, $body, $TimeoutSec, $inBackground, $task -ScriptBlock {
         param($file, $body, $timeout, $background, $task)
         $ErrorActionPreference = "Continue"
         New-Item -ItemType Directory -Force (Split-Path -Parent $file) | Out-Null
@@ -529,6 +782,7 @@ Write-Output "__EXIT=`$__code"
     $lines = foreach ($line in $run.Output) {
         if ("$line" -match '^__EXIT=(-?\d+)$') { $code = [int]$Matches[1] } else { "$line" }
     }
+    Write-Timing -Kind guest -What $task -Sec $callClock.Elapsed.TotalSeconds -Lane $(if ($inBackground) { "background" } else { "task" }) -Exit $code
     [pscustomobject]@{
         ExitCode  = $code
         Output    = ($lines -join "`n").Trim()
@@ -1186,6 +1440,7 @@ function Start-Recording {
     $process = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList ($arguments | ForEach-Object { if ("$_" -match '\s') { "`"$_`"" } else { "$_" } }) `
         -WindowStyle Hidden -PassThru
     $script:Vm.Recorder = @{ Process = $process; Stop = $stop }
+    $script:Vm.RecStart = [DateTime]::UtcNow
     $true
 }
 

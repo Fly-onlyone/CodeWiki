@@ -73,7 +73,10 @@ param(
     # main pass of a release, whose real embedding servers run alone.
     [string[]]$Skip,
     # Multiplies every wait; raise it on a slow host.
-    [double]$Pace = 1.0
+    [double]$Pace = 1.0,
+    # The report folder of an earlier run: logs\timing.md then compares this
+    # run's total, setup and cases with it.
+    [string]$Previous
 )
 $ErrorActionPreference = "Stop"
 # "pwsh -File ... -Only A1,C1" hands the list over as one text.
@@ -120,6 +123,8 @@ $Report = (Resolve-Path $Report).Path
 Get-ChildItem $shots -Filter "*.png" | Remove-Item -Force
 Get-ChildItem $shots -Directory | Remove-Item -Recurse -Force
 Get-ChildItem $logs -Filter "probe-*.json" | Remove-Item -Force
+# What takes the time, event by event (Write-Timing in Vm.ps1); summarized at the end.
+Initialize-Timing -Path (Join-Path $logs "timing.jsonl") -Pace $Pace
 
 # The guest's folders. They are set once the guest is up, from what the guest
 # says its profile folder is: that is not always C:\Users\<account name>.
@@ -132,7 +137,16 @@ $powershell = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 $results = [System.Collections.Generic.List[object]]::new()
 $shotCount = 0
 
-function Wait-For { param([double]$Seconds) Start-Sleep -Milliseconds ([int]($Seconds * 1000 * $Pace)) }
+# A fixed sleep, as the script has always had. It writes itself into the timing
+# log with the line that called it, so that the slowest ones can be found and
+# replaced by a wait for what the case needs (Wait-Until, Wait-AppPage).
+function Wait-For {
+    param([double]$Seconds)
+    $line = (Get-PSCallStack)[1].ScriptLineNumber
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    Start-Sleep -Milliseconds ([int]($Seconds * 1000 * $Pace))
+    Write-Timing -Kind wait -What "fixed sleep, line $line" -Sec $clock.Elapsed.TotalSeconds -Deadline ($Seconds * $Pace)
+}
 
 # Take a screenshot named after the case and return its file name.
 function Shot {
@@ -154,19 +168,43 @@ function Add-Result {
             observed = $Observed; screenshots = $Shots; output = $Output
         })
     "{0,-5} {1,-4} {2}" -f $Status, $Id, $Observed
-    $results | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $logs "results.json")
+    Save-Results
+}
+
+# Written to a file beside it first and moved over, so that a reader who
+# follows the run through results.json never sees half of it.
+function Save-Results {
+    $file = Join-Path $logs "results.json"
+    $results | ConvertTo-Json -Depth 5 | Set-Content "$file.tmp"
+    Move-Item "$file.tmp" $file -Force
 }
 
 # Run one case; a thrown error becomes an "error" result and the run goes on.
+# The results the case added get started, ended and seconds, which are new
+# fields: nothing that was there changes.
 function Test-Case {
     param([string]$Id, [string]$Title, [string]$Expect, [scriptblock]$Body)
     if ($Only -and $Only -notcontains $Id) { return }
     if ($Skip | Where-Object { $Id -like $_ }) { return }
+    $first = $results.Count
+    $began = Get-Date
+    $clock = [System.Diagnostics.Stopwatch]::StartNew()
+    $script:Timing.Case = $Id
     try {
         & $Body
     } catch {
         Add-Result -Id $Id -Title $Title -Expect $Expect -Status error `
             -Observed "the harness failed: $($_.Exception.Message)" -Shots @(Shot "$Id-error")
+    } finally {
+        $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
+        for ($i = $first; $i -lt $results.Count; $i++) {
+            $results[$i] | Add-Member -NotePropertyName started -NotePropertyValue $began.ToString("s") -Force
+            $results[$i] | Add-Member -NotePropertyName ended -NotePropertyValue (Get-Date).ToString("s") -Force
+            $results[$i] | Add-Member -NotePropertyName seconds -NotePropertyValue $seconds -Force
+        }
+        if ($results.Count -gt $first) { Save-Results }
+        Write-Timing -Kind case -What $Id -Sec $seconds
+        $script:Timing.Case = ""
     }
 }
 
@@ -266,7 +304,7 @@ Test-Case "A1" "Package contents" "three programs, licence files, the scripts an
 # ---------------------------------------------------------------- guest up
 if ($Gpu -and -not $PSBoundParameters.ContainsKey("Snapshot")) { $Snapshot = "clean-gpu" }
 "restoring checkpoint '$Snapshot'"
-Restore-Guest -Snapshot $Snapshot
+Measure-Step "restore checkpoint" { Restore-Guest -Snapshot $Snapshot }
 if ($MemoryMb) {
     # Startup and ceiling alike: a guest that grows later takes what the
     # host does not have.
@@ -275,26 +313,30 @@ if ($MemoryMb) {
 }
 # A checkpoint does not keep the card, so it is attached after every restore.
 if ($Gpu) { Enable-GuestGpu }
-Start-Guest
-Wait-Guest -TimeoutSec 900
+Measure-Step "start guest and wait for the desktop" {
+    Start-Guest
+    Wait-Guest -TimeoutSec 900
+}
 if ($Gpu) {
-    $driver = Test-GuestGpuDriver
+    $driver = Measure-Step "check the graphics driver" { Test-GuestGpuDriver }
     if (-not $driver.Match -and $RefreshGpuDriver) {
         # For this run only: the checkpoint keeps the driver it was taken
         # with, and the next restore brings that one back.
         "the guest holds the graphics driver '$($driver.GuestDrivers -join ', ')' and the host now has '$($driver.HostDriver)'; copying the host's into the guest for this run"
-        Copy-GpuDriverToGuest | Out-Null
-        Restart-Guest
-        Wait-Guest -TimeoutSec 900
+        Measure-Step "copy the graphics driver and restart" {
+            Copy-GpuDriverToGuest | Out-Null
+            Restart-Guest
+            Wait-Guest -TimeoutSec 900
+        }
         $driver = Test-GuestGpuDriver
     }
     if (-not $driver.Match) {
         throw "the guest holds the graphics driver '$($driver.GuestDrivers -join ', ')' and the host now has '$($driver.HostDriver)'; run scripts\vm\provision-gpu.ps1 -Force, or pass -RefreshGpuDriver to copy the host's driver in for this run alone"
     }
     # Without a screen nothing is drawn, and every measurement would be of nothing.
-    if (-not (Test-GuestDisplay)) { throw "the guest's desktop has no screen with the graphics card attached; see Test-GuestDisplay in Vm.ps1" }
+    if (-not (Measure-Step "check the guest's display" { Test-GuestDisplay })) { throw "the guest's desktop has no screen with the graphics card attached; see Test-GuestDisplay in Vm.ps1" }
 }
-$guestHome = (Invoke-GuestScript -Script '$env:USERPROFILE').Output.Trim()
+$guestHome = (Measure-Step "read the guest's profile folder" { Invoke-GuestScript -Script '$env:USERPROFILE' }).Output.Trim()
 if ($guestHome -notmatch '^[A-Za-z]:\\') { throw "could not read the guest's profile folder: '$guestHome'" }
 $guestUnpacked = "$guestHome\Downloads\CodeWiki"
 $guestTarget = "$guestHome\AppData\Local\Programs\CodeWiki"
@@ -302,15 +344,17 @@ $guestRepo = "$guestHome\repos\cw-core"
 Wait-For 30
 Start-Recording -Path (Join-Path $Report "recording\session.mp4") | Out-Null
 
-New-GuestDirectory $script:Vm.GuestDir
-New-GuestDirectory "$guestHome\repos"
-Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\probe.ps1") -GuestDirectory $script:Vm.GuestDir
-Copy-ToGuest -Path $Zip -GuestDirectory "$guestHome\Downloads"
-Copy-ToGuest -Path (Join-Path $root "crates\cw-core") -GuestDirectory "$guestHome\repos"
+Measure-Step "make the guest folders" {
+    New-GuestDirectory $script:Vm.GuestDir
+    New-GuestDirectory "$guestHome\repos"
+}
+Measure-Step "copy probe.ps1" { Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\probe.ps1") -GuestDirectory $script:Vm.GuestDir }
+Measure-Step "copy the package" { Copy-ToGuest -Path $Zip -GuestDirectory "$guestHome\Downloads" }
+Measure-Step "copy cw-core" { Copy-ToGuest -Path (Join-Path $root "crates\cw-core") -GuestDirectory "$guestHome\repos" }
 $guestZip = "$guestHome\Downloads\$(Split-Path -Leaf $Zip)"
 $guestSetup = $null
 if ($Setup) {
-    Copy-ToGuest -Path $Setup -GuestDirectory "$guestHome\Downloads"
+    Measure-Step "copy the setup program" { Copy-ToGuest -Path $Setup -GuestDirectory "$guestHome\Downloads" }
     $guestSetup = "$guestHome\Downloads\$(Split-Path -Leaf $Setup)"
 }
 
@@ -5279,6 +5323,7 @@ Stop-Recording
 Get-VM -Name $VmName | Select-Object Name, Generation, ProcessorCount, @{ n = "MemoryMb"; e = { $_.MemoryStartup / 1MB } }, Version |
     ConvertTo-Json | Set-Content (Join-Path $logs "vm.json")
 if (-not $KeepRunning) { Stop-Guest }
+Write-TimingSummary -Report $Report -Previous $Previous
 
 $counts = $results | Group-Object status | ForEach-Object { "$($_.Count) $($_.Name)" }
 "done: $($counts -join ', '); evidence in $Report"

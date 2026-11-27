@@ -1297,11 +1297,11 @@ $layout = @{
     sidebarRow  = @(124, 248)   # Core > Overview, a sidebar row that is not open
     sidebarRow2 = @(124, 560)   # Operations > Build and Test, with the window at 992x688
     homeIcon    = @(333, 61)    # the toolbar's Home icon button
-    searchField = @(432, 61)    # the toolbar's search field, just after its icon (a click on the icon does not focus it)
+    recentIcon  = @(397, 61)    # the toolbar's Open recent icon button, after Back
+    searchField = @(464, 61)    # the toolbar's search field, just after its icon (a click on the icon does not focus it)
     tab         = @(330, 112)   # the first tab
     noteLink    = @(354, 540)   # the link 'cw-core' of _HOME, with the window at 992x688
-    detailsButton = @(-130, 433) # "Open in Obsidian" in the details pane of _HOME
-    detailsBlank = @(-130, 600) # empty space in the details pane, below that button
+    detailsBlank = @(-130, 600) # empty space in the details pane of _HOME, below its source list
     reviewAll   = @(311, 158)   # the review queue's header checkbox (select all)
     reviewRow3  = @(388, 304)   # the queue's third row, its label
     approve     = @(620, 157)   # "Approve N" / "Approve and write", its left part
@@ -1365,7 +1365,7 @@ Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and lin
     Send-RestedClick -X $x -Y $y
     Wait-For 1
     $taken = @()
-    foreach ($target in "neutral", "sidebarRow", "homeIcon", "detailsButton", "tab", "noteLink") {
+    foreach ($target in "neutral", "sidebarRow", "homeIcon", "recentIcon", "tab", "noteLink") {
         $x, $y = Get-LayoutPoint -Info $info -Name $target
         Move-Pointer -X $x -Y $y
         Start-Sleep -Milliseconds 1200
@@ -1389,7 +1389,7 @@ Test-Case "HV1" "Hover, press and selection" "a hovered row, button, tab and lin
     $taken += Shot "selected-row"
     Stop-GuestApp
     Add-Result -Id "HV1" -Title "Hover, press and selection" -Expect "each hovered control differs from the first picture; the pressed row is darker; the open note's row carries the bar" -Status note -Shots $taken `
-        -Observed "window placed at 992x688; pointer rested 1.2 s on: the title bar (rest), a sidebar row, the Home icon, 'Open in Obsidian', the first tab and the link 'cw-core' of _HOME; the row held down: $pressed; read the screenshots: the row fills and shifts right with its icon grown, the Home icon grows and brightens, the outlined button tints, the tab tints, the link gets a solid underline; the pressed row fills darker; in the last the row of the note opened by the press has a glowing bar at its left edge"
+        -Observed "window placed at 992x688; pointer rested 1.2 s on: the title bar (rest), a sidebar row, the Home icon, the Open recent icon, the first tab and the link 'cw-core' of _HOME; the row held down: $pressed; read the screenshots: the row fills and shifts right with its icon grown, the Home and Open recent icons grow and brighten, the tab tints, the link gets a solid underline; the pressed row fills darker; in the last the row of the note opened by the press has a glowing bar at its left edge"
 }
 
 # ---------------------------------------------------------------- TB1, CH1 and WT1, a narrow window (0.5.0)

@@ -1886,6 +1886,15 @@ async fn a_linked_worktree_is_filed_under_its_repository_and_forgotten_when_gone
     let listed = h.get("/v1/repos").await;
     assert!(of(&listed, &id).is_none(), "{listed}");
     assert!(of(&listed, &main_id).is_some());
+    // The index goes as soon as nothing holds it open: the job that embeds
+    // after an update may still, for a moment. Each listing tries again.
+    for _ in 0..100 {
+        if !index.exists() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        h.get("/v1/repos").await;
+    }
     assert!(!index.exists());
     let (status, _) = h
         .call("GET", &format!("/v1/repos/{id}"), Some(TOKEN), None)

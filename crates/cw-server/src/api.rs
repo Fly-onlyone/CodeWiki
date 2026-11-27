@@ -439,7 +439,12 @@ async fn list_repos(State(state): State<AppState>) -> Api<Vec<ListedRepo>> {
                 log::info!("forgot the worktree {}: its folder is gone", entry.name);
             }
         }
+        // One that could not be forgotten yet, because its index is still
+        // open, is no repository either: it is left out until it goes.
         Ok(repos::load(&state.0.config.data_dir)?
+            .into_iter()
+            .filter(|e| e.worktree_of.is_none() || std::path::Path::new(&e.path).is_dir())
+            .collect::<Vec<_>>()
             .into_iter()
             .map(|entry| ListedRepo {
                 present: std::path::Path::new(&entry.path).is_dir(),

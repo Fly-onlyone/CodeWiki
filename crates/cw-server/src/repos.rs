@@ -105,19 +105,23 @@ pub fn mark_worktrees(data_dir: &Path) -> Result<()> {
 /// that is unplugged for a while. Returns the entries forgotten.
 pub fn prune_worktrees(data_dir: &Path) -> Result<Vec<RepoEntry>> {
     let repos = load(data_dir)?;
-    let (gone, kept): (Vec<RepoEntry>, Vec<RepoEntry>) = repos
-        .into_iter()
-        .partition(|e| e.worktree_of.is_some() && !Path::new(&e.path).is_dir());
-    if gone.is_empty() {
-        return Ok(gone);
-    }
-    save(data_dir, &kept)?;
-    for entry in &gone {
+    let index = data_dir.join("index");
+    // The index goes first. Windows does not delete a file that is open,
+    // and a job may still hold the database: such an entry stays listed,
+    // so that the next call tries again and no index is left without one.
+    let forgotten = |entry: &RepoEntry| {
+        if entry.worktree_of.is_none() || Path::new(&entry.path).is_dir() {
+            return false;
+        }
         // The database and the files SQLite keeps beside it.
-        let index = data_dir.join("index");
         for suffix in ["", "-wal", "-shm"] {
             let _ = std::fs::remove_file(index.join(format!("{}.db{suffix}", entry.id)));
         }
+        !index.join(format!("{}.db", entry.id)).exists()
+    };
+    let (gone, kept): (Vec<RepoEntry>, Vec<RepoEntry>) = repos.into_iter().partition(forgotten);
+    if !gone.is_empty() {
+        save(data_dir, &kept)?;
     }
     Ok(gone)
 }

@@ -81,11 +81,37 @@ param(
     # not through the helper in the guest (guest\agent.ps1). For telling a
     # fault of the helper from a fault of the app, and as the baseline when
     # timing the helper.
-    [switch]$NoGuestAgent
+    [switch]$NoGuestAgent,
+    # The pass on a guest without a graphics card (checkpoint "Clean"): sets
+    # -Only to the cases that draw or move, the cases for the window's newer
+    # parts, and the setup they stand on (the list is $NoGpuCases below;
+    # -Only given too adds to it). A case outside the list is not run.
+    [switch]$NoGpuSubset,
+    # Also photograph the app for the user guide (cases GS1 to GS14, off by
+    # default so that an ordinary pass is no longer): window client area
+    # 1536x820, cropped to the window, as PNG under screenshots\guide\. The
+    # cases need what the ones they stand on make; run them with
+    # -Only "<those>,GS*". Pictures that are taken inside another case
+    # (RV1, RC1, RC2, TT1, DV1, AV1, RV2) are taken only when this is set.
+    [switch]$GuideShots
 )
 $ErrorActionPreference = "Stop"
+# The pass without a graphics card runs these. Each id has been run outside
+# the full order with the setup below it: A1 (host check), S1/SX/S3 (only with
+# -Hardened), C1 and C5 (unpack, install), D2 (the wiki of cw-core), E1, P1
+# and E3 (start from the Start menu, idle load, a repository opened); NG0
+# ends that app; then the title bar's buttons and unsaved edits (W0 to W7),
+# F2 (start and leave alone), the look (BG1, HV1, TB1, CH1, WT1, LK1, TT1,
+# PN1, Z1), editing (G3) and the 0.6.0 window cases (HS1 to HS3, OU1).
+$NoGpuCases = @(
+    "A1", "S1", "SX", "C1", "C5", "S3", "D2", "E1", "P1", "E3", "NG0",
+    "W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7",
+    "F2-reduced", "F2-system", "BG1", "HV1", "TB1", "CH1", "WT1", "LK1", "TT1", "PN1", "Z1", "G3",
+    "HS1", "HS2", "HS3", "OU1"
+)
 # "pwsh -File ... -Only A1,C1" hands the list over as one text.
 if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+if ($NoGpuSubset) { $Only = @(@($NoGpuCases) + @($Only) | Where-Object { $_ } | Select-Object -Unique) }
 if ($Skip) { $Skip = @($Skip | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
 . (Join-Path $PSScriptRoot "Vm.ps1")
 Initialize-Vm -Name $VmName -User $User -Password $Password -NoAgent:$NoGuestAgent
@@ -122,6 +148,7 @@ function Get-ZipVersion {
 }
 if (-not $Report) { $Report = Join-Path $root ("report\vm-test-" + (Get-Date -Format "yyyy-MM-dd")) }
 $shots = Join-Path $Report "screenshots"
+if ($NoGpuSubset) { "-NoGpuSubset: running $($Only -join ', ')" }
 $logs = Join-Path $Report "logs"
 New-Item -ItemType Directory -Force $shots, $logs, (Join-Path $Report "recording") | Out-Null
 $Report = (Resolve-Path $Report).Path
@@ -194,7 +221,7 @@ function Test-Selected {
 # fields: nothing that was there changes.
 function Test-Case {
     param([string]$Id, [string]$Title, [string]$Expect, [scriptblock]$Body)
-    if ($Only -and $Only -notcontains $Id) { return }
+    if ($Only -and -not ($Only | Where-Object { $Id -like $_ })) { return }
     if ($Skip | Where-Object { $Id -like $_ }) { return }
     $first = $results.Count
     $began = Get-Date
@@ -942,6 +969,18 @@ Test-Case "E3" "Open a folder from Home" "Open folder… asks for a folder, regi
     Add-Result -Id "E3" -Title "Open a folder from Home" -Expect "cw-core registered and shown" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($a, $b, $c) `
         -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); the app's log says it opened '$opened'"
+}
+
+# The pass without a graphics card (-NoGpuSubset) skips the tray cases, which
+# end by closing the app they were left with. E3 leaves its app running, and a
+# later start would hand over to it: this ends it, so that the window cases
+# start their own.
+if ($NoGpuSubset) {
+    Test-Case "NG0" "End the app the setup started" "the app E3 left open is ended, so that each window case starts its own" {
+        Stop-GuestApp
+        Add-Result -Id "NG0" -Title "End the app the setup started" -Expect "no app is left" -Status note `
+            -Observed "-NoGpuSubset runs no tray case, so the app E3 left open was ended by force (the backend stays)"
+    }
 }
 
 # ---------------------------------------------------------------- TR, the tray

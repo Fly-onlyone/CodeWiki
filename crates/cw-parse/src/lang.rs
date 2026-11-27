@@ -1,4 +1,4 @@
-//! Plumbing shared by the Python, TypeScript, Java, C# and Go extractors: the fact
+//! Plumbing shared by the Python, TypeScript, Java, Kotlin, C# and Go extractors: the fact
 //! sink, text helpers, the file-to-module mapping and import classification.
 //!
 //! Qualified names use `::` between segments in every language, so one
@@ -135,6 +135,11 @@ const PYTHON_STDLIB: [&str; 112] = [
 
 /// Root packages of the Java platform.
 const JAVA_PLATFORM: [&str; 4] = ["java", "javax", "jdk", "sun"];
+
+/// Root package of Kotlin's standard library, its own platform. `kotlinx` is
+/// a set of libraries (coroutines, serialization, ...) that a build file
+/// names, so it is no platform.
+const KOTLIN_PLATFORM: &str = "kotlin";
 
 /// Namespaces the .NET platform ships. `System` is the platform's root;
 /// `Microsoft` holds platform namespaces and NuGet packages alike, so only
@@ -688,12 +693,15 @@ fn link_python(mut import: UseImport, modules: &HashSet<String>) -> Option<UseIm
     Some(external(import, root, 1))
 }
 
-fn link_java(import: UseImport, packages: &HashSet<String>) -> Option<UseImport> {
+/// An import of a Java or Kotlin file. `packages` holds the packages of both
+/// languages: they share them. `kotlin` says the file is Kotlin, whose
+/// platform also has the `kotlin` root.
+fn link_jvm(import: UseImport, packages: &HashSet<String>, kotlin: bool) -> Option<UseImport> {
     if has_module_prefix(packages, &import.path, 1) {
         return Some(import);
     }
     let root = import.path.first()?;
-    if JAVA_PLATFORM.contains(&root.as_str()) {
+    if JAVA_PLATFORM.contains(&root.as_str()) || (kotlin && root == KOTLIN_PLATFORM) {
         return None;
     }
     // `org.junit.Test` belongs to `org.junit`; the class name is not part of
@@ -930,13 +938,16 @@ fn link_go(import: UseImport, packages: &HashSet<String>, go: &GoBuild) -> Optio
     })
 }
 
-/// Decide, for every Python, Java, C# and Go import, whether it names
+/// Decide, for every Python, Java, Kotlin, C# and Go import, whether it names
 /// repository code, an outside package, or the language's own library.
 /// Imports of the last kind are dropped. Also records which Python package
 /// holds which module.
 pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String], go: &GoBuild) {
     let python = modules_of(parsed, Language::Python);
-    let java = modules_of(parsed, Language::Java);
+    // Java and Kotlin files of one package are one module, and each language
+    // imports the other's classes.
+    let mut jvm = modules_of(parsed, Language::Java);
+    jvm.extend(modules_of(parsed, Language::Kotlin));
     let csharp = modules_of(parsed, Language::CSharp);
     let packages = modules_of(parsed, Language::Go);
     for (file, facts) in parsed.iter_mut() {
@@ -962,10 +973,10 @@ pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String]
                     });
                 }
             }
-            Language::Java => {
+            language @ (Language::Java | Language::Kotlin) => {
                 facts.uses = uses
                     .into_iter()
-                    .filter_map(|u| link_java(u, &java))
+                    .filter_map(|u| link_jvm(u, &jvm, language == Language::Kotlin))
                     .collect();
             }
             Language::CSharp => {

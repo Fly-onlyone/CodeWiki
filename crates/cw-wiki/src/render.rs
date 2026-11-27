@@ -166,7 +166,7 @@ impl<'a> RenderCtx<'a> {
                     .unwrap_or_else(|| match unit.filter(|u| !u.is_rust()) {
                         Some(unit) => format!(
                             "{} {}{} `{}` with {}.",
-                            language_name(unit.language),
+                            self.unit_language(unit),
                             if unit.tests { "test " } else { "" },
                             unit_noun(unit.language),
                             note.title,
@@ -365,6 +365,37 @@ impl<'a> RenderCtx<'a> {
         }
     }
 
+    /// The language a unit is called after: the one with more files. A
+    /// Gradle or Maven module that holds both Java and Kotlin is named for
+    /// both, the larger first (`Kotlin and Java`, and Kotlin on a tie).
+    fn unit_language(&self, unit: &Unit) -> String {
+        if matches!(unit.language, Language::Java | Language::Kotlin) {
+            let files = |language: Language| {
+                self.repo
+                    .facts
+                    .files
+                    .iter()
+                    .filter(|f| f.language == language)
+                    .filter(|f| {
+                        self.repo
+                            .units
+                            .of_file(&f.path)
+                            .is_some_and(|u| u.name == unit.name)
+                    })
+                    .count()
+            };
+            let (other, name) = if unit.language == Language::Kotlin {
+                (Language::Java, "Kotlin and Java")
+            } else {
+                (Language::Kotlin, "Java and Kotlin")
+            };
+            if files(other) > 0 {
+                return name.to_string();
+            }
+        }
+        language_name(unit.language).to_string()
+    }
+
     /// The languages of the repository and how many units each has, the
     /// language with the most source files first.
     fn composition(&self) -> (Vec<String>, Vec<String>) {
@@ -445,8 +476,13 @@ impl<'a> RenderCtx<'a> {
                 relative.to_string()
             };
         }
+        // A function at the top of a C# or Kotlin file stands in no type: it
+        // is known by its file.
         let top_level = symbol.kind == SymbolKind::Function
-            && Language::from_path(&symbol.file) == Language::CSharp;
+            && matches!(
+                Language::from_path(&symbol.file),
+                Language::CSharp | Language::Kotlin
+            );
         match symbol.kind {
             SymbolKind::Module => symbol
                 .file
@@ -1133,6 +1169,40 @@ impl<'a> RenderCtx<'a> {
                 code.push('}');
                 ("java", code)
             }
+            Language::Kotlin => {
+                // An interface is implemented; a class is extended through
+                // what it lets be overridden.
+                let parameters = kotlin_type_parameters(&symbol.signature, &symbol.name);
+                let generic = if parameters.is_empty() {
+                    String::new()
+                } else {
+                    format!("<{}>", parameters.join(", "))
+                };
+                let supertype = if symbol.kind == SymbolKind::Class {
+                    format!("{}{generic}()", symbol.name)
+                } else {
+                    format!("{}{generic}", symbol.name)
+                };
+                let mut code = format!("class NewType{generic} : {supertype} {{\n");
+                for m in methods
+                    .iter()
+                    .filter(|m| m.visibility != Visibility::Private && m.name != symbol.name)
+                    .filter(|m| {
+                        symbol.kind != SymbolKind::Class
+                            || m.signature
+                                .split_whitespace()
+                                .any(|w| matches!(w, "abstract" | "open" | "override"))
+                    })
+                    .take(MAX_LISTED)
+                {
+                    code.push_str(&format!(
+                        "    {} {{\n        TODO()\n    }}\n",
+                        kotlin_override(&m.signature)
+                    ));
+                }
+                code.push('}');
+                ("kotlin", code)
+            }
             Language::Go if symbol.kind == SymbolKind::Interface => {
                 let mut code = "type NewType struct{}".to_string();
                 for m in methods.iter().take(MAX_LISTED) {
@@ -1463,7 +1533,7 @@ impl<'a> RenderCtx<'a> {
                     });
                 }
             }
-            Language::Java => {
+            Language::Java | Language::Kotlin => {
                 for m in &unit.manifests {
                     let dir = dir_of(&m.path);
                     if file_name(&m.path) == "pom.xml" {
@@ -1833,6 +1903,7 @@ fn language_name(language: Language) -> &'static str {
         Language::TypeScript => "TypeScript",
         Language::JavaScript => "JavaScript",
         Language::Java => "Java",
+        Language::Kotlin => "Kotlin",
         Language::CSharp => "C#",
         Language::Go => "Go",
         _ => "source",
@@ -1843,7 +1914,7 @@ fn language_name(language: Language) -> &'static str {
 fn unit_noun(language: Language) -> &'static str {
     match language {
         Language::Rust => "crate",
-        Language::Java => "module",
+        Language::Java | Language::Kotlin => "module",
         Language::CSharp => "project",
         Language::Go => "module",
         _ => "package",
@@ -1886,6 +1957,59 @@ fn csharp_override(signature: &str) -> String {
     } else {
         format!("public {signature}")
     }
+}
+
+/// The names of the type parameters a Kotlin declaration lists after its
+/// name: `T` and `R` for `interface Mapper<in T, out R : Any> : Base<T>`.
+fn kotlin_type_parameters(signature: &str, name: &str) -> Vec<String> {
+    let Some(at) = signature.find(&format!(" {name}<")) else {
+        return Vec::new();
+    };
+    let rest = &signature[at + name.len() + 2..];
+    let mut depth = 1usize;
+    let mut parts: Vec<String> = vec![String::new()];
+    for c in rest.chars() {
+        match c {
+            '<' | '(' => depth += 1,
+            '>' | ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            ',' if depth == 1 => {
+                parts.push(String::new());
+                continue;
+            }
+            _ => {}
+        }
+        if let Some(last) = parts.last_mut() {
+            last.push(c);
+        }
+    }
+    parts
+        .iter()
+        .filter_map(|part| {
+            part.split_whitespace()
+                .find(|w| !matches!(*w, "in" | "out" | "reified"))
+                .map(str::to_string)
+        })
+        .collect()
+}
+
+/// A Kotlin member as a stub in a type that extends or implements it: what
+/// let it be overridden is replaced by `override`.
+fn kotlin_override(signature: &str) -> String {
+    let words: Vec<&str> = signature
+        .split_whitespace()
+        .filter(|w| {
+            !matches!(
+                *w,
+                "abstract" | "open" | "override" | "final" | "public" | "protected"
+            )
+        })
+        .collect();
+    format!("override {}", words.join(" "))
 }
 
 /// What a build file outside Cargo is for.
@@ -1932,9 +2056,9 @@ pub(crate) fn lower_first(text: &str) -> String {
 
 /// Product and technology names that keep their capital at the start of a
 /// list item.
-const PROPER_NOUNS: [&str; 17] = [
+const PROPER_NOUNS: [&str; 18] = [
     "Obsidian", "Rust", "Markdown", "Mermaid", "Windows", "Docker", "Git", "Cargo", "Claude",
-    "Codex", "Unicode", "Louvain", "Tarjan", "Brandes", "Python", "Linux", "Java",
+    "Codex", "Unicode", "Louvain", "Tarjan", "Brandes", "Python", "Linux", "Java", "Kotlin",
 ];
 
 #[cfg(test)]
@@ -1968,6 +2092,38 @@ mod tests {
         assert_eq!(unit_noun(Language::Go), "module");
         assert_eq!(build_role("services/api/go.mod"), "Go module");
         assert_eq!(build_role("go.work"), "Go workspace");
+        assert_eq!(language_name(Language::Kotlin), "Kotlin");
+        assert_eq!(unit_noun(Language::Kotlin), "module");
+        assert_eq!(build_role("app/build.gradle.kts"), "Gradle build");
+        // A Kotlin name keeps its capital at the start of a list item.
+        assert_eq!(lower_first("Kotlin module `app`."), "Kotlin module `app`.");
+    }
+
+    #[test]
+    fn a_kotlin_stub_repeats_the_type_parameters_of_its_supertype() {
+        let parameters = |signature: &str, name: &str| kotlin_type_parameters(signature, name);
+        assert_eq!(
+            parameters("interface Codec<T> : Encoding<T>", "Codec"),
+            ["T"]
+        );
+        assert_eq!(
+            parameters(
+                "interface Mapper<in T, out R : Comparable<R>> : Base<T>",
+                "Mapper"
+            ),
+            ["T", "R"]
+        );
+        assert!(parameters("interface Named", "Named").is_empty());
+        // The name's own generics, not a supertype's.
+        assert!(parameters("interface Named : Base<T>", "Named").is_empty());
+        assert_eq!(
+            kotlin_override("abstract fun total(): Int"),
+            "override fun total(): Int"
+        );
+        assert_eq!(
+            kotlin_override("open suspend fun load(id: Int): Item?"),
+            "override suspend fun load(id: Int): Item?"
+        );
     }
 
     #[test]

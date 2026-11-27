@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cw_core::{Confidence, Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility, file_node};
 
+use crate::kotlin::EXTENSION_ATTR;
 use crate::rust::ParsedFile;
 use crate::workspace::CrateInfo;
 
@@ -280,6 +281,94 @@ const COMMON_GO_METHODS: [&str; 52] = [
     "Value",
 ];
 
+/// The same for Kotlin: the scope functions, the collection and string
+/// extensions and the infix functions of its standard library, which any
+/// receiver of unknown type may be given. They are extension functions of
+/// the platform, so a repository function of the same name is no answer.
+const COMMON_KOTLIN_METHODS: [&str; 81] = [
+    "also",
+    "any",
+    "apply",
+    "associate",
+    "associateBy",
+    "contains",
+    "count",
+    "downTo",
+    "drop",
+    "emptyList",
+    "filter",
+    "filterIsInstance",
+    "filterNot",
+    "filterNotNull",
+    "first",
+    "firstOrNull",
+    "flatMap",
+    "forEach",
+    "forEachIndexed",
+    "getOrDefault",
+    "getOrNull",
+    "getOrPut",
+    "groupBy",
+    "isEmpty",
+    "isNotEmpty",
+    "isNullOrBlank",
+    "isNullOrEmpty",
+    "joinToString",
+    "last",
+    "lastOrNull",
+    "let",
+    "listOf",
+    "map",
+    "mapNotNull",
+    "mapOf",
+    "mapValues",
+    "max",
+    "maxOrNull",
+    "min",
+    "minOrNull",
+    "none",
+    "onEach",
+    "orEmpty",
+    "plus",
+    "reversed",
+    "run",
+    "sorted",
+    "sortedBy",
+    "sortedByDescending",
+    "sortedWith",
+    "split",
+    "step",
+    "substring",
+    "sumOf",
+    "take",
+    "takeIf",
+    "takeUnless",
+    "to",
+    "toInt",
+    "toList",
+    "toLong",
+    "toMap",
+    "toMutableList",
+    "toMutableMap",
+    "toSet",
+    "toString",
+    "trim",
+    "trimIndent",
+    "until",
+    "use",
+    "with",
+    "withIndex",
+    "zip",
+    "launch",
+    "async",
+    "emit",
+    "collect",
+    "lazy",
+    "require",
+    "check",
+    "error",
+];
+
 pub struct Resolver<'a> {
     symbols: HashMap<&'a str, &'a Symbol>,
     by_name: HashMap<&'a str, Vec<&'a Symbol>>,
@@ -294,6 +383,11 @@ pub struct Resolver<'a> {
     /// Packages of Go code. An import there binds a name in one file and
     /// re-exports nothing, so a name is never followed through one.
     go_modules: HashSet<String>,
+    /// Packages that hold Kotlin code. As in Go, an import there binds a
+    /// name in one file and re-exports nothing; Kotlin files also import
+    /// with `*` often, which would make the search through re-exports grow
+    /// with every glob of every package on the way.
+    kotlin_modules: HashSet<String>,
     /// crate -> the crates its manifest lets its code name, itself excluded
     crate_deps: HashMap<&'a str, HashSet<&'a str>>,
 }
@@ -322,6 +416,15 @@ impl<'a> Resolver<'a> {
                 .filter(|s| {
                     s.kind == SymbolKind::Module && Language::from_path(&s.file) == Language::Go
                 })
+                .map(|s| s.qualified.clone())
+                .collect(),
+            // The module symbol stands for a package in the file that came
+            // first, which may be a Java file, so look at every file.
+            kotlin_modules: files
+                .iter()
+                .filter(|(path, _)| Language::from_path(path) == Language::Kotlin)
+                .flat_map(|(_, parsed)| &parsed.symbols)
+                .filter(|s| s.kind == SymbolKind::Module)
                 .map(|s| s.qualified.clone())
                 .collect(),
             crate_deps: HashMap::new(),
@@ -426,7 +529,10 @@ impl<'a> Resolver<'a> {
         }
         for i in (1..segs.len()).rev() {
             let module = segs[..i].join("::");
-            if self.csharp_modules.contains(&module) || self.go_modules.contains(&module) {
+            if self.csharp_modules.contains(&module)
+                || self.go_modules.contains(&module)
+                || self.kotlin_modules.contains(&module)
+            {
                 continue;
             }
             if let Some(target) = self.imports.get(&module).and_then(|m| m.get(&segs[i])) {
@@ -616,19 +722,22 @@ impl<'a> Resolver<'a> {
         name: &str,
         module: &str,
         language: Language,
-        accept: impl Fn(SymbolKind) -> bool,
+        accept: impl Fn(&Symbol) -> bool,
         private_here: bool,
     ) -> Option<(&'a Symbol, Confidence)> {
         let rust = language == Language::Rust;
         let visible = |s: &Symbol| !rust || (visible_from(s, module) && self.reaches(module, s));
         let only = |found: Vec<&'a Symbol>| (found.len() == 1).then(|| found[0]);
-        // A name never matches a symbol written in another language.
+        // A name never matches a symbol written in another language, Java
+        // and Kotlin included: a receiver of unknown type calls `readLine`
+        // or `add` of the platform far more often than a method of the other
+        // language. Paths and imports do cross between the two.
         let all: Vec<&Symbol> = self
             .by_name
             .get(name)?
             .iter()
             .copied()
-            .filter(|s| accept(s.kind) && Language::from_path(&s.file) == language)
+            .filter(|s| accept(s) && Language::from_path(&s.file) == language)
             .collect();
         let here = |found: &[&'a Symbol], private: bool| {
             only(
@@ -763,12 +872,17 @@ impl<'a> Resolver<'a> {
                             // nearly always means a standard library method.
                             let common = COMMON_METHODS.contains(&name)
                                 || COMMON_CSHARP_METHODS.contains(&name)
-                                || COMMON_GO_METHODS.contains(&name);
+                                || COMMON_GO_METHODS.contains(&name)
+                                || COMMON_KOTLIN_METHODS.contains(&name);
                             self.by_bare_name(
                                 name,
                                 &c.module,
                                 language,
-                                |k| k == SymbolKind::Method,
+                                |s| {
+                                    s.kind == SymbolKind::Method
+                                        || (s.kind == SymbolKind::Function
+                                            && s.attrs.iter().any(|a| a == EXTENSION_ATTR))
+                                },
                                 common,
                             )
                             .map(|(s, _)| (s, Confidence::Low))

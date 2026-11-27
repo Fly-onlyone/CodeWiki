@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use cw_core::{Error, Language, MANIFEST_DIR, Result};
 use cw_parse::workspace::{dependency_specs, locked_versions, package_description};
-use cw_parse::{Locked, go_sum_versions, parse_go_mod};
+use cw_parse::{Locked, go_sum_versions, parse_go_mod, parse_version_catalog};
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Repo;
@@ -177,18 +177,75 @@ fn other(unit: &Unit, package: &str) -> Vec<Declared> {
         return go(unit, package);
     }
     let named = unit.declares(package);
-    unit.manifests
+    let mut out: Vec<Declared> = unit
+        .manifests
         .iter()
         .filter(|m| named.contains(&m.path.as_str()))
         .map(|m| {
-            let (requirement, features) = asked_in(m, package).unwrap_or_default();
+            // A build file may mention the name in `libs.<alias>` and leave
+            // the version to the catalog.
+            let (requirement, features) = asked_in(m, package)
+                .filter(|(requirement, _)| !requirement.is_empty())
+                .or_else(|| Some((jvm_requirement(unit, m, package)?, Vec::new())))
+                .unwrap_or_default();
             Declared {
                 requirement,
                 features,
                 ..Declared::bare(&m.path)
             }
         })
-        .collect()
+        .collect();
+    // A library of Kotlin's own family is not named by its group alone
+    // (`org.jetbrains.kotlinx:kotlinx-coroutines-core` is `kotlinx.coroutines`),
+    // and a build file may name it by its alias in the version catalog.
+    for manifest in &unit.manifests {
+        if out.iter().all(|d| d.manifest != manifest.path)
+            && let Some(requirement) = jvm_requirement(unit, manifest, package)
+        {
+            out.push(Declared {
+                requirement,
+                ..Declared::bare(&manifest.path)
+            });
+        }
+    }
+    out
+}
+
+/// What a Gradle or Maven build file asks of `package` when its text does
+/// not name the package itself: by the library's artifact, or by its alias
+/// in the version catalog the unit keeps.
+fn jvm_requirement(unit: &Unit, manifest: &Manifest, package: &str) -> Option<String> {
+    let file = manifest.path.rsplit('/').next().unwrap_or(&manifest.path);
+    match file {
+        "pom.xml" => maven(&manifest.text, package),
+        "build.gradle" | "build.gradle.kts" => gradle(&manifest.text, package).or_else(|| {
+            let catalog = unit
+                .lock
+                .as_ref()
+                .filter(|lock| lock.path.ends_with("libs.versions.toml"))?;
+            parse_version_catalog(&catalog.text)
+                .into_iter()
+                .find(|library| {
+                    names_package(&library.group, &library.name, package)
+                        && uses_accessor(&manifest.text, &library.accessor())
+                })
+                .map(|library| library.version)
+        }),
+        _ => None,
+    }
+}
+
+/// True when `text` uses the catalog accessor `libs.kotlinx.coroutines.core`
+/// as a whole: `libs.ktor.client` is not a use of `libs.ktor.client.core`.
+fn uses_accessor(text: &str, accessor: &str) -> bool {
+    let accessor_char = |c: char| c.is_alphanumeric() || matches!(c, '_' | '.' | '-');
+    text.match_indices(accessor).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(accessor_char)
+            && !text[at + accessor.len()..]
+                .chars()
+                .next()
+                .is_some_and(accessor_char)
+    })
 }
 
 /// The requirement and the extras `manifest` gives for `package`, read by
@@ -390,6 +447,17 @@ fn in_group(group: &str, package: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 
+/// True when the library `group:artifact` is the one a Java or Kotlin
+/// import of `package` comes from: its group is the package or starts with
+/// it, or, for the `kotlinx` libraries, whose group (`org.jetbrains.kotlinx`)
+/// does not say, its artifact (`kotlinx-coroutines-core`) starts with the
+/// package's name (`kotlinx.coroutines`).
+fn names_package(group: &str, artifact: &str, package: &str) -> bool {
+    in_group(group, package)
+        || (package.starts_with("kotlinx.")
+            && in_group(&artifact.replace(['-', '_'], "."), package))
+}
+
 /// Text of the first `<tag>` element in `xml`.
 fn element<'a>(xml: &'a str, tag: &str) -> Option<&'a str> {
     let open = format!("<{tag}>");
@@ -402,7 +470,11 @@ fn maven(text: &str, package: &str) -> Option<String> {
     text.split("<dependency>")
         .skip(1)
         .filter_map(|rest| rest.split("</dependency>").next())
-        .find(|block| element(block, "groupId").is_some_and(|g| in_group(g, package)))
+        .find(|block| {
+            element(block, "groupId").is_some_and(|g| {
+                names_package(g, element(block, "artifactId").unwrap_or(""), package)
+            })
+        })
         .map(|block| element(block, "version").unwrap_or("").to_string())
 }
 
@@ -413,7 +485,7 @@ fn gradle(text: &str, package: &str) -> Option<String> {
         .skip(1)
         .step_by(2)
         .map(|quoted| quoted.split(':').collect::<Vec<_>>())
-        .find(|parts| parts.len() >= 2 && in_group(parts[0], package))
+        .find(|parts| parts.len() >= 2 && names_package(parts[0], parts[1], package))
         .map(|parts| parts.get(2).copied().unwrap_or("").to_string())
 }
 
@@ -865,6 +937,107 @@ mod tests {
         assert_eq!(asked("requests\n"), plain(""));
         assert_eq!(asked("# uses requests and more\n"), plain(""));
         assert_eq!(asked("requests-oauthlib==1.0\n"), None);
+    }
+
+    fn kotlin_unit(build: &str, catalog: Option<&str>) -> Unit {
+        Unit {
+            name: "app".into(),
+            package: "app".into(),
+            slug: "app".into(),
+            dir: "app".into(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: false,
+            has_bin: false,
+            language: Language::Kotlin,
+            manifests: vec![Manifest {
+                path: "app/build.gradle.kts".into(),
+                text: build.into(),
+            }],
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            lock: catalog.map(|text| Manifest {
+                path: "gradle/libs.versions.toml".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_the_libraries_of_a_kotlin_build() {
+        let build = "dependencies {
+    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3\")
+    implementation(\"io.ktor:ktor-client-core\")
+    implementation(libs.kotlinx.serialization.json)
+    implementation(libs.ktor.client.cio)
+    testImplementation(kotlin(\"test\"))
+    testImplementation(libs.junit)
+}
+";
+        // The Kotlin DSL writes the coordinates in a string, as Groovy does.
+        assert_eq!(
+            gradle(build, "kotlinx.coroutines").as_deref(),
+            Some("1.7.3")
+        );
+        assert_eq!(gradle(build, "kotlinx.serialization"), None);
+        assert_eq!(gradle(build, "io.ktor").as_deref(), Some(""));
+        // Only the `kotlinx` libraries are named by their artifact.
+        assert_eq!(gradle("implementation(\"a.b:kotlinx-x:1\")", "org.z"), None);
+
+        let catalog = "[versions]
+serialization = \"1.6.0\"
+ktor = \"2.3.0\"
+
+[libraries]
+kotlinx-serialization-json = { module = \"org.jetbrains.kotlinx:kotlinx-serialization-json\", version.ref = \"serialization\" }
+ktor-client-core = { module = \"io.ktor:ktor-client-core\", version.ref = \"ktor\" }
+ktor-client-cio = { module = \"io.ktor:ktor-client-cio\", version.ref = \"ktor\" }
+unused = \"com.unused:lib:9.9\"
+junit = \"junit:junit:4.13.2\"
+";
+        let unit = kotlin_unit(build, Some(catalog));
+        let asked = |package: &str| -> Vec<(String, String)> {
+            other(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement))
+                .collect()
+        };
+        let build_file = "app/build.gradle.kts".to_string();
+        // In the string, and through the alias of the catalog.
+        assert_eq!(
+            asked("kotlinx.coroutines"),
+            [(build_file.clone(), "1.7.3".to_string())]
+        );
+        assert_eq!(
+            asked("kotlinx.serialization"),
+            [(build_file.clone(), "1.6.0".to_string())]
+        );
+        assert_eq!(asked("junit"), [(build_file.clone(), "4.13.2".to_string())]);
+        // `libs.ktor.client.cio` names `io.ktor`; the string names it too, and
+        // the build file is listed once, with the version its text writes.
+        assert_eq!(asked("io.ktor"), [(build_file, String::new())]);
+        // A library of the catalog that no build file uses is not declared.
+        assert!(asked("com.unused").is_empty());
+        // Without the catalog the alias still names the library, and no
+        // version is known.
+        let bare = other(&kotlin_unit(build, None), "kotlinx.serialization");
+        assert_eq!(bare.len(), 1);
+        assert_eq!(bare[0].requirement, "");
+        assert!(uses_accessor("api(libs.ktor.client)", "libs.ktor.client"));
+        assert!(!uses_accessor(
+            "api(libs.ktor.client.core)",
+            "libs.ktor.client"
+        ));
+        assert!(!uses_accessor(
+            "api(mylibs.ktor.client)",
+            "libs.ktor.client"
+        ));
+
+        let pom = "<dependency><groupId>org.jetbrains.kotlinx</groupId><artifactId>kotlinx-coroutines-core</artifactId><version>1.7.3</version></dependency>";
+        assert_eq!(maven(pom, "kotlinx.coroutines").as_deref(), Some("1.7.3"));
     }
 
     #[test]

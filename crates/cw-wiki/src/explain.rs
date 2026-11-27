@@ -490,8 +490,9 @@ fn return_type(signature: &str, language: Language) -> Option<String> {
             let rest = &rest[open..];
             &rest[after(rest)?..]
         }
-        Language::TypeScript | Language::JavaScript => {
-            // After the parameter list: `(x: number): string`.
+        Language::TypeScript | Language::JavaScript | Language::Kotlin => {
+            // After the parameter list: `(x: number): string`, and Kotlin's
+            // `fun load(path: String): Item?`.
             let open = signature.find('(')?;
             let mut depth = 0usize;
             let close = signature[open..].char_indices().find_map(|(i, c)| {
@@ -508,7 +509,8 @@ fn return_type(signature: &str, language: Language) -> Option<String> {
         _ => return None,
     };
     let text = text.trim().trim_end_matches([':', '{']).trim();
-    let unit = matches!(text, "" | "()" | "None" | "void");
+    let unit = matches!(text, "" | "()" | "None" | "void")
+        || (text == "Unit" && language == Language::Kotlin);
     (!unit && !text.contains('`') && text.chars().count() <= 60).then(|| text.to_string())
 }
 
@@ -717,6 +719,18 @@ mod tests {
         assert_eq!(return_type("name(): void", Language::TypeScript), None);
         assert_eq!(return_type("function f(x)", Language::JavaScript), None);
         assert_eq!(return_type("public String name()", Language::Java), None);
+        let kotlin = |signature| return_type(signature, Language::Kotlin);
+        assert_eq!(
+            kotlin("fun load(path: String): Item?").as_deref(),
+            Some("Item?")
+        );
+        assert_eq!(
+            kotlin("fun <T : Comparable<T>> List<T>.second(): T").as_deref(),
+            Some("T")
+        );
+        assert_eq!(kotlin("fun run()"), None);
+        assert_eq!(kotlin("fun run(): Unit"), None);
+        assert_eq!(kotlin("override fun name() = 1"), None);
         let csharp = |signature| return_type(signature, Language::CSharp);
         assert_eq!(
             csharp("public static async Task<List<Item>> Load<T>(int a)").as_deref(),

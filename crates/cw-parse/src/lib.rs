@@ -3,7 +3,9 @@
 pub mod csharp;
 pub mod go;
 pub mod gomod;
+pub mod gradle;
 pub mod java;
+pub mod kotlin;
 pub mod lang;
 pub mod python;
 pub mod resolve;
@@ -18,7 +20,9 @@ pub use gomod::{
     GoMod, GoModules, GoReplace, GoRequire, go_sum_versions, guess_package_name, parse_go_mod,
     parse_go_work,
 };
+pub use gradle::{CatalogLibrary, parse_version_catalog};
 pub use java::parse_java;
+pub use kotlin::{EXTENSION_ATTR, KOTEST_ATTR, parse_kotlin};
 pub use lang::{python_module, resolve_ts_import, ts_module};
 pub use python::{MAIN_GUARD_ATTR, parse_python};
 pub use resolve::{ExternalUse, Resolver};

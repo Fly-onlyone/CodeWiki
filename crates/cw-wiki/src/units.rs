@@ -32,6 +32,9 @@ const CSHARP_LOCK: &str = "packages.lock.json";
 /// The sums of a Go module's dependencies, kept apart from the files a note
 /// describes as the lock file of a C# project is.
 const GO_LOCK: &str = "go.sum";
+/// Where Gradle's default version catalog stands, below the folder that holds
+/// `settings.gradle(.kts)`.
+const GRADLE_CATALOG: &str = "gradle/libs.versions.toml";
 /// Attributes that make a C# method a test, under any test framework.
 const CSHARP_TEST_ATTRIBUTES: [&str; 11] = [
     "Fact",
@@ -105,7 +108,8 @@ pub struct Unit {
     /// its code.
     pub tests: bool,
     /// The lock file of the unit's packages, kept out of `manifests` so that
-    /// a lock does not count among the files a note describes.
+    /// a lock does not count among the files a note describes. For a Gradle
+    /// module with Kotlin files it is the version catalog.
     pub lock: Option<Manifest>,
 }
 
@@ -198,7 +202,8 @@ impl Family {
         match language {
             Language::Python => Some(Self::Python),
             Language::TypeScript | Language::JavaScript => Some(Self::Js),
-            Language::Java => Some(Self::Java),
+            // A Gradle or Maven module holds both languages side by side.
+            Language::Java | Language::Kotlin => Some(Self::Java),
             Language::CSharp => Some(Self::CSharp),
             Language::Go => Some(Self::Go),
             _ => None,
@@ -251,6 +256,60 @@ pub fn is_test_file(path: &str) -> bool {
         || (file.ends_with(".java")
             && (stem.ends_with("Test") || stem.ends_with("Tests") || stem.ends_with("IT")))
         || (file.ends_with(".cs") && (stem.ends_with("Test") || stem.ends_with("Tests")))
+        // `Spec` is the name Kotest and Spek give a test class.
+        || (file.ends_with(".kt")
+            && (stem.ends_with("Test")
+                || stem.ends_with("Tests")
+                || stem.ends_with("IT")
+                || stem.ends_with("Spec")
+                || in_jvm_test_set(&dirs)))
+}
+
+/// True for a folder of a Gradle source set of tests: `src/test`, and the
+/// ones that name their target, such as Kotlin Multiplatform's
+/// `src/commonTest`, `src/jvmTest` and Android's `src/androidTest`.
+fn in_jvm_test_set(dirs: &[&str]) -> bool {
+    dirs.windows(2).any(|pair| {
+        pair[0] == "src"
+            && (pair[1] == "test"
+                || (pair[1].len() > "Test".len()
+                    && (pair[1].ends_with("Test") || pair[1].ends_with("Tests"))))
+    })
+}
+
+/// True for a Java or Kotlin file of test code, the source sets of tests
+/// included. [`is_test_file`] leaves the sets of a Java file alone, since a
+/// Java repository's notes must not change; the test map looks further.
+pub(crate) fn is_jvm_test_file(path: &str) -> bool {
+    let dirs: Vec<&str> = path.split('/').collect();
+    is_test_file(path) || in_jvm_test_set(&dirs[..dirs.len().saturating_sub(1)])
+}
+
+/// A Kotlin program's `main`: a function at the top of a file, or an
+/// `@JvmStatic` one of an `object` or a companion, taking no parameter or
+/// the arguments (`Array<String>`, or `vararg String`).
+pub(crate) fn is_kotlin_entry(symbol: &Symbol) -> bool {
+    if symbol.name != "main"
+        || !symbol.file.ends_with(".kt")
+        || is_test_file(&symbol.file)
+        || symbol.visibility == cw_core::Visibility::Private
+    {
+        return false;
+    }
+    let placed = match symbol.kind {
+        SymbolKind::Function => true,
+        SymbolKind::Method => symbol.attrs.iter().any(|a| a == "JvmStatic"),
+        _ => false,
+    };
+    let parameters = symbol
+        .signature
+        .split_once("main(")
+        .and_then(|(_, rest)| rest.split_once(')'))
+        .map_or("", |(parameters, _)| parameters.trim());
+    placed
+        && (parameters.is_empty()
+            || parameters.contains("Array<String>")
+            || parameters.starts_with("vararg"))
 }
 
 /// True when `attribute` (as written: `Fact`, `Xunit.Fact`, `FactAttribute`)
@@ -908,6 +967,23 @@ pub fn discover(
                     text: read(&path).unwrap_or_default(),
                     path,
                 }),
+            // A Kotlin module takes its libraries from the version catalog
+            // more often than not: the nearest `gradle/libs.versions.toml`
+            // above it stands where a lock file does for the others. A
+            // module of Java alone is left as it was.
+            Family::Java
+                if group
+                    .files
+                    .iter()
+                    .any(|f| Language::from_path(f) == Language::Kotlin) =>
+            {
+                nearest_with(&files, &dir, &[GRADLE_CATALOG])
+                    .map(|d| join(d, GRADLE_CATALOG))
+                    .map(|path| Manifest {
+                        text: read(&path).unwrap_or_default(),
+                        path,
+                    })
+            }
             _ => None,
         };
         let test_project = *family == Family::CSharp
@@ -999,11 +1075,12 @@ pub fn discover(
                     members
                         .iter()
                         .filter(|s| {
-                            s.kind == SymbolKind::Method
+                            (s.kind == SymbolKind::Method
                                 && s.name == "main"
                                 && s.signature.contains("static")
                                 && s.signature.contains("String")
-                                && !is_test_file(&s.file)
+                                && !is_test_file(&s.file))
+                                || is_kotlin_entry(s)
                         })
                         .map(|s| s.qualified.clone()),
                 );
@@ -1730,5 +1807,149 @@ func util() {}
         assert_eq!(units.list[0].package, "tools.gen");
         assert!(units.list[0].manifests.is_empty());
         assert_eq!(units.list[0].entries.len(), 1);
+    }
+
+    #[test]
+    fn recognises_kotlin_test_files() {
+        for path in [
+            "src/test/kotlin/com/acme/AppTest.kt",
+            "src/commonTest/kotlin/com/acme/Shared.kt",
+            "src/jvmTest/kotlin/com/acme/Shared.kt",
+            "app/src/androidTest/kotlin/Instrumented.kt",
+            "src/main/kotlin/com/acme/AppTests.kt",
+            "src/main/kotlin/com/acme/AppIT.kt",
+            "src/main/kotlin/com/acme/UserSpec.kt",
+        ] {
+            assert!(is_test_file(path), "{path}");
+            assert!(is_jvm_test_file(path), "{path}");
+        }
+        for path in [
+            "src/main/kotlin/com/acme/App.kt",
+            "src/commonMain/kotlin/com/acme/App.kt",
+            "src/jvmMain/kotlin/com/acme/App.kt",
+            "src/main/kotlin/com/acme/Contest.kt",
+            "src/Test/kotlin/com/acme/App.kt",
+        ] {
+            assert!(!is_test_file(path), "{path}");
+        }
+        // A Java repository's notes do not change: the source sets of tests
+        // are the test map's to know for a Java file.
+        assert!(!is_test_file("src/integrationTest/java/com/acme/Flow.java"));
+        assert!(is_jvm_test_file(
+            "src/integrationTest/java/com/acme/Flow.java"
+        ));
+        assert!(is_jvm_test_file("src/test/java/com/acme/AppTest.java"));
+        assert!(!is_jvm_test_file("src/main/java/com/acme/App.java"));
+    }
+
+    #[test]
+    fn a_gradle_module_of_java_and_kotlin_is_one_unit() {
+        let units = discovery(&[
+            ("settings.gradle.kts", "include(\"app\", \"lib\")\n"),
+            ("gradle/libs.versions.toml", "[libraries]\n"),
+            ("app/build.gradle.kts", "plugins { kotlin(\"jvm\") }\n"),
+            (
+                "app/src/main/kotlin/com/acme/app/Main.kt",
+                "package com.acme.app
+
+import com.acme.store.Cart
+
+fun main(args: Array<String>) {
+    Cart().checkout()
+}
+",
+            ),
+            (
+                "app/src/main/kotlin/com/acme/app/Tool.kt",
+                "package com.acme.app
+
+object Tool {
+    @JvmStatic
+    fun main(args: Array<String>) {}
+
+    fun run() {}
+}
+",
+            ),
+            (
+                "app/src/main/kotlin/com/acme/app/Other.kt",
+                "package com.acme.other
+
+fun main(x: Int) {}
+
+fun helper() {}
+",
+            ),
+            (
+                "app/src/main/kotlin/com/acme/app/Hidden.kt",
+                "package com.acme.hidden
+
+private fun main() {}
+",
+            ),
+            (
+                "app/src/main/java/com/acme/store/Cart.java",
+                "package com.acme.store;
+
+public class Cart {
+    public void checkout() {}
+}
+",
+            ),
+            (
+                "app/src/test/kotlin/com/acme/app/MainTest.kt",
+                "package com.acme.app.tests
+
+fun main() {}
+",
+            ),
+            ("lib/build.gradle", "plugins { id 'java' }\n"),
+            (
+                "lib/src/main/java/com/acme/lib/Util.java",
+                "package com.acme.lib;
+
+public class Util {
+    public static String shout(String s) { return s; }
+}
+",
+            ),
+        ]);
+        assert_eq!(
+            units.list.len(),
+            2,
+            "{:?}",
+            units.list.iter().map(|u| &u.name).collect::<Vec<_>>()
+        );
+        let app = units.by_name("app").unwrap();
+        // Two Kotlin files for every Java file: the unit is Kotlin.
+        assert_eq!(app.language, Language::Kotlin);
+        assert_eq!(app.dir, "app");
+        assert_eq!(
+            app.manifests
+                .iter()
+                .map(|m| m.path.as_str())
+                .collect::<Vec<_>>(),
+            ["app/build.gradle.kts"]
+        );
+        assert_eq!(
+            units
+                .of_file("app/src/main/java/com/acme/store/Cart.java")
+                .map(|u| u.name.as_str()),
+            Some("app")
+        );
+        // The version catalog stands where a lock file does.
+        assert_eq!(app.lock.as_ref().unwrap().path, "gradle/libs.versions.toml");
+        // A top-level `main`, an `@JvmStatic` one, and none that takes
+        // another parameter, is private or sits in a test.
+        let entries: Vec<&str> = app.entries.iter().map(|e| e.symbol.as_str()).collect();
+        assert_eq!(
+            entries,
+            ["com::acme::app::Tool::main", "com::acme::app::main"]
+        );
+        assert!(!app.entries[0].declared);
+        // A module of Java alone is as it was: no catalog, Java.
+        let lib = units.by_name("lib").unwrap();
+        assert_eq!(lib.language, Language::Java);
+        assert!(lib.lock.is_none());
     }
 }

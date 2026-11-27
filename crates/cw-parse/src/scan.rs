@@ -14,6 +14,7 @@ use crate::csharp::parse_csharp;
 use crate::go::{package_name, parse_go};
 use crate::gomod::parse_go_mod;
 use crate::java::parse_java;
+use crate::kotlin::parse_kotlin;
 use crate::lang::{GoBuild, link_imports, nuget_ids, python_module, resolve_ts_import, ts_module};
 use crate::python::parse_python;
 use crate::resolve::{ExternalUse, Resolver};
@@ -266,6 +267,7 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
                     parse_typescript(path, &ts_module(path), &source, &resolve)?
                 }
                 Language::Java => parse_java(path, &source)?,
+                Language::Kotlin => parse_kotlin(path, &source)?,
                 Language::CSharp => parse_csharp(path, &source)?,
                 Language::Go => {
                     parse_go(path, &source, &go.modules.package_of(path), &go_import_name)?
@@ -340,7 +342,7 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
     nuget.sort();
     nuget.dedup();
     link_imports(&mut parsed, &nuget, &go);
-    // The first segment of every Python, TypeScript, Java, C# and Go module is a
+    // The first segment of every Python, TypeScript, Java, Kotlin, C# and Go module is a
     // root that paths may start at, as crate names are for Rust.
     let mut roots: Vec<&str> = facts.crates.iter().map(|c| c.name.as_str()).collect();
     roots.extend(
@@ -911,6 +913,255 @@ mod tests {
                 file: "src/main/java/com/acme/app/App.java".into(),
                 krate: "org.slf4j".into(),
                 names: vec!["Logger".into()],
+            }]
+        );
+    }
+
+    #[test]
+    fn scans_kotlin_and_java_files_of_one_package() {
+        let store = "src/main/kotlin/com/acme/store";
+        let facts = scan_files(&[
+            (
+                &format!("{store}/Cart.kt"),
+                "package com.acme.store
+
+class Cart(val items: List<Item>) : Priced {
+    override fun total(): Int = items.sumOf { it.price }
+
+    fun checkout() {
+        Tax.apply(total())
+        audit()
+    }
+}
+
+fun audit() {}
+",
+            ),
+            (
+                &format!("{store}/Tax.kt"),
+                "package com.acme.store
+
+interface Priced {
+    fun total(): Int
+}
+
+object Tax {
+    const val RATE = 3
+
+    fun rate(): Int = RATE
+
+    fun apply(n: Int): Int = n * rate()
+}
+",
+            ),
+            // A Java file in a Kotlin folder, and a package the folder does
+            // not name: the declaration wins.
+            (
+                "src/main/java/elsewhere/Item.java",
+                "package com.acme.store;
+
+public class Item {
+    public int price;
+
+    public int taxed() {
+        return Tax.rate();
+    }
+
+    public Cart cart() {
+        return new Cart(null);
+    }
+}
+",
+            ),
+            (
+                "src/main/kotlin/com/acme/util/Print.kt",
+                "package com.acme.util
+
+fun println(s: String) {}
+
+fun map(): Int = 1
+",
+            ),
+            (
+                "src/main/kotlin/com/acme/app/Main.kt",
+                "package com.acme.app
+
+import com.acme.store.Cart
+import com.acme.store.Tax as T
+import com.acme.store.audit
+import kotlinx.coroutines.launch
+import kotlin.math.max
+import java.util.Locale
+
+fun main() {
+    val cart = Cart(listOf())
+    cart.checkout()
+    audit()
+    T.rate()
+    println(\"x\")
+    listOf(1).map { it }
+    launch { }
+}
+",
+            ),
+        ]);
+        assert!(
+            facts.files_with_errors.is_empty(),
+            "{:?}",
+            facts.files_with_errors
+        );
+
+        // One module for the package, whichever language wrote it first.
+        let modules = facts
+            .symbols
+            .iter()
+            .filter(|s| s.qualified == "com::acme::store")
+            .count();
+        assert_eq!(modules, 1);
+        assert_eq!(
+            kind_of(&facts, "com::acme::store::Cart"),
+            Some(SymbolKind::Class)
+        );
+        assert_eq!(
+            kind_of(&facts, "com::acme::store::Item"),
+            Some(SymbolKind::Class)
+        );
+        assert_eq!(
+            kind_of(&facts, "com::acme::store::audit"),
+            Some(SymbolKind::Function)
+        );
+        assert_eq!(
+            kind_of(&facts, "com::acme::store::Tax::RATE"),
+            Some(SymbolKind::Const)
+        );
+
+        let edge = |src: &str, dst: &str, kind| edge_of(&facts, src, dst, kind);
+        // The same package needs no import: a type, a call on an object, a
+        // top-level function, a member of the enclosing object.
+        assert_eq!(
+            edge(
+                "com::acme::store::Cart",
+                "com::acme::store::Priced",
+                EdgeKind::Implements
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Cart",
+                "com::acme::store::Item",
+                EdgeKind::References
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Cart::checkout",
+                "com::acme::store::Tax::apply",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Cart::checkout",
+                "com::acme::store::audit",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Cart::checkout",
+                "com::acme::store::Cart::total",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Tax::apply",
+                "com::acme::store::Tax::rate",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Tax::rate",
+                "com::acme::store::Tax::RATE",
+                EdgeKind::References
+            ),
+            Some(Confidence::High)
+        );
+        // Java calls Kotlin and refers to it.
+        assert_eq!(
+            edge(
+                "com::acme::store::Item::taxed",
+                "com::acme::store::Tax::rate",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "com::acme::store::Item::cart",
+                "com::acme::store::Cart",
+                EdgeKind::References
+            ),
+            Some(Confidence::High)
+        );
+        // Through an import, an alias and a receiver of unknown type.
+        let main = "com::acme::app::main";
+        assert_eq!(
+            edge(main, "com::acme::store::audit", EdgeKind::Calls),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(main, "com::acme::store::Tax::rate", EdgeKind::Calls),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(main, "com::acme::store::Cart::checkout", EdgeKind::Calls),
+            Some(Confidence::Low)
+        );
+        assert_eq!(
+            edge(main, "com::acme::store::Cart", EdgeKind::References),
+            Some(Confidence::High)
+        );
+        // A default import is no repository function: `println` and `map`
+        // are the platform's, though another package has one of each.
+        assert!(
+            !facts
+                .edges
+                .iter()
+                .any(|e| e.src == main && e.dst.starts_with("com::acme::util")),
+            "{:?}",
+            facts
+                .edges
+                .iter()
+                .filter(|e| e.src == main)
+                .collect::<Vec<_>>()
+        );
+        for target in ["Cart.kt", "Tax.kt"] {
+            assert!(
+                edge(
+                    "file:src/main/kotlin/com/acme/app/Main.kt",
+                    &format!("file:{store}/{target}"),
+                    EdgeKind::Imports
+                )
+                .is_some(),
+                "{target}"
+            );
+        }
+
+        // `kotlin.*` and `java.*` are the platform, `kotlinx.*` a library.
+        assert_eq!(
+            facts.external_uses,
+            vec![ExternalUse {
+                file: "src/main/kotlin/com/acme/app/Main.kt".into(),
+                krate: "kotlinx.coroutines".into(),
+                names: vec!["launch".into()],
             }]
         );
     }

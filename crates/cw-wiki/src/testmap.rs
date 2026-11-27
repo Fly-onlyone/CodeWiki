@@ -25,7 +25,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::gitintel::dependents_by_file;
 use crate::rustscan::{Scanned, is_test_path};
-use crate::units::{is_csharp_test_attribute, is_test_file, xml_attribute, xml_elements};
+use crate::units::{
+    is_csharp_test_attribute, is_jvm_test_file, is_test_file, xml_attribute, xml_elements,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -89,6 +91,8 @@ struct Env<'a> {
     test_projects: HashSet<String>,
     /// The folders of the Go modules, by `go.mod`.
     go_modules: BTreeSet<String>,
+    /// Every file of the repository, for the build files of Gradle and Maven.
+    files: HashSet<String>,
 }
 
 impl Env<'_> {
@@ -106,6 +110,13 @@ impl Env<'_> {
 /// the dependency graph.
 trait TestLanguage: Sync {
     fn language(&self) -> Language;
+
+    /// True for a language whose tests this entry runs. Java and Kotlin
+    /// share one: a Gradle or Maven module runs the tests of both with one
+    /// command.
+    fn covers(&self, language: Language) -> bool {
+        language == self.language()
+    }
 
     /// True for a file of test code kept apart from the code it tests. Such
     /// a file is no source file of the map.
@@ -134,10 +145,10 @@ trait TestLanguage: Sync {
 /// The languages whose tests the map follows. Adding a language is adding an
 /// entry here and the type that fills in [`TestLanguage`]: reachability,
 /// the report, the MCP tool and the app need no change.
-static LANGUAGES: [&dyn TestLanguage; 3] = [&RustTests, &CSharpTests, &GoTests];
+static LANGUAGES: [&dyn TestLanguage; 4] = [&RustTests, &CSharpTests, &GoTests, &JvmTests];
 
 fn language_of(language: Language) -> Option<&'static dyn TestLanguage> {
-    LANGUAGES.iter().copied().find(|l| l.language() == language)
+    LANGUAGES.iter().copied().find(|l| l.covers(language))
 }
 
 struct RustTests;
@@ -575,6 +586,360 @@ impl TestLanguage for GoTests {
     }
 }
 
+/// More test classes than this in one module and the module's tests run
+/// whole: a list of names would be longer than the run it saves.
+const MAX_JVM_CLASSES: usize = 8;
+
+/// The build files that make a folder a Java or Kotlin module.
+const JVM_BUILD_FILES: [&str; 3] = ["build.gradle", "build.gradle.kts", "pom.xml"];
+
+/// Annotations that make a method a test: JUnit 4 and 5, TestNG and
+/// `kotlin.test` all call theirs `Test`, and JUnit 5 adds the parameterized,
+/// repeated, factory and template forms.
+const JVM_TEST_ANNOTATIONS: [&str; 5] = [
+    "Test",
+    "ParameterizedTest",
+    "RepeatedTest",
+    "TestFactory",
+    "TestTemplate",
+];
+
+/// A test: a method with one of the annotations (as written: `Test`,
+/// `org.junit.Test`), or a class that extends one of Kotest's spec styles,
+/// whose tests are written in its constructor and carry no annotation.
+fn is_jvm_test(symbol: &Symbol) -> bool {
+    match symbol.kind {
+        SymbolKind::Method => symbol
+            .attrs
+            .iter()
+            .any(|a| JVM_TEST_ANNOTATIONS.contains(&a.rsplit('.').next().unwrap_or(a))),
+        SymbolKind::Class => symbol.attrs.iter().any(|a| a == cw_parse::KOTEST_ATTR),
+        _ => false,
+    }
+}
+
+fn parent_dir(path: &str) -> &str {
+    path.rsplit_once('/').map_or("", |(dir, _)| dir)
+}
+
+fn join_path(dir: &str, name: &str) -> String {
+    if dir.is_empty() {
+        name.to_string()
+    } else {
+        format!("{dir}/{name}")
+    }
+}
+
+/// Java and Kotlin tests, run by Gradle or Maven. A file is a test file when
+/// it is test code by name or by its Gradle source set (`src/test`,
+/// `src/commonTest`, `src/jvmTest`). One command runs a module's tests of
+/// both languages, so the two share this entry.
+struct JvmTests;
+
+impl JvmTests {
+    /// The folder of the module that owns `path`: the nearest one above it
+    /// that holds a build file.
+    fn module(env: &Env, path: &str) -> Option<String> {
+        let mut dir = parent_dir(path);
+        loop {
+            if JVM_BUILD_FILES
+                .iter()
+                .any(|name| env.files.contains(&join_path(dir, name)))
+            {
+                return Some(dir.to_string());
+            }
+            if dir.is_empty() {
+                return None;
+            }
+            dir = parent_dir(dir);
+        }
+    }
+
+    fn is_gradle(env: &Env, module: &str) -> bool {
+        ["build.gradle", "build.gradle.kts"]
+            .iter()
+            .any(|name| env.files.contains(&join_path(module, name)))
+    }
+
+    /// The classes a run is told to filter on: the type that stands
+    /// outermost above each test, in the language's own name
+    /// (`com.acme.AppTest`), with `*` after it when a nested class holds
+    /// tests, which a filter on the outer class alone would miss.
+    fn classes(env: &Env, path: &str) -> Vec<String> {
+        let symbols = env.symbols_of(path);
+        let mut out: Vec<String> = Vec::new();
+        for test in symbols.iter().filter(|s| is_jvm_test(s)) {
+            let owner = if test.kind == SymbolKind::Class {
+                Some(test)
+            } else {
+                symbols
+                    .iter()
+                    .find(|s| Some(s.qualified.as_str()) == test.parent.as_deref())
+            };
+            let Some(mut current) = owner else {
+                continue;
+            };
+            let mut nested = false;
+            while let Some(parent) = symbols.iter().find(|s| {
+                Some(s.qualified.as_str()) == current.parent.as_deref() && s.kind.is_type()
+            }) {
+                current = parent;
+                nested = true;
+            }
+            let name = format!(
+                "{}{}",
+                current.qualified.replace("::", "."),
+                if nested { "*" } else { "" }
+            );
+            if !out.contains(&name) {
+                out.push(name);
+            }
+        }
+        // `Outer*` already runs `Outer`.
+        let starred: Vec<String> = out
+            .iter()
+            .filter_map(|c| c.strip_suffix('*').map(str::to_string))
+            .collect();
+        out.retain(|c| !starred.contains(c));
+        out
+    }
+
+    /// The Gradle command that runs `classes` of the module at `module`.
+    fn gradle(env: &Env, module: &str, path: &str, classes: &[String]) -> String {
+        // The folder of `settings.gradle(.kts)`, nearest above the module,
+        // is the root of the build; a project path is the module's folder
+        // below it, with `:` for `/`. A `projectDir` set in the settings is
+        // not read.
+        let mut root = module;
+        let root = loop {
+            if ["settings.gradle", "settings.gradle.kts"]
+                .iter()
+                .any(|name| env.files.contains(&join_path(root, name)))
+            {
+                break root;
+            }
+            if root.is_empty() {
+                break module;
+            }
+            root = parent_dir(root);
+        };
+        let below = module
+            .strip_prefix(root)
+            .unwrap_or("")
+            .trim_start_matches('/');
+        let quoted = |p: &str| {
+            if p.contains(' ') {
+                format!("\"{p}\"")
+            } else {
+                p.to_string()
+            }
+        };
+        let tool = if env.files.contains(&join_path(root, "gradlew")) {
+            if root.is_empty() {
+                "./gradlew".to_string()
+            } else {
+                format!("./{}/gradlew -p {}", quoted(root), quoted(root))
+            }
+        } else if root.is_empty() {
+            "gradle".to_string()
+        } else {
+            format!("gradle -p {}", quoted(root))
+        };
+        // The task of the source set the file stands in. Kotlin
+        // Multiplatform names a set after its target (`jvmTest`) and runs
+        // the shared tests (`commonTest`) through `allTests`, which takes no
+        // filter.
+        let set = path
+            .strip_prefix(&join_path(module, "src/"))
+            .and_then(|rest| rest.split('/').next());
+        let (task, filterable) = match set {
+            Some("commonTest") => ("allTests", false),
+            Some(set) if set != "test" && set.ends_with("Test") => (set, true),
+            _ => ("test", true),
+        };
+        let project = if below.is_empty() {
+            String::new()
+        } else {
+            format!(":{}:", below.replace('/', ":"))
+        };
+        let mut command = format!("{tool} {project}{task}");
+        if filterable && !classes.is_empty() && classes.len() <= MAX_JVM_CLASSES {
+            for class in classes {
+                command.push_str(&format!(" --tests \"{class}\""));
+            }
+        }
+        command
+    }
+
+    /// The Maven command that runs `classes` of the module at `module`. A
+    /// module below an aggregator `pom.xml` (one with `<modules>`) is picked
+    /// with `-pl` from the aggregator's folder; a module of a build with no
+    /// aggregator is the whole build and needs none.
+    fn maven(env: &Env, module: &str, classes: &[String]) -> String {
+        let mut reactor: Option<&str> = None;
+        let mut dir = module;
+        while !dir.is_empty() {
+            dir = parent_dir(dir);
+            let pom = join_path(dir, "pom.xml");
+            if env.files.contains(&pom) && env.read(&pom).is_some_and(|t| t.contains("<modules>")) {
+                reactor = Some(dir);
+            }
+        }
+        let quoted = |p: &str| {
+            if p.contains(' ') {
+                format!("\"{p}\"")
+            } else {
+                p.to_string()
+            }
+        };
+        let mut command = match reactor {
+            Some(root) => {
+                let below = module
+                    .strip_prefix(root)
+                    .unwrap_or(module)
+                    .trim_start_matches('/');
+                let from = if root.is_empty() {
+                    String::new()
+                } else {
+                    format!(" -f {}", quoted(&join_path(root, "pom.xml")))
+                };
+                format!("mvn{from} -pl {} test", quoted(below))
+            }
+            None if module.is_empty() => "mvn test".to_string(),
+            None => format!("mvn -f {} test", quoted(&join_path(module, "pom.xml"))),
+        };
+        if !classes.is_empty() && classes.len() <= MAX_JVM_CLASSES {
+            let names: Vec<String> = classes
+                .iter()
+                .map(|c| {
+                    let simple = c.rsplit('.').next().unwrap_or(c);
+                    simple.to_string()
+                })
+                .collect();
+            command.push_str(&format!(" -Dtest={}", names.join(",")));
+        }
+        command
+    }
+}
+
+/// The parts of a command [`JvmTests::command`] wrote: what runs the module,
+/// and the classes it is filtered to (`None` for the whole module).
+fn split_jvm_command(command: &str) -> (String, Option<Vec<String>>, bool) {
+    if let Some(at) = command.find(" --tests \"") {
+        let classes = command[at..]
+            .split(" --tests \"")
+            .skip(1)
+            .map(|c| c.trim_end_matches('"').to_string())
+            .collect();
+        return (command[..at].to_string(), Some(classes), true);
+    }
+    if let Some(at) = command.find(" -Dtest=") {
+        let classes = command[at + " -Dtest=".len()..]
+            .split(',')
+            .map(str::to_string)
+            .collect();
+        return (command[..at].to_string(), Some(classes), false);
+    }
+    (command.to_string(), None, true)
+}
+
+impl TestLanguage for JvmTests {
+    fn language(&self) -> Language {
+        Language::Java
+    }
+
+    fn covers(&self, language: Language) -> bool {
+        matches!(language, Language::Java | Language::Kotlin)
+    }
+
+    fn is_test_file(&self, _: &Env, path: &str) -> bool {
+        is_jvm_test_file(path)
+    }
+
+    fn tests(&self, env: &Env, path: &str, _: &str) -> Vec<TestCase> {
+        env.symbols_of(path)
+            .iter()
+            .filter(|s| is_jvm_test(s))
+            .map(|s| TestCase {
+                name: if s.kind == SymbolKind::Class {
+                    s.name.clone()
+                } else {
+                    format!(
+                        "{}.{}",
+                        s.parent
+                            .as_deref()
+                            .and_then(|p| p.rsplit("::").next())
+                            .unwrap_or(""),
+                        s.name
+                    )
+                },
+                line: s.start_line,
+            })
+            .collect()
+    }
+
+    /// Gradle: `./gradlew :<project>:test --tests "<package.Class>"`, the
+    /// option once for each class. Maven: `mvn -pl <module> test
+    /// -Dtest=<Class>,<Class>`. The build tool is the one the file's module
+    /// has a build file for, Gradle first; past [`MAX_JVM_CLASSES`] classes
+    /// the module runs whole.
+    fn command(&self, env: &Env, path: &str, _: TestKind, _: &[TestCase]) -> String {
+        let Some(module) = Self::module(env, path) else {
+            return String::new();
+        };
+        let classes = Self::classes(env, path);
+        if Self::is_gradle(env, &module) {
+            Self::gradle(env, &module, path, &classes)
+        } else {
+            Self::maven(env, &module, &classes)
+        }
+    }
+
+    /// One run for each module and task, over every class of its impacted
+    /// files; a file whose command names no class, and more than
+    /// [`MAX_JVM_CLASSES`] classes, make the run the whole module.
+    fn commands(&self, files: &[&ImpactedTestFile]) -> Vec<String> {
+        // Module command -> its classes (`None` for all of them), and
+        // whether the filter is Gradle's.
+        let mut runs: Vec<(String, Option<Vec<String>>, bool)> = Vec::new();
+        for file in files.iter().filter(|f| !f.command.is_empty()) {
+            let (base, filter, gradle) = split_jvm_command(&file.command);
+            match runs.iter_mut().find(|(known, _, _)| *known == base) {
+                Some((_, known, _)) => {
+                    *known = match (known.take(), filter) {
+                        (Some(mut have), Some(more)) => {
+                            for class in more {
+                                if !have.contains(&class) {
+                                    have.push(class);
+                                }
+                            }
+                            Some(have)
+                        }
+                        _ => None,
+                    };
+                }
+                None => runs.push((base, filter, gradle)),
+            }
+        }
+        runs.into_iter()
+            .map(|(base, filter, gradle)| match filter {
+                Some(classes) if classes.len() <= MAX_JVM_CLASSES => {
+                    if gradle {
+                        let tests: String = classes
+                            .iter()
+                            .map(|c| format!(" --tests \"{c}\""))
+                            .collect();
+                        format!("{base}{tests}")
+                    } else {
+                        format!("{base} -Dtest={}", classes.join(","))
+                    }
+                }
+                _ => base,
+            })
+            .collect()
+    }
+}
+
 /// A Go test file builds with every file of its package, without importing
 /// it: the tests of `package store` and of `package store_test` in one folder
 /// both run for a change to any non-test file of that folder. Each such file
@@ -654,6 +1019,7 @@ fn gather(root: &Path, index: &Index) -> Result<Facts> {
         projects,
         test_projects,
         go_modules,
+        files: files.iter().cloned().collect(),
     };
     let mut test_files = Vec::new();
     let mut sources = Vec::new();
@@ -841,7 +1207,7 @@ pub fn impacted_tests(root: &Path, index: &Index, changed: &[String]) -> Result<
     for language in LANGUAGES {
         let own: Vec<&ImpactedTestFile> = test_files
             .iter()
-            .filter(|f| Language::from_path(&f.path) == language.language())
+            .filter(|f| language.covers(Language::from_path(&f.path)))
             .collect();
         commands.extend(language.commands(&own));
     }

@@ -15,6 +15,7 @@ pub enum Language {
     Java,
     CSharp,
     Go,
+    Kotlin,
     Markdown,
     Toml,
     Json,
@@ -34,6 +35,10 @@ impl Language {
             "java" => Self::Java,
             "cs" => Self::CSharp,
             "go" => Self::Go,
+            "kt" => Self::Kotlin,
+            // A Gradle build script is a build file, not source: it is
+            // `Other`, as the Maven `pom.xml` is.
+            "kts" if !path.to_ascii_lowercase().ends_with(".gradle.kts") => Self::Kotlin,
             "md" | "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -51,6 +56,7 @@ impl Language {
             Self::Java => "java",
             Self::CSharp => "csharp",
             Self::Go => "go",
+            Self::Kotlin => "kotlin",
             Self::Markdown => "markdown",
             Self::Toml => "toml",
             Self::Json => "json",
@@ -68,6 +74,7 @@ impl Language {
             "java" => Self::Java,
             "csharp" => Self::CSharp,
             "go" => Self::Go,
+            "kotlin" => Self::Kotlin,
             "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -87,6 +94,7 @@ impl Language {
                 | Self::Java
                 | Self::CSharp
                 | Self::Go
+                | Self::Kotlin
         )
     }
 
@@ -110,7 +118,6 @@ impl Language {
         let file = path.rsplit('/').next().unwrap_or(path);
         let (_, ext) = file.rsplit_once('.')?;
         Some(match ext.to_ascii_lowercase().as_str() {
-            "kt" | "kts" => "Kotlin",
             "c" | "h" => "C",
             "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "ipp" | "inl" => "C++",
             "m" | "mm" => "Objective-C",
@@ -179,10 +186,12 @@ pub enum SymbolKind {
     Static,
     TypeAlias,
     Macro,
-    /// A class in Python, TypeScript, Java or C#; also a Java record and a C#
-    /// record (a C# record struct is a [`SymbolKind::Struct`]). Go has none.
+    /// A class in Python, TypeScript, Java, C# or Kotlin; also a Java record,
+    /// a C# record (a C# record struct is a [`SymbolKind::Struct`]) and a
+    /// Kotlin `object`. Go has none.
     Class,
-    /// An interface in TypeScript, Java, C# or Go; also a Java annotation type.
+    /// An interface in TypeScript, Java, C#, Go or Kotlin; also a Java
+    /// annotation type and a Kotlin annotation class.
     Interface,
 }
 
@@ -403,6 +412,19 @@ mod tests {
         assert_eq!(Language::parse(Language::Go.as_str()), Language::Go);
         assert!(Language::Go.has_symbol_support());
         assert!(Language::JavaScript.has_symbol_support());
+        assert_eq!(Language::from_path("src/App/Main.KT"), Language::Kotlin);
+        assert_eq!(Language::from_path("tools/gen.kts"), Language::Kotlin);
+        assert_eq!(Language::parse(Language::Kotlin.as_str()), Language::Kotlin);
+        assert!(Language::Kotlin.has_symbol_support());
+        // A Gradle script is a build file, not Kotlin source.
+        for build in [
+            "build.gradle.kts",
+            "app/settings.gradle.kts",
+            "a/x.gradle.kts",
+        ] {
+            assert_eq!(Language::from_path(build), Language::Other, "{build}");
+            assert_eq!(Language::file_level_name(build), None, "{build}");
+        }
     }
 
     #[test]
@@ -410,7 +432,6 @@ mod tests {
         for (path, name) in [
             ("app.swift", "Swift"),
             ("lib/tool.rb", "Ruby"),
-            ("a/B.KT", "Kotlin"),
             ("lib/x.c", "C"),
             ("include/x.h", "C"),
             ("include/x.hpp", "C++"),
@@ -436,6 +457,8 @@ mod tests {
             "a.py",
             "web/App.tsx",
             "A.java",
+            "src/app/Main.kt",
+            "tools/gen.kts",
             "src/App/Program.cs",
             "ui/Main.axaml.cs",
             "cmd/app/main.go",

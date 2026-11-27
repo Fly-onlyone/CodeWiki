@@ -1580,6 +1580,159 @@ fn a_java_module_gets_a_full_vault() {
     assert!(ops.contains("- `pom.xml` — Maven build") && ops.contains("mvn package"));
 }
 
+#[test]
+fn a_kotlin_module_gets_a_full_vault() {
+    let kt = "src/main/kotlin/com/acme";
+    let (_dir, root) = named_repo(
+        "billing",
+        &[
+            ("settings.gradle.kts", "rootProject.name = \"billing\"\n"),
+            (
+                "build.gradle.kts",
+                "plugins { kotlin(\"jvm\") }\n\ndependencies {\n    implementation(\"org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3\")\n    implementation(libs.slf4j.api)\n}\n",
+            ),
+            (
+                "gradle/libs.versions.toml",
+                "[libraries]\nslf4j-api = \"org.slf4j:slf4j-api:2.0.9\"\n",
+            ),
+            ("gradlew", "#!/bin/sh\n"),
+            (
+                &format!("{kt}/text/Named.kt"),
+                "package com.acme.text\n\n/** Anything with a display name. */\ninterface Named {\n    fun name(): String\n}\n",
+            ),
+            (
+                &format!("{kt}/text/Label.kt"),
+                "package com.acme.text\n\nimport kotlinx.coroutines.launch\nimport org.slf4j.Logger\n\n/** A printable label. */\nclass Label(private val text: String) : Named {\n    override fun name(): String = text\n\n    fun upper(): String = text.uppercase()\n}\n\nfun shout(label: Label): String = label.upper()\n",
+            ),
+            (
+                &format!("{kt}/text/Title.kt"),
+                "package com.acme.text\n\nimport org.slf4j.Logger\n\nclass Title : Named {\n    override fun name() = \"title\"\n}\n",
+            ),
+            (
+                &format!("{kt}/app/Main.kt"),
+                "package com.acme.app\n\nimport com.acme.text.Label\nimport com.acme.text.Title\nimport com.acme.text.shout\nimport kotlinx.coroutines.launch\n\nfun main() {\n    val label = Label(\"x\")\n    println(shout(label) + Title().name())\n}\n",
+            ),
+        ],
+    );
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/billing/billing.md",
+            "01-Core/billing/Text Module.md",
+            "01-Core/billing/Named.md",
+            "03-Integrations/org.slf4j.md",
+            "03-Integrations/kotlinx.coroutines.md",
+            "04-Patterns/Implementing Named Pattern.md",
+            "05-Operations/Build and Test.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("**billing** is a Kotlin codebase of 1 module and 8 source files."),
+        "{home}"
+    );
+    assert!(
+        home.contains("— Kotlin module `billing` with 2 modules."),
+        "{home}"
+    );
+    let unit = read(&vault, "01-Core/billing/billing.md");
+    assert!(unit.contains("Runs from `Main.kt`."), "{unit}");
+    assert!(
+        unit.contains("- `build.gradle.kts` — Gradle build"),
+        "{unit}"
+    );
+    // A library named by its alias in the version catalog, and one named in
+    // the string a Kotlin build writes; `kotlinx` is a library, not the platform.
+    let slf4j = read(&vault, "03-Integrations/org.slf4j.md");
+    assert!(
+        slf4j.contains("- `build.gradle.kts` — declares the dependency: version `2.0.9`"),
+        "{slf4j}"
+    );
+    let coroutines = read(&vault, "03-Integrations/kotlinx.coroutines.md");
+    assert!(
+        coroutines.contains("- `build.gradle.kts` — declares the dependency: version `1.7.3`"),
+        "{coroutines}"
+    );
+    let pattern = read(&vault, "04-Patterns/Implementing Named Pattern.md");
+    assert!(
+        pattern.contains("```kotlin\nclass NewType : Named {\n    override fun name(): String {"),
+        "{pattern}"
+    );
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains("- `build.gradle.kts` — Gradle build")
+            && ops.contains("```sh\n./gradlew build\n```"),
+        "{ops}"
+    );
+}
+
+#[test]
+fn a_module_of_java_and_kotlin_is_one_unit() {
+    let (_dir, root) = named_repo(
+        "shop",
+        &[
+            ("build.gradle.kts", "plugins { kotlin(\"jvm\") }\n"),
+            (
+                "src/main/java/com/acme/store/Item.java",
+                "package com.acme.store;\n\n/** A thing for sale. */\npublic class Item {\n    public int price() {\n        return Tax.rate();\n    }\n}\n",
+            ),
+            (
+                "src/main/kotlin/com/acme/store/Tax.kt",
+                "package com.acme.store\n\n/** The tax. */\nobject Tax {\n    fun rate(): Int = 3\n}\n",
+            ),
+            (
+                "src/main/kotlin/com/acme/store/Cart.kt",
+                "package com.acme.store\n\n/** What a customer holds. */\nclass Cart {\n    fun total(item: Item): Int = item.price() + Tax.rate()\n}\n",
+            ),
+            (
+                "src/main/kotlin/com/acme/app/Main.kt",
+                "package com.acme.app\n\nimport com.acme.store.Cart\nimport com.acme.store.Item\n\nfun main() {\n    println(Cart().total(Item()))\n}\n",
+            ),
+            (
+                "src/test/kotlin/com/acme/store/CartTest.kt",
+                "package com.acme.store\n\nimport org.junit.jupiter.api.Test\n\nclass CartTest {\n    @Test\n    fun totals() {\n        Cart().total(Item())\n    }\n}\n",
+            ),
+        ],
+    );
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/shop/shop.md",
+            "01-Core/shop/Store Module.md",
+            "01-Core/shop/Tax.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("**shop** is a Kotlin codebase of 1 module and 6 source files."),
+        "{home}"
+    );
+    let unit = read(&vault, "01-Core/shop/shop.md");
+    assert!(
+        unit.contains("> Kotlin and Java module `shop` with 2 modules."),
+        "{unit}"
+    );
+    // One package, one note, whichever language wrote its types.
+    let store = read(&vault, "01-Core/shop/Store Module.md");
+    for line in [
+        "- `public class Item` — A thing for sale.",
+        "- `class Cart` — what a customer holds.",
+        "- [[Tax]] — the tax.",
+        "1. `Item.price` calls `Tax.rate` in [[Tax]].",
+        "2. `Cart.total` calls `Tax.rate` in [[Tax]].",
+    ] {
+        assert!(store.contains(line), "{line}\n{store}");
+    }
+    // The test file is test code: no note of its own.
+    assert!(!vault.join("01-Core/shop/CartTest.md").exists());
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(ops.contains("```sh\ngradle build\n```"), "{ops}");
+}
+
 /// A repository whose code says enough for a note to explain it: a module
 /// comment of several parts, calls in a known order, items with and without
 /// a comment, and a package from outside.

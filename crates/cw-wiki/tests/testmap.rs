@@ -564,3 +564,335 @@ fn lists_the_go_tests_a_change_can_break() {
     assert!(impact.test_files.is_empty() && impact.commands.is_empty());
     assert_eq!(impact.untested_changes, ["lonely/lonely.go"]);
 }
+
+/// A Gradle build of three modules with Kotlin and Java side by side, a
+/// Kotlin Multiplatform module, a module under a nested build, one with too
+/// many test classes, and two Maven builds.
+fn jvm_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(
+        r,
+        "settings.gradle.kts",
+        "include(\"core\", \"app\", \"kmp\", \"wide\")\n",
+    );
+    write(r, "gradlew", "#!/bin/sh\n");
+    write(r, "core/build.gradle.kts", "plugins { kotlin(\"jvm\") }\n");
+    write(
+        r,
+        "core/src/main/java/com/acme/core/Money.java",
+        "package com.acme.core;\n\npublic class Money {\n    public int cents() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "core/src/main/kotlin/com/acme/core/Prices.kt",
+        "package com.acme.core\n\nfun total(m: Money): Int = m.cents() * 2\n",
+    );
+    write(
+        r,
+        "core/src/main/kotlin/com/acme/core/Cart.kt",
+        "package com.acme.core\n\nclass Cart {\n    fun count(): Int = 0\n}\n",
+    );
+    write(
+        r,
+        "core/src/test/kotlin/com/acme/core/PricesTest.kt",
+        "package com.acme.core\n\nimport org.junit.jupiter.api.Test\nimport org.junit.jupiter.params.ParameterizedTest\n\nclass PricesTest {\n    @Test\n    fun `totals a price`() {\n        total(Money())\n    }\n\n    @ParameterizedTest\n    fun totalsMany() {\n        total(Money())\n    }\n\n    fun helper() {}\n\n    @org.junit.jupiter.api.Nested\n    inner class Inner {\n        @Test\n        fun nested() {\n            total(Money())\n        }\n    }\n}\n",
+    );
+    write(
+        r,
+        "core/src/test/java/com/acme/core/MoneyTest.java",
+        "package com.acme.core;\n\nimport org.junit.jupiter.api.RepeatedTest;\nimport org.junit.jupiter.api.Test;\n\nclass MoneyTest {\n    @Test\n    void cents() {\n        new Money().cents();\n    }\n\n    @RepeatedTest(3)\n    void repeated() {\n        new Money().cents();\n    }\n}\n",
+    );
+    write(
+        r,
+        "core/src/test/kotlin/com/acme/core/CartSpec.kt",
+        "package com.acme.core\n\nimport io.kotest.core.spec.style.StringSpec\n\nclass CartSpec : StringSpec({\n    \"counts\" { Cart().count() }\n})\n",
+    );
+    write(r, "app/build.gradle.kts", "plugins { kotlin(\"jvm\") }\n");
+    write(
+        r,
+        "app/src/main/kotlin/com/acme/app/App.kt",
+        "package com.acme.app\n\nimport com.acme.core.Cart\n\nfun run(): Int = Cart().count()\n",
+    );
+    write(
+        r,
+        "app/src/test/kotlin/com/acme/app/AppTest.kt",
+        "package com.acme.app\n\nimport kotlin.test.Test\n\nclass AppTest {\n    @Test\n    fun runs() { run() }\n}\n",
+    );
+    write(
+        r,
+        "kmp/build.gradle.kts",
+        "plugins { kotlin(\"multiplatform\") }\n",
+    );
+    write(
+        r,
+        "kmp/src/commonMain/kotlin/com/acme/kmp/Shared.kt",
+        "package com.acme.kmp\n\nfun shared(): Int = 1\n\nfun jvmOnly(): Int = 2\n",
+    );
+    write(
+        r,
+        "kmp/src/commonTest/kotlin/com/acme/kmp/SharedTest.kt",
+        "package com.acme.kmp\n\nimport kotlin.test.Test\n\nclass SharedTest {\n    @Test\n    fun works() { shared() }\n}\n",
+    );
+    write(
+        r,
+        "kmp/src/jvmTest/kotlin/com/acme/kmp/JvmOnlyTest.kt",
+        "package com.acme.kmp\n\nimport kotlin.test.Test\n\nclass JvmOnlyTest {\n    @Test\n    fun only() { jvmOnly() }\n}\n",
+    );
+    write(r, "wide/build.gradle", "plugins { id 'java' }\n");
+    write(
+        r,
+        "wide/src/main/java/com/acme/wide/Wide.java",
+        "package com.acme.wide;\n\npublic class Wide {\n    public static int wide() { return 1; }\n}\n",
+    );
+    for n in 0..9 {
+        write(
+            r,
+            &format!("wide/src/test/java/com/acme/wide/Wide{n}Test.java"),
+            &format!(
+                "package com.acme.wide;\n\nimport org.junit.Test;\n\npublic class Wide{n}Test {{\n    @Test\n    public void wide() {{ Wide.wide(); }}\n}}\n"
+            ),
+        );
+    }
+    // A nested Gradle build without a wrapper.
+    write(r, "plain/settings.gradle", "include 'lib'\n");
+    write(r, "plain/lib/build.gradle", "plugins { id 'java' }\n");
+    write(
+        r,
+        "plain/lib/src/main/java/com/acme/plain/Plain.java",
+        "package com.acme.plain;\n\npublic class Plain {\n    public static int plain() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "plain/lib/src/test/java/com/acme/plain/PlainTest.java",
+        "package com.acme.plain;\n\nimport org.junit.Test;\n\npublic class PlainTest {\n    @Test\n    public void plain() { Plain.plain(); }\n}\n",
+    );
+    // A Maven build of one module.
+    write(
+        r,
+        "single/pom.xml",
+        "<project><artifactId>single</artifactId></project>\n",
+    );
+    write(
+        r,
+        "single/src/main/java/com/acme/single/Calc.java",
+        "package com.acme.single;\n\npublic class Calc {\n    public static int add() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "single/src/test/java/com/acme/single/CalcTest.java",
+        "package com.acme.single;\n\nimport org.junit.Test;\n\npublic class CalcTest {\n    @Test\n    public void adds() { Calc.add(); }\n}\n",
+    );
+    // A Maven reactor, and a module of it.
+    write(
+        r,
+        "reactor/pom.xml",
+        "<project><modules><module>svc</module></modules></project>\n",
+    );
+    write(
+        r,
+        "reactor/svc/pom.xml",
+        "<project><artifactId>svc</artifactId></project>\n",
+    );
+    write(
+        r,
+        "reactor/svc/src/main/java/com/acme/svc/Svc.java",
+        "package com.acme.svc;\n\npublic class Svc {\n    public static int svc() { return 1; }\n}\n",
+    );
+    write(
+        r,
+        "reactor/svc/src/test/java/com/acme/svc/SvcTest.java",
+        "package com.acme.svc;\n\nimport org.junit.jupiter.api.Test;\n\nclass SvcTest {\n    @Test\n    void svc() { Svc.svc(); }\n\n    @Test\n    void again() { Svc.svc(); }\n}\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_jvm_tests_and_the_command_that_runs_them() {
+    let (dir, index) = jvm_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    let found = |path: &str| {
+        let file = map
+            .test_files
+            .iter()
+            .find(|t| t.path == path)
+            .unwrap_or_else(|| panic!("no tests in {path}"));
+        assert_eq!(file.kind, TestKind::Integration, "{path}");
+        (
+            file.tests
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            file.command.as_str(),
+        )
+    };
+    // Methods with a test annotation of any framework, in either language,
+    // and a spec class; a helper is no test.
+    assert_eq!(
+        found("core/src/test/kotlin/com/acme/core/PricesTest.kt"),
+        (
+            vec![
+                "PricesTest.totals_a_price",
+                "PricesTest.totalsMany",
+                "Inner.nested"
+            ],
+            // The nested class has tests too, which `PricesTest` alone misses.
+            "./gradlew :core:test --tests \"com.acme.core.PricesTest*\""
+        )
+    );
+    assert_eq!(
+        found("core/src/test/java/com/acme/core/MoneyTest.java"),
+        (
+            vec!["MoneyTest.cents", "MoneyTest.repeated"],
+            "./gradlew :core:test --tests \"com.acme.core.MoneyTest\""
+        )
+    );
+    assert_eq!(
+        found("core/src/test/kotlin/com/acme/core/CartSpec.kt"),
+        (
+            vec!["CartSpec"],
+            "./gradlew :core:test --tests \"com.acme.core.CartSpec\""
+        )
+    );
+    assert_eq!(
+        found("app/src/test/kotlin/com/acme/app/AppTest.kt"),
+        (
+            vec!["AppTest.runs"],
+            "./gradlew :app:test --tests \"com.acme.app.AppTest\""
+        )
+    );
+    // A Kotlin Multiplatform source set names its task; the shared tests run
+    // through `allTests`, which takes no filter.
+    assert_eq!(
+        found("kmp/src/commonTest/kotlin/com/acme/kmp/SharedTest.kt").1,
+        "./gradlew :kmp:allTests"
+    );
+    assert_eq!(
+        found("kmp/src/jvmTest/kotlin/com/acme/kmp/JvmOnlyTest.kt").1,
+        "./gradlew :kmp:jvmTest --tests \"com.acme.kmp.JvmOnlyTest\""
+    );
+    // A nested build is run from its own folder, with `gradle` when it has no
+    // wrapper; Maven is told the module with `-pl` below an aggregator, and
+    // by `-f` when the build has no other module.
+    assert_eq!(
+        found("plain/lib/src/test/java/com/acme/plain/PlainTest.java").1,
+        "gradle -p plain :lib:test --tests \"com.acme.plain.PlainTest\""
+    );
+    assert_eq!(
+        found("single/src/test/java/com/acme/single/CalcTest.java").1,
+        "mvn -f single/pom.xml test -Dtest=CalcTest"
+    );
+    assert_eq!(
+        found("reactor/svc/src/test/java/com/acme/svc/SvcTest.java").1,
+        "mvn -f reactor/pom.xml -pl svc test -Dtest=SvcTest"
+    );
+    // Nine test files of Kotlin and Java, and nine more of the wide module.
+    assert_eq!(map.test_files.len(), 18);
+    assert_eq!(map.tests_total, 22);
+    assert!(map.untested.is_empty(), "{:?}", map.untested);
+}
+
+#[test]
+fn lists_the_jvm_tests_a_change_can_break() {
+    let (dir, index) = jvm_fixture();
+    let commands = |changed: &[&str]| {
+        let changed: Vec<String> = changed.iter().map(|c| c.to_string()).collect();
+        testmap::impacted_tests(dir.path(), &index, &changed).unwrap()
+    };
+
+    // A Kotlin file reaches its Kotlin test, a Java file reaches the tests of
+    // both languages; one command runs a module's tests.
+    let kotlin = commands(&["core/src/main/kotlin/com/acme/core/Prices.kt"]);
+    assert_eq!(
+        kotlin
+            .test_files
+            .iter()
+            .map(|t| (t.path.as_str(), t.distance))
+            .collect::<Vec<_>>(),
+        [("core/src/test/kotlin/com/acme/core/PricesTest.kt", 1)]
+    );
+    assert_eq!(
+        kotlin.commands,
+        ["./gradlew :core:test --tests \"com.acme.core.PricesTest*\""]
+    );
+    let java = commands(&["core/src/main/java/com/acme/core/Money.java"]);
+    assert_eq!(
+        java.test_files
+            .iter()
+            .map(|t| t.path.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "core/src/test/java/com/acme/core/MoneyTest.java",
+            "core/src/test/kotlin/com/acme/core/PricesTest.kt"
+        ]
+    );
+    assert_eq!(
+        java.commands,
+        [
+            "./gradlew :core:test --tests \"com.acme.core.MoneyTest\" --tests \"com.acme.core.PricesTest*\""
+        ]
+    );
+    // Two changes of one module are one run; modules are separate runs.
+    let both = commands(&[
+        "core/src/main/kotlin/com/acme/core/Prices.kt",
+        "core/src/main/java/com/acme/core/Money.java",
+        "core/src/main/kotlin/com/acme/core/Cart.kt",
+    ]);
+    assert_eq!(
+        both.commands,
+        [
+            "./gradlew :core:test --tests \"com.acme.core.MoneyTest\" --tests \"com.acme.core.CartSpec\" --tests \"com.acme.core.PricesTest*\"",
+            "./gradlew :app:test --tests \"com.acme.app.AppTest\"",
+        ]
+    );
+    // A test in another module reaches the code it imports.
+    let cart = commands(&["core/src/main/kotlin/com/acme/core/Cart.kt"]);
+    assert_eq!(
+        cart.test_files
+            .iter()
+            .map(|t| (t.path.as_str(), t.distance))
+            .collect::<Vec<_>>(),
+        [
+            ("core/src/test/kotlin/com/acme/core/CartSpec.kt", 1),
+            ("app/src/test/kotlin/com/acme/app/AppTest.kt", 2),
+        ]
+    );
+
+    // More than eight test classes in a module: the module runs whole.
+    let wide = commands(&["wide/src/main/java/com/acme/wide/Wide.java"]);
+    assert_eq!(wide.test_files.len(), 9);
+    assert_eq!(wide.commands, ["./gradlew :wide:test"]);
+
+    // Kotlin Multiplatform: each source set has its task.
+    let kmp = commands(&["kmp/src/commonMain/kotlin/com/acme/kmp/Shared.kt"]);
+    assert_eq!(
+        kmp.commands,
+        [
+            "./gradlew :kmp:allTests",
+            "./gradlew :kmp:jvmTest --tests \"com.acme.kmp.JvmOnlyTest\"",
+        ]
+    );
+
+    // Maven names the classes, one run for the module.
+    let maven = commands(&["reactor/svc/src/main/java/com/acme/svc/Svc.java"]);
+    assert_eq!(maven.tests_total, 2);
+    assert_eq!(
+        maven.commands,
+        ["mvn -f reactor/pom.xml -pl svc test -Dtest=SvcTest"]
+    );
+    let single = commands(&[
+        "single/src/main/java/com/acme/single/Calc.java",
+        "plain/lib/src/main/java/com/acme/plain/Plain.java",
+    ]);
+    assert_eq!(
+        single.commands,
+        [
+            "gradle -p plain :lib:test --tests \"com.acme.plain.PlainTest\"",
+            "mvn -f single/pom.xml test -Dtest=CalcTest",
+        ]
+    );
+    assert!(single.untested_changes.is_empty());
+}

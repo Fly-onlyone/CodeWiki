@@ -9,13 +9,13 @@ use std::path::Path;
 
 use cw_core::{EdgeKind, Result, Symbol, SymbolKind, VAULT_DIR, Visibility};
 use cw_index::Index;
-use cw_parse::GENERATED_ATTR;
+use cw_parse::{EXTENSION_ATTR, GENERATED_ATTR, KOTEST_ATTR};
 use cw_vault::lifecycle::{self, NoteState};
 use cw_vault::{Gone, Note, VaultMeta};
 use serde::{Deserialize, Serialize};
 
 use crate::analyze::DEPENDENCY_KINDS;
-use crate::units::{is_csharp_test_attribute, is_test_file};
+use crate::units::{is_csharp_test_attribute, is_kotlin_entry, is_test_file};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -79,6 +79,21 @@ fn is_test_symbol(symbol: &Symbol) -> bool {
         || symbol.file.ends_with("build.rs")
         || (symbol.file.ends_with(".cs") && is_test_file(&symbol.file))
         || symbol.file.ends_with("_test.go")
+        // A Kotest spec is a test whatever it is called, and so is any
+        // Kotlin symbol of a test source set.
+        || symbol.attrs.iter().any(|a| a == KOTEST_ATTR)
+        || (symbol.file.ends_with(".kt") && is_test_file(&symbol.file))
+}
+
+/// A Kotlin member the language reaches by itself: one that overrides, which
+/// the supertype's callers reach, and an operator, which an expression calls.
+fn is_kotlin_dispatch(symbol: &Symbol) -> bool {
+    symbol.file.ends_with(".kt")
+        && symbol.kind == SymbolKind::Method
+        && symbol
+            .signature
+            .split_whitespace()
+            .any(|w| matches!(w, "override" | "operator"))
 }
 
 /// The functions the Go runtime calls: `main`, and each `init`.
@@ -166,6 +181,8 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
             || is_test_symbol(symbol)
             || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || is_csharp_main(symbol)
+            || is_kotlin_entry(symbol)
+            || is_kotlin_dispatch(symbol)
             || is_go_entry_point(symbol)
             // Generated code is nobody's to delete.
             || symbol.attrs.iter().any(|a| a == GENERATED_ATTR)
@@ -197,7 +214,7 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
                 if csharp {
                     !PASSIVE_CSHARP_ATTRS.contains(&a.as_str())
                 } else {
-                    !PASSIVE_ATTRS.contains(&a.as_str())
+                    !PASSIVE_ATTRS.contains(&a.as_str()) && a.as_str() != EXTENSION_ATTR
                 }
             })
             .collect();
@@ -211,7 +228,7 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
                 ),
             )
         } else if cw_core::Language::from_path(&symbol.file) != cw_core::Language::Rust {
-            // Python, TypeScript, JavaScript, Java, C# and Go reach code through
+            // Python, TypeScript, JavaScript, Java, Kotlin, C# and Go reach code through
             // reflection, decorators, frameworks and duck typing that a
             // static index cannot follow.
             (

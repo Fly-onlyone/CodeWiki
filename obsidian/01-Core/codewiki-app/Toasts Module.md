@@ -34,19 +34,19 @@ For notices that can repeat at every status poll, `Toasts::offer` limits Windows
 - `pub struct Notice` — one message for the user.
 - `pub struct Toast` — A notice on screen. `seq` tells it apart from an earlier one with the same key.
 - `pub enum Offer` — what becomes of a notice offered to Windows (`Toasts::offer`).
-- [[Toasts]] — the toasts on screen, the ones that are leaving, and the notices sent to Windows.
+- `pub struct Toasts` — the toasts on screen, the ones that are leaving, and the notices sent to Windows.
 - `pub fn system(notice: &Notice) -> SystemNotification` — the notice as a Windows notification.
 
 ## Depends on
 
+- [[Review Module]] — uses `retain`
 - [[Action]] — uses `Action`
 - [[Glyph]] — uses `Glyph`
 - [[Tone]] — uses `Tone`
 
 ## Used by
 
-- [[Toasts]] — from `Toasts`, `leave`, `leaving`, `live`
-- [[codewiki-app]] — from `after_hide`, `notify_user`, `probe_embed_models`, `show_system_notification`
+- [[codewiki-app]] — from `AppView`, `after_hide`, `dismiss_toast`, `handle_event`
 - [[Review Module]] — from `decided_notices`, `rise_notice`
 
 ## Gotchas

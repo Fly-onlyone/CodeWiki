@@ -19,15 +19,15 @@ All wiki data comes from the backend over HTTP through `cw-client`. The app link
 
 ## How it works
 
-`main` runs these steps before any window opens:
+`main` runs these steps before any window opens: it reads the log level and starts logging and, if the user allowed it, error reports (`cw_telemetry::init`). It makes the channel for events from outside GPUI. `instance::acquire` decides whether this launch is the main app; a second launch hands its request over and returns with no window. `win32::on_console_stop` sends `Event::Quit` on Ctrl+C. Inside the GPUI run come the module inits, the key bindings and the window with its `Shell`. The [[codewiki-app Startup Flow]] shows the order.
 
-1. It reads the log level from the prefs (`CODEWIKI_LOG` can name another for one run) and starts logging and, when the user turned them on, error reports with `cw_telemetry::init`.
-2. It makes a channel for events that come from outside GPUI: a second launch, the tray, a notification, Ctrl+C.
-3. `instance::acquire` decides whether this launch is the main app. A second launch hands its request over to the running one and returns at once with no window.
-4. `win32::on_console_stop` sends `Event::Quit` on Ctrl+C, so an IDE's Stop button quits like the tray does.
-5. Inside the GPUI run: `gpui_kit::init`, motion, backdrop, tab prefs, fonts, themes, then `zoom::init`. The key bindings are set, including the tab and zoom keys. The window opens with a Mica backdrop, and a `Shell` draws the backdrop, the app and the generated page.
+After that, `AppView` runs the app. `AppView::new` starts four jobs: `connect` reaches the backend, `start_updates` looks for new releases, `start_tray` puts the icon in the notification area, and `start_status_poll` asks the backend every 5 seconds what it does.
+
+The status poll feeds the tray, the backdrop and the toolbar. It also reads the waiting notes again when the backend's note revision changes, and it drives `supervise`, which tries to reach a lost backend again. While an update installs, nothing is asked, because the update stops the backend.
 
 `AppView::listen` is the one task that takes events from the channel. It hides or shows the window with the Win32 calls between two GPUI updates, then calls `handle_event`. Closing the window sends `Event::Hide` when a tray icon exists; without a tray, closing ends the app unless there are unsaved edits.
+
+`notify_user` shows a toast in the window's corner while the window is on screen. While it is hidden or minimized it sends a Windows notification, and the click comes back as `Event::Notification`.
 
 On quit, `on_app_quit` releases the single-instance lock, flushes error reports, and asks the backend to stop on a background task. That happens only when this app started it: `stops_backend_on_quit` is false for a backend named by `CODEWIKI_URL` and while an update installs.
 
@@ -99,23 +99,23 @@ Defined at the crate root:
 - `fn reach(attempt: connection::Attempt, register: bool) -> Result<Reached, String>` — reach a backend as `attempt` allows and list its repositories. With `register`, also register the folder the app was started on; failure there is not fatal, the user may have other repositories. Blocks; run it off the UI thread.
 - `fn load_notes(backend: &Backend, id: &str) -> Result<(Value, Value), String>` — the notes of repository `id` and its proposals. Blocks; run it off the UI thread.
 - `fn read_auto_explain() -> Option<cw_core::auto_explain::Count>` — how many notes auto explaining explains in a session, or `None` while it is off: `auto-explain.txt` and `auto-explain-count.txt` in the data directory, which the app reads itself, as it does the folders kept from agents.
+- `recent_menu_entries` — A theme as a row of a menu: its icon in a color of its own, its name, a sample of its four colors, and a mark on the one in use. The toolbar's theme menu and the theme select of the settings list themes with it, so that a theme looks the same in both. What the toolbar's Open recent menu lists: the registered repositories of `recent`, newest first, by id and label, without the open one `current`, and at most as many as the tray's Recent menu.
 - `enum ToolbarFit` — how much of the toolbar shows. Its buttons with labels need more room than a window about 1000 px wide leaves it, or one at 125% zoom: they ran past its right edge, and Sync, Review and To explain could not be reached.
 - `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
-- `fn search_hint(width: f32) -> &'static str` — the placeholder for a search field `width` design units wide (icon and padding included): the whole hint, a short one, or none, where the magnifier says it alone. Never a hint cut in the middle.
 - `fn main()` — private function.
 
-And 38 more items.
+And 41 more items.
 
 ## Depends on
 
 - [[Review Module]] — uses `Click`, `Item`, `State`, `Targets`
 - [[Live Module]] — uses `HomeInput`, `Kept`, `OPEN`, `Project`
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
+- [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
 - [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
 - [[Supervisor]] — uses `Supervisor`, `default`, `due`, `failed`
 - [[Glass Module]] — uses `FADE`, `Levels`, `OPAQUE`, `chrome`
-- [[List Module]] — uses `ListItemButton`, `Placed`, `ROW_START`, `leading`
 
 ## Used by
 

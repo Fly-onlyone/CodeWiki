@@ -63,7 +63,7 @@ And 6 more items.
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `click_review_row`, `decide_review`, `forget_written_notes`
-- [[Toasts]] — from `offer`, `push`, `sent`
+- [[Toasts Module]] — from `offer`, `push`, `sent`
 - [[Instance Module]] — from `listen`
 - [[Base Module]] — from `new`
 - [[Startup Module]] — from `touched`

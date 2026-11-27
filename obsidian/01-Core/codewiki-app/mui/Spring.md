@@ -18,7 +18,7 @@ A spring described the way Framer Motion does it: stiffness, damping and mass. T
 
 `new` and `mass` build a spring in const context. `response` is the time of one undamped swing, and `damping_ratio` says whether it overshoots (below 1 it does). `slowed` makes the same motion slower by a factor: stiffness divides by the factor squared and damping by the factor, so the damping ratio stays and only the speed changes.
 
-`config` applies the global motion scale through `slowed` and returns a GPUI `SpringConfig`. `animation` samples that config from rest at 0 to rest at 1 into an `Animation`, for entrances and for a figure that counts up (a stat tile uses `GENTLE.animation()`). `policy` makes a gpui-kit spring from the response time (scaled) and damping ratio, with an epsilon for when it counts as arrived. Controls use `policy` for springs that chase a changing target, such as a row's or a button's hover, the selected row's bar or the tab bar's place.
+`config` applies the global motion scale through `slowed` and returns a GPUI `SpringConfig`. `animation` samples that config from rest at 0 to rest at 1 into an `Animation`. Entrances (`Enter`, such as the menu's and the toast's) use it, and so does a figure that counts up: the doc view's stat tile runs `GENTLE.animation()`. `policy` makes a gpui-kit spring from the response time (scaled) and damping ratio, with an epsilon for when it counts as arrived. Controls use `policy` for springs that chase a changing target, such as a row's or a button's hover (`SNAPPY`), the selected row's bar (the knob's bouncy spring) or the tab bar's place.
 
 ## Items
 

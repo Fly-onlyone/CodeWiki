@@ -16,20 +16,23 @@ Most pages of the app are notes that the vault holds as Markdown files. Some thi
 
 ## How it works
 
-The app calls a page function after it has the backend's answer. `AppView::open_symbol` calls `symbol_page`. `run_search` calls `search_page`. `open_hotspots` calls `hotspots_page`. `open_file` calls `file_page`, which takes three answers: context, risk and radius. Home is built by `home_page` from a `HomeInput`, on every frame.
+The app calls a page function after it has the backend's answer. `AppView::open_symbol` calls `symbol_page`, `run_search` calls `search_page`, `open_hotspots` calls `hotspots_page`, and `open_file` calls `file_page` with three answers: context, risk and radius. Home is built by `home_page` from a `HomeInput`, on every frame.
 
-The functions read JSON with small helpers. `string` gives an empty text for a missing field, `list` gives an empty list for a missing array, and `number` shows a dash for null. Rows are made by `symbol_row`, `file_row` and `note_rows`, each with an `Action` that says what a click does.
+Small helpers read the JSON. `string` gives an empty text for a missing field, `list` an empty list for a missing array, and `number` a dash for null. Rows come from `symbol_row`, `file_row` and `note_rows`, each with an `Action`.
 
-Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, in that order, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a note's snippet so it reads as one plain line. The search suggestions in [[Suggest Module]] share this code with the search page.
+Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a snippet. The suggestions in [[Suggest Module]] share this code with the search page.
 
-`waiting_page` shows the notes that wait for a coding agent. Its top alert depends on the auto explain choice: all notes, up to a number of notes, or off. The alert has a button to the repositories settings. Rows say whether a note is behind the code or never explained, and whether an agent is writing it now. `waiting_count` gives the total for a badge.
+`home_page` puts the logo first. It adds an alert when a newer release waits, and another when the open repository has no wiki yet. The search block appears only when a registered project was opened in the app before, because the search finds only those. Then come the Open folder row, the projects newest first (`by_recency`), and the projects whose folder is missing, each with a Remove button. Each project row shows how agents are kept out (`Kept`).
 
-`kept_by` checks the file system to see how coding agents are kept out of a folder. It answers with `Kept`: open, kept by its own entry, kept by a parent folder's entry, or containing an entry.
+`recent_matches` feeds Home's search: projects whose name holds the query, then those whose folder matches it (`path_matches`), newest first, at most `RECENT_MATCHES`.
+
+`waiting_page` shows the notes that wait for a coding agent. Its top alert depends on the auto explain choice: all notes, a number of notes, or off. Rows say whether a note is behind the code or never explained, and whether an agent is writing it now.
+
+`kept_by` checks the file system and answers with `Kept`: open, kept by its own entry, kept by a parent folder's entry, or containing an entry.
 
 ## Items
 
 - `pub fn hit_groups(hits: &Value) -> Vec<(&'static str, Vec<HitTarget>)>` — the hits of `GET /search` that the app opens, under the heading of their kind, in the order of `HIT_GROUPS` and then of the backend's ranking. A kind with no hit has no group.
-- `pub struct HitTarget` — what a search hit opens, and how a list names it.
 - `pub fn hit_target(hit: &Value) -> Option<HitTarget>` — what `hit`, one result of `GET /search`, opens; `None` for a kind of hit the app does not open.
 - `pub fn plain_snippet(snippet: &str) -> String` — the Markdown of a note's search snippet as plain text on one line: no frontmatter, heading or quote marks, list bullets, rules, table pipes, link brackets, code ticks or `**` emphasis. A snippet is a window of the note, with its lines kept (a text match) or flattened (the opening of a note only the embedder found), so a block or link it cuts off keeps its text.
 - `pub fn symbol_page(detail: &Value) -> Doc` — one symbol: what it is, where it is, and what it touches.
@@ -47,9 +50,10 @@ Search hits go through `hit_groups`, which sorts them under Notes, Symbols and F
 - `pub enum Kept` — whether coding agents are kept out of a project's registered folder.
 - `pub fn kept_by(entries: &[PathBuf], folder: &str) -> Kept` — how `entries` keep agents out of `folder`. A parent entry wins over the folder's own: removing the own entry would leave the folder kept. It looks at the file system (a link is followed), so the app works it out when Home's data is refreshed, never while a page is built.
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
+- `pub fn recent_matches(projects: &[Project], recent: &[String], query: &str) -> Vec<HitTarget>` — what Home's search suggests for `query`, ignoring case: the projects of `recent` whose name holds it, then those whose folder matches it (`path_matches`), each newest first. A folder that is not among `projects`, the registered ones that are there, is left out, and so is every project never opened in the app.
 - `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: that the app keeps looking for one, where its log is, and a button that tries again at once. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 15 more items.
+And 19 more items.
 
 ## Depends on
 
@@ -63,7 +67,7 @@ And 15 more items.
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `agent_view_notice`, `connect`, `details`
-- [[Suggest Module]] — from `Suggestions`, `chosen`, `groups`, `show`
+- [[Suggestions]] — from `Suggestions`, `chosen`, `groups`, `show`
 - [[Palette Module]] — from `agents_entry`
 - [[Review View Module]] — from `empty_review`
 

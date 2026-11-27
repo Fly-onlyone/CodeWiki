@@ -16,11 +16,11 @@ This module is the data and the matching of the command palette, the Ctrl+K box 
 
 ## How it works
 
-`AppView::palette_matches` in [[codewiki-app]] builds the full list. It starts with `actions`, which returns the fixed commands in the order shown for an empty query. Then come animation choices, one entry per [[MotionPref]], and one `Settings: <name>` entry per [[Category]], so typing a category name leads there. The app adds more entries of its own, such as notes, themes and repositories, and the command from `agents_entry`.
+`AppView::palette_matches` in [[codewiki-app]] builds the full list. It starts with `actions`, which returns the fixed commands in the order shown for an empty query: Home, Sync, Review, the analysis pages, the waiting notes, themes, settings, tabs, the two panes, zoom, Open folder, updates, logs and Quit. Then come animation choices, one entry per [[MotionPref]], and one `Settings: <name>` entry per [[Category]], so typing a category name leads there. The app adds more entries of its own, such as notes, themes and repositories, and the command from `agents_entry`.
 
 `agents_entry` looks at how the open project stands against the folders kept from coding agents. It offers `Keep agents out` when nothing covers the project, and `Let agents in` when an entry for exactly its folder does. It returns nothing when a parent folder covers it or when it holds an entry. Those are changed in Settings.
 
-`filter` splits the query into words and keeps entries whose label contains every word. `rank` scores each one. A match at the start of the label wins over a match at the start of a word, which wins over a match inside a word. A match nearer the start also scores better. The lowest score comes first, and ties keep the order of the list. An empty query returns the first entries as they are.
+`filter` splits the query into words and keeps entries whose label contains every word. `rank` scores each one. A match at the start of the label wins over a match at the start of a word, which wins over a match inside a word. A match nearer the start also scores better. The lowest score comes first, and ties keep the order of the list. An empty query returns the first entries as they are, with no search entry.
 
 ## Items
 

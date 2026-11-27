@@ -8,11 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The app keeps running when its window closes; this icon is then all of it that shows. A click brings the window back, a right click opens the menu.
+The app keeps running when its window closes, and this icon in the notification area is then all of it that shows. A left click brings the window back. A right click opens a menu that says what the app is doing and offers a few commands: open, sync, recent repositories, settings, check for updates, quit.
 
-What the tooltip and the menu say is a `Snapshot` of the app, and `rows` is the menu for one, as plain data. `Tray::refresh` changes only the rows that differ from the last snapshot, in place: the menu may be open while the app's state changes, and a menu that is rebuilt while open closes under the pointer.
-
-Clicks arrive in a window procedure, where nothing of GPUI may be touched. The two callbacks given to `Tray::new` must therefore only pass them on (the app sends them through its event channel).
+The module has two parts. Plain functions turn a `Snapshot` of the app into rows and a tooltip, so a test can check them without Windows. The `Tray` type owns the real icon and menu and keeps them in step with new snapshots.
 
 ## Source
 
@@ -24,7 +22,7 @@ The app builds a `Snapshot` (open repository, state words, MCP words, whether sy
 
 `Tray::new` creates the real menu from those rows, loads the icon from the program's resources, sets the tooltip, and installs two handlers. A left click or double click (`shows_window`) calls `on_show`. A menu row calls `on_command` with the `Command` decoded from the row's id. Right click opens the menu by itself.
 
-`Tray::refresh` compares new rows with the old ones and changes only rows that differ: text, enabled state, or the recent submenu's items. The tooltip is updated only when it changes. `menu_text` doubles `&` so Windows does not read it as an underline marker. `recent_label` shows a folder's name, then its parent in brackets.
+`Tray::refresh` compares new rows with the old ones and changes only rows that differ: text, enabled state, or the recent submenu's items. The tooltip is updated only when it changes. `menu_text` doubles `&` so Windows does not read it as an underline marker. `recent_label` shows a folder's name, then its parent in brackets. The toolbar's Open recent menu in [[codewiki-app]] uses the same label and the same cap, `RECENT_ROWS`, so the two lists read alike.
 
 ## Items
 
@@ -35,7 +33,7 @@ The app builds a `Snapshot` (open repository, state words, MCP words, whether sy
 - `pub enum Row` — one row of the menu.
 - `pub fn rows(snapshot: &Snapshot) -> Vec<Row>` — the menu for `snapshot`, top to bottom. The rows are always the same, in the same order; only their words, whether they can be chosen and the folders under "Recent repositories" change. `Tray::refresh` relies on it.
 - `pub fn tooltip(snapshot: &Snapshot) -> String` — the tooltip for `snapshot`.
-- `fn recent_label(path: &str) -> String` — how a folder reads under "Recent repositories": its name, then where it is, since two folders may share a name.
+- `pub fn recent_label(path: &str) -> String` — how a folder reads under "Recent repositories", and in the toolbar's Open recent menu: its name, then where it is, since two folders may share a name.
 - `fn menu_text(text: &str) -> String` — `text` as a menu shows it: Windows reads `&` as "underline the next letter", so one that is meant is doubled.
 - `enum Item` — the row of the real menu that stands for a `Row`.
 - `pub struct Tray` — the icon, for as long as it lives; dropping it takes the icon away.
@@ -50,7 +48,7 @@ The app builds a `Snapshot` (open repository, state words, MCP words, whether sy
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `Event`, `run_tray_command`, `start_tray`
+- [[codewiki-app]] — from `AppView`, `Event`, `recent_menu_entries`, `run_tray_command`
 
 ## Gotchas
 

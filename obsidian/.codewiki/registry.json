@@ -1060,6 +1060,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:codewiki_app::suggest::Suggestions",
+    "path": "01-Core/codewiki-app/Suggestions.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:codewiki_app::connection::Supervisor",
     "path": "01-Core/codewiki-app/Supervisor.md",
     "kind": "concept"
@@ -1122,11 +1127,6 @@
   {
     "id": "mod:codewiki_app::themes",
     "path": "01-Core/codewiki-app/Themes Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:codewiki_app::toasts::Toasts",
-    "path": "01-Core/codewiki-app/Toasts.md",
     "kind": "concept"
   },
   {

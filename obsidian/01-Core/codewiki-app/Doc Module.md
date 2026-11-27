@@ -23,7 +23,8 @@ A page function builds a [[Doc]] from backend data with these pieces.
 - `Stat` is a headline number with an optional hint and a tone. `Row` is a pressable row with an icon, a detail and an optional aside button. `Choice` and `Press` feed choice groups, selects and button rows.
 - Settings controls are blocks too: `Switch`, `Select`, `Field`, `Secret`, `Setting`, `Choices` and `Buttons`. A control can carry a lock text that says why it cannot be changed, and a note that shows saving, saved or an error. A `Field` holds only an id: the typed text lives in the input the app keeps for that id.
 - `SecretState` says whether a secret setting is empty, being replaced, saved (with its last characters) or unreadable. Its `text` gives the line the page shows in place of the input.
-- `Progress` shows how far long work is. Without a share it only says work goes on.
+- `Progress` shows how far long work is: a label, a bar, a detail line. Without a share the bar only says work goes on, and a bar that is not `moving` stands still, as for work that waits.
+- `Logo` draws the app's logo. `Search` marks the place of Home's search field. Its input belongs to the app, not to the `Doc`.
 
 Test-only helpers on `Doc` read a page back: `flat`, `tables`, `headings`, `words`, `actions` and `fields`.
 
@@ -77,6 +78,7 @@ And 2 more items.
 - `Table::row` checks the cell count against the column count only with a debug assertion. A release build draws a ragged row without a warning.
 - `rich` has no escape for a backtick. A text with an odd number of backticks turns its tail into code.
 - `symbol` labels a link with the last part of the qualified name only, so two symbols with the same last part look alike. The link target keeps the full name.
+- `Block::Search` holds no input. A page drawn without the app's input leaves the place empty, so a test cannot see the field.
 - `plain`, `Cell::plain` and the `Doc` read-back helpers exist only in tests.
 - `Doc::actions` skips locked switches, selects and secrets, and disabled buttons. `Doc::fields` still lists a locked field.
 

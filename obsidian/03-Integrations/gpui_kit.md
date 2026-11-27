@@ -20,7 +20,7 @@ Imported by 36 source files. Main users:
 - [[Button Module]] — imports `App`, `BoxShadow`, `ClickEvent`, `ElementId` and 22 more
 - [[Checkbox Module]] — imports `App`, `ElementId`, `Hsla`, `InteractiveElement` and 11 more
 - [[Diagrams Module]] — imports `Image`
-- [[Doc View Module]] — imports `AnimationExt`, `AnyElement`, `App`, `Bounds` and 36 more
+- [[Doc View Module]] — imports `AnimationExt`, `AnyElement`, `App`, `Bounds` and 39 more
 - [[Feedback Module]] — imports `Animation`, `AnimationExt`, `AnyView`, `App` and 15 more
 
 ## Configuration
@@ -31,9 +31,11 @@ Imported by 36 source files. Main users:
 
 The version is pinned exactly in the app's manifest, because the API changes between releases. Files import the pieces they need from `gpui_kit`, from `gpui_kit::component` (theme, icons, inputs, title bar), `gpui_kit::base` (markdown and motion) and `gpui_kit::prelude`.
 
-In `main`, the app is built with `gpui_kit::application().with_assets(icons::AppAssets)`. Inside `run` the setup order is: `gpui_kit::init`, then the app's `motion`, `backdrop` and `tab_prefs` init, then `fonts::register`, then `themes::init`, then `zoom::init`. The fonts are registered through the text system before any theme is applied. Zoom comes after the themes because it reads the theme's sizes as its 100% sizes.
+In `main`, the app is built with `gpui_kit::application().with_assets(icons::AppAssets)`. Inside `run` the setup order is: `gpui_kit::init`, then the app's `motion`, `backdrop` and `tab_prefs` init, then `fonts::register`, then `themes::init`, then `zoom::init`. The fonts are registered before any theme is applied. Zoom comes after the themes because it reads the theme's sizes as its 100% sizes. The zoom actions and the key bindings are bound to the app with `cx.on_action` and `cx.bind_keys`.
 
 The window is opened with `gpui_kit::open_window` and the Windows Mica backdrop. The [[Icons Module]] supplies `AppAssets`. It serves the app's own SVG icons and logo first, then falls back to the kit's default assets, which the kit's own components need. The [[Glass Module]] and the [[Backdrop Module]] read the active theme and draw see-through surfaces over Mica, since the toolkit cannot blur inside a window.
+
+Home's search field is a kit `InputState` that the app owns. The [[Doc View Module]] draws it and catches the kit's `Escape`, `MoveUp` and `MoveDown` actions before the input uses them. The page it sits on is drawn cached, so the input is a view of its own.
 
 Most views implement `Render` and build `div()` trees with the toolkit's styling and flex helpers.
 

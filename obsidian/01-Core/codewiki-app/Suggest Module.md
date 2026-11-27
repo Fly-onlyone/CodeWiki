@@ -8,9 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-The search box in the app's toolbar shows a list of hits under itself while you type, so you see results without pressing Enter. This module keeps the state of that list: the hits it shows, whether it is open, which row the arrow keys point at, and the lookup that waits for you to stop typing. The app's main view in [[codewiki-app]] owns one Suggestions value and changes it from the search box's events. [[Autocomplete Module]] draws the list.
+The search box in the app's toolbar shows a list of hits under itself while you type, so you see results without pressing Enter. Home has a second search box that does the same for the projects opened before. This module keeps the state of those lists: the hits it shows, whether it is open, which row the arrow keys point at, and the lookup that waits for you to stop typing. The app's main view in [[codewiki-app]] owns two [[Suggestions]] values, one for each box, and changes them from the boxes' events. [[Autocomplete Module]] draws the list.
 
-The search box keeps the keyboard the whole time. Down moves from the box into the list and on down it; Up moves back up and, from the first row, back to the box. Enter opens the highlighted hit. With no row highlighted, Enter opens the full Search page, as it did before the list existed.
+The box keeps the keyboard the whole time. Down moves from the box into the list and on down it; Up moves back up and, from the first row, back to the box. Enter opens the highlighted hit. With no row highlighted, Enter in the toolbar box opens the full Search page.
 
 ## Source
 
@@ -30,16 +30,11 @@ The root view catches Up, Down and Escape while the list is open, before the sea
 
 - `pub const PAUSE: Duration` — how long typing must pause before the field's text is looked up.
 - `pub const LIMIT: usize` — how many hits the list shows.
-- `pub struct Suggestions` — public struct; used by `AppView`.
-
-## Depends on
-
-- [[Live Module]] — uses `HitTarget`, `hit_groups`
-- [[Menu Module]] — uses `AnchorBounds`
+- [[Suggestions]] — struct
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `choose_suggestion`, `new`, `render`
+- [[codewiki-app]] — from `suggest`
 
 ## Gotchas
 
@@ -47,6 +42,7 @@ The root view catches Up, Down and Escape while the list is open, before the sea
 - After the text changes, the old hits stay in view until new ones come (`typed`), but no row is highlighted. Enter in that moment runs the full search of the new text.
 - The lookup does not go through `AppView::run`. It shows no busy line and no error banner: a failed lookup only closes the list.
 - A backend older than this module does not know `mode=text` and ignores it. It answers with the full search, which asks the embedder each time.
+- Home's list is filled by `show_targets` from the projects in memory, so it has no pause and no lookup. Its Enter opens the first match when none is highlighted.
 
 ## See also
 

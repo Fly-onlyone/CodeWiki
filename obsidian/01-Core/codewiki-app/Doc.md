@@ -25,7 +25,7 @@ Six methods exist only in tests and read a page back:
 - `actions` lists every [[Action]] a link, row, button, choice, unlocked switch or select, or secret control carries. Disabled buttons are left out.
 - `fields` lists the inputs the page asks the user to fill in.
 
-Page tests use these to check what a page says and offers.
+Page tests use these to check what a page says and offers. The [[Doc View Module]] draws the same tree in the app.
 
 ## Items
 

@@ -61,7 +61,7 @@ And 3 more private items with no comment.
 
 ## Used by
 
-- [[codewiki-app]] — from `details`, `diagram_viewer_view`, `edit_view`, `review_actions`
+- [[codewiki-app]] — from `diagram_viewer_view`, `edit_view`, `review_actions`, `settings_frame`
 - [[Doc View Module]] — from `choices_row`, `draw`, `draw_row`, `secret_control`
 - [[Snackbar Module]] — from `snackbar`
 

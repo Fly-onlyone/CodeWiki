@@ -52,7 +52,7 @@ The field keeps the keyboard focus the whole time. A row's own press never moves
 
 ## Used by
 
-- [[codewiki-app]] — from `suggestions_view`
+- [[codewiki-app]] — from `home_suggestions_view`, `suggestions_view`
 
 ## Gotchas
 

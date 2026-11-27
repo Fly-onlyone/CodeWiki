@@ -26,7 +26,7 @@ The variants fall into a few groups.
 - Backend and secrets: `SetSetting`, `ReplaceSecret`, `KeepSecret`, `RemoveSecret` (each names a [[FieldId]]), `TestEmbedder`, `RefreshEmbedModels`, `ConnectRemote`, `UseLocalBackend`, `ForgetRemote`, `CancelEmbedJob`.
 - Housekeeping: `Reconnect`, `Sync`, `CheckUpdates`, `InstallUpdate`, `OpenLogs`, `OpenDataFolder`, `ForgetRepo`.
 
-An action sits in a [[Span]] link, a row, a button, a choice, a switch or an alert button. The doc view returns it to the app, and `run_action` and `run_settings_action` in [[codewiki-app]] match on it.
+An action sits in a [[Span]] link, a row, a button, a choice, a switch or an alert button. The doc view returns it to the app, and `run_action` and `run_settings_action` in [[codewiki-app]] match on it. A toast can carry one too: the [[Toasts Module]] hands it back when its button or its Windows notification is clicked.
 
 ## Items
 
@@ -44,9 +44,9 @@ Declared as `pub enum Action`.
 - [[Doc View Module]] — from `LinkedLine`, `OnAction`, `choices_row`, `line`
 - [[Doc Module]] — from `Choice`, `Press`, `Row`, `aside`
 - [[codewiki-app]] — from `run_action`, `run_action_with`, `run_settings_action`
+- [[Toasts Module]] — from `Notice`, `route`
 - [[Doc]] — from `actions`, `of_line`
 - [[Live Module]] — from `HitTarget`
-- [[Toasts Module]] — from `Notice`
 - [[Block]] — from `Block`
 - [[Span]] — from `Span`
 

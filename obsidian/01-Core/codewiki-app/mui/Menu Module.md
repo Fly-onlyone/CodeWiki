@@ -20,15 +20,15 @@ Three things MUI does are left out. Its `Grow` entrance scales the paper, which 
 
 ## How it works
 
-The owner keeps the state and rebuilds a `Menu` each frame. It passes the `anchor` bounds, a focus handle, sections of `MenuItem`s, the highlighted row, and the callbacks `on_select`, `on_highlight` and `on_close`.
+The owner keeps the state and rebuilds a `Menu` each frame. It passes the `anchor` bounds, a focus handle, sections of `MenuItem`s, the highlighted row, and the callbacks `on_select`, `on_highlight` and `on_close`. A `MenuItem` can carry an icon, a tint for that icon, a mark for the choice in effect, and a trailing element.
 
 `AnchorBounds::track` wraps the control that opens the menu. After each paint it stores the control's bounds and calls `moved` when they change, so the menu has an anchor from the first frame.
 
-On render, each section becomes an optional subheading and a list of `ListItemButton` rows from [[List Module]]. The highlighted row is found by counting rows through every section. A keyed `Scroll` state scrolls the highlighted row into view, but only when the highlight changed.
+On render, each section becomes an optional subheading and a list of `ListItemButton` rows from [[List Module]]. A section with no heading, after the first, is set off by a divider. The highlighted row is found by counting rows through every section. A keyed `Scroll` state scrolls the highlighted row into view, but only when the highlight changed.
 
 Keys: `step` moves the highlight with Down, Up, Home and End, and wraps at the ends. Enter or Space call `on_select` with the highlighted row. Escape calls `on_close`. A key with a modifier is ignored.
 
-The layout: a full-window `scrim` takes the press that closes the menu. It listens for the left, right and middle buttons, so a right-click outside also closes the menu. Inside it an `anchored` element hangs the paper under the anchor (4 px gap), lines up its left edge (`Align::Start`) or right edge (`Align::End`), and keeps 16 px from the window edge. The whole thing is `deferred` so it draws on top. The paper has elevation 8 from [[Surfaces Module]] and a fade-and-drop entrance.
+The layout: a full-window `scrim` takes the press that closes the menu. It listens for the left, right and middle buttons, so a right-click outside also closes the menu. Inside it an `anchored` element hangs the paper under the anchor (4 px gap), lines up its left edge (`Align::Start`) or right edge (`Align::End`, the default), and keeps 16 px from the window edge. The whole thing is `deferred` so it draws on top. The paper has elevation 8 from [[Surfaces Module]] and a fade-and-drop entrance.
 
 ## Items
 
@@ -36,6 +36,7 @@ The layout: a full-window `scrim` takes the press that closes the menu. It liste
 - `const WINDOW_MARGIN: f32` — `Popover.js`: `marginThreshold = 16`, the least distance to the window's edge.
 - `const HEIGHT_INSET: f32` — `Menu.js`: `maxHeight: 'calc(100% - 96px)'`.
 - `const LIST_PADDING: f32` — `List.js`: `paddingTop: 8, paddingBottom: 8`.
+- `const DIVIDER_MARGIN: f32` — above and below the line between two groups with no heading.
 - `const GAP: f32` — between the anchor and the menu. MUI lays a menu over its anchor; here it hangs under it, so the control that opened it stays in view.
 - `const WIDTH: f32` — MUI sizes a menu to its widest row. A row here is a flex line that truncates, so the menu has a width of its own.
 - `type OnIndex = Rc<dyn Fn(usize, &mut Window, &mut App)>` — what a chosen row does: it is given the row's place in the menu.
@@ -54,16 +55,16 @@ And 1 more private item with no comment.
 
 - [[List Module]] — uses `icon`, `new`, `subheader`, `trailing`
 - [[Motion Module (mui)]] — uses `MENU`, `enter`
-- [[Surfaces Module]] — uses `paper`
+- [[Surfaces Module]] — uses `divider`, `paper`
 - [[Zoom Module]] — uses `px`
 - [[Glyph]] — uses `Glyph`
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `body`, `context_menu_view`, `settings_menu_view`
-- [[Doc View Module]] — from `select_control`
+- [[codewiki-app]] — from `AppView`, `body`, `context_menu_view`, `recent_menu_view`
+- [[Doc View Module]] — from `SearchSlot`, `draw`, `select_control`
 - [[Select Module]] — from `menu`
-- [[Suggest Module]] — from `Suggestions`
+- [[Suggestions]] — from `Suggestions`
 
 ## Gotchas
 

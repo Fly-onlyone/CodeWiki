@@ -16,7 +16,7 @@ A `Glyph` is one icon of the app. It is a small copy-able value that holds the a
 
 ## How it works
 
-The [[Icons Module]] creates every `Glyph` with the `app_icons!` macro. For each name the macro makes a public constant, with a path under `icons/material/`, and embeds the SVG file with `include_bytes!` into a list called `EMBEDDED`. `Glyph` implements gpui-kit's `IconNamed`, whose `path` method returns the stored path. When a component draws the icon, GPUI asks the asset source (`AppAssets`) for that path. `AppAssets` looks in `EMBEDDED` first and falls back to the kit's own assets.
+The [[Icons Module]] creates every `Glyph` with the `app_icons!` macro. For each name the macro makes a public constant, with a path under `icons/material/`, and embeds the SVG file from the crate's `icons` folder with `include_bytes!` into a list called `EMBEDDED`. A missing file stops the build. `Glyph` implements gpui-kit's `IconNamed`, whose `path` method returns the stored path. When a component draws the icon, GPUI asks the asset source (`AppAssets`) for that path. `AppAssets` looks in `EMBEDDED` first and falls back to the kit's own assets.
 
 ## Items
 

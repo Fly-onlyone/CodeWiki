@@ -76,7 +76,12 @@ fn name_in(symbol: &Symbol, subject: &str) -> String {
     match symbol.parent.as_deref() {
         Some(parent) if symbol.kind == SymbolKind::Method && parent != subject => {
             let owner = parent.rsplit("::").next().unwrap_or(parent);
-            let sep = if is_rust(symbol) { "::" } else { "." };
+            // C++ names a member with `::`, as Rust does.
+            let sep = if is_rust(symbol) || Language::from_path(&symbol.file).is_c_family() {
+                "::"
+            } else {
+                "."
+            };
             format!("{owner}{sep}{}", symbol.name)
         }
         _ => symbol.name.clone(),
@@ -490,6 +495,48 @@ fn return_type(signature: &str, language: Language) -> Option<String> {
             let rest = &rest[open..];
             &rest[after(rest)?..]
         }
+        Language::C | Language::Cpp => {
+            // Before the name, after the modifiers: `static const char *name(void)`.
+            let mut text = signature.trim();
+            // A template's parameters come first: `template <class T> T id(T x)`.
+            if let Some(rest) = text.strip_prefix("template") {
+                let mut depth = 0usize;
+                let end = rest.char_indices().find_map(|(i, c)| {
+                    match c {
+                        '<' => depth += 1,
+                        '>' => depth = depth.saturating_sub(1),
+                        _ => {}
+                    }
+                    (depth == 0 && c == '>').then_some(i + 1)
+                })?;
+                text = rest[end..].trim_start();
+            }
+            let head = text.split('(').next()?;
+            let cut = head.rfind(|c: char| c.is_whitespace() || c == '*' || c == '&')? + 1;
+            let mut rest = head[..cut].trim();
+            while let Some((word, tail)) = rest.split_once(' ') {
+                if !matches!(
+                    word,
+                    "static"
+                        | "inline"
+                        | "extern"
+                        | "virtual"
+                        | "constexpr"
+                        | "explicit"
+                        | "friend"
+                ) {
+                    break;
+                }
+                rest = tail.trim_start();
+            }
+            if matches!(
+                rest,
+                "static" | "inline" | "extern" | "virtual" | "constexpr" | "explicit" | "friend"
+            ) {
+                return None;
+            }
+            rest
+        }
         Language::TypeScript | Language::JavaScript | Language::Kotlin => {
             // After the parameter list: `(x: number): string`, and Kotlin's
             // `fun load(path: String): Item?`.
@@ -784,5 +831,29 @@ mod tests {
             in_order(&mixed, 0),
             "`open` in [[Store]], then `check`, then `read`, then `parse` (both in [[Store]]), then `log` in [[Logs]], then `x`, then `y`, then `z` (all in [[Io]])"
         );
+    }
+
+    #[test]
+    fn reads_the_type_a_c_function_returns() {
+        let c = |signature| return_type(signature, Language::C);
+        assert_eq!(c("int add(int a, int b)").as_deref(), Some("int"));
+        assert_eq!(
+            c("static const char *name(void)").as_deref(),
+            Some("const char *")
+        );
+        assert_eq!(c("FT_EXPORT( FT_Error ) FT_Init( void )").as_deref(), None);
+        assert_eq!(c("void run(void)"), None);
+        let cpp = |signature| return_type(signature, Language::Cpp);
+        assert_eq!(
+            cpp("template <typename T> T clamp(T v, T lo, T hi)").as_deref(),
+            Some("T")
+        );
+        assert_eq!(
+            cpp("virtual std::string name() const").as_deref(),
+            Some("std::string")
+        );
+        // A constructor has no type of its own.
+        assert_eq!(cpp("explicit Circle(double radius)"), None);
+        assert_eq!(cpp("Circle(double radius)"), None);
     }
 }

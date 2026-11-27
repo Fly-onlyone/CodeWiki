@@ -13,6 +13,10 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cw_core::{Error, Language, MANIFEST_DIR, Result};
+use cw_parse::cdeps::{
+    names_library, parse_conan_lock, parse_conanfile_py, parse_conanfile_txt, parse_vcpkg,
+};
+use cw_parse::cmake::declared_packages;
 use cw_parse::workspace::{dependency_specs, locked_versions, package_description};
 use cw_parse::{Locked, go_sum_versions, parse_go_mod, parse_version_catalog};
 use serde::{Deserialize, Serialize};
@@ -176,6 +180,9 @@ fn other(unit: &Unit, package: &str) -> Vec<Declared> {
     if unit.language == Language::Go {
         return go(unit, package);
     }
+    if unit.language.is_c_family() {
+        return cfamily(unit, package);
+    }
     let named = unit.declares(package);
     let mut out: Vec<Declared> = unit
         .manifests
@@ -207,6 +214,93 @@ fn other(unit: &Unit, package: &str) -> Vec<Declared> {
                 ..Declared::bare(&manifest.path)
             });
         }
+    }
+    out
+}
+
+/// True when the library a build file names is the one the scan called
+/// `package`: the same name once case is put aside, or evidently one of its
+/// family (`boost-asio` for `Boost`).
+fn same_library(declared: &str, package: &str) -> bool {
+    declared.eq_ignore_ascii_case(package) || names_library(package, declared)
+}
+
+/// What the build files of a C or C++ unit ask of a library: CMake's
+/// `find_package` and `FetchContent_Declare`, vcpkg's `dependencies` (with
+/// its `overrides` as the version in effect and its `builtin-baseline` where
+/// no version is written), Conan's `requires`, and Conan's lock file for the
+/// version in effect. One entry for each file that names the library.
+fn cfamily(unit: &Unit, package: &str) -> Vec<Declared> {
+    let mut out: Vec<Declared> = Vec::new();
+    for manifest in &unit.manifests {
+        let file = manifest.path.rsplit('/').next().unwrap_or(&manifest.path);
+        let declared = match file {
+            "CMakeLists.txt" => declared_packages(&manifest.text, &manifest.path)
+                .into_iter()
+                .find(|p| same_library(&p.name, package))
+                .map(|p| Declared {
+                    requirement: p.version,
+                    ..Declared::bare(&manifest.path)
+                }),
+            "vcpkg.json" => {
+                let vcpkg = parse_vcpkg(&manifest.text);
+                vcpkg
+                    .dependencies
+                    .iter()
+                    .find(|d| same_library(&d.name, package))
+                    .map(|d| {
+                        let pinned = vcpkg
+                            .overrides
+                            .iter()
+                            .find(|o| o.name == d.name)
+                            .map(|o| o.version.clone())
+                            .unwrap_or_default();
+                        let requirement = if !d.version.is_empty() {
+                            format!(">={}", d.version)
+                        } else if pinned.is_empty() && !vcpkg.baseline.is_empty() {
+                            format!(
+                                "baseline {}",
+                                vcpkg.baseline.chars().take(8).collect::<String>()
+                            )
+                        } else {
+                            String::new()
+                        };
+                        Declared {
+                            requirement,
+                            locked: pinned,
+                            ..Declared::bare(&manifest.path)
+                        }
+                    })
+            }
+            "conanfile.txt" | "conanfile.py" => {
+                let libraries = if file == "conanfile.txt" {
+                    parse_conanfile_txt(&manifest.text)
+                } else {
+                    parse_conanfile_py(&manifest.text)
+                };
+                libraries
+                    .into_iter()
+                    .find(|l| same_library(&l.name, package))
+                    .map(|l| {
+                        let locked = unit
+                            .lock
+                            .as_ref()
+                            .map(|lock| parse_conan_lock(&lock.text))
+                            .unwrap_or_default()
+                            .into_iter()
+                            .find(|k| k.name == l.name)
+                            .map(|k| k.version)
+                            .unwrap_or_default();
+                        Declared {
+                            requirement: l.version,
+                            locked,
+                            ..Declared::bare(&manifest.path)
+                        }
+                    })
+            }
+            _ => None,
+        };
+        out.extend(declared);
     }
     out
 }
@@ -1305,5 +1399,93 @@ junit = \"junit:junit:4.13.2\"
         // A machine with no NuGet folder knows nothing.
         let bare = Machine::with_cargo_home(dir.path(), None).with_nuget(None);
         assert_eq!(bare.describe(Language::CSharp, "Avalonia", None), None);
+    }
+
+    fn c_unit(manifests: &[(&str, &str)], lock: Option<&str>) -> Unit {
+        Unit {
+            name: "core".into(),
+            package: "core".into(),
+            slug: "core".into(),
+            dir: String::new(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: true,
+            has_bin: false,
+            language: Language::Cpp,
+            manifests: manifests
+                .iter()
+                .map(|(path, text)| Manifest {
+                    path: (*path).into(),
+                    text: (*text).into(),
+                })
+                .collect(),
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            lock: lock.map(|text| Manifest {
+                path: "conan.lock".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_c_requirements_from_cmake_vcpkg_and_conan() {
+        let unit = c_unit(
+            &[
+                (
+                    "CMakeLists.txt",
+                    "find_package(fmt 10.1 REQUIRED)\nfind_package(Boost 1.80 COMPONENTS system)\nfind_package(Threads)\nFetchContent_Declare(googletest GIT_REPOSITORY https://x/googletest.git GIT_TAG v1.14.0)\n",
+                ),
+                (
+                    "vcpkg.json",
+                    "{\"builtin-baseline\": \"0123456789abcdef\", \"dependencies\": [\"fmt\", {\"name\": \"boost-asio\", \"version>=\": \"1.80.0\"}, \"zlib\"], \"overrides\": [{\"name\": \"fmt\", \"version\": \"10.1.1\"}]}",
+                ),
+                ("conanfile.txt", "[requires]\nfmt/10.1.0\nspdlog/1.12.0\n"),
+            ],
+            Some("{\"requires\": [\"fmt/10.1.0#aa%1\", \"spdlog/1.12.0#bb%2\"]}"),
+        );
+        let asked = |package: &str| -> Vec<(String, String, String)> {
+            other(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement, d.locked))
+                .collect()
+        };
+        let row = |m: &str, r: &str, l: &str| (m.to_string(), r.to_string(), l.to_string());
+        // The version CMake asks, vcpkg's override, and Conan's pin.
+        assert_eq!(
+            asked("fmt"),
+            [
+                row("CMakeLists.txt", "10.1", ""),
+                row("vcpkg.json", "", "10.1.1"),
+                row("conanfile.txt", "10.1.0", "10.1.0"),
+            ]
+        );
+        // A library of a family: CMake's `Boost` and vcpkg's `boost-asio`.
+        assert_eq!(
+            asked("Boost"),
+            [
+                row("CMakeLists.txt", "1.80", ""),
+                row("vcpkg.json", ">=1.80.0", ""),
+            ]
+        );
+        // No version written: vcpkg's baseline says which registry state.
+        assert_eq!(asked("zlib"), [row("vcpkg.json", "baseline 01234567", "")]);
+        assert_eq!(asked("Threads"), [row("CMakeLists.txt", "", "")]);
+        assert_eq!(asked("googletest"), [row("CMakeLists.txt", "v1.14.0", "")]);
+        assert_eq!(asked("spdlog"), [row("conanfile.txt", "1.12.0", "1.12.0")]);
+        assert!(asked("openssl").is_empty());
+        // `conanfile.py` states its requirements in the class.
+        let python = c_unit(
+            &[(
+                "conanfile.py",
+                "class P(ConanFile):\n    requires = \"zlib/1.3.1\"\n    def requirements(self):\n        self.requires(\"fmt/10.2.0\")\n",
+            )],
+            None,
+        );
+        assert_eq!(other(&python, "fmt")[0].requirement, "10.2.0");
+        assert_eq!(other(&python, "zlib")[0].requirement, "1.3.1");
     }
 }

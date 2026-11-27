@@ -896,3 +896,246 @@ fn lists_the_jvm_tests_a_change_can_break() {
     );
     assert!(single.untested_changes.is_empty());
 }
+
+/// A CMake project with GoogleTest registered through CTest, a library with
+/// header and source apart, Catch2 and Boost.Test executables that CTest does
+/// not know by test, a plain `add_test`, and a folder with no build file.
+fn cpp_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(
+        r,
+        "CMakeLists.txt",
+        "cmake_minimum_required(VERSION 3.20)\nproject(geo CXX)\nenable_testing()\nadd_subdirectory(src)\nadd_subdirectory(tests)\n",
+    );
+    write(
+        r,
+        "src/CMakeLists.txt",
+        "add_library(geo geo/circle.cpp geo/area.cpp)\ntarget_include_directories(geo PUBLIC .)\n",
+    );
+    write(
+        r,
+        "src/geo/circle.hpp",
+        "#pragma once\nnamespace geo { class Circle { public: double area() const; static Circle unit(); }; double square(double x); }\n",
+    );
+    write(
+        r,
+        "src/geo/circle.cpp",
+        "#include \"geo/circle.hpp\"\nnamespace geo {\ndouble Circle::area() const { return 3.14 * square(1.0); }\nCircle Circle::unit() { return Circle(); }\n}\n",
+    );
+    write(
+        r,
+        "src/geo/area.cpp",
+        "#include \"geo/circle.hpp\"\nnamespace geo { double square(double x) { return x * x; } }\n",
+    );
+    write(
+        r,
+        "src/geo/lonely.hpp",
+        "#pragma once\ninline int nobody() { return 0; }\n",
+    );
+    write(
+        r,
+        "tests/CMakeLists.txt",
+        "add_executable(geo_tests circle_test.cpp square_test.cpp)\ntarget_link_libraries(geo_tests geo GTest::gtest_main)\ngtest_discover_tests(geo_tests)\nadd_executable(catch_tests map_test.cpp)\ntarget_link_libraries(catch_tests geo Catch2::Catch2WithMain)\nadd_executable(boost_tests b_test.cpp)\ntarget_link_libraries(boost_tests geo)\nadd_executable(smoke_check check/smoke.cpp)\ntarget_link_libraries(smoke_check geo)\nadd_test(NAME smoke COMMAND smoke_check)\n",
+    );
+    write(
+        r,
+        "tests/circle_test.cpp",
+        "#include <gtest/gtest.h>\n#include \"geo/circle.hpp\"\n\nTEST(Circle, Area) { EXPECT_GT(geo::Circle().area(), 0); }\nTEST_F(CircleFixture, Unit) { geo::Circle::unit(); }\nTEST_P(CircleParams, Sizes) { geo::Circle c; }\n",
+    );
+    write(
+        r,
+        "tests/square_test.cpp",
+        "#include <gtest/gtest.h>\n#include \"geo/circle.hpp\"\n\nTEST(Square, Zero) { EXPECT_EQ(geo::square(0), 0); }\n",
+    );
+    write(
+        r,
+        "tests/map_test.cpp",
+        "#include <catch2/catch_test_macros.hpp>\n#include \"geo/circle.hpp\"\n\nTEST_CASE(\"circle area\", \"[circle]\") { geo::Circle().area(); }\nTEST_CASE(\"unit circle\") { geo::Circle::unit(); }\n",
+    );
+    write(
+        r,
+        "tests/b_test.cpp",
+        "#include <boost/test/unit_test.hpp>\n#include \"geo/circle.hpp\"\n\nBOOST_AUTO_TEST_CASE(squares) { geo::square(2); }\n",
+    );
+    write(
+        r,
+        "tests/check/smoke.cpp",
+        "#include \"geo/circle.hpp\"\n\nint main() { return geo::square(1) > 0 ? 0 : 1; }\n",
+    );
+    // No build file at all: tests the repository cannot say how to run.
+    write(r, "bare/list.c", "int list_len(void) { return 3; }\n");
+    write(r, "bare/list.h", "int list_len(void);\n");
+    write(
+        r,
+        "bare/list_test.c",
+        "#include \"list.h\"\nTEST(List, Len) { list_len(); }\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_cpp_tests_and_the_command_that_runs_them() {
+    let (dir, index) = cpp_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+    let rows: Vec<(&str, usize, TestKind)> = map
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.tests.len(), t.kind))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("bare/list_test.c", 1, TestKind::Integration),
+            ("tests/b_test.cpp", 1, TestKind::Integration),
+            ("tests/check/smoke.cpp", 1, TestKind::Integration),
+            ("tests/circle_test.cpp", 3, TestKind::Integration),
+            ("tests/map_test.cpp", 2, TestKind::Integration),
+            ("tests/square_test.cpp", 1, TestKind::Integration),
+        ]
+    );
+    let by_path = |path: &str| map.test_files.iter().find(|t| t.path == path).unwrap();
+    // The names a framework gives its tests.
+    let names = |path: &str| -> Vec<&str> {
+        by_path(path)
+            .tests
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect()
+    };
+    assert_eq!(
+        names("tests/circle_test.cpp"),
+        ["Circle.Area", "CircleFixture.Unit", "CircleParams.Sizes"]
+    );
+    assert_eq!(names("tests/map_test.cpp"), ["circle area", "unit circle"]);
+    assert_eq!(names("tests/b_test.cpp"), ["squares"]);
+
+    // Registered by name with CTest: a regex of the names. A parameterized
+    // test is known by a longer name, so its regex is not anchored.
+    assert_eq!(
+        by_path("tests/circle_test.cpp").command,
+        "ctest --test-dir build -R '^Circle\\.Area$|^CircleFixture\\.Unit$|CircleParams[./]Sizes'"
+    );
+    assert_eq!(
+        by_path("tests/square_test.cpp").command,
+        "ctest --test-dir build -R '^Square\\.Zero$'"
+    );
+    // Not registered by test: the executable with its framework's filter,
+    // from the folder CMake builds in.
+    assert_eq!(
+        by_path("tests/map_test.cpp").command,
+        "./build/tests/catch_tests \"circle area\",\"unit circle\""
+    );
+    assert_eq!(
+        by_path("tests/b_test.cpp").command,
+        "./build/tests/boost_tests --run_test=squares"
+    );
+    // No build file, no executable to name.
+    assert_eq!(by_path("bare/list_test.c").command, "");
+
+    // `add_test(NAME smoke COMMAND smoke_check)`: CTest knows the whole
+    // program by the name it was registered under.
+    assert_eq!(names("tests/check/smoke.cpp"), ["smoke"]);
+    assert_eq!(
+        by_path("tests/check/smoke.cpp").command,
+        "ctest --test-dir build -R '^smoke$'"
+    );
+    // A source is reached through its header.
+    let circle = map
+        .files
+        .iter()
+        .find(|f| f.path == "src/geo/circle.cpp")
+        .unwrap();
+    assert!(
+        circle.direct.contains(&"tests/circle_test.cpp".to_string())
+            || circle
+                .indirect
+                .contains(&"tests/circle_test.cpp".to_string()),
+        "{circle:?}"
+    );
+}
+
+#[test]
+fn lists_the_cpp_tests_a_change_can_break() {
+    let (dir, index) = cpp_fixture();
+    // A change to the source reaches every test through the header.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["src/geo/circle.cpp".to_string()]).unwrap();
+    let paths: Vec<&str> = impact.test_files.iter().map(|t| t.path.as_str()).collect();
+    for expected in [
+        "tests/b_test.cpp",
+        "tests/circle_test.cpp",
+        "tests/map_test.cpp",
+        "tests/square_test.cpp",
+    ] {
+        assert!(paths.contains(&expected), "{expected} in {paths:?}");
+    }
+    // The ctest regexes fold into one run; each executable has its own.
+    // Nearest first, then by file: the Boost executable's test file comes
+    // before the others.
+    assert_eq!(
+        impact.commands,
+        [
+            "./build/tests/boost_tests --run_test=squares",
+            "ctest --test-dir build -R '^smoke$|^Circle\\.Area$|^CircleFixture\\.Unit$|CircleParams[./]Sizes|^Square\\.Zero$'",
+            "./build/tests/catch_tests \"circle area\",\"unit circle\"",
+        ]
+    );
+    // A change to the test file alone.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["tests/square_test.cpp".to_string()])
+            .unwrap();
+    assert_eq!(impact.test_files.len(), 1);
+    assert_eq!(
+        impact.commands,
+        ["ctest --test-dir build -R '^Square\\.Zero$'"]
+    );
+    // A header nothing includes.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["src/geo/lonely.hpp".to_string()]).unwrap();
+    assert!(impact.test_files.is_empty() && impact.commands.is_empty());
+    assert_eq!(impact.untested_changes, ["src/geo/lonely.hpp"]);
+}
+
+#[test]
+fn many_cpp_tests_in_one_run_run_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(
+        r,
+        "CMakeLists.txt",
+        "project(many CXX)\nadd_library(core core.cpp)\nadd_executable(many_tests many_test.cpp)\ntarget_link_libraries(many_tests core GTest::gtest_main)\ngtest_discover_tests(many_tests)\nadd_executable(plain_tests plain_test.cpp)\ntarget_link_libraries(plain_tests core GTest::gtest)\n",
+    );
+    write(r, "core.hpp", "int core();\n");
+    write(
+        r,
+        "core.cpp",
+        "#include \"core.hpp\"\nint core() { return 1; }\n",
+    );
+    let many: String = (0..10)
+        .map(|i| format!("TEST(Many, N{i}) {{ core(); }}\n"))
+        .collect();
+    write(
+        r,
+        "many_test.cpp",
+        &format!("#include \"core.hpp\"\n{many}"),
+    );
+    write(
+        r,
+        "plain_test.cpp",
+        &format!("#include \"core.hpp\"\n{many}"),
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    let impact = testmap::impacted_tests(r, &index, &["core.cpp".to_string()]).unwrap();
+    assert_eq!(impact.tests_total, 20);
+    // Past the limit CTest runs every test, and the executable runs whole.
+    assert_eq!(
+        impact.commands,
+        ["ctest --test-dir build", "./build/plain_tests"]
+    );
+}

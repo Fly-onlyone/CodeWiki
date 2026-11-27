@@ -442,6 +442,21 @@ fn extract_types(facts: &Facts, out: &mut Vec<Suggestion>) {
     }
 }
 
+/// A C or C++ header and the source of its name call each other by design:
+/// the symbols a header declares stand at the header, and the code that
+/// defines them is in the source. That is no loop to break.
+fn are_header_and_source(a: &str, b: &str) -> bool {
+    let stem = |p: &str| {
+        p.rsplit('/')
+            .next()
+            .and_then(|f| f.rsplit_once('.'))
+            .map(|(s, _)| s.to_string())
+    };
+    cw_core::Language::from_path(a).is_c_family()
+        && cw_core::Language::from_path(b).is_c_family()
+        && stem(a) == stem(b)
+}
+
 /// Files that depend on each other through calls, type references or trait
 /// implementations. `use` re-exports alone do not count.
 fn break_cycles(facts: &Facts, out: &mut Vec<Suggestion>) {
@@ -452,7 +467,11 @@ fn break_cycles(facts: &Facts, out: &mut Vec<Suggestion>) {
             facts.symbols[*src].file.as_str(),
             facts.symbols[*dst].file.as_str(),
         );
-        if from != to && !is_test_path(from) && !is_test_path(to) {
+        if from != to
+            && !is_test_path(from)
+            && !is_test_path(to)
+            && !are_header_and_source(from, to)
+        {
             between.entry((from, to)).or_default().push((*src, *dst));
         }
     }

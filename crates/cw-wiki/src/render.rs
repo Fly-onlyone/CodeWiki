@@ -481,7 +481,7 @@ impl<'a> RenderCtx<'a> {
         let top_level = symbol.kind == SymbolKind::Function
             && matches!(
                 Language::from_path(&symbol.file),
-                Language::CSharp | Language::Kotlin
+                Language::CSharp | Language::Kotlin | Language::C | Language::Cpp
             );
         match symbol.kind {
             SymbolKind::Module => symbol
@@ -705,7 +705,11 @@ impl<'a> RenderCtx<'a> {
         let language = Language::from_path(&symbol.file);
         // The summary is the comment's first sentence; the rest is here.
         doc.section("What it does", doc_body(&symbol.doc, language, true));
-        doc.section("Source", format!("- `{}` — module `{q}`", symbol.file));
+        let mut source = format!("- `{}` — module `{q}`", symbol.file);
+        for file in implementation_files(symbol) {
+            source.push_str(&format!("\n- `{file}` — implementation of module `{q}`"));
+        }
+        doc.section("Source", source);
         let walk = explain::walk(self, &note.id);
         doc.section("How it works", walk.text(self, &note.id, q, "module"));
         let mut body = Vec::new();
@@ -744,10 +748,14 @@ impl<'a> RenderCtx<'a> {
         let symbol = repo.symbols[q];
         let language = Language::from_path(&symbol.file);
         doc.section("What it does", doc_body(&symbol.doc, language, true));
-        doc.section(
-            "Source",
-            format!("- `{}` — definition of `{}`", symbol.file, symbol.name),
-        );
+        let mut source = format!("- `{}` — definition of `{}`", symbol.file, symbol.name);
+        for file in implementation_files(symbol) {
+            source.push_str(&format!(
+                "\n- `{file}` — implementation of `{}`",
+                symbol.name
+            ));
+        }
+        doc.section("Source", source);
         let walk = explain::walk(self, &note.id);
         doc.section("How it works", walk.text(self, &note.id, q, "type"));
         let mut body = vec![format!("Declared as `{}`.", symbol.signature)];
@@ -1240,6 +1248,31 @@ impl<'a> RenderCtx<'a> {
                 code.push('}');
                 ("csharp", code)
             }
+            Language::C | Language::Cpp => {
+                let mut code = format!("class NewType : public {} {{\npublic:\n", symbol.name);
+                for m in methods
+                    .iter()
+                    .filter(|m| m.visibility == Visibility::Public)
+                    .filter(|m| {
+                        !m.attrs
+                            .iter()
+                            .any(|a| matches!(a.as_str(), "destructor" | "special"))
+                            && m.name != symbol.name
+                    })
+                    // A class is extended through what it lets be overridden.
+                    .filter(|m| {
+                        symbol.kind != SymbolKind::Class || m.attrs.iter().any(|a| a == "virtual")
+                    })
+                    .take(MAX_LISTED)
+                {
+                    code.push_str(&format!(
+                        "    {} {{\n        throw std::logic_error(\"not implemented\");\n    }}\n",
+                        cpp_override(&m.signature)
+                    ));
+                }
+                code.push_str("};");
+                ("cpp", code)
+            }
             Language::TypeScript | Language::JavaScript => {
                 let mut code = format!("class NewType {keyword} {} {{\n", symbol.name);
                 for m in methods
@@ -1531,6 +1564,24 @@ impl<'a> RenderCtx<'a> {
                     } else {
                         format!("go run{from} ./{}", quote(relative))
                     });
+                }
+            }
+            Language::C | Language::Cpp => {
+                // CMake builds in a folder next to the sources. Presets name
+                // a folder of their own (`binaryDir`), so no command here
+                // follows them: the reader sees `CMakePresets.json` among the
+                // sources, and the commands that follow assume `build`.
+                if !unit
+                    .manifests
+                    .iter()
+                    .any(|m| file_name(&m.path) == "CMakeLists.txt")
+                {
+                    return out;
+                }
+                out.push("cmake -S . -B build".into());
+                out.push("cmake --build build".into());
+                if repo.units.c_tests() {
+                    out.push("ctest --test-dir build".into());
                 }
             }
             Language::Java | Language::Kotlin => {
@@ -1906,6 +1957,8 @@ fn language_name(language: Language) -> &'static str {
         Language::Kotlin => "Kotlin",
         Language::CSharp => "C#",
         Language::Go => "Go",
+        Language::C => "C",
+        Language::Cpp => "C++",
         _ => "source",
     }
 }
@@ -1917,6 +1970,7 @@ fn unit_noun(language: Language) -> &'static str {
         Language::Java | Language::Kotlin => "module",
         Language::CSharp => "project",
         Language::Go => "module",
+        Language::C | Language::Cpp => "project",
         _ => "package",
     }
 }
@@ -1930,6 +1984,35 @@ fn external_noun(files: &BTreeSet<&str>) -> &'static str {
         "crate"
     } else {
         "package"
+    }
+}
+
+/// The files, besides the header a symbol stands in, that define what the
+/// header declares (C and C++).
+fn implementation_files(symbol: &Symbol) -> Vec<&str> {
+    symbol
+        .attrs
+        .iter()
+        .filter_map(|a| a.strip_prefix(cw_parse::IMPL_ATTR))
+        .collect()
+}
+
+/// A member of a C++ interface as the override a class that takes it on
+/// writes: `virtual` goes, `override` comes, and a pure virtual's `= 0` goes.
+fn cpp_override(signature: &str) -> String {
+    let mut text = signature.trim().trim_end_matches(';').trim().to_string();
+    if let Some(rest) = text.strip_prefix("virtual ") {
+        text = rest.to_string();
+    }
+    for tail in ["= 0", "= default", "= delete"] {
+        if let Some(rest) = text.strip_suffix(tail) {
+            text = rest.trim_end().to_string();
+        }
+    }
+    if text.split_whitespace().any(|w| w == "override") {
+        text
+    } else {
+        format!("{text} override")
     }
 }
 
@@ -2022,6 +2105,11 @@ fn build_role(path: &str) -> &'static str {
         "package.json" => "package manifest",
         "pom.xml" => "Maven build",
         "build.gradle" | "build.gradle.kts" => "Gradle build",
+        "CMakeLists.txt" => "CMake build",
+        "CMakePresets.json" => "CMake presets",
+        "vcpkg.json" => "vcpkg dependencies",
+        "conanfile.txt" | "conanfile.py" => "Conan dependencies",
+        "conan.lock" => "Conan lock file",
         "go.mod" => "Go module",
         "go.work" => "Go workspace",
         "go.sum" => "Go module checksums",
@@ -2045,13 +2133,25 @@ pub(crate) fn lower_first(text: &str) -> String {
     let plain = chars.next().is_some_and(char::is_uppercase)
         && chars.clone().next().is_some()
         && chars.all(char::is_lowercase)
-        && !PROPER_NOUNS.contains(&word);
+        && !PROPER_NOUNS.contains(&word)
+        && !starts_with_language_unit(text);
     if plain {
         let first = text.chars().next().unwrap_or_default();
         first.to_lowercase().collect::<String>() + &text[first.len_utf8()..]
     } else {
         text.to_string()
     }
+}
+
+/// True for the sentence of a unit that starts with the name of its
+/// language and that name is an ordinary word: `Go module `app` with 3
+/// packages.` keeps its capital, a sentence that starts with "Go to" does
+/// not. (`C`, `C++` and `C#` are never lowered, whatever follows.)
+fn starts_with_language_unit(text: &str) -> bool {
+    text.strip_prefix("Go ").is_some_and(|rest| {
+        let rest = rest.strip_prefix("test ").unwrap_or(rest);
+        rest.starts_with("module `")
+    })
 }
 
 /// Product and technology names that keep their capital at the start of a
@@ -2146,5 +2246,44 @@ mod tests {
             "Obsidian vault model."
         );
         assert_eq!(lower_first("A graph."), "A graph.");
+    }
+
+    #[test]
+    fn a_unit_sentence_keeps_the_name_of_its_language() {
+        // The names that are no plain word keep their spelling.
+        for text in [
+            "C project `core` with 3 modules.",
+            "C++ project `net` with 1 module.",
+            "C# project `App` with 2 modules.",
+            "Go module `ledger` with 5 packages.",
+            "Go test module `ledger` with 1 package.",
+        ] {
+            assert_eq!(lower_first(text), text);
+        }
+        // An ordinary sentence that starts with the word still lowers it.
+        assert_eq!(lower_first("Go to the store."), "go to the store.");
+        assert_eq!(
+            lower_first("Go modules are folders."),
+            "go modules are folders."
+        );
+        assert_eq!(language_name(Language::C), "C");
+        assert_eq!(language_name(Language::Cpp), "C++");
+        assert_eq!(unit_noun(Language::Cpp), "project");
+    }
+
+    #[test]
+    fn stubs_a_cpp_member_for_the_class_that_takes_it_on() {
+        assert_eq!(
+            cpp_override("virtual double area() const = 0"),
+            "double area() const override"
+        );
+        assert_eq!(
+            cpp_override("virtual void run() override;"),
+            "void run() override"
+        );
+        assert_eq!(
+            cpp_override("int size() const"),
+            "int size() const override"
+        );
     }
 }

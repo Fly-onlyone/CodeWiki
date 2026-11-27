@@ -10,6 +10,8 @@ use cw_core::{
 };
 use ignore::WalkBuilder;
 
+use crate::c::{CInput, parse_c};
+use crate::cfamily::{CPlan, merge as merge_c_family};
 use crate::csharp::parse_csharp;
 use crate::go::{package_name, parse_go};
 use crate::gomod::parse_go_mod;
@@ -223,10 +225,19 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
         |import: &str| -> Option<String> { go_names.get(&go.modules.folder_of(import)?).cloned() };
     let mut go_module_at: HashMap<String, usize> = HashMap::new();
 
+    // The language of every C and C++ file, which header and source are one
+    // module, and what an `#include` names: all need the other files.
+    let c_plan = CPlan::build(&paths, &|path| {
+        std::fs::read_to_string(root.join(path)).ok()
+    });
+
     for path in &paths {
         let full = root.join(path);
         let meta = std::fs::metadata(&full).map_err(|e| Error::io(&full, e))?;
-        let language = Language::from_path(path);
+        let language = c_plan
+            .as_ref()
+            .and_then(|plan| plan.language.get(path).copied())
+            .unwrap_or_else(|| Language::from_path(path));
         if meta.len() > MAX_SOURCE_BYTES {
             facts.files.push(FileRecord {
                 path: path.clone(),
@@ -272,10 +283,34 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
                 Language::Go => {
                     parse_go(path, &source, &go.modules.package_of(path), &go_import_name)?
                 }
+                Language::C | Language::Cpp => {
+                    // A vendored tree has no module: it is not parsed.
+                    let Some((plan, module)) = c_plan
+                        .as_ref()
+                        .and_then(|plan| Some((plan, plan.module.get(path)?)))
+                    else {
+                        continue;
+                    };
+                    let dirs = plan.include_dirs(path);
+                    let include =
+                        |spec: &str, quoted: bool| plan.include(path, &dirs, spec, quoted);
+                    let input = CInput {
+                        module,
+                        cpp: language == Language::Cpp,
+                        include: &include,
+                    };
+                    parse_c(path, &source, &input)?
+                }
                 _ => continue,
             };
             if file_parsed.has_errors {
                 facts.files_with_errors.push(path.clone());
+            }
+            // The symbols of C and C++ files are put together afterwards:
+            // a declaration and its definition stand in different files.
+            if language.is_c_family() {
+                parsed.push((path.clone(), file_parsed));
+                continue;
             }
             for symbol in &file_parsed.symbols {
                 // Overloads, stubs, the files of one Java package and the
@@ -326,6 +361,14 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
             }
         }
         parsed.push((path.clone(), file_parsed));
+    }
+
+    if let Some(plan) = &c_plan {
+        for symbol in merge_c_family(&mut parsed, plan) {
+            if seen.insert(symbol.qualified.clone()) {
+                facts.symbols.push(symbol);
+            }
+        }
     }
 
     // The packages the repository's projects reference tell which package a
@@ -1864,6 +1907,515 @@ pub fn read() -> u8 { LIMIT }
         assert_eq!(
             edge_of(&facts, "ui::draw", size, EdgeKind::Calls),
             Some(Confidence::Low)
+        );
+    }
+
+    fn symbol_of<'f>(facts: &'f RepoFacts, qualified: &str) -> &'f Symbol {
+        facts
+            .symbols
+            .iter()
+            .find(|s| s.qualified == qualified)
+            .unwrap_or_else(|| {
+                let all: Vec<&str> = facts.symbols.iter().map(|s| s.qualified.as_str()).collect();
+                panic!("no {qualified} in {all:#?}")
+            })
+    }
+
+    #[test]
+    fn scans_a_c_project_with_header_and_source_pairs() {
+        let facts = scan_files(&[
+            (
+                "CMakeLists.txt",
+                "project(demo)\nfind_package(ZLIB REQUIRED)\nadd_library(net src/net/socket.c)\ntarget_include_directories(net PUBLIC include)\nadd_executable(app src/main.c)\ntarget_link_libraries(app net)\n",
+            ),
+            (
+                "include/net/socket.h",
+                "#ifndef NET_SOCKET_H\n#define NET_SOCKET_H\n#include <stdint.h>\n\n#define SOCKET_MAX 64\n#define SOCKET_OK(s) ((s) != NULL)\n\n/* A connection. */\ntypedef struct socket {\n    int fd;\n} socket_t;\n\ntypedef enum { SOCK_TCP, SOCK_UDP } sock_kind;\n\n/* Open a socket. */\nsocket_t *socket_open(int port);\nint socket_close(socket_t *s);\nextern int socket_count;\n#endif\n",
+            ),
+            (
+                "src/net/socket.c",
+                "#include \"net/socket.h\"\n#include <zlib.h>\n#include <stdio.h>\n\nint socket_count = 0;\n\nstatic int next_fd(void) { return socket_count++; }\n\nsocket_t *socket_open(int port) {\n    socket_t *s = 0;\n    next_fd();\n    printf(\"%d\", port);\n    return s;\n}\n\nint socket_close(socket_t *s) {\n    return SOCKET_OK(s) ? 0 : SOCKET_MAX;\n}\n",
+            ),
+            (
+                "src/main.c",
+                "#include \"net/socket.h\"\n\nint main(int argc, char **argv) {\n    socket_t *s = socket_open(80);\n    sock_kind k = SOCK_TCP;\n    return socket_close(s);\n}\n",
+            ),
+        ]);
+        assert!(
+            facts.files_with_errors.is_empty(),
+            "{:?}",
+            facts.files_with_errors
+        );
+        // The header and the source are one module, standing at the header.
+        let module = symbol_of(&facts, "net::socket");
+        assert_eq!(module.kind, SymbolKind::Module);
+        assert_eq!(module.file, "include/net/socket.h");
+        assert_eq!(
+            facts
+                .symbols
+                .iter()
+                .filter(|s| s.qualified == "net::socket")
+                .count(),
+            1
+        );
+        // A declaration and its definition are one symbol at the header, and
+        // name the file that defines it.
+        let open = symbol_of(&facts, "net::socket::socket_open");
+        assert_eq!(open.kind, SymbolKind::Function);
+        assert_eq!(open.file, "include/net/socket.h");
+        assert_eq!(open.doc, "Open a socket.");
+        assert_eq!(open.visibility, Visibility::Public);
+        assert!(open.attrs.contains(&"impl:src/net/socket.c".to_string()));
+        assert!(!open.attrs.iter().any(|a| a == "declaration"));
+        // `static` is private; a definition no header declares is internal.
+        assert_eq!(
+            symbol_of(&facts, "net::socket::next_fd").visibility,
+            Visibility::Private
+        );
+        let count = symbol_of(&facts, "net::socket::socket_count");
+        assert_eq!(
+            (count.kind, count.file.as_str()),
+            (SymbolKind::Static, "include/net/socket.h")
+        );
+        // A typedef'd struct is one struct; the enum has constants.
+        assert_eq!(
+            kind_of(&facts, "net::socket::socket_t"),
+            Some(SymbolKind::Struct)
+        );
+        assert_eq!(kind_of(&facts, "net::socket::socket"), None);
+        assert_eq!(
+            kind_of(&facts, "net::socket::sock_kind"),
+            Some(SymbolKind::Enum)
+        );
+        assert_eq!(
+            kind_of(&facts, "net::socket::sock_kind::SOCK_UDP"),
+            Some(SymbolKind::Const)
+        );
+        // A constant macro and a function-like macro are symbols; the
+        // include guard is none.
+        assert_eq!(
+            kind_of(&facts, "net::socket::SOCKET_MAX"),
+            Some(SymbolKind::Const)
+        );
+        assert_eq!(
+            kind_of(&facts, "net::socket::SOCKET_OK"),
+            Some(SymbolKind::Macro)
+        );
+        assert_eq!(kind_of(&facts, "net::socket::NET_SOCKET_H"), None);
+        // `main` of a program of its own.
+        assert_eq!(kind_of(&facts, "main::main"), Some(SymbolKind::Function));
+
+        let edge = |src: &str, dst: &str, kind| edge_of(&facts, src, dst, kind);
+        // Through the include: the header's names are the file's.
+        assert_eq!(
+            edge("main::main", "net::socket::socket_open", EdgeKind::Calls),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge("main::main", "net::socket::socket_close", EdgeKind::Calls),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "main::main",
+                "net::socket::sock_kind::SOCK_TCP",
+                EdgeKind::References
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge("main::main", "net::socket::socket_t", EdgeKind::References),
+            Some(Confidence::High)
+        );
+        // Within the module, and a macro invoked like a function.
+        assert_eq!(
+            edge(
+                "net::socket::socket_open",
+                "net::socket::next_fd",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "net::socket::socket_close",
+                "net::socket::SOCKET_OK",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "net::socket::socket_close",
+                "net::socket::SOCKET_MAX",
+                EdgeKind::References
+            ),
+            Some(Confidence::High)
+        );
+        // `printf` is nobody's.
+        assert!(!facts.edges.iter().any(|e| e.dst.ends_with("printf")));
+        assert!(
+            edge(
+                "file:src/main.c",
+                "file:include/net/socket.h",
+                EdgeKind::Imports
+            )
+            .is_some()
+        );
+        assert!(
+            edge(
+                "file:src/net/socket.c",
+                "file:include/net/socket.h",
+                EdgeKind::Imports
+            )
+            .is_some()
+        );
+        // The standard library is no integration; `zlib.h` is the library the
+        // repository asks for.
+        assert_eq!(
+            facts.external_uses,
+            vec![ExternalUse {
+                file: "src/net/socket.c".into(),
+                krate: "ZLIB".into(),
+                names: vec![],
+            }]
+        );
+    }
+
+    #[test]
+    fn scans_a_cpp_project_with_a_class_across_header_and_source() {
+        let facts = scan_files(&[
+            (
+                "src/shapes/shape.hpp",
+                "#pragma once\nnamespace shapes {\n\n/// Anything with an area.\nclass Shape {\npublic:\n    virtual ~Shape() = default;\n    virtual double area() const = 0;\n    virtual const char* name() const = 0;\n};\n\n}\n",
+            ),
+            (
+                "src/shapes/circle.hpp",
+                "#pragma once\n#include \"shape.hpp\"\n#include <vector>\nnamespace shapes {\n\ntemplate <typename T>\nT square(T x);\n\n/// A circle.\nclass Circle : public Shape {\npublic:\n    explicit Circle(double r);\n    double area() const override;\n    const char* name() const override { return \"circle\"; }\n    static Circle unit();\nprivate:\n    double scale() const;\n    double r_;\n};\n\n}\n",
+            ),
+            (
+                "src/shapes/circle.cpp",
+                "#include \"circle.hpp\"\n\nnamespace shapes {\n\nCircle::Circle(double r) : r_(r) {}\n\ndouble Circle::area() const { return square(r_) * scale(); }\n\ndouble Circle::scale() const { return 3.14; }\n\nCircle Circle::unit() { return Circle(1.0); }\n\ntemplate <typename T>\nT square(T x) { return x * x; }\n\n}\n",
+            ),
+            (
+                "src/app/main.cpp",
+                "#include \"../shapes/circle.hpp\"\n#include <iostream>\n\nstatic double total(const shapes::Shape& s) { return s.area(); }\n\nint main() {\n    shapes::Circle c(2.0);\n    auto u = shapes::Circle::unit();\n    std::cout << total(c) << u.area();\n    shapes::Shape* p = new shapes::Circle(3.0);\n    return p->name() == nullptr;\n}\n",
+            ),
+        ]);
+        assert!(
+            facts.files_with_errors.is_empty(),
+            "{:?}",
+            facts.files_with_errors
+        );
+        // The pure virtual class is the nearest thing to an interface.
+        let shape = symbol_of(&facts, "shapes::shape::Shape");
+        assert_eq!(shape.kind, SymbolKind::Interface);
+        assert_eq!(shape.doc, "Anything with an area.");
+        assert!(shape.attrs.contains(&"namespace:shapes".to_string()));
+        let circle = symbol_of(&facts, "shapes::circle::Circle");
+        assert_eq!(circle.kind, SymbolKind::Class);
+        assert_eq!(circle.file, "src/shapes/circle.hpp");
+        // The out-of-line definitions are the class's methods, one symbol
+        // each, at the header, and say where they are defined.
+        let area = symbol_of(&facts, "shapes::circle::Circle::area");
+        assert_eq!(area.kind, SymbolKind::Method);
+        assert_eq!(area.file, "src/shapes/circle.hpp");
+        assert!(
+            area.attrs
+                .contains(&"impl:src/shapes/circle.cpp".to_string())
+        );
+        assert_eq!(
+            symbol_of(&facts, "shapes::circle::Circle::scale").visibility,
+            Visibility::Private
+        );
+        assert_eq!(
+            kind_of(&facts, "shapes::circle::Circle::Circle"),
+            Some(SymbolKind::Method)
+        );
+        assert_eq!(
+            kind_of(&facts, "shapes::circle::Circle::unit"),
+            Some(SymbolKind::Method)
+        );
+        assert_eq!(
+            facts
+                .symbols
+                .iter()
+                .filter(|s| s.qualified == "shapes::circle::Circle::area")
+                .count(),
+            1
+        );
+        // A template function is one symbol, its definition in the source.
+        let square = symbol_of(&facts, "shapes::circle::square");
+        assert_eq!(square.kind, SymbolKind::Function);
+        assert!(square.attrs.contains(&"template".to_string()));
+        // Inheritance, through the include.
+        assert_eq!(
+            edge_of(
+                &facts,
+                "shapes::circle::Circle",
+                "shapes::shape::Shape",
+                EdgeKind::Implements
+            ),
+            Some(Confidence::High)
+        );
+        let edge = |src: &str, dst: &str, kind| edge_of(&facts, src, dst, kind);
+        // A call inside a method finds a sibling, and a template.
+        assert_eq!(
+            edge(
+                "shapes::circle::Circle::area",
+                "shapes::circle::Circle::scale",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "shapes::circle::Circle::area",
+                "shapes::circle::square",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // `Namespace::Class::method()` and a constructor.
+        assert_eq!(
+            edge(
+                "app::main::main",
+                "shapes::circle::Circle::unit",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "app::main::main",
+                "shapes::circle::Circle::Circle",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // `s.area()` on a parameter: two classes have an `area`, so nothing
+        // is claimed.
+        assert!(
+            edge(
+                "app::main::total",
+                "shapes::circle::Circle::area",
+                EdgeKind::Calls
+            )
+            .is_none()
+        );
+        // The standard library never binds.
+        assert!(!facts.edges.iter().any(|e| e.dst.contains("cout")));
+        assert_eq!(facts.external_uses, vec![]);
+    }
+
+    #[test]
+    fn a_mixed_repository_keeps_c_and_cpp_apart_and_together() {
+        let facts = scan_files(&[
+            (
+                "core/buf.h",
+                "#ifdef __cplusplus\nextern \"C\" {\n#endif\nint buf_len(const char *b);\n#ifdef __cplusplus\n}\n#endif\n",
+            ),
+            (
+                "core/buf.c",
+                "#include \"buf.h\"\nint buf_len(const char *b) { return 0; }\n",
+            ),
+            (
+                "app/wrap.hpp",
+                "#include \"../core/buf.h\"\nclass Wrap { public: int size() const; };\n",
+            ),
+            (
+                "app/wrap.cpp",
+                "#include \"wrap.hpp\"\nint Wrap::size() const { return buf_len(\"x\"); }\n",
+            ),
+        ]);
+        let language = |path: &str| {
+            facts
+                .files
+                .iter()
+                .find(|f| f.path == path)
+                .map(|f| f.language)
+                .unwrap()
+        };
+        assert_eq!(language("core/buf.h"), Language::C);
+        assert_eq!(language("core/buf.c"), Language::C);
+        assert_eq!(language("app/wrap.hpp"), Language::Cpp);
+        assert_eq!(language("app/wrap.cpp"), Language::Cpp);
+        // C++ calls the C function through the header, and the C and C++
+        // files of the repository are mapped as one.
+        assert_eq!(
+            edge_of(
+                &facts,
+                "app::wrap::Wrap::size",
+                "core::buf::buf_len",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(kind_of(&facts, "app::wrap::Wrap"), Some(SymbolKind::Class));
+    }
+
+    #[test]
+    fn a_dot_h_with_cpp_in_it_is_parsed_as_cpp() {
+        let facts = scan_files(&[
+            (
+                "inc/shape.h",
+                "namespace g { class Shape { public: virtual ~Shape(); int id() const; }; }\n",
+            ),
+            ("inc/plain.h", "int plain(int x);\n"),
+        ]);
+        let language = |path: &str| {
+            facts
+                .files
+                .iter()
+                .find(|f| f.path == path)
+                .map(|f| f.language)
+                .unwrap()
+        };
+        assert_eq!(language("inc/shape.h"), Language::Cpp);
+        assert_eq!(language("inc/plain.h"), Language::C);
+        assert_eq!(kind_of(&facts, "shape::Shape"), Some(SymbolKind::Class));
+        assert_eq!(
+            kind_of(&facts, "shape::Shape::id"),
+            Some(SymbolKind::Method)
+        );
+        assert_eq!(kind_of(&facts, "plain::plain"), Some(SymbolKind::Function));
+    }
+
+    #[test]
+    fn a_vendored_tree_is_not_parsed_beside_the_projects_own_code() {
+        let facts = scan_files(&[
+            (
+                "src/app.c",
+                "#include <png/png.h>\nint app(void) { return png_ok(); }\n",
+            ),
+            ("third_party/png/png.h", "int png_ok(void);\n"),
+            ("third_party/png/png.c", "int png_ok(void) { return 1; }\n"),
+        ]);
+        assert!(
+            !facts
+                .symbols
+                .iter()
+                .any(|s| s.file.starts_with("third_party/"))
+        );
+        assert_eq!(kind_of(&facts, "app::app"), Some(SymbolKind::Function));
+        assert!(!facts.edges.iter().any(|e| e.dst.contains("png_ok")));
+        // The folder names the library the include reaches.
+        assert_eq!(
+            facts.external_uses,
+            vec![ExternalUse {
+                file: "src/app.c".into(),
+                krate: "png".into(),
+                names: vec!["png/png.h".into()],
+            }]
+        );
+        // The files are known all the same.
+        assert!(
+            facts
+                .files
+                .iter()
+                .any(|f| f.path == "third_party/png/png.c")
+        );
+    }
+
+    #[test]
+    fn a_function_defined_in_another_module_joins_its_declaration() {
+        let facts = scan_files(&[
+            (
+                "api.h",
+                "/* Run it. */\nint api_run(int n);\nint api_other(void);\n",
+            ),
+            (
+                "impl_linux.c",
+                "#include \"api.h\"\n\nstatic int helper(int n) { return n + 1; }\n\nint api_run(int n) { return helper(n); }\n",
+            ),
+            (
+                "impl_other.c",
+                "static int helper(int n) { return n + 2; }\nint unrelated(int n) { return helper(n); }\n",
+            ),
+            (
+                "user.c",
+                "#include \"api.h\"\nint use_it(void) { return api_run(1) + api_other(); }\n",
+            ),
+        ]);
+        // One symbol at the header, with the file that defines it.
+        let run = symbol_of(&facts, "api::api_run");
+        assert_eq!(run.file, "api.h");
+        assert_eq!(run.doc, "Run it.");
+        assert!(run.attrs.contains(&"impl:impl_linux.c".to_string()));
+        assert!(
+            !facts
+                .symbols
+                .iter()
+                .any(|s| s.qualified == "impl_linux::api_run")
+        );
+        // What the definition's body calls belongs to the merged symbol, and
+        // each static `helper` is the one of its own module.
+        assert_eq!(
+            edge_of(
+                &facts,
+                "api::api_run",
+                "impl_linux::helper",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge_of(
+                &facts,
+                "impl_other::unrelated",
+                "impl_other::helper",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge_of(
+                &facts,
+                "impl_other::unrelated",
+                "impl_linux::helper",
+                EdgeKind::Calls
+            ),
+            None
+        );
+        // A call through the header finds it, and a function nothing defines
+        // is still the header's.
+        assert_eq!(
+            edge_of(&facts, "user::use_it", "api::api_run", EdgeKind::Calls),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge_of(&facts, "user::use_it", "api::api_other", EdgeKind::Calls),
+            Some(Confidence::High)
+        );
+    }
+
+    #[test]
+    fn two_headers_that_declare_a_name_leave_it_unbound() {
+        let facts = scan_files(&[
+            ("a.h", "int shared_name(void);\n"),
+            ("b.h", "int shared_name(void);\n"),
+            (
+                "use.c",
+                "#include \"a.h\"\n#include \"b.h\"\nint f(void) { return shared_name(); }\n",
+            ),
+            (
+                "only_a.c",
+                "#include \"a.h\"\nint g(void) { return shared_name(); }\n",
+            ),
+        ]);
+        // Declared by two headers at one distance: no claim.
+        assert_eq!(
+            edge_of(&facts, "use::f", "a::shared_name", EdgeKind::Calls),
+            None
+        );
+        assert_eq!(
+            edge_of(&facts, "use::f", "b::shared_name", EdgeKind::Calls),
+            None
+        );
+        // One header sees only its own.
+        assert_eq!(
+            edge_of(&facts, "only_a::g", "a::shared_name", EdgeKind::Calls),
+            Some(Confidence::High)
         );
     }
 }

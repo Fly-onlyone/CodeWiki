@@ -375,6 +375,20 @@ fn module_dir(unit: &Unit, module: &str) -> String {
     dir
 }
 
+/// The file a symbol stands in and, for C and C++ code, the files that
+/// define what a header declares: a change in either changes the note.
+fn files_of(symbol: &Symbol) -> Vec<String> {
+    let mut files = vec![symbol.file.clone()];
+    files.extend(
+        symbol
+            .attrs
+            .iter()
+            .filter_map(|a| a.strip_prefix(cw_parse::IMPL_ATTR))
+            .map(str::to_string),
+    );
+    files
+}
+
 /// Nearest enclosing module of a symbol (itself when it is a module).
 fn enclosing_module<'a>(repo: &Repo<'a>, symbol: &'a Symbol) -> &'a str {
     let mut current = symbol;
@@ -493,7 +507,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
             kind: NoteKind::Concept,
             tags: vec!["core".into(), unit.slug.clone(), "module".into()],
             subject: Subject::Module(m.qualified.clone()),
-            sources: vec![m.file.clone()],
+            sources: files_of(m),
         });
     }
 
@@ -545,7 +559,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
                 kind: NoteKind::Concept,
                 tags: vec!["core".into(), unit.slug.clone()],
                 subject: Subject::Type(t.qualified.clone()),
-                sources: vec![t.file.clone()],
+                sources: files_of(t),
             });
         }
     }
@@ -747,12 +761,23 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
             .filter(|u| !u.is_rust())
             .flat_map(|u| u.manifests.iter().map(|m| m.path.as_str()))
             .collect();
+        let has_c = repo.units.list.iter().any(|u| u.language.is_c_family());
         let mut sources: Vec<String> = facts
             .files
             .iter()
             .map(|f| f.path.as_str())
             .filter(|p| {
-                *p == "Cargo.toml"
+                // The files at the top that every C or C++ build starts from.
+                (has_c
+                    && matches!(
+                        *p,
+                        "CMakeLists.txt"
+                            | "CMakePresets.json"
+                            | "vcpkg.json"
+                            | "conanfile.txt"
+                            | "conanfile.py"
+                    ))
+                    || *p == "Cargo.toml"
                     || p.starts_with(".github/workflows/")
                     || p.rsplit('/')
                         .next()

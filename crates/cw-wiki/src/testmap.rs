@@ -12,7 +12,9 @@
 //! ([`crate::rustscan`]) because the structural parser leaves unit-test
 //! modules out of the index; C# reads them from the attributes the parser
 //! recorded; Go reads them from the names and signatures of the functions of
-//! its `_test.go` files. A language joins the map by adding one entry to
+//! its `_test.go` files; C and C++ read them from the test macros the parser
+//! recorded (`TEST`, `TEST_CASE`, `BOOST_AUTO_TEST_CASE`) and from what CMake
+//! registers with CTest. A language joins the map by adding one entry to
 //! [`LANGUAGES`].
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
@@ -20,7 +22,8 @@ use std::path::Path;
 
 use cw_core::{Language, Result, Symbol, SymbolKind};
 use cw_index::Index;
-use cw_parse::{CrateInfo, module_path, owning_crate};
+use cw_parse::cmake::{Cmake, Target, read_cmake};
+use cw_parse::{CrateInfo, c_module_map, module_path, owning_crate};
 use serde::{Deserialize, Serialize};
 
 use crate::gitintel::dependents_by_file;
@@ -93,6 +96,8 @@ struct Env<'a> {
     go_modules: BTreeSet<String>,
     /// Every file of the repository, for the build files of Gradle and Maven.
     files: HashSet<String>,
+    /// The CMake targets and the tests registered with CTest.
+    cmake: Cmake,
 }
 
 impl Env<'_> {
@@ -145,7 +150,7 @@ trait TestLanguage: Sync {
 /// The languages whose tests the map follows. Adding a language is adding an
 /// entry here and the type that fills in [`TestLanguage`]: reachability,
 /// the report, the MCP tool and the app need no change.
-static LANGUAGES: [&dyn TestLanguage; 4] = [&RustTests, &CSharpTests, &GoTests, &JvmTests];
+static LANGUAGES: [&dyn TestLanguage; 5] = [&RustTests, &CSharpTests, &GoTests, &JvmTests, &CTests];
 
 fn language_of(language: Language) -> Option<&'static dyn TestLanguage> {
     LANGUAGES.iter().copied().find(|l| l.covers(language))
@@ -940,6 +945,377 @@ impl TestLanguage for JvmTests {
     }
 }
 
+/// A test that reaches what a header declares reaches the source that
+/// defines it, so a change to the source impacts it too. The header and the
+/// source of one name are one module; every file of a module gets the files
+/// that depend on any other file of it.
+fn add_c_pair_dependents(files: &[String], dependents: &mut HashMap<String, BTreeSet<String>>) {
+    let modules = c_module_map(files);
+    if modules.is_empty() {
+        return;
+    }
+    let mut by_module: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (file, module) in &modules {
+        by_module.entry(module).or_default().push(file);
+    }
+    for members in by_module.values().filter(|m| m.len() > 1) {
+        let mut all: BTreeSet<String> = BTreeSet::new();
+        for member in members {
+            all.extend(dependents.get(*member).into_iter().flatten().cloned());
+        }
+        for member in members {
+            let own = dependents.entry((*member).to_string()).or_default();
+            own.extend(all.iter().filter(|f| f.as_str() != *member).cloned());
+        }
+    }
+}
+
+/// More tests than this in one run and the run is the whole executable, or
+/// every test CTest knows: a list of names would be longer than the run it
+/// saves.
+const MAX_C_TESTS: usize = 8;
+
+/// The test frameworks of C and C++ code that the parser reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CFilter {
+    /// `ctest -R`.
+    Ctest,
+    Gtest,
+    Catch,
+    Boost,
+    Doctest,
+}
+
+/// How CMake registers the tests of an executable with CTest.
+enum Registration {
+    /// `gtest_discover_tests` and the like: CTest knows each test by its own
+    /// name, which is `Suite.Name` for GoogleTest.
+    Discovered,
+    /// `add_test(NAME x COMMAND exe)`: CTest knows the whole executable as `x`.
+    Plain(Vec<String>),
+    None,
+}
+
+/// `text` as a regular expression that matches it and nothing else.
+fn regex_escape(text: &str) -> String {
+    let mut out = String::new();
+    for c in text.chars() {
+        if "\\^$.|?*+()[]{}".contains(c) {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
+}
+
+struct CTests;
+
+impl CTests {
+    /// The CMake target that lists `path`.
+    fn target<'e>(env: &'e Env, path: &str) -> Option<&'e Target> {
+        env.cmake
+            .targets
+            .iter()
+            .find(|t| t.sources.iter().any(|s| s == path))
+    }
+
+    fn registration(env: &Env, target: &Target) -> Registration {
+        let mut names = Vec::new();
+        for test in &env.cmake.tests {
+            if test.target.as_deref() != Some(target.name.as_str()) && test.name != target.name {
+                continue;
+            }
+            if test.discovered.is_some() {
+                return Registration::Discovered;
+            }
+            names.push(test.name.clone());
+        }
+        if names.is_empty() {
+            Registration::None
+        } else {
+            Registration::Plain(names)
+        }
+    }
+
+    /// The test frameworks' own names for a test: `Suite.Name` for GoogleTest.
+    fn name_of(symbol: &Symbol) -> Option<&str> {
+        symbol
+            .attrs
+            .iter()
+            .find_map(|a| a.strip_prefix(cw_parse::TEST_NAME_ATTR))
+    }
+
+    fn framework(symbol: &Symbol) -> Option<&str> {
+        symbol
+            .attrs
+            .iter()
+            .find_map(|a| a.strip_prefix(cw_parse::TEST_FRAMEWORK_ATTR))
+    }
+
+    /// A CTest regex for one test.
+    fn ctest_alternative(symbol: &Symbol, name: &str) -> String {
+        let escaped = regex_escape(name);
+        // A parameterized or typed test is known as `Prefix/Suite.Name/N`
+        // or `Suite/0.Name`.
+        if symbol.signature.starts_with("TEST_P") || symbol.signature.starts_with("TYPED_TEST") {
+            match name.split_once('.') {
+                Some((suite, case)) => {
+                    format!("{}[./]{}", regex_escape(suite), regex_escape(case))
+                }
+                None => escaped,
+            }
+        } else {
+            format!("^{escaped}$")
+        }
+    }
+}
+
+impl TestLanguage for CTests {
+    fn language(&self) -> Language {
+        Language::Cpp
+    }
+
+    fn covers(&self, language: Language) -> bool {
+        language.is_c_family()
+    }
+
+    /// A file in a test folder or named like a test, and the sources of a
+    /// CMake target that CTest runs or that links a test framework.
+    fn is_test_file(&self, env: &Env, path: &str) -> bool {
+        is_test_file(path)
+            || Self::target(env, path).is_some_and(|t| {
+                matches!(Self::registration(env, t), Registration::Discovered)
+                    || crate::units::links_a_test_framework(&t.links)
+            })
+    }
+
+    /// The test macros the parser found, and for a program CTest runs as a
+    /// whole, its `main`.
+    fn tests(&self, env: &Env, path: &str, _: &str) -> Vec<TestCase> {
+        let found: Vec<TestCase> = env
+            .symbols_of(path)
+            .iter()
+            .filter(|s| s.attrs.iter().any(|a| a == cw_parse::TEST_ATTR))
+            .filter_map(|s| {
+                Some(TestCase {
+                    name: Self::name_of(s)?.to_string(),
+                    line: s.start_line,
+                })
+            })
+            .collect();
+        if !found.is_empty() {
+            return found;
+        }
+        let Some(target) = Self::target(env, path) else {
+            return Vec::new();
+        };
+        let Registration::Plain(names) = Self::registration(env, target) else {
+            return Vec::new();
+        };
+        // A program CTest runs as a smoke test is no file of tests.
+        if !self.is_test_file(env, path) {
+            return Vec::new();
+        }
+        env.symbols_of(path)
+            .iter()
+            .find(|s| s.kind == SymbolKind::Function && s.name == "main")
+            .map(|main| {
+                vec![TestCase {
+                    name: names[0].clone(),
+                    line: main.start_line,
+                }]
+            })
+            .unwrap_or_default()
+    }
+
+    /// With CMake: `ctest --test-dir build -R '<tests>'` for what CTest
+    /// knows by name, else the test executable with its framework's filter
+    /// (`./build/<folder>/<target> --gtest_filter=A.B`), else every test:
+    /// `ctest --test-dir build`. The folder `build` is a guess: it is where
+    /// `cmake -S . -B build` puts a build. Without CMake there is no
+    /// executable to name, and no command.
+    fn command(&self, env: &Env, path: &str, _: TestKind, tests: &[TestCase]) -> String {
+        let Some(target) = Self::target(env, path) else {
+            return String::new();
+        };
+        let symbols: Vec<&Symbol> = env
+            .symbols_of(path)
+            .iter()
+            .filter(|s| s.attrs.iter().any(|a| a == cw_parse::TEST_ATTR))
+            .collect();
+        let named: Vec<(&Symbol, &str)> = symbols
+            .iter()
+            .filter_map(|s| Some((*s, Self::name_of(s)?)))
+            .filter(|(_, name)| tests.iter().any(|t| t.name == *name))
+            .collect();
+        match Self::registration(env, target) {
+            Registration::Discovered if !named.is_empty() => format!(
+                "ctest --test-dir build -R '{}'",
+                named
+                    .iter()
+                    .map(|(s, n)| Self::ctest_alternative(s, n))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
+            Registration::Plain(names) => format!(
+                "ctest --test-dir build -R '{}'",
+                names
+                    .iter()
+                    .map(|n| format!("^{}$", regex_escape(n)))
+                    .collect::<Vec<_>>()
+                    .join("|")
+            ),
+            _ => {
+                let program = if target.dir.is_empty() {
+                    format!("./build/{}", target.name)
+                } else {
+                    format!("./build/{}/{}", target.dir, target.name)
+                };
+                let framework = named.first().and_then(|(s, _)| Self::framework(s));
+                let names: Vec<&str> = named.iter().map(|(_, n)| *n).collect();
+                match framework {
+                    Some("gtest") if !names.is_empty() => {
+                        format!("{program} --gtest_filter={}", names.join(":"))
+                    }
+                    Some("boost") if !names.is_empty() => {
+                        format!("{program} --run_test={}", names.join(","))
+                    }
+                    Some("doctest") if !names.is_empty() => {
+                        format!("{program} --test-case=\"{}\"", names.join(","))
+                    }
+                    // Catch2 and doctest read the same macro. A name with a
+                    // comma or a quote cannot be written in the filter.
+                    Some("catch")
+                        if !names.is_empty()
+                            && names.iter().all(|n| !n.contains([',', '"', '[', ']'])) =>
+                    {
+                        format!(
+                            "{program} {}",
+                            names
+                                .iter()
+                                .map(|n| format!("\"{n}\""))
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        )
+                    }
+                    _ => "ctest --test-dir build".to_string(),
+                }
+            }
+        }
+    }
+
+    /// One command for each test executable, over the tests of every impacted
+    /// file of it; every CTest regex folds into one `ctest` run. Past
+    /// [`MAX_C_TESTS`] names the executable or CTest runs whole.
+    fn commands(&self, files: &[&ImpactedTestFile]) -> Vec<String> {
+        // base -> (filter, names); no names and no filter: the whole run.
+        let mut runs: Vec<(String, Option<CFilter>, Vec<String>)> = Vec::new();
+        for file in files.iter().filter(|f| !f.command.is_empty()) {
+            let (base, filter, names) = split_c_command(&file.command);
+            let at = match runs.iter().position(|(known, _, _)| *known == base) {
+                Some(at) => at,
+                None => {
+                    runs.push((base, filter, Vec::new()));
+                    runs.len() - 1
+                }
+            };
+            match filter {
+                Some(_) => {
+                    for name in names {
+                        if !runs[at].2.contains(&name) {
+                            runs[at].2.push(name);
+                        }
+                    }
+                }
+                // Part of the run is unfiltered: run it all.
+                None => runs[at].1 = None,
+            }
+            if filter.is_none() {
+                runs[at].2.clear();
+            }
+        }
+        runs.into_iter()
+            .map(|(base, filter, names)| match filter {
+                Some(_) if names.len() > MAX_C_TESTS => {
+                    // Whole: every test of the executable, or of the build.
+                    base
+                }
+                Some(CFilter::Ctest) => format!("{base} -R '{}'", names.join("|")),
+                Some(CFilter::Gtest) => format!("{base} --gtest_filter={}", names.join(":")),
+                Some(CFilter::Boost) => format!("{base} --run_test={}", names.join(",")),
+                Some(CFilter::Doctest) => format!("{base} --test-case=\"{}\"", names.join(",")),
+                Some(CFilter::Catch) => format!(
+                    "{base} {}",
+                    names
+                        .iter()
+                        .map(|n| format!("\"{n}\""))
+                        .collect::<Vec<_>>()
+                        .join(",")
+                ),
+                None => base,
+            })
+            .collect()
+    }
+}
+
+/// The parts of a command [`CTests::command`] wrote: what runs, how the tests
+/// are chosen, and the names chosen.
+fn split_c_command(command: &str) -> (String, Option<CFilter>, Vec<String>) {
+    if let Some(rest) = command.strip_prefix("ctest --test-dir build -R '")
+        && let Some(inner) = rest.strip_suffix('\'')
+    {
+        // Alternatives are split where a `|` is not escaped.
+        let mut names: Vec<String> = Vec::new();
+        let mut current = String::new();
+        let mut escaped = false;
+        for c in inner.chars() {
+            match c {
+                '\\' if !escaped => {
+                    escaped = true;
+                    current.push(c);
+                    continue;
+                }
+                '|' if !escaped => names.push(std::mem::take(&mut current)),
+                _ => current.push(c),
+            }
+            escaped = false;
+        }
+        names.push(current);
+        return (
+            "ctest --test-dir build".to_string(),
+            Some(CFilter::Ctest),
+            names,
+        );
+    }
+    let split = |marker: &str, filter: CFilter, separator: &str, quoted: bool| {
+        let at = command.find(marker)?;
+        let mut tail = &command[at + marker.len()..];
+        if quoted {
+            tail = tail.strip_suffix('"').unwrap_or(tail);
+        }
+        Some((
+            command[..at].to_string(),
+            Some(filter),
+            tail.split(separator).map(str::to_string).collect(),
+        ))
+    };
+    if let Some(found) = split(" --gtest_filter=", CFilter::Gtest, ":", false)
+        .or_else(|| split(" --run_test=", CFilter::Boost, ",", false))
+        .or_else(|| split(" --test-case=\"", CFilter::Doctest, ",", true))
+    {
+        return found;
+    }
+    if let Some(at) = command.find(" \"") {
+        let names = command[at + 2..]
+            .trim_end_matches('"')
+            .split("\",\"")
+            .map(str::to_string)
+            .collect();
+        return (command[..at].to_string(), Some(CFilter::Catch), names);
+    }
+    (command.to_string(), None, Vec::new())
+}
+
 /// A Go test file builds with every file of its package, without importing
 /// it: the tests of `package store` and of `package store_test` in one folder
 /// both run for a change to any non-test file of that folder. Each such file
@@ -1020,6 +1396,13 @@ fn gather(root: &Path, index: &Index) -> Result<Facts> {
         test_projects,
         go_modules,
         files: files.iter().cloned().collect(),
+        cmake: if records.iter().any(|f| f.language.is_c_family()) {
+            read_cmake(&files, &|path| {
+                std::fs::read_to_string(root.join(path)).ok()
+            })
+        } else {
+            Cmake::default()
+        },
     };
     let mut test_files = Vec::new();
     let mut sources = Vec::new();
@@ -1054,6 +1437,7 @@ fn gather(root: &Path, index: &Index) -> Result<Facts> {
     sources.sort();
     let mut dependents = dependents_by_file(index)?;
     add_go_package_dependents(&files, &mut dependents);
+    add_c_pair_dependents(&files, &mut dependents);
     Ok(Facts {
         test_files,
         sources,

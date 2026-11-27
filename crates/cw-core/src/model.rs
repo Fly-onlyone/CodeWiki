@@ -16,6 +16,8 @@ pub enum Language {
     CSharp,
     Go,
     Kotlin,
+    C,
+    Cpp,
     Markdown,
     Toml,
     Json,
@@ -36,6 +38,12 @@ impl Language {
             "cs" => Self::CSharp,
             "go" => Self::Go,
             "kt" => Self::Kotlin,
+            // `.h` is C here; a repository that uses it for C++ headers is
+            // told apart by the scan, which knows the other files.
+            "c" | "h" => Self::C,
+            "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "ipp" | "tpp" | "inl" => {
+                Self::Cpp
+            }
             // A Gradle build script is a build file, not source: it is
             // `Other`, as the Maven `pom.xml` is.
             "kts" if !path.to_ascii_lowercase().ends_with(".gradle.kts") => Self::Kotlin,
@@ -57,6 +65,8 @@ impl Language {
             Self::CSharp => "csharp",
             Self::Go => "go",
             Self::Kotlin => "kotlin",
+            Self::C => "c",
+            Self::Cpp => "cpp",
             Self::Markdown => "markdown",
             Self::Toml => "toml",
             Self::Json => "json",
@@ -75,6 +85,8 @@ impl Language {
             "csharp" => Self::CSharp,
             "go" => Self::Go,
             "kotlin" => Self::Kotlin,
+            "c" => Self::C,
+            "cpp" => Self::Cpp,
             "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -95,7 +107,15 @@ impl Language {
                 | Self::CSharp
                 | Self::Go
                 | Self::Kotlin
+                | Self::C
+                | Self::Cpp
         )
+    }
+
+    /// C and C++ are one family: they share headers, modules and names, and
+    /// a `.h` file may be either.
+    pub fn is_c_family(self) -> bool {
+        matches!(self, Self::C | Self::Cpp)
     }
 
     /// Display name of the language of a source file that CodeWiki has no
@@ -108,9 +128,8 @@ impl Language {
     /// A language that gets a parser leaves this table by giving its
     /// extensions a [`Language`] variant that has symbol support.
     ///
-    /// `.h` is C: a header says nothing about which of the two languages
-    /// includes it, and a C++ project still names its headers `.hpp` or
-    /// `.hh` as often as not. `.m` and `.mm` are Objective-C.
+    /// C and C++ have parsers and are not in the table; `.m` and `.mm` are
+    /// Objective-C and stay file-level.
     pub fn file_level_name(path: &str) -> Option<&'static str> {
         if Self::from_path(path) != Self::Other {
             return None;
@@ -118,8 +137,6 @@ impl Language {
         let file = path.rsplit('/').next().unwrap_or(path);
         let (_, ext) = file.rsplit_once('.')?;
         Some(match ext.to_ascii_lowercase().as_str() {
-            "c" | "h" => "C",
-            "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "ipp" | "inl" => "C++",
             "m" | "mm" => "Objective-C",
             "swift" => "Swift",
             "rb" | "rake" => "Ruby",
@@ -174,24 +191,33 @@ pub struct FileRecord {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SymbolKind {
+    /// A header and the source of its name in C and C++; see `cw-parse`.
     Module,
     Function,
+    /// Also a C++ member, constructors, destructors and operators included.
     Method,
+    /// Also a C struct and a C or C++ typedef of one.
     Struct,
+    /// Also a C or C++ `enum` and a C++ `enum class`; its enumerators are
+    /// [`SymbolKind::Const`].
     Enum,
     Union,
     Trait,
     Impl,
+    /// Also a C or C++ constant and enumerator, and a `#define` with a value.
     Const,
+    /// Also a C or C++ global variable.
     Static,
     TypeAlias,
+    /// A Rust `macro_rules!` and a C or C++ function-like macro.
     Macro,
-    /// A class in Python, TypeScript, Java, C# or Kotlin; also a Java record,
-    /// a C# record (a C# record struct is a [`SymbolKind::Struct`]) and a
-    /// Kotlin `object`. Go has none.
+    /// A class in Python, TypeScript, Java, C#, Kotlin or C++; also a Java
+    /// record, a C# record (a C# record struct is a [`SymbolKind::Struct`])
+    /// and a Kotlin `object`. Go has none.
     Class,
     /// An interface in TypeScript, Java, C#, Go or Kotlin; also a Java
-    /// annotation type and a Kotlin annotation class.
+    /// annotation type, a Kotlin annotation class, and a C++ class of pure
+    /// virtual members and no data.
     Interface,
 }
 
@@ -416,6 +442,18 @@ mod tests {
         assert_eq!(Language::from_path("tools/gen.kts"), Language::Kotlin);
         assert_eq!(Language::parse(Language::Kotlin.as_str()), Language::Kotlin);
         assert!(Language::Kotlin.has_symbol_support());
+        assert_eq!(Language::from_path("lib/x.c"), Language::C);
+        assert_eq!(Language::from_path("include/x.h"), Language::C);
+        for cpp in [
+            "a.cc", "a.cpp", "a.CXX", "a.c++", "a.hpp", "a.hh", "a.hxx", "a.ipp", "a.tpp", "a.inl",
+        ] {
+            assert_eq!(Language::from_path(cpp), Language::Cpp, "{cpp}");
+        }
+        assert_eq!(Language::parse(Language::C.as_str()), Language::C);
+        assert_eq!(Language::parse(Language::Cpp.as_str()), Language::Cpp);
+        assert!(Language::C.has_symbol_support() && Language::Cpp.has_symbol_support());
+        assert!(Language::C.is_c_family() && Language::Cpp.is_c_family());
+        assert!(!Language::Go.is_c_family());
         // A Gradle script is a build file, not Kotlin source.
         for build in [
             "build.gradle.kts",
@@ -432,10 +470,8 @@ mod tests {
         for (path, name) in [
             ("app.swift", "Swift"),
             ("lib/tool.rb", "Ruby"),
-            ("lib/x.c", "C"),
-            ("include/x.h", "C"),
-            ("include/x.hpp", "C++"),
-            ("src/x.cpp", "C++"),
+            ("ui/View.m", "Objective-C"),
+            ("ui/View.mm", "Objective-C"),
             ("ui/Main.axaml", "AXAML"),
             ("ui/Main.xaml", "XAML"),
             ("run.sh", "Shell"),
@@ -462,6 +498,11 @@ mod tests {
             "src/App/Program.cs",
             "ui/Main.axaml.cs",
             "cmd/app/main.go",
+            "lib/x.c",
+            "include/x.h",
+            "include/x.hpp",
+            "src/x.cpp",
+            "src/x.CC",
             "README.md",
             "a.json",
             "a.yaml",

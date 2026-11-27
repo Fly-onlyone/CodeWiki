@@ -1,5 +1,9 @@
 //! Source parsing and symbol extraction for CodeWiki.
 
+pub mod c;
+pub mod cdeps;
+pub mod cfamily;
+pub mod cmake;
 pub mod csharp;
 pub mod go;
 pub mod gomod;
@@ -14,6 +18,11 @@ pub mod scan;
 pub mod typescript;
 pub mod workspace;
 
+pub use c::{
+    CInput, ENTRY_NAMES, IMPL_ATTR, Include, TEST_ATTR, TEST_FRAMEWORK_ATTR, TEST_NAME_ATTR,
+    parse_c,
+};
+pub use cfamily::{c_module_map, is_header as is_c_header};
 pub use csharp::parse_csharp;
 pub use go::{GENERATED_ATTR, is_exported, package_name, parse_go};
 pub use gomod::{

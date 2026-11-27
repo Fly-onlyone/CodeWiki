@@ -3113,3 +3113,239 @@ fn a_go_workspace_has_a_flow_between_its_modules() {
         "{ops}"
     );
 }
+
+fn c_project() -> (tempfile::TempDir, std::path::PathBuf) {
+    named_repo(
+        "tinyc",
+        &[
+            (
+                "CMakeLists.txt",
+                "cmake_minimum_required(VERSION 3.20)\nproject(tinyc)\nfind_package(ZLIB 1.2 REQUIRED)\nadd_library(tiny src/buf.c src/util.c)\ntarget_include_directories(tiny PUBLIC include)\nadd_executable(tinyc src/main.c)\ntarget_link_libraries(tinyc tiny)\nenable_testing()\nadd_test(NAME smoke COMMAND tinyc)\n",
+            ),
+            (
+                "include/tiny/buf.h",
+                "#ifndef TINY_BUF_H\n#define TINY_BUF_H\n\n#include <stddef.h>\n\n/** The most a buffer holds. */\n#define BUF_MAX 4096\n\n/* A growable byte buffer. */\ntypedef struct buf {\n    char *data;\n    size_t len;\n} buf_t;\n\n/* Make an empty buffer. */\nbuf_t *buf_new(void);\n/* Append bytes; returns how many were kept. */\nsize_t buf_push(buf_t *b, const char *bytes, size_t n);\n\n#endif\n",
+            ),
+            (
+                "include/tiny/util.h",
+                "#ifndef TINY_UTIL_H\n#define TINY_UTIL_H\n\n/* The smaller of two numbers. */\nint util_min(int a, int b);\n\n#endif\n",
+            ),
+            (
+                "src/buf.c",
+                "#include \"tiny/buf.h\"\n#include \"tiny/util.h\"\n#include <stdlib.h>\n#include <zlib.h>\n\nbuf_t *buf_new(void) {\n    buf_t *b = malloc(sizeof *b);\n    b->len = 0;\n    return b;\n}\n\nsize_t buf_push(buf_t *b, const char *bytes, size_t n) {\n    size_t kept = util_min((int)n, BUF_MAX);\n    b->len += kept;\n    (void)crc32(0L, 0, 0);\n    return kept;\n}\n",
+            ),
+            (
+                "src/util.c",
+                "#include \"tiny/util.h\"\n\nint util_min(int a, int b) { return a < b ? a : b; }\n",
+            ),
+            (
+                "src/main.c",
+                "#include \"tiny/buf.h\"\n\nint main(int argc, char **argv) {\n    buf_t *b = buf_new();\n    buf_push(b, \"hi\", 2);\n    return 0;\n}\n",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_c_project_gets_a_full_vault() {
+    let (_dir, root) = c_project();
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "00-Architecture/tinyc Startup Flow.md",
+            "01-Core/tiny/tiny.md",
+            "01-Core/tiny/Buf Module.md",
+            "01-Core/tiny/buf_t.md",
+            "01-Core/tinyc/tinyc.md",
+            "05-Operations/Build and Test.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("**tinyc** is a C codebase of 2 projects and 6 source files."),
+        "{home}"
+    );
+    assert!(
+        home.contains("- [[01-Core/tiny/_index|tiny/]] — C project `tiny` with 2 modules."),
+        "{home}"
+    );
+
+    // A header and its source are one module; what the header documents is
+    // listed, and the source is named as the implementation.
+    let module = read(&vault, "01-Core/tiny/Buf Module.md");
+    assert!(
+        module.contains("- `include/tiny/buf.h` — module `tiny::buf`")
+            && module.contains("- `src/buf.c` — implementation of module `tiny::buf`")
+            && module.contains("- `#define BUF_MAX 4096` — the most a buffer holds.")
+            && module.contains(
+                "- `size_t buf_push(buf_t *b, const char *bytes, size_t n)` — append bytes; returns how many were kept."
+            )
+            && module.contains("`buf_push` calls `util_min` in [[tiny]]."),
+        "{module}"
+    );
+    // The typedef'd struct is one type.
+    let buf = read(&vault, "01-Core/tiny/buf_t.md");
+    assert!(
+        buf.contains("> A growable byte buffer.")
+            && buf.contains("Declared as `typedef struct buf { ... } buf_t`."),
+        "{buf}"
+    );
+    // The program, the library it links, and where each runs from.
+    let unit = read(&vault, "01-Core/tinyc/tinyc.md");
+    assert!(
+        unit.contains("> C project `tinyc` with 1 module.")
+            && unit.contains("- `CMakeLists.txt` — CMake build")
+            && unit.contains("Runs from `main.c`."),
+        "{unit}"
+    );
+    let flow = read(&vault, "00-Architecture/tinyc Startup Flow.md");
+    assert!(
+        flow.contains("Call sequence from the `main.c` entry point of `tinyc`")
+            && flow.contains("p1->>p2: util_min()"),
+        "{flow}"
+    );
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains("- `CMakeLists.txt` — CMake build")
+            && ops.contains(
+                "```sh\ncmake -S . -B build\ncmake --build build\nctest --test-dir build\n```"
+            )
+            && ops.contains("[[tinyc]] — runs from `main.c`"),
+        "{ops}"
+    );
+    // The standard library is no integration.
+    assert!(
+        !meta
+            .notes
+            .keys()
+            .any(|id| id.starts_with("integration:stdlib") || id.starts_with("integration:stdio")),
+    );
+}
+
+fn cpp_project() -> (tempfile::TempDir, std::path::PathBuf) {
+    named_repo(
+        "shapes",
+        &[
+            (
+                "CMakeLists.txt",
+                "cmake_minimum_required(VERSION 3.20)\nproject(shapes CXX)\nfind_package(GTest REQUIRED)\nadd_library(geometry src/geo/shape.cpp src/geo/circle.cpp)\ntarget_include_directories(geometry PUBLIC src)\nadd_executable(draw src/app/main.cpp)\ntarget_link_libraries(draw geometry)\nadd_executable(geometry_tests tests/circle_test.cpp)\ntarget_link_libraries(geometry_tests geometry GTest::gtest_main)\ninclude(GoogleTest)\ngtest_discover_tests(geometry_tests)\n",
+            ),
+            (
+                "vcpkg.json",
+                "{\"name\": \"shapes\", \"dependencies\": [{\"name\": \"gtest\", \"version>=\": \"1.14.0\"}]}",
+            ),
+            (
+                "src/geo/shape.hpp",
+                "#pragma once\n\nnamespace geo {\n\n/// Anything with an area that can be drawn.\nclass Shape {\npublic:\n    virtual ~Shape() = default;\n    virtual double area() const = 0;\n    virtual const char* name() const = 0;\n};\n\n}  // namespace geo\n",
+            ),
+            (
+                "src/geo/shape.cpp",
+                "#include \"geo/shape.hpp\"\n\nnamespace geo {}\n",
+            ),
+            (
+                "src/geo/circle.hpp",
+                "#pragma once\n\n#include \"geo/shape.hpp\"\n\nnamespace geo {\n\n/// A circle of a given radius.\nclass Circle : public Shape {\npublic:\n    explicit Circle(double radius);\n    double area() const override;\n    const char* name() const override { return \"circle\"; }\n    static Circle unit();\n\nprivate:\n    double radius_;\n};\n\ntemplate <typename T>\nT square(T x) { return x * x; }\n\n}  // namespace geo\n",
+            ),
+            (
+                "src/geo/circle.cpp",
+                "#include \"geo/circle.hpp\"\n\nnamespace geo {\n\nCircle::Circle(double radius) : radius_(radius) {}\n\ndouble Circle::area() const { return 3.14159 * square(radius_); }\n\nCircle Circle::unit() { return Circle(1.0); }\n\n}  // namespace geo\n",
+            ),
+            (
+                "src/app/main.cpp",
+                "#include \"geo/circle.hpp\"\n#include <iostream>\n\nint main() {\n    auto c = geo::Circle::unit();\n    std::cout << c.area() << \"\\n\";\n    return 0;\n}\n",
+            ),
+            (
+                "tests/circle_test.cpp",
+                "#include <gtest/gtest.h>\n#include \"geo/circle.hpp\"\n\nTEST(Circle, Area) {\n    geo::Circle c(2.0);\n    EXPECT_GT(c.area(), 12.0);\n}\n\nTEST(Circle, Unit) {\n    EXPECT_EQ(geo::Circle::unit().area(), geo::square(1.0) * 3.14159);\n}\n",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_cpp_project_gets_a_full_vault() {
+    let (_dir, root) = cpp_project();
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/geometry/geometry.md",
+            "01-Core/geometry/Circle Module.md",
+            "01-Core/geometry/Circle.md",
+            "01-Core/geometry/Shape.md",
+            "01-Core/draw/draw.md",
+            "05-Operations/Build and Test.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("**shapes** is a C++ codebase of 2 projects and 8 source files."),
+        "{home}"
+    );
+    assert!(
+        home.contains(
+            "- [[01-Core/geometry/_index|geometry/]] — C++ project `geometry` with 2 modules."
+        ),
+        "{home}"
+    );
+
+    // A class declared in a header and defined in a source: one type, with
+    // the methods of both, and the files it stands in.
+    let circle = read(&vault, "01-Core/geometry/Circle.md");
+    assert!(
+        circle.contains("> A circle of a given radius.")
+            && circle.contains("- `src/geo/circle.hpp` — definition of `Circle`")
+            && circle.contains("- `src/geo/circle.cpp` — implementation of `Circle`")
+            && circle.contains("Declared as `class Circle : public Shape`.")
+            && circle
+                .contains("- `double area() const override` — public method, returns `double`.")
+            && circle.contains(
+                "- `static Circle unit()` — public method, returns `Circle`; called by `main`."
+            ),
+        "{circle}"
+    );
+    // Pure virtual members make an interface, implemented by the subclass.
+    let shape = read(&vault, "01-Core/geometry/Shape.md");
+    assert!(
+        shape.contains("> Anything with an area that can be drawn.")
+            && shape.contains("Required and provided methods:")
+            && shape
+                .contains("- `virtual double area() const = 0` — public method, returns `double`.")
+            && shape.contains("Implemented by [[Circle]]."),
+        "{shape}"
+    );
+    // A template function of the header, and the call that finds it.
+    let module = read(&vault, "01-Core/geometry/Circle Module.md");
+    assert!(
+        module.contains("- `src/geo/circle.cpp` — implementation of module `geo::circle`")
+            && module.contains("`template <typename T> T square(T x)` — public function, returns `T`; called by `Circle::area`."),
+        "{module}"
+    );
+    // The program's way in, across the units.
+    let draw = read(&vault, "01-Core/draw/draw.md");
+    assert!(
+        draw.contains("> C++ project `draw` with 1 module.")
+            && draw.contains("Runs from `main.cpp`.")
+            && draw.contains("`main` calls `Circle::unit` in [[Circle]]."),
+        "{draw}"
+    );
+    // The test executable is no unit and has no notes; CTest runs it.
+    assert!(!meta.notes.keys().any(|id| id.contains("circle_test")));
+    assert!(!meta.notes.keys().any(|id| id == "crate:geometry_tests"));
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains("- `vcpkg.json` — vcpkg dependencies")
+            && ops.contains(
+                "```sh\ncmake -S . -B build\ncmake --build build\nctest --test-dir build\n```"
+            )
+            && ops.contains("[[draw]] — runs from `main.cpp`"),
+        "{ops}"
+    );
+}

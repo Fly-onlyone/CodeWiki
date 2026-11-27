@@ -275,6 +275,8 @@ fn blocks(doc: &str, language: Language) -> Vec<Block> {
                 "" if rust => "rust",
                 "" if language == Language::Go => "go",
                 "" if language == Language::Kotlin => "kotlin",
+                "" if language == Language::C => "c",
+                "" if language == Language::Cpp => "cpp",
                 w if rust && RUSTDOC_FENCE_WORDS.contains(&w) => "rust",
                 w => w,
             };

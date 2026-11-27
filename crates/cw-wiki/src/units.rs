@@ -10,7 +10,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cw_core::{EdgeKind, Language, Symbol, SymbolKind};
-use cw_parse::{MAIN_GUARD_ATTR, RepoFacts, parse_go_mod, parse_go_work};
+use cw_parse::cmake::{Cmake, TargetKind, read_cmake};
+use cw_parse::{
+    ENTRY_NAMES, MAIN_GUARD_ATTR, RepoFacts, TEST_ATTR, c_module_map, parse_go_mod, parse_go_work,
+};
 
 /// Directories a bundler writes to; `main` in `package.json` often points
 /// into one while the source sits under `src`.
@@ -147,9 +150,17 @@ pub struct Units {
     /// Files outside Rust whose code is test code, by their contents and
     /// their project, not by their name alone.
     tests: HashSet<String>,
+    /// True when the repository's C or C++ code has tests: test files, or
+    /// tests registered with CTest.
+    c_tests: bool,
 }
 
 impl Units {
+    /// True when the repository has tests written in C or C++.
+    pub fn c_tests(&self) -> bool {
+        self.c_tests
+    }
+
     /// Index of the unit that holds `symbol`.
     pub fn index_of(&self, symbol: &Symbol) -> Option<usize> {
         if Language::from_path(&symbol.file) == Language::Rust {
@@ -195,6 +206,8 @@ enum Family {
     Java,
     CSharp,
     Go,
+    /// C and C++ together: they share headers, and one CMake target holds both.
+    C,
 }
 
 impl Family {
@@ -206,6 +219,7 @@ impl Family {
             Language::Java | Language::Kotlin => Some(Self::Java),
             Language::CSharp => Some(Self::CSharp),
             Language::Go => Some(Self::Go),
+            Language::C | Language::Cpp => Some(Self::C),
             _ => None,
         }
     }
@@ -217,6 +231,7 @@ impl Family {
             Self::Java => "java",
             Self::CSharp => "csharp",
             Self::Go => "go",
+            Self::C => "c",
         }
     }
 }
@@ -249,6 +264,7 @@ pub fn is_test_file(path: &str) -> bool {
         return true;
     }
     file.starts_with("test_")
+        || is_c_test_name(file, stem)
         || file == "conftest.py"
         || file.contains(".test.")
         || file.contains(".spec.")
@@ -263,6 +279,82 @@ pub fn is_test_file(path: &str) -> bool {
                 || stem.ends_with("IT")
                 || stem.ends_with("Spec")
                 || in_jvm_test_set(&dirs)))
+}
+
+/// A C or C++ file named like a test: `list_test.c`, `test_list.cpp`,
+/// `list_tests.cc`, `ListTest.cpp`, `ListTests.cpp`. A file in a `test` or
+/// `tests` folder is caught by its folder.
+fn is_c_test_name(file: &str, stem: &str) -> bool {
+    let ext = file.rsplit_once('.').map_or("", |(_, e)| e);
+    matches!(ext, "c" | "cc" | "cpp" | "cxx" | "c++")
+        && (stem.ends_with("_tests")
+            || (stem.len() > 4 && (stem.ends_with("Test") || stem.ends_with("Tests"))))
+}
+
+/// A C or C++ program's way in: `main`, `wmain`, `WinMain` or `wWinMain` in
+/// a source file. `DllMain` is not one: a library calls it, not a program.
+fn is_c_entry(symbol: &Symbol) -> bool {
+    symbol.kind == SymbolKind::Function
+        && ENTRY_NAMES.contains(&symbol.name.as_str())
+        && symbol.parent.as_deref().is_some_and(|p| {
+            // A free function: its parent is the module, which is no class.
+            symbol.qualified == format!("{p}::{}", symbol.name)
+        })
+        && !cw_parse::is_c_header(&symbol.file)
+        && !is_test_file(&symbol.file)
+        && !symbol.attrs.iter().any(|a| a == TEST_ATTR)
+}
+
+/// Libraries a CMake target links to run tests with.
+const C_TEST_LIBRARIES: [&str; 12] = [
+    "gtest",
+    "gtest_main",
+    "gmock",
+    "gmock_main",
+    "catch2",
+    "catch2withmain",
+    "doctest",
+    "unit_test_framework",
+    "cmocka",
+    "criterion",
+    "check",
+    "unity",
+];
+
+/// True when a target links a test framework: `GTest::gtest_main`,
+/// `Catch2::Catch2WithMain`, `doctest::doctest`.
+pub(crate) fn links_a_test_framework(links: &[String]) -> bool {
+    links.iter().any(|l| {
+        let name = l
+            .rsplit("::")
+            .next()
+            .unwrap_or(l)
+            .to_ascii_lowercase()
+            .replace(['-', '_'], "");
+        C_TEST_LIBRARIES
+            .iter()
+            .any(|t| name == t.replace('_', "") || name == format!("{}main", t.replace('_', "")))
+    })
+}
+
+/// The folder unit a module belongs to when no CMake target says: the project
+/// folder under a container (`libs/net`), else its first name (`net` for
+/// `net::socket`), else the root.
+fn c_folder_unit(module: &str) -> String {
+    let segments: Vec<&str> = module.split("::").collect();
+    if segments.len() >= 3
+        && [
+            "libs", "apps", "packages", "projects", "modules", "services", "plugins", "tests",
+            "test", "samples", "examples",
+        ]
+        .contains(&segments[0].to_ascii_lowercase().as_str())
+    {
+        format!("{}/{}", segments[0], segments[1])
+    } else if segments.len() >= 2 {
+        segments[0].to_string()
+    } else {
+        String::new()
+    }
 }
 
 /// True for a folder of a Gradle source set of tests: `src/test`, and the
@@ -620,6 +712,8 @@ struct Group<'a> {
     /// Directory of the manifest that defines the unit, when one does.
     manifest_dir: Option<String>,
     files: Vec<&'a str>,
+    /// The CMake target of a C or C++ unit, and whether it is a library.
+    c_target: Option<(String, bool)>,
 }
 
 /// Find the units of a repository. `repo_name` names a unit that is the
@@ -683,6 +777,11 @@ pub fn discover(
     }
 
     let files: HashSet<&str> = facts.files.iter().map(|f| f.path.as_str()).collect();
+    let lang_of: HashMap<&str, Language> = facts
+        .files
+        .iter()
+        .map(|f| (f.path.as_str(), f.language))
+        .collect();
     // The module a file defines; Java files of one package share a module, so
     // any symbol of the file stands in for it.
     let mut module_of: HashMap<&str, &Symbol> = HashMap::new();
@@ -720,12 +819,66 @@ pub fn discover(
         .map(|p| parent_dir(p))
         .collect();
 
+    // C and C++: the CMake targets, and which module each file belongs to.
+    let all_paths: Vec<String> = facts.files.iter().map(|f| f.path.clone()).collect();
+    let has_c = facts.files.iter().any(|f| f.language.is_c_family());
+    let cmake: Cmake = if has_c {
+        read_cmake(&all_paths, read)
+    } else {
+        Cmake::default()
+    };
+    let c_modules: HashMap<String, String> = if has_c {
+        c_module_map(&all_paths)
+    } else {
+        HashMap::new()
+    };
+
+    // A CMake target of tests: CTest runs it, or it links a test framework,
+    // or every file it holds is test code.
+    let c_tests_target = |group: &Group| -> bool {
+        let target = group.c_target.as_ref().map(|(n, _)| n.as_str());
+        // A program that CTest runs as a smoke test is still a program: only
+        // a discovery command (`gtest_discover_tests`) says its tests are
+        // tests of other code.
+        let registered = target.is_some_and(|n| {
+            cmake
+                .tests
+                .iter()
+                .any(|t| t.discovered.is_some() && t.target.as_deref() == Some(n))
+        });
+        let links = target
+            .and_then(|n| cmake.targets.iter().find(|t| t.name == n))
+            .is_some_and(|t| links_a_test_framework(&t.links));
+        registered
+            || links
+            || (!group.files.is_empty() && group.files.iter().all(|f| is_test_file(f)))
+    };
+
     let mut groups: BTreeMap<(Family, String), Group> = BTreeMap::new();
     for file in &facts.files {
         let path = file.path.as_str();
         let Some(family) = Family::of(file.language) else {
             continue;
         };
+        if family == Family::C {
+            // A file of a vendored tree has no module and no unit.
+            let Some(module) = c_modules.get(path) else {
+                continue;
+            };
+            let (key, manifest_dir, target) = match cmake.target_of(path) {
+                Some(target) => (
+                    format!("cmake:{}:{}", target.dir, target.name),
+                    Some(target.dir.clone()),
+                    Some((target.name.clone(), target.kind == TargetKind::Library)),
+                ),
+                None => (format!("dir:{}", c_folder_unit(module)), None, None),
+            };
+            let group = groups.entry((family, key)).or_default();
+            group.manifest_dir = manifest_dir;
+            group.c_target = target;
+            group.files.push(path);
+            continue;
+        }
         let Some(symbol) = module_of.get(path).or_else(|| any_of.get(path)) else {
             continue;
         };
@@ -764,6 +917,7 @@ pub fn discover(
                 Some(dir) => (format!("dir:{dir}"), Some(dir.to_string())),
                 None => (format!("pkg:{first}"), None),
             },
+            Family::C => unreachable!("C files are grouped above"),
         };
         let group = groups.entry((family, key)).or_default();
         group.manifest_dir = manifest_dir;
@@ -776,6 +930,8 @@ pub fn discover(
         units.list.iter().map(|u| u.slug.to_lowercase()).collect();
     // The module path of each Go unit, by unit index.
     let mut go_unit_paths: Vec<(usize, String)> = Vec::new();
+    // The unit of each CMake target, by the target's name.
+    let mut c_unit_of_target: HashMap<String, usize> = HashMap::new();
     for ((family, key), group) in &groups {
         let members: Vec<&Symbol> = group
             .files
@@ -789,6 +945,17 @@ pub fn discover(
         if !members.iter().any(|s| {
             s.kind != SymbolKind::Module && (*family == Family::CSharp || !is_test_file(&s.file))
         }) {
+            // The files of tests are test code, though they make no unit.
+            if *family == Family::C {
+                let all = c_tests_target(group);
+                units.tests.extend(
+                    group
+                        .files
+                        .iter()
+                        .filter(|f| all || is_test_file(f))
+                        .map(|f| f.to_string()),
+                );
+            }
             continue;
         }
         let modules: Vec<&Symbol> = members
@@ -880,6 +1047,29 @@ pub fn discover(
                 }
                 found
             }
+            Family::C => {
+                let mut found: Vec<String> = group
+                    .c_target
+                    .as_ref()
+                    .and_then(|(name, _)| cmake.targets.iter().find(|t| &t.name == name))
+                    .map(|t| vec![t.file.clone()])
+                    .unwrap_or_default();
+                for names in [
+                    &["CMakePresets.json"][..],
+                    &["vcpkg.json"][..],
+                    &["conanfile.txt", "conanfile.py"][..],
+                ] {
+                    if let Some(at) = nearest_with(&files, &dir, names) {
+                        for name in names {
+                            let path = join(at, name);
+                            if files.contains(path.as_str()) && !found.contains(&path) {
+                                found.push(path);
+                            }
+                        }
+                    }
+                }
+                found
+            }
             Family::Python => nearest_with(&files, &dir, &PYTHON_MANIFESTS)
                 .map(|d| {
                     let mut found: Vec<String> = PYTHON_MANIFESTS
@@ -939,6 +1129,16 @@ pub fn discover(
                 Some(file) => file.strip_suffix(".csproj").unwrap_or(file).to_string(),
                 None => prefix.replace("::", "."),
             },
+            Family::C => match &group.c_target {
+                Some((name, _)) => name.clone(),
+                None => key
+                    .strip_prefix("dir:")
+                    .unwrap_or("")
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("")
+                    .to_string(),
+            },
             Family::Python => key.clone(),
             Family::Js if !package_json.name.is_empty() => package_json.name.clone(),
             Family::Js if group.manifest_dir.is_none() => {
@@ -967,6 +1167,12 @@ pub fn discover(
                     text: read(&path).unwrap_or_default(),
                     path,
                 }),
+            Family::C => nearest_with(&files, &dir, &["conan.lock"])
+                .map(|d| join(d, "conan.lock"))
+                .map(|path| Manifest {
+                    text: read(&path).unwrap_or_default(),
+                    path,
+                }),
             // A Kotlin module takes its libraries from the version catalog
             // more often than not: the nearest `gradle/libs.versions.toml`
             // above it stands where a lock file does for the others. A
@@ -986,12 +1192,14 @@ pub fn discover(
             }
             _ => None,
         };
-        let test_project = *family == Family::CSharp
-            && (is_test_name(&own_name)
-                || is_test_name(dir_name)
-                || manifests
-                    .iter()
-                    .any(|m| m.path.ends_with(".csproj") && references_a_test_framework(&m.text)));
+        let c_test_project = *family == Family::C && c_tests_target(group);
+        let test_project = c_test_project
+            || *family == Family::CSharp
+                && (is_test_name(&own_name)
+                    || is_test_name(dir_name)
+                    || manifests.iter().any(|m| {
+                        m.path.ends_with(".csproj") && references_a_test_framework(&m.text)
+                    }));
         let is_repo = own_name.is_empty();
         let package = if is_repo {
             repo_name.to_string()
@@ -1070,6 +1278,15 @@ pub fn discover(
                 );
                 entries.sort();
             }
+            Family::C => {
+                entries.extend(
+                    members
+                        .iter()
+                        .filter(|s| is_c_entry(s) && !test_project)
+                        .map(|s| s.qualified.clone()),
+                );
+                entries.sort();
+            }
             Family::Java => {
                 entries.extend(
                     members
@@ -1089,13 +1306,21 @@ pub fn discover(
         }
         // A lone `main` is the module's way in; a lone script is still
         // just a script and keeps its own name.
-        if matches!(family, Family::Java | Family::CSharp | Family::Go) && entries.len() == 1 {
+        if matches!(
+            family,
+            Family::Java | Family::CSharp | Family::Go | Family::C
+        ) && entries.len() == 1
+        {
             declared = 1;
         }
 
         let mut counts: BTreeMap<&str, (usize, Language)> = BTreeMap::new();
         for file in &group.files {
-            let language = Language::from_path(file);
+            // A `.h` is C or C++ as the scan decided.
+            let language = lang_of
+                .get(file)
+                .copied()
+                .unwrap_or_else(|| Language::from_path(file));
             counts.entry(language.as_str()).or_insert((0, language)).0 += 1;
         }
         let language = counts
@@ -1125,6 +1350,26 @@ pub fn discover(
                     .map(|f| f.to_string()),
             );
         }
+        if *family == Family::C {
+            units.tests.extend(
+                group
+                    .files
+                    .iter()
+                    .filter(|f| {
+                        test_project
+                            || is_test_file(f)
+                            || in_file.get(*f).is_some_and(|symbols| {
+                                symbols
+                                    .iter()
+                                    .any(|s| s.attrs.iter().any(|a| a == TEST_ATTR))
+                            })
+                    })
+                    .map(|f| f.to_string()),
+            );
+            if let Some((name, _)) = &group.c_target {
+                c_unit_of_target.insert(name.clone(), index);
+            }
+        }
         let description = match family {
             Family::CSharp => manifests
                 .iter()
@@ -1149,8 +1394,8 @@ pub fn discover(
             dir,
             description,
             deps: Vec::new(),
-            has_lib: false,
-            has_bin: !entries.is_empty(),
+            has_lib: group.c_target.as_ref().is_some_and(|(_, lib)| *lib),
+            has_bin: !entries.is_empty() || group.c_target.as_ref().is_some_and(|(_, lib)| !*lib),
             language,
             manifests,
             root,
@@ -1257,7 +1502,31 @@ pub fn discover(
             go_deps.push((*index, names));
         }
     }
-    for (index, names) in project_deps.into_iter().chain(go_deps) {
+    units.c_tests = !cmake.tests.is_empty()
+        || units
+            .tests
+            .iter()
+            .any(|f| lang_of.get(f.as_str()).is_some_and(|l| l.is_c_family()));
+    // A target depends on the targets of the repository it links.
+    let mut c_deps: Vec<(usize, Vec<String>)> = Vec::new();
+    for target in &cmake.targets {
+        let Some(&from) = c_unit_of_target.get(&target.name) else {
+            continue;
+        };
+        let mut names: Vec<String> = Vec::new();
+        for link in &target.links {
+            if let Some(&to) = c_unit_of_target.get(link)
+                && to != from
+                && !names.contains(&units.list[to].name)
+            {
+                names.push(units.list[to].name.clone());
+            }
+        }
+        if !names.is_empty() {
+            c_deps.push((from, names));
+        }
+    }
+    for (index, names) in project_deps.into_iter().chain(go_deps).chain(c_deps) {
         referencing.insert(index);
         units.list[index].deps = names;
     }
@@ -1951,5 +2220,171 @@ public class Util {
         let lib = units.by_name("lib").unwrap();
         assert_eq!(lib.language, Language::Java);
         assert!(lib.lock.is_none());
+    }
+
+    #[test]
+    fn recognises_c_and_cpp_test_files() {
+        for path in [
+            "tests/list.c",
+            "test/unit/a.cpp",
+            "src/list_test.c",
+            "src/list_test.cc",
+            "src/test_list.cpp",
+            "src/list_tests.cpp",
+            "src/ListTest.cpp",
+            "src/ListTests.cxx",
+        ] {
+            assert!(is_test_file(path), "{path}");
+        }
+        for path in [
+            "src/list.c",
+            "src/latest.cpp",
+            "src/Test.cpp",
+            // Headers are named for what they declare; a header called
+            // `...Test.h` is a helper of tests, not a test.
+            "src/ListTest.h",
+            "src/attest.h",
+        ] {
+            assert!(!is_test_file(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn cmake_targets_are_the_units_of_c_code() {
+        let units = discovery(&[
+            (
+                "CMakeLists.txt",
+                "project(demo)\nadd_subdirectory(core)\nadd_subdirectory(app)\nadd_subdirectory(tests)\nfind_package(ZLIB)\n",
+            ),
+            (
+                "core/CMakeLists.txt",
+                "add_library(core src/list.c src/map.c)\ntarget_include_directories(core PUBLIC include)\n",
+            ),
+            ("core/include/core/list.h", "int list_len(void);\n"),
+            (
+                "core/src/list.c",
+                "#include \"core/list.h\"\nint list_len(void) { return 0; }\n",
+            ),
+            ("core/src/map.c", "int map_len(void) { return 1; }\n"),
+            (
+                "app/CMakeLists.txt",
+                "add_executable(demo main.c)\ntarget_link_libraries(demo core)\n",
+            ),
+            (
+                "app/main.c",
+                "#include \"core/list.h\"\nint main(void) { return list_len(); }\n",
+            ),
+            (
+                "tests/CMakeLists.txt",
+                "add_executable(core_tests list_test.cpp)\ntarget_link_libraries(core_tests core GTest::gtest_main)\ngtest_discover_tests(core_tests)\n",
+            ),
+            (
+                "tests/list_test.cpp",
+                "#include \"core/list.h\"\nTEST(List, Len) { list_len(); }\n",
+            ),
+            ("vcpkg.json", "{\"dependencies\": [\"zlib\"]}"),
+            ("conanfile.txt", "[requires]\nzlib/1.3.1\n"),
+            ("conan.lock", "{\"requires\": [\"zlib/1.3.1#aa\"]}"),
+            ("CMakePresets.json", "{\"version\": 3}"),
+        ]);
+        let names: Vec<&str> = units.list.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(names, ["demo", "core"]);
+        let core = units.by_name("core").unwrap();
+        assert_eq!(core.language, Language::C);
+        assert!(core.has_lib && !core.has_bin);
+        assert_eq!(core.dir, "core");
+        // The header sits in the unit of the source that includes it.
+        assert_eq!(
+            units
+                .of_file("core/include/core/list.h")
+                .map(|u| u.name.as_str()),
+            Some("core")
+        );
+        let manifests: Vec<&str> = core.manifests.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(
+            manifests,
+            [
+                "core/CMakeLists.txt",
+                "CMakePresets.json",
+                "vcpkg.json",
+                "conanfile.txt"
+            ]
+        );
+        assert_eq!(core.lock.as_ref().unwrap().path, "conan.lock");
+        // A program, its entry, and the library it links.
+        let app = units.by_name("demo").unwrap();
+        assert!(app.has_bin && !app.has_lib);
+        assert_eq!(app.deps, ["core"]);
+        assert_eq!(app.entries.len(), 1);
+        assert_eq!(app.entries[0].symbol, "app::main::main");
+        assert!(app.entries[0].declared);
+        // The test executable is registered with CTest: its files are test
+        // code, and it has no notes about its code.
+        assert!(units.is_test("tests/list_test.cpp"));
+        assert!(!units.is_test("core/src/list.c"));
+        assert!(
+            units.list.iter().all(|u| u.name != "core_tests")
+                || units.by_name("core_tests").unwrap().tests
+        );
+    }
+
+    #[test]
+    fn c_files_without_cmake_are_grouped_by_folder() {
+        let units = discovery(&[
+            ("src/main.c", "int main(void) { return 0; }\n"),
+            (
+                "src/net/socket.c",
+                "#include \"socket.h\"\nint open_socket(void) { return 1; }\n",
+            ),
+            ("src/net/socket.h", "int open_socket(void);\n"),
+            ("src/net/pool.c", "int pool(void) { return 2; }\n"),
+            ("src/db/store.c", "int store(void) { return 3; }\n"),
+            ("libs/zip/zip.c", "int zip(void) { return 4; }\n"),
+            ("libs/zip/zip.h", "int zip(void);\n"),
+            ("libs/zip/zip_extra.c", "int extra(void) { return 5; }\n"),
+        ]);
+        let mut names: Vec<&str> = units.list.iter().map(|u| u.name.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["db", "net", "root-c", "zip"]);
+        // A header and its source are in one unit.
+        assert_eq!(
+            units.of_file("src/net/socket.h").map(|u| u.name.as_str()),
+            Some("net")
+        );
+        assert_eq!(
+            units.of_file("src/net/pool.c").map(|u| u.name.as_str()),
+            Some("net")
+        );
+        assert_eq!(units.of_file("src/main.c").unwrap().entries.len(), 1);
+        assert_eq!(units.by_name("net").unwrap().manifests, []);
+        assert!(!units.by_name("net").unwrap().has_bin);
+    }
+
+    #[test]
+    fn a_unit_may_hold_both_c_and_cpp() {
+        let units = discovery(&[
+            ("CMakeLists.txt", "add_library(mixed a.c b.cpp)\n"),
+            ("a.c", "int a(void) { return 1; }\n"),
+            ("b.cpp", "int b() { return 2; }\n"),
+            ("b2.cpp", "int b2() { return 3; }\n"),
+        ]);
+        let unit = units.by_name("mixed").unwrap();
+        // The language with more files names the unit.
+        assert_eq!(unit.language, Language::Cpp);
+        assert_eq!(units.list.len(), 1);
+        assert_eq!(
+            units.of_file("b2.cpp").map(|u| u.name.as_str()),
+            Some("mixed")
+        );
+    }
+
+    #[test]
+    fn a_vendored_tree_has_no_unit() {
+        let units = discovery(&[
+            ("src/a.c", "int a(void) { return 1; }\n"),
+            ("third_party/zlib/z.c", "int z(void) { return 2; }\n"),
+        ]);
+        assert!(units.of_file("third_party/zlib/z.c").is_none());
+        assert!(units.of_file("src/a.c").is_some());
     }
 }

@@ -126,6 +126,18 @@ fn is_go_api(symbol: &Symbol, by_name: &HashMap<&str, &Symbol>) -> bool {
     false
 }
 
+/// What a C or C++ header declares for others: its API, which code outside
+/// the repository may call. `DllMain` and the other entry points a loader
+/// calls are never dead either.
+fn is_c_api(symbol: &Symbol) -> bool {
+    cw_core::Language::from_path(&symbol.file).is_c_family()
+        && ((symbol.visibility == Visibility::Public && cw_parse::is_c_header(&symbol.file))
+            || matches!(
+                symbol.name.as_str(),
+                "wmain" | "WinMain" | "wWinMain" | "DllMain"
+            ))
+}
+
 /// A C# program's `Main`, which the runtime calls.
 fn is_csharp_main(symbol: &Symbol) -> bool {
     symbol.file.ends_with(".cs")
@@ -187,6 +199,7 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
             // Generated code is nobody's to delete.
             || symbol.attrs.iter().any(|a| a == GENERATED_ATTR)
             || is_go_api(symbol, &by_name)
+            || is_c_api(symbol)
         {
             continue;
         }

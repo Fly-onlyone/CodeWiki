@@ -41,7 +41,7 @@ Members:
 - [[Lint Module]] — from `lint`, `lint_lines`, `max_words`
 - [[Query Module]] — from `NoteInfo`, `agent_view`, `info`
 - [[Explanation Module]] — from `extract`, `weave`
-- [[Registry Module]] — from `RegistryEntry`
+- [[Plan Module]] — from `Planned`
 
 ## Gotchas
 

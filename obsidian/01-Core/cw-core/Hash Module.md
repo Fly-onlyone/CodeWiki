@@ -35,12 +35,12 @@ Small hashing helpers. CodeWiki hashes file and note content to tell whether any
 ## Used by
 
 - [[Api Module]] — from `require_token`, `webhook_signed`
+- [[Proposal Module]] — from `create_agent`, `create_retire`
 - [[Generate Module]] — from `file_hash`, `generate_with`
 - [[cw-server]] — from `signature`
 - [[Paths Module]] — from `repo_id`
 - [[Scan Module]] — from `scan_repo`
 - [[Manifest Module]] — from `body_hash`
-- [[Proposal Module]] — from `create_agent`
 - [[Run]] — from `plan`
 
 ## Gotchas

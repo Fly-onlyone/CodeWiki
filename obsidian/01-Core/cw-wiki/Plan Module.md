@@ -42,7 +42,7 @@ Decides which wiki notes a repository gets. The vault is a set of curated concep
 - `const MIN_MODULE_ITEMS: usize` — outside Rust every file is a module, so only those that hold this many items, or this many symbols counting nested ones, get a note.
 - `pub struct FlowMessage` — one step of a startup flow: `from` note calls into `to` note.
 - `pub enum Subject` — public enum; used by `Planned`.
-- `pub struct Planned` — public struct; used by `Doc::new`, `Plan`, `RenderCtx::render`, `RenderCtx::render_crate` and 12 more.
+- `pub struct Planned` — public struct; used by `Doc::new`, `Plan`, `RenderCtx::render`, `RenderCtx::render_crate` and 13 more.
 - `pub struct Plan` — public struct; used by `RenderCtx`, `RenderCtx::new`, `generate_with`, `plan`.
 - [[Repo]] — lookup tables over the scanned facts.
 - `fn module_title(module: &Symbol) -> String` — title of the note about `module`. A TypeScript `index` file is named after its folder.
@@ -50,7 +50,8 @@ Decides which wiki notes a repository gets. The vault is a set of curated concep
 - `fn is_test_path(qualified: &str) -> bool` — private function, returns `bool`; called by `Repo::is_test`.
 - `fn module_dir(unit: &Unit, module: &str) -> String` — vault folder for notes about `module` and the types it defines.
 - `fn enclosing_module<'a>(repo: &Repo<'a>, symbol: &'a Symbol) -> &'a str` — nearest enclosing module of a symbol (itself when it is a module).
-- `pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan` — select notes. `covered` maps source files already documented by adopted notes to the id of the adopted note; those files get no new module or type notes.
+- `fn cut<T>(ranked: &mut Vec<T>, limit: usize, pinned: impl Fn(&T) -> bool)` — keep the first `limit` of `ranked`, and behind them every one that is pinned: a limit drops the least important notes, never an explained one.
+- `pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<String>) -> Plan` — select notes. `covered` maps source files already documented by adopted notes to the id of the adopted note; those files get no new module or type notes. `pinned` holds the ids of the notes a coding agent explained. Which modules, types, integrations and patterns get a note is a ranking with limits, and a ranking moves when other code changes. A pinned note keeps its place for as long as what it describes exists, so that an explanation is lost only with its subject.
 - `fn startup_messages(repo: &Repo, owner: &HashMap<String, String>, entry: &str) -> Vec<FlowMessage>` — follow calls outward from an entry point and keep those that cross from one note into another.
 
 And 7 more private items with no comment.
@@ -68,7 +69,7 @@ And 7 more private items with no comment.
 ## Used by
 
 - [[RenderCtx]] — from `RenderCtx`, `new`, `render`, `render_crate`
-- [[Generate Module]] — from `generate_with`, `planned_path`
+- [[Generate Module]] — from `carry_moves`, `generate_with`, `planned_path`
 - [[Render Module]] — from `new`
 - [[Repo]] — from `is_test`
 

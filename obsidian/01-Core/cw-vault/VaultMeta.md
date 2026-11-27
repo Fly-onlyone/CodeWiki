@@ -28,6 +28,7 @@ Members:
 - `pub fn load(vault: &Path) -> Result<Self>` — load metadata; a vault with none yields the default (empty) state.
 - `pub fn save(&self, vault: &Path) -> Result<()>` — write metadata. `registry.json` is derived from the note entries so the two can never disagree.
 - `pub fn registry(&self) -> Result<Registry>` — build the name registry from the note entries.
+- `pub fn live_notes(&self) -> usize` — how many notes the wiki has: those that describe something. A note kept after what it describes went is in the vault and not of the wiki, whatever the reason it stays for.
 - `pub fn by_path(&self, path: &str) -> Option<&NoteEntry>` — public method, returns `Option<&NoteEntry>`.
 - `pub fn notes_for_source(&self, source_path: &str) -> Vec<&NoteEntry>` — ids of notes that cite `source_path`.
 
@@ -38,19 +39,19 @@ Members:
 - [[Error]] — uses `external`, `io`
 - [[cw-core]] — uses `MANIFEST_DIR`
 - [[Error Module]] — uses `Result`
-- [[Registry Module]] — uses `RegistryEntry`
 - [[NoteEntry]] — uses `NoteEntry`
+- [[RegistryEntry]] — uses `RegistryEntry`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_new_way_of_writing_the_facts_keeps_the_explanation`, `a_run_counts_the_notes_no_agent_has_explained`, `a_type_that_moves_between_crates_keeps_the_vault_consistent`, `assert_notes`
-- [[Explanations Module]] — from `all_waiting`, `approve`, `brief`, `fits_all`
+- [[cw-wiki]] — from `a_move_with_two_possible_ends_carries_nothing`, `a_new_way_of_writing_the_facts_keeps_the_explanation`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `a_run_counts_the_notes_no_agent_has_explained`
+- [[Explanations Module]] — from `all_waiting`, `approve_keeping`, `brief`, `fits_all`
 - [[Query Module]] — from `find_entry`, `list_notes`, `notes_citing`, `read_note_as`
+- [[Generate Module]] — from `adopt_existing`, `carry_moves`, `generate_with`
+- [[Gone Module]] — from `after_removal`, `keep_all`, `retire`
 - [[Decisions Module]] — from `list`, `why`
-- [[Generate Module]] — from `adopt_existing`, `generate_with`
 - [[Service Module]] — from `index_notes`, `is_stale`
 - [[codewiki]] — from `run`
-- [[cw-server]] — from `repo_with_proposals`
 
 ## Gotchas
 

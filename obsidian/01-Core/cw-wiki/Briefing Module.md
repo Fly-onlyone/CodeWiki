@@ -48,15 +48,15 @@ For Claude Code the order tells the agent to launch the `codewiki:note-writer` a
 - [[cw-core]] — uses `MANIFEST_DIR`, `VAULT_DIR`
 - [[Explanations Module]] — uses `MAX_LIMIT`, `waiting_counts`
 - [[Git Module]] — uses `head_commit`, `vault_is_behind`
+- [[VaultMeta]] — uses `live_notes`, `load`
 - [[Error Module]] — uses `Result`
 - [[Proposal Module]] — uses `list`
 - [[Count]] — uses `Count`
-- [[VaultMeta]] — uses `load`
 - [[Counts]] — uses `total`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_folder_without_git_is_not_called_stale`, `reports_a_missing_wiki_then_its_state`, `the_line_about_waiting_notes_goes_when_none_waits`, `the_waiting_line_orders_a_batch_for_each_host`
+- [[cw-wiki]] — from `a_folder_without_git_is_not_called_stale`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `reports_a_missing_wiki_then_its_state`, `the_line_about_waiting_notes_goes_when_none_waits`
 - [[codewiki]] — from `session_start_hook`
 
 ## Gotchas

@@ -55,6 +55,7 @@ Inside `weave`:
 - [[cw-wiki]] — from `every_explainable_note_splits_and_joins_to_itself`, `explain`
 - [[Explanations Module]] — from `brief`, `submit`
 - [[Generate Module]] — from `weave_kept`
+- [[Gone Module]] — from `after_removal`
 
 ## Gotchas
 

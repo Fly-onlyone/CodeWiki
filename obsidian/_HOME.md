@@ -2,11 +2,11 @@
 tags: [moc, home]
 ---
 
-# CodeWiki — Knowledge Vault
+# gone-notes — Knowledge Vault
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 17 crates and 364 source files. This vault maps its architecture, modules and conventions.
+> **gone-notes** is a Rust codebase of 17 crates and 367 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 

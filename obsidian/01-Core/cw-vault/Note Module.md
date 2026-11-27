@@ -46,7 +46,7 @@ Understands the shape of a wiki note. It reads a note's text into parts: frontma
 - [[Lint Module]] — from `link_resolution_rate`, `lint`
 - [[Explanations Module]] — from `brief`, `submit`
 - [[Agentdocs Module]] — from `render`
-- [[Health Module]] — from `doc_drift`
+- [[Gone Module]] — from `after_removal`
 
 ## Gotchas
 

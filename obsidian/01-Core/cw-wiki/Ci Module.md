@@ -31,7 +31,7 @@ The list is sorted by file, line, rule, then message, so output is stable betwee
 ## Items
 
 - `pub struct CheckFinding` — public struct; used by `check`, `fails`, `to_junit`, `to_sarif` and 1 more.
-- `pub(crate) const RULES: [(&str, &str); 22]` — what each rule means, shown by tools that list rules.
+- `pub(crate) const RULES: [(&str, &str); 23]` — what each rule means, shown by tools that list rules.
 - `pub fn check(root: &Path, index: &Index) -> Result<Vec<CheckFinding>>` — run every analysis and return findings sorted by file, line and rule.
 - `pub fn fails(findings: &[CheckFinding], threshold: Level) -> bool` — true when any finding is at or above `threshold`.
 - `pub fn to_text(findings: &[CheckFinding]) -> String` — public function, returns `String`; called by `run`.

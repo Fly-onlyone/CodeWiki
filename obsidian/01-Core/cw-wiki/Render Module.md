@@ -24,7 +24,9 @@ The helpers are small. `join_and` writes lists with an Oxford comma. `count` plu
 
 - `const MAX_MANIFESTS: usize` — build files named on one line of an integration note.
 - `const MAX_UNIT_MODULES: usize` — modules listed in the note of a unit that has no root module.
+- `const MAX_HAND_NOTES: usize` — notes the home note names of a folder of hand-written notes that has no map note of its own.
 - `type NoteDeps = HashMap<String, BTreeMap<String, BTreeSet<String>>>` — Note-level dependency edges: note id -> other note id -> symbol names.
+- `pub struct HandZone` — A top folder of the vault that holds notes their owner wrote by hand.
 - [[RenderCtx]] — struct
 - `struct Doc` — accumulates a note's sections; empty ones are dropped.
 - `fn front(tags: &[String]) -> String` — private function, returns `String`; called by `Doc::new`, `RenderCtx::render_home`, `RenderCtx::render_index`.
@@ -54,6 +56,7 @@ And 2 more private items with no comment.
 
 - [[RenderCtx]] — from `RenderCtx`, `composition`, `dep_bullets`, `link`
 - [[Explain Module]] — from `items`
+- [[Generate Module]] — from `generate_with`
 
 ## Gotchas
 

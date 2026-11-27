@@ -33,6 +33,7 @@ Each entry has an `Origin` (`Generated` or `Adopted`), its [[SourceRef]] list, a
 - `pub enum Origin` — public enum; used by `NoteEntry`, `NoteInfo`.
 - [[SourceRef]] — A source file a note describes, with the content hash seen at generation.
 - `pub struct Explained` — what a coding agent explained a note from.
+- [[Gone]] — why a note is still in the vault although what it describes is gone from the repository.
 - [[NoteEntry]] — struct
 - `pub fn body_hash(text: &str) -> String` — hash used to tell whether a note changed on disk.
 - [[VaultMeta]] — everything under `.codewiki/`, loaded.
@@ -48,11 +49,11 @@ Each entry has an `Origin` (`Generated` or `Adopted`), its [[SourceRef]] list, a
 - [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_code_change_refreshes_the_facts_and_keeps_the_explanation`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_submission_is_woven_into_the_note_and_recorded`
 - [[Proposal Module]] — from `Offer`, `Proposal`, `approve`, `create_as`
 - [[Explanations Module]] — from `brief`, `record`, `submit`, `untouched`
+- [[Generate Module]] — from `adopt_existing`, `carry_moves`, `generate_with`
 - [[VaultMeta]] — from `VaultMeta`, `load`, `save`
-- [[Generate Module]] — from `adopt_existing`, `generate_with`
+- [[Gone Module]] — from `after_removal`, `retire`
 - [[Lifecycle Module]] — from `state`
 - [[Query Module]] — from `NoteInfo`
-- [[NoteEntry]] — from `NoteEntry`
 
 ## Gotchas
 

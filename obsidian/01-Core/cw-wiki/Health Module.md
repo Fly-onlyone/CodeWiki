@@ -55,7 +55,7 @@ And 7 more private items with no comment.
 
 ## Used by
 
-- [[cw-wiki]] — from `a_cycle_is_two_sibling_files_not_a_module_and_its_parent`, `finds_dead_code_without_false_alarms`, `private_items_used_through_receivers_and_constants_are_alive`, `reports_documentation_drift_and_coverage`
+- [[cw-wiki]] — from `a_cycle_is_two_sibling_files_not_a_module_and_its_parent`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `finds_dead_code_without_false_alarms`, `private_items_used_through_receivers_and_constants_are_alive`
 - [[Api Module]] — from `dead_code`, `doc_drift`, `file_health`
 - [[Refactor Module]] — from `extract_types`, `move_functions`, `split_files`
 - [[codewiki]] — from `run`

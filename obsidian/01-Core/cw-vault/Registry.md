@@ -46,10 +46,11 @@ Members:
 
 ## Depends on
 
-- [[Registry Module]] — uses `RegistryEntry`, `folder`, `join`, `sanitize_name`
+- [[Registry Module]] — uses `folder`, `join`, `sanitize_name`, `stem`
 - [[Error Module]] — uses `Result`
 - [[Error]] — uses `invalid`
 - [[NoteKind]] — uses `NoteKind`
+- [[RegistryEntry]] — uses `RegistryEntry`
 
 ## Used by
 

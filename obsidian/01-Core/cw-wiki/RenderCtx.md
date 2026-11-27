@@ -30,7 +30,7 @@ Members:
 
 - `new` — public method, returns `Self`; called by `generate_with`.
 - `pub fn link(&self, id: &str) -> Option<String>` — wikilink to the note with `id`, or `None` when it is not in the vault.
-- `fn name(&self, id: &str) -> String` — private method, returns `String`; called by `RenderCtx::new`, `RenderCtx::render`, `RenderCtx::render_crate`, `RenderCtx::render_startup_flow` and 2 more.
+- `fn name(&self, id: &str) -> String` — private method, returns `String`; called by `RenderCtx::new`, `RenderCtx::render`, `RenderCtx::render_crate`, `RenderCtx::render_home` and 3 more.
 - `fn summary(&self, note: &Planned) -> String` — private method, returns `String`; called by `RenderCtx::new`, `RenderCtx::render_crate`, `RenderCtx::render_home`.
 - `fn composition(&self) -> (Vec<String>, Vec<String>)` — the languages of the repository and how many units each has, the language with the most source files first.
 - `fn entry_label(&self, entry: &str) -> String` — how a reader names the entry point `entry`: `main` in Rust, the file for a script, `Class.main` in Java.
@@ -42,7 +42,7 @@ And 11 more private items with no comment.
 
 ## Depends on
 
-- [[Render Module]] — uses `Doc`, `MAX_LISTED`, `MAX_MANIFESTS`, `MAX_NAMES`
+- [[Render Module]] — uses `Doc`, `HandZone`, `MAX_HAND_NOTES`, `MAX_LISTED`
 - [[Plan Module]] — uses `FlowMessage`, `Plan`, `Planned`, `ZONE_ARCHITECTURE`
 - [[Repo]] — uses `Repo`, `children_of`, `module_count`, `subtree_rank`
 - [[Doctext Module]] — uses `clean_inline`, `doc_body`, `ensure_period`, `first_sentence`

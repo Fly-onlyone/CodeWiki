@@ -47,7 +47,7 @@ On render, `Base::new` tracks hover and focus. The hover tint fades with a trans
 
 ## Used by
 
-- [[codewiki-app]] — from `review_queue`
+- [[codewiki-app]] — from `review_queue`, `review_retire`
 - [[Review Module]] — from `header`
 
 ## Gotchas

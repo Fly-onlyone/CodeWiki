@@ -22,8 +22,8 @@ tags: [moc, core]
 - [[01-Core/cw-server/_index|cw-server]] — 14 notes
 - [[01-Core/cw-telemetry/_index|cw-telemetry]] — 3 notes
 - [[01-Core/cw-update/_index|cw-update]] — 8 notes
-- [[01-Core/cw-vault/_index|cw-vault]] — 14 notes
-- [[01-Core/cw-wiki/_index|cw-wiki]] — 39 notes
+- [[01-Core/cw-vault/_index|cw-vault]] — 16 notes
+- [[01-Core/cw-wiki/_index|cw-wiki]] — 42 notes
 - [[01-Core/openui-lang/_index|openui-lang]] — 7 notes
 
 ## See also

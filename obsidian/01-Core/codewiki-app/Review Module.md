@@ -31,7 +31,8 @@ Counts from the status poll feed `news`, `loaded` and `take_counts`. A rise is n
 ## Items
 
 - `pub enum Kind` — what made a proposal.
-- `pub struct Item` — one pending proposal, as the queue lists it.
+- `pub fn retire_notes(detail: &Value) -> Vec<String>` — the notes a retire proposal would delete, by vault path, from what `GET /v1/repos/{id}/proposals/{pid}` answered; none for any other proposal.
+- `pub fn retire_label(notes: usize, kept: usize) -> String` — the label of the button that approves a retire proposal of `notes` notes, `kept` of which the user left out.
 - `pub fn pending(proposals: &Value) -> Vec<Item>` — the pending proposals in what `GET /v1/repos/{id}/proposals` answered, in its order. A proposal with no kind is a sync's, as on the backend.
 - `pub struct Selection` — which proposals of the queue are selected, by id.
 - `pub fn next_after(order: &[String], decided: &[String], current: Option<&str>) -> Option<String>` — the proposal to open after a decision on `decided`: the first one after `current` in `order` that was not decided, else the nearest one before it, else none. With no `current`, or one not in `order`, the first that was not decided.
@@ -41,7 +42,6 @@ Counts from the status poll feed `news`, `loaded` and `take_counts`. A rise is n
 - `pub fn decided_notices(approve: bool, results: &[DecideResult], items: &[Item]) -> Vec<Notice>` — what the user is told after a decision: what went through, and a warning that lists what did not. `items` is the queue before the decision, for the names of the notes.
 - `pub fn rise_key(id: &str) -> String` — the key of the notice that new proposals wait in the repository `id`.
 - `pub fn rise_notice(id: &str, name: &str, increase: usize) -> Notice` — the notice that new proposals wait in the repository `id`, named `name`.
-- `pub enum Targets` — what the buttons above the open proposal decide.
 - `targets` — what a decision acts on: the selection whenever it holds anything, the open proposal only while nothing is selected. A selection of the open proposal alone is that proposal, and so is a selection of the one whose detail is `loading`, which a plain click on its row is about to open. Only what waits in `order` counts.
 - `pub fn written(approve: bool, results: &[DecideResult], items: &[Item]) -> Vec<String>` — the notes an approval wrote, by vault path: none for a rejection.
 - `forget_written` — drop from `history` every page of a note in `written`, which shows the note as it was before: going back to one and editing it would save the old text over the approved one. `note` gives the path of a page that is a note, `None` for any other page, which stays.
@@ -51,7 +51,7 @@ Counts from the status poll feed `news`, `loaded` and `take_counts`. A rise is n
 - `pub fn loaded(counts: &mut Option<HashMap<String, usize>>, open: &str, pending: usize)` — take the queue the app loaded for the open repository `open`, `pending` proposals long, as the count its rises are measured from: what the app loaded itself is no news, however fast its sync ran. Nothing changes before the first answer that counts.
 - `pub fn take_counts(known: &mut Option<HashMap<String, usize>>, answer: HashMap<String, usize>)` — take an answer of `GET /v1/status` into the counts the app knows: each repository in it gets its new count, and one it leaves out keeps the count known before. On slow storage the backend leaves out what it did not count in time, rather than give a count that may be older than what the app loaded since (`loaded`).
 
-And 6 more items.
+And 9 more items.
 
 ## Depends on
 

@@ -42,6 +42,7 @@ Modules:
 - [[Generate Module]] — the generation pipeline: scan, plan, freeze names, render, lint, write.
 - [[Git Module]] — minimal git access through the `git` command line.
 - [[Gitintel Module]] — Git intelligence: what history says about each file.
+- [[Gone Module]] — notes whose subject is gone from the repository: which of them leave the vault in a sync, which stay, and why.
 - [[Health Module]] — code health: dead code, documentation drift and per-file health scores.
 - [[Level Module]] — severity of a finding, shared by the analyses and the CI report.
 - [[Manifests Module]] — what a repository's build files say about a package from outside it: the version asked for, the version locked, the features turned on, and what the package is.
@@ -59,13 +60,13 @@ Modules:
 ## Depends on
 
 - [[Explanations Module]] — uses `Brief`, `DEFAULT_LIMIT`, `MAX_LIMIT`, `MAX_SECTION_WORDS`
+- [[Proposal Module]] — uses `Proposal`, `get`, `list`, `patch_text`
 - [[Ci Module]] — uses `CheckFinding`, `check`, `fails`, `to_junit`
+- [[Git Module]] — uses `at_head`, `head_commit`, `history_paths`, `is_linked_worktree`
 - [[Gitintel Module]] — uses `blast_radius`, `change_risk`, `file_risk`, `hotspots`
-- [[Proposal Module]] — uses `get`, `list`, `patch_text`, `proposed_text`
 - [[Coverage Module]] — uses `import`, `import_text`, `load`, `report`
 - [[Security Module]] — uses `COMMAND_INJECTION`, `HARDCODED_SECRET`, `INSECURE_HTTP`, `SQL_FORMAT`
-- [[Health Module]] — uses `DriftKind`, `dead_code`, `doc_drift`, `file_health`
-- [[Service Module]] — uses `is_stale`, `open_existing_index_in`, `open_index_in`, `reindex`
+- [[Service Module]] — uses `index_notes`, `is_stale`, `open_existing_index_in`, `open_index_in`
 
 ## Gotchas
 

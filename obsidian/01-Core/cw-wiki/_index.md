@@ -4,7 +4,7 @@ tags: [moc, core, cw-wiki]
 
 # Core / cw-wiki — Map of Content
 
-> Notes for `cw-wiki`: 39 concepts.
+> Notes for `cw-wiki`: 42 concepts.
 
 ## Notes
 
@@ -21,8 +21,10 @@ tags: [moc, core, cw-wiki]
 - [[Explain Module]] — what a note says beyond its subject's own comment: the walk-through of what happens when the code is used, and the list of its items.
 - [[Explanations Module]] — explanations: what a coding agent writes into a note, and how.
 - [[Generate Module]] — the generation pipeline: scan, plan, freeze names, render, lint, write.
+- [[Git]] — what git knows about a repository, each answer asked for once and only when a note needs it: most syncs remove nothing.
 - [[Git Module]] — minimal git access through the `git` command line.
 - [[Gitintel Module]] — Git intelligence: what history says about each file.
+- [[Gone Module]] — notes whose subject is gone from the repository: which of them leave the vault in a sync, which stay, and why.
 - [[Health Module]] — code health: dead code, documentation drift and per-file health scores.
 - [[Level]] — `Level` enum defined in `cw_wiki::level` with 2 methods.
 - [[Level Module]] — severity of a finding, shared by the analyses and the CI report.
@@ -35,6 +37,7 @@ tags: [moc, core, cw-wiki]
 - [[Render Module]] — rendering of planned notes into Markdown in the vault's house style.
 - [[RenderCtx]] — `RenderCtx` struct defined in `cw_wiki::render` with 20 methods.
 - [[Repo]] — lookup tables over the scanned facts.
+- [[Report]] — `Report` struct defined in `cw_wiki::generate` with 1 methods.
 - [[Run]] — one pass that brings the stored vectors of some kinds in line with their documents, a batch at a time.
 - [[Rustscan Module]] — A light lexical scan of Rust source, shared by the test map and the security rules.
 - [[Scanned]] — `Scanned` struct defined in `cw_wiki::rustscan` with 7 methods.

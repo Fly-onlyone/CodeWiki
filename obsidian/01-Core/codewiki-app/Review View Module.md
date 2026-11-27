@@ -32,9 +32,10 @@ Counts: `take_proposal_counts` compares the new status counts with the old, tell
 
 - `pub const QUEUE_WIDTH: f32` — width of the queue beside the open proposal.
 - `const QUEUE_HEAD: f32` — the row above the queue, with the checkbox that selects every row: `ListSubheader.js`, `lineHeight: '48px'`.
+- `const RETIRE_LIST_HEIGHT: f32` — how tall the list of a retire proposal's notes grows before it scrolls: the text of the proposal under it must stay in sight.
 - `pub(crate) enum Show` — where the review page shows a proposal.
 - `fn empty_review() -> Page` — the review page when nothing waits.
-- `decide` — decide the proposals `ids` of the repository `repo`. One goes by its own route, which every backend has, and a refusal is its result; several go in one call, which an older backend refuses with an error that says so. Blocks; run it off the UI thread.
+- `decide` — decide the proposals `ids` of the repository `repo`. One goes by its own route, which every backend has, and a refusal is its result; several go in one call, which an older backend refuses with an error that says so. Blocks; run it off the UI thread. `keep` names a retire proposal among them and the notes of it to keep: only its own route takes those, so it goes there by itself and the others as before; the results come back in the order of `ids`.
 
 ## Depends on
 
@@ -45,7 +46,7 @@ Counts: `take_proposal_counts` compares the new status counts with the old, tell
 
 ## Used by
 
-- [[codewiki-app]] — from `decide_review`, `review_queue`, `review_queue_width`, `show_proposal`
+- [[codewiki-app]] — from `decide_review`, `review_queue`, `review_queue_width`, `review_retire`
 
 ## Gotchas
 

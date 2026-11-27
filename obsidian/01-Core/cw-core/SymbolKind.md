@@ -43,7 +43,7 @@ Members:
 
 ## Gotchas
 
-- `parse` returns `Option` and gives `None` for an unknown name. [[Visibility]] and the other enums in the model fall back to a default instead. A caller must handle the `None`.
+- `parse` returns `Option` and gives `None` for an unknown name. Visibility and the other enums in the model fall back to a default instead. A caller must handle the `None`.
 - Adding a variant needs three edits: the enum, `as_str` and `parse`. The round-trip test lists only some variants, so a missed arm may not fail a test.
 - `Impl`, `Const`, `Static`, `Macro` and `Module` are not types by `is_type`, so they get no concept note of their own.
 

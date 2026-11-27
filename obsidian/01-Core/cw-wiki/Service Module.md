@@ -46,15 +46,15 @@ And 1 more private item with no comment.
 - [[Index]] — uses `Index`, `meta`, `metrics`, `open`
 - [[Paths Module]] — uses `data_dir`, `index_path`, `index_path_in`
 - [[Scan Module]] — uses `RepoFacts`, `scan_repo`
-- [[Generate Module]] — uses `Report`, `generate_with`
 - [[Git Module]] — uses `head_commit`, `vault_is_behind`
 - [[Gitintel Module]] — uses `mine`, `save`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[cw-index]] — uses `replace_documents`
+- [[Error Module]] — uses `Result`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `an_index_that_was_never_built_is_not_opened`, `apply_writes_both_files_and_preserves_the_authors_text`, `fixture`
+- [[cw-wiki]] — from `a_healthy_repository_gets_no_suggestions`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `an_index_that_was_never_built_is_not_opened`, `apply_writes_both_files_and_preserves_the_authors_text`
 - [[Api Module]] — from `approve_proposal`, `decide_proposals`, `index`, `reindex_repo`
 - [[Embed Job Module]] — from `after_update`, `embed_repo`, `resume`
 - [[codewiki]] — from `run`

@@ -20,7 +20,7 @@ Keeps the list of note names for a vault. Links between notes use the title only
 
 ## Items
 
-- `pub struct RegistryEntry` — public struct; used by `Registry`, `Registry::by_id`, `Registry::by_name`, `Registry::entries` and 6 more.
+- [[RegistryEntry]] — struct
 - [[Registry]] — maps note names (file stem, compared case-insensitively because Windows file names and Obsidian links are) to entries.
 - `const FORBIDDEN: [char; 12]` — characters Obsidian or Windows forbid in file names or link targets.
 - `pub fn sanitize_name(title: &str) -> String` — make a title safe to use as a file name and link target.
@@ -28,15 +28,10 @@ Keeps the list of note names for a vault. Links between notes use the title only
 - `fn folder(path: &str) -> &str` — private function, returns `&str`; called by `Registry::resolve`.
 - `fn join(dir: &str, file: &str) -> String` — private function, returns `String`; called by `Registry::resolve`.
 
-## Depends on
-
-- [[NoteKind]] — uses `NoteKind`
-
 ## Used by
 
-- [[Registry]] — from `Registry`, `by_id`, `by_name`, `entries`
+- [[Registry]] — from `insert`, `reserve`, `resolve`
 - [[Generate Module]] — from `generate_with`, `planned_path`
-- [[VaultMeta]] — from `registry`, `save`
 - [[Decisions Module]] — from `create`
 
 ## Gotchas

@@ -24,28 +24,28 @@ Each proposal lives in a `proposals` folder under the metadata folder, as severa
 
 ## Items
 
-- `pub enum ProposalStatus` — public enum; used by `Proposal`, `Status`.
+- `pub enum ProposalStatus` — public enum; used by `Proposal`, `Status`, `close_retire`.
 - `pub enum ProposalKind` — what made a proposal.
+- `pub struct Retired` — one note a retire proposal would delete.
 - `pub struct Offer` — what an agent's proposal carries beside the note's text.
-- `pub struct Proposal` — public struct; used by `ProposalDetail`, `approve`, `approve_proposal`, `create` and 9 more.
-- `fn proposals_dir(vault: &Path) -> PathBuf` — private function, returns `PathBuf`; called by `create_as`, `get`, `list`, `patch_text` and 5 more.
+- `pub struct Proposal` — public struct; used by `ProposalDetail`, `approve`, `approve_keeping`, `approve_proposal` and 15 more.
+- `pub const RETIRE_NOTE: &str` — the id every retire proposal's `note_id` holds: it stands for the vault.
 - `pub fn unified_diff(old: &str, new: &str, path: &str) -> String` — unified diff between two note texts, for display.
-- `fn read_json(path: &Path) -> Result<Proposal>` — private function, returns `Result<Proposal>`; called by `get`, `list`.
-- `fn write_json(vault: &Path, proposal: &Proposal) -> Result<()>` — private function, returns `Result<()>`; called by `approve`, `create_as`, `reject`.
 - `create` — queue a sync's proposal. `current` is the note text on disk, empty for a new note. An earlier pending proposal of a sync for the same note is replaced; one of an agent stays.
 - `create_agent` — queue an agent's proposal: the note with the agent's sections woven in, and what comes with it. An earlier pending proposal of an agent for the same note is replaced; one of a sync stays, since it says something else: that the facts changed.
+- `pub fn create_retire(vault: &Path, mut notes: Vec<Retired>) -> Result<Option<Proposal>>` — queue the proposal to delete `notes`, which their owner wrote about code that is gone: one proposal for all of them, which a person decides as a whole, leaving out the notes they want to keep. With no notes nothing is queued. A pending retire proposal for other notes is replaced; one for these same notes stays as it is, and `None` says so.
+- `pub fn close_retire(vault: &Path, id: &str, status: ProposalStatus) -> Result<Proposal>` — record the decision on the pending retire proposal `id`. What the decision does to the notes is the caller's work: it needs to know what git holds, which this crate does not.
 - `pub fn list(vault: &Path) -> Result<Vec<Proposal>>` — all proposals, sorted by id.
 - `pub fn pending_count(vault: &Path) -> Result<usize>` — how many proposals wait for a decision. Reads only the `status` of each proposal file, so a patch or a text is never loaded.
-- `pub fn get(vault: &Path, id: &str) -> Result<Proposal>` — public function, returns `Result<Proposal>`; called by `approve`, `get_proposal`, `reject`.
+- `pub fn get(vault: &Path, id: &str) -> Result<Proposal>` — public function, returns `Result<Proposal>`; called by `approve`, `approve_keeping`, `close_retire`, `get_proposal` and 3 more.
 - `pub fn proposed_text(vault: &Path, id: &str) -> Result<String>` — proposed full text of the note.
 - `pub fn patch_text(vault: &Path, id: &str) -> Result<String>` — public function, returns `Result<String>`; called by `get_proposal`.
 - `pub fn pictures_text(vault: &Path, id: &str) -> Result<String>` — the pictures file an agent's proposal would give the note; empty when it carries none.
-- `const PICTURES: &str` — extension of the file that holds a proposal's pictures.
-- `fn check_id(id: &str) -> Result<()>` — ids come from API callers; never let one name a path outside the folder.
 - `pub fn approve(vault: &Path, id: &str) -> Result<Proposal>` — apply a pending proposal: write the note and record the outcome. Fails with the proposal marked `Superseded` when the note changed meanwhile.
+- `pub fn supersede(vault: &Path, id: &str) -> Result<()>` — mark the pending proposal `id` as overtaken: what it would write is no longer true of the repository, so it can no longer be approved. A proposal that is not pending is left as it is.
 - `pub fn reject(vault: &Path, id: &str) -> Result<Proposal>` — reject a pending proposal. The caller records `input_hash` on the note entry so the same change is not proposed again.
 
-And 3 more items.
+And 8 more items.
 
 ## Depends on
 
@@ -57,14 +57,14 @@ And 3 more items.
 
 ## Used by
 
+- [[cw-wiki]] — from `a_fault_the_owner_wrote_is_not_held_against_the_agent`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_proposal_that_waits_for_a_note_of_something_gone_cannot_be_approved`, `an_explained_note_changed_by_hand_gets_a_proposal_with_the_explanation`
 - [[Api Module]] — from `ProposalDetail`, `approve_proposal`, `get_proposal`, `list_proposals`
-- [[cw-wiki]] — from `a_fault_the_owner_wrote_is_not_held_against_the_agent`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `an_explained_note_changed_by_hand_gets_a_proposal_with_the_explanation`, `human_edited_notes_get_a_proposal_not_an_overwrite`
-- [[Explanations Module]] — from `approve`, `reject`, `submit`
+- [[Explanations Module]] — from `approve`, `approve_keeping`, `reject`, `submit`
+- [[Gone Module]] — from `keep_all`, `pending_retire`, `retire`
 - [[codewiki]] — from `run`
 - [[cw-server]] — from `repo_with_proposals`
 - [[Briefing Module]] — from `session_start`
 - [[Generate Module]] — from `generate_with`
-- [[Query Module]] — from `status`
 
 ## Gotchas
 

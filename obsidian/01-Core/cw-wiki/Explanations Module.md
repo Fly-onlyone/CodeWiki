@@ -50,17 +50,17 @@ If all pass, the text is woven in, the pictures file is written, and the note re
 - `pub fn waiting_counts(root: &Path) -> Result<Counts>` — how many notes of the repository at `root` wait for an agent.
 - `pub fn queue(root: &Path, scope: &Scope) -> Result<Queue>` — the notes that wait for an agent, as far as `scope` asks. Notes another agent holds are left out before the limit applies.
 - `pub fn every(root: &Path, claimed: &[String]) -> Result<Queue>` — every waiting note, with no limit and no filter, in queue order. Notes in `claimed` are marked.
-- `pub struct BriefSource` — A file a note is about, in a `Brief`.
 - `pub fn brief(root: &Path, path_or_name: &str) -> Result<Brief>` — what an agent needs to explain the note at vault path or name `path_or_name`.
 - `pub struct Written` — the text an agent wrote for one section.
 - `pub struct Submission` — what an agent sends for one note.
 - `pub enum Outcome` — what became of a submission. Each is an answer, not an error: an agent acts on every one of them.
 - `pub fn submit(root: &Path, path_or_name: &str, submission: &Submission) -> Result<Outcome>` — take what an agent wrote for the note at vault path or name `path_or_name`: check it, weave it into the note, save its pictures and record what it was written from. See `Outcome` for what can come of it. The search index is the caller's to refresh after `Saved`.
 - `pub fn approve(root: &Path, id: &str) -> Result<proposal::Proposal>` — approve the pending proposal `id`: write the note, and for an agent's proposal its pictures and the record of who explained it. After a sync's proposal the note counts as reviewed for that input, so the same change is not proposed again. After an agent's proposal the note stays its owner's: it was edited by hand and nothing overwrites it, so the next change of its facts is a proposal again.
+- `pub fn approve_keeping(root: &Path, id: &str, keep: &[String]) -> Result<proposal::Proposal>` — `approve`, for a retire proposal with some of its notes left out: `keep` holds the vault paths of the notes that stay, as history. The others are deleted where git holds them (`crate::gone`). Any other proposal is about one note and takes no `keep`.
 - `pub fn reject(root: &Path, id: &str) -> Result<proposal::Proposal>` — reject the pending proposal `id`. A sync's input is recorded, so the same change is not proposed again. An agent's text is dropped, and an agent may offer another.
 - `pub fn decide_all(root: &Path, decision: Decision, ids: &[String]) -> Vec<Decided>` — apply `decision` to each of the proposals `ids`, in order. A proposal that is missing, superseded or already decided is reported and the rest still run. The caller holds the repository's write lock for the whole batch, and indexes the notes once afterwards when an approval went through.
 
-And 22 more items.
+And 23 more items.
 
 ## Depends on
 
@@ -75,7 +75,7 @@ And 22 more items.
 
 ## Used by
 
-- [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`, `a_submission_against_an_older_note_or_older_facts_is_turned_back`
+- [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_note_changed_after_the_proposal_is_not_deleted_by_it`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`
 - [[Api Module]] — from `approve_proposal`, `decide_proposals`, `list_explanations`, `read_explanation`
 - [[Briefing Module]] — from `explain_sentence`, `launch_order`, `session_start`
 - [[codewiki]] — from `batch_and_claim_texts_follow_the_backend`, `write_notes_skill_follows_the_tools_and_the_limits`

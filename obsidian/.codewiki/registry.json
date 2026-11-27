@@ -395,6 +395,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_wiki::gone::Git",
+    "path": "01-Core/cw-wiki/Git.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::git",
     "path": "01-Core/cw-wiki/Git Module.md",
     "kind": "concept"
@@ -412,6 +417,16 @@
   {
     "id": "type:codewiki_app::icons::Glyph",
     "path": "01-Core/codewiki-app/Glyph.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_vault::manifest::Gone",
+    "path": "01-Core/cw-vault/Gone.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::gone",
+    "path": "01-Core/cw-wiki/Gone Module.md",
     "kind": "concept"
   },
   {
@@ -780,6 +795,11 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_vault::registry::RegistryEntry",
+    "path": "01-Core/cw-vault/RegistryEntry.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_update::release::Release",
     "path": "01-Core/cw-update/Release.md",
     "kind": "concept"
@@ -812,6 +832,11 @@
   {
     "id": "type:codewiki_mcp::guard::RepoArg",
     "path": "01-Core/codewiki-mcp/RepoArg.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::generate::Report",
+    "path": "01-Core/cw-wiki/Report.md",
     "kind": "concept"
   },
   {

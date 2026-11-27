@@ -305,7 +305,751 @@ fn a_type_that_moves_between_crates_keeps_the_vault_consistent() {
         .map(|e| e.path.clone())
         .collect();
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].starts_with("01-Core/money/"), "{notes:?}");
+    // Under its plain name: the old note gave it up in the same run.
+    assert_eq!(notes[0], MOVED_PRICE);
+}
+
+/// Move `Price` out of the engine crate into a new crate `money`, as the
+/// only type of that name.
+fn move_price_to_money(root: &Path) {
+    write(
+        root,
+        "crates/money/Cargo.toml",
+        "[package]\nname = \"money\"\n",
+    );
+    write(
+        root,
+        "crates/money/src/lib.rs",
+        "//! Money types.\n\n/// A price in integer ticks.\n#[derive(Clone, Copy)]\npub struct Price(pub u64);\n\nimpl Price {\n    /// The zero price.\n    pub fn zero() -> Self { Price(0) }\n}\n",
+    );
+    remove_pricing(root);
+}
+
+const MOVED_PRICE: &str = "01-Core/money/Price.md";
+
+#[test]
+fn an_explanation_follows_its_subject_to_a_new_place() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    move_price_to_money(dir.path());
+
+    let report = run(dir.path());
+    assert_eq!(
+        report.moved,
+        [cw_wiki::Moved {
+            from: PRICE.into(),
+            to: MOVED_PRICE.into()
+        }],
+        "{report:?}"
+    );
+    assert!(report.possible_moves.is_empty() && report.kept_gone.is_empty());
+    assert!(!report.removed.iter().any(|p| p == PRICE), "{report:?}");
+    assert!(!vault.join(PRICE).exists());
+    assert!(!vault.join("01-Core/engine/Price.openui").exists());
+
+    // One note about the type, under its plain name, with the agent's
+    // words and its picture.
+    let note = read(&vault, MOVED_PRICE);
+    assert!(
+        note.contains(PRICE_WORKS) && note.contains(PRICE_GOTCHA),
+        "{note}"
+    );
+    assert!(vault.join("01-Core/money/Price.openui").exists());
+    let entry = entry_of(dir.path(), MOVED_PRICE);
+    assert_eq!(entry.id, "type:money::Price");
+    assert!(entry.explained.is_some());
+    assert_eq!(
+        entry.illustration.as_deref(),
+        Some("01-Core/money/Price.openui")
+    );
+    // An agent must look again: the code around it changed.
+    assert_eq!(report.behind, [MOVED_PRICE]);
+    assert!(
+        entry
+            .behind
+            .iter()
+            .any(|line| line == "its subject moved from `crates/engine/src/pricing.rs`"),
+        "{:?}",
+        entry.behind
+    );
+    assert_eq!(report.link_rate, 1.0);
+
+    // The next run changes nothing and keeps the reason.
+    let again = run(dir.path());
+    assert!(
+        again.written.is_empty() && again.merged.is_empty() && again.moved.is_empty(),
+        "{again:?}"
+    );
+    assert_eq!(entry_of(dir.path(), MOVED_PRICE).behind, entry.behind);
+    assert_eq!(read(&vault, MOVED_PRICE), note);
+}
+
+#[test]
+fn a_move_with_two_possible_ends_carries_nothing() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    let before = read(&vault, PRICE);
+    move_price_to_money(dir.path());
+    // A second new type of the same name: which one is the old `Price`?
+    write(
+        dir.path(),
+        "crates/cash/Cargo.toml",
+        "[package]\nname = \"cash\"\n",
+    );
+    write(
+        dir.path(),
+        "crates/cash/src/lib.rs",
+        "//! Cash types.\n\n/// A price in coins.\npub struct Price(pub u32);\n",
+    );
+
+    let report = run(dir.path());
+    assert!(report.moved.is_empty(), "{report:?}");
+    assert_eq!(report.possible_moves, [PRICE], "{report:?}");
+    // The old note is a note of something gone, and is treated as one.
+    assert_eq!(kept_gone(&report), [(PRICE, cw_vault::Gone::Unsaved)]);
+    assert_eq!(read(&vault, PRICE), before);
+    let meta = VaultMeta::load(&vault).unwrap();
+    for id in ["type:money::Price", "type:cash::Price"] {
+        let entry = meta.notes.get(id).unwrap_or_else(|| panic!("no {id}"));
+        assert_eq!(entry.explained, None, "{id} starts unexplained");
+    }
+    // The kept note still links the module note that went, and cannot be
+    // changed safely: it is no part of the live wiki, whose links all hold.
+    assert!(read(&vault, PRICE).contains("[[Pricing Module]]"));
+    assert_eq!(report.link_rate, 1.0);
+}
+
+#[test]
+fn git_names_the_end_of_a_move_among_several() {
+    let dir = committed_with_written_work();
+    let root = dir.path();
+    let vault = root.join("obsidian");
+    // The file moves into a new crate, and another crate gets a type of
+    // the same name.
+    write(
+        root,
+        "crates/money/Cargo.toml",
+        "[package]\nname = \"money\"\n",
+    );
+    write(
+        root,
+        "crates/money/src/lib.rs",
+        "//! Money types.\npub mod pricing;\n",
+    );
+    git(
+        root,
+        &[
+            "mv",
+            "crates/engine/src/pricing.rs",
+            "crates/money/src/pricing.rs",
+        ],
+    );
+    write(
+        root,
+        "crates/engine/src/lib.rs",
+        "//! Order matching engine.\npub mod book;\n",
+    );
+    write(
+        root,
+        "crates/engine/src/book.rs",
+        "//! The order book.\n\n/// Holds resting orders.\npub struct OrderBook;\n",
+    );
+    write(root, "crates/cli/src/main.rs", "fn main() {}\n");
+    write(
+        root,
+        "crates/cash/Cargo.toml",
+        "[package]\nname = \"cash\"\n",
+    );
+    write(
+        root,
+        "crates/cash/src/lib.rs",
+        "//! Cash types.\n\n/// A price in coins.\npub struct Price(pub u32);\n",
+    );
+    commit_all(root, "move pricing to money");
+
+    let report = run(root);
+    let meta = VaultMeta::load(&vault).unwrap();
+    let moved = meta
+        .notes
+        .get("type:money::pricing::Price")
+        .expect("the moved type has a note");
+    assert!(moved.explained.is_some(), "{report:?}");
+    assert!(read(&vault, &moved.path).contains(PRICE_WORKS));
+    assert_eq!(meta.notes["type:cash::Price"].explained, None);
+    assert!(report.possible_moves.is_empty(), "{report:?}");
+    // The module note its owner edited moved with the file as well.
+    let module = meta
+        .notes
+        .get("mod:money::pricing")
+        .expect("the moved module has a note");
+    assert!(read(&vault, &module.path).contains("My note."));
+    assert_eq!(report.link_rate, 1.0);
+}
+
+fn hand_note(title: &str, body: &str) -> String {
+    format!("---\ntags: [notes]\n---\n\n# {title}\n\n> Mine.\n\n{body}\n")
+}
+
+const OLD_SERVICE: &str = "06-Notes/Old Service.md";
+const TEXT_ONLY: &str = "06-Notes/Text Only.md";
+const MIXED: &str = "06-Notes/Mixed.md";
+const GLOSSARY: &str = "06-Notes/Glossary.md";
+const MOVED_NOTE: &str = "06-Notes/Moved Tool.md";
+
+/// The fixture as a git repository with five notes its owner wrote by hand
+/// about files under `legacy/`, a first run done and everything committed.
+fn hand_written() -> tempfile::TempDir {
+    let dir = fixture();
+    let r = dir.path();
+    for file in ["service", "util", "moved"] {
+        write(
+            r,
+            &format!("legacy/{file}.cfg"),
+            &format!("# the {file} settings\nname = {file}\nmode = old\nretries = 3\n"),
+        );
+    }
+    let vault = r.join("obsidian");
+    write(
+        &vault,
+        OLD_SERVICE,
+        &hand_note(
+            "Old Service",
+            "## Source\n\n- `legacy/service.cfg`\n\nIt also reads `legacy/util.cfg`.",
+        ),
+    );
+    write(
+        &vault,
+        TEXT_ONLY,
+        &hand_note("Text Only", "The helpers live in `legacy/util.cfg`."),
+    );
+    write(
+        &vault,
+        MIXED,
+        &hand_note(
+            "Mixed",
+            "Old settings in `legacy/service.cfg`, the book in `crates/engine/src/book.rs`.",
+        ),
+    );
+    write(
+        &vault,
+        GLOSSARY,
+        &hand_note("Glossary", "A `tick` is the smallest step of a price."),
+    );
+    write(
+        &vault,
+        MOVED_NOTE,
+        &hand_note("Moved Tool", "## Source\n\n- `legacy/moved.cfg`"),
+    );
+    run(r);
+    git(r, &["init", "-q", "-b", "main"]);
+    commit_all(r, "code and wiki");
+    dir
+}
+
+/// Delete two of the legacy files and move the third.
+fn retire_legacy(root: &Path) {
+    fs::remove_file(root.join("legacy/service.cfg")).unwrap();
+    fs::remove_file(root.join("legacy/util.cfg")).unwrap();
+    fs::create_dir_all(root.join("tools")).unwrap();
+    git(root, &["mv", "legacy/moved.cfg", "tools/moved.cfg"]);
+}
+
+fn retire_proposals(vault: &Path) -> Vec<proposal::Proposal> {
+    proposal::list(vault)
+        .unwrap()
+        .into_iter()
+        .filter(|p| p.kind == cw_vault::ProposalKind::Retire)
+        .collect()
+}
+
+#[test]
+fn hand_written_notes_about_deleted_code_wait_in_one_retire_proposal() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    let before: Vec<String> = [OLD_SERVICE, TEXT_ONLY, MIXED, GLOSSARY]
+        .iter()
+        .map(|note| read(&vault, note))
+        .collect();
+    retire_legacy(r);
+
+    // Not committed yet: the files may come back. Until the commit git
+    // does not call the third file moved either.
+    let report = run(r);
+    assert_eq!(
+        kept_gone(&report),
+        [
+            (MOVED_NOTE, cw_vault::Gone::Uncommitted),
+            (OLD_SERVICE, cw_vault::Gone::Uncommitted),
+            (TEXT_ONLY, cw_vault::Gone::Uncommitted)
+        ],
+        "{report:?}"
+    );
+    assert!(report.retire.is_empty() && retire_proposals(&vault).is_empty());
+
+    commit_all(r, "retire legacy");
+    let report = run(r);
+    assert_eq!(report.retire, [OLD_SERVICE, TEXT_ONLY], "{report:?}");
+    assert!(report.removed.is_empty(), "nothing is deleted: {report:?}");
+    assert_eq!(report.partly_gone, [MIXED]);
+    assert!(report.kept_gone.is_empty(), "{report:?}");
+    // The notes are as they were, and marked.
+    for (note, text) in [OLD_SERVICE, TEXT_ONLY, MIXED, GLOSSARY]
+        .iter()
+        .zip(&before)
+    {
+        assert_eq!(&read(&vault, note), text, "{note}");
+    }
+    assert_eq!(entry_of(r, OLD_SERVICE).gone, Some(cw_vault::Gone::Pending));
+    assert_eq!(entry_of(r, TEXT_ONLY).gone, Some(cw_vault::Gone::Pending));
+    assert_eq!(entry_of(r, MIXED).gone, None);
+    assert_eq!(entry_of(r, GLOSSARY).gone, None);
+    assert_eq!(
+        entry_of(r, OLD_SERVICE).cited,
+        ["legacy/service.cfg", "legacy/util.cfg"]
+    );
+    // A path named only in the text counts, with no `Source` section.
+    assert_eq!(entry_of(r, TEXT_ONLY).cited, ["legacy/util.cfg"]);
+    assert!(entry_of(r, GLOSSARY).cited.is_empty());
+
+    let pending = retire_proposals(&vault);
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].status, ProposalStatus::Pending);
+    let listed: Vec<(&str, &[String])> = pending[0]
+        .retire
+        .iter()
+        .map(|n| (n.path.as_str(), n.cited.as_slice()))
+        .collect();
+    assert_eq!(listed.len(), 2);
+    assert_eq!(listed[0].0, OLD_SERVICE);
+    assert_eq!(listed[0].1, ["legacy/service.cfg", "legacy/util.cfg"]);
+    assert_eq!(listed[1].0, TEXT_ONLY);
+
+    // The run says so in words, the same for every program that shows them.
+    assert!(
+        report.summary.iter().any(|line| line.starts_with(
+            "2 notes written by hand name only files that are gone: `06-Notes/Old Service.md`, `06-Notes/Text Only.md`. None was deleted."
+        )),
+        "{:?}",
+        report.summary
+    );
+    assert!(
+        report.summary.iter().any(|line| line.starts_with(
+            "1 note written by hand name files that are gone beside files that exist"
+        )),
+        "{:?}",
+        report.summary
+    );
+    // Notes that wait to be retired are no notes of the wiki.
+    let meta = VaultMeta::load(&vault).unwrap();
+    assert_eq!(report.notes_total, meta.notes.len() - 2);
+
+    // The next run finds the same and leaves the proposal alone.
+    let again = run(r);
+    assert_eq!(again.retire, [OLD_SERVICE, TEXT_ONLY]);
+    assert_eq!(retire_proposals(&vault), pending);
+}
+
+#[test]
+fn a_hand_written_note_follows_a_file_that_moved() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    retire_legacy(r);
+    commit_all(r, "retire legacy");
+
+    let report = run(r);
+    assert_eq!(report.repathed, [MOVED_NOTE], "{report:?}");
+    assert!(!report.retire.iter().any(|p| p == MOVED_NOTE));
+    let note = read(&vault, MOVED_NOTE);
+    assert!(
+        note.contains("- `tools/moved.cfg`") && !note.contains("legacy/moved.cfg"),
+        "{note}"
+    );
+    let entry = entry_of(r, MOVED_NOTE);
+    assert_eq!(entry.gone, None);
+    assert_eq!(entry.cited, ["tools/moved.cfg"]);
+    // It is its owner's note still, and the run settles.
+    assert_eq!(entry.origin, Origin::Adopted);
+    assert!(run(r).repathed.is_empty());
+}
+
+#[test]
+fn approving_a_retire_proposal_deletes_all_but_the_notes_left_out() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    retire_legacy(r);
+    commit_all(r, "retire legacy");
+    run(r);
+    let id = retire_proposals(&vault)[0].id.clone();
+
+    let done = cw_wiki::explanations::approve_keeping(r, &id, &[TEXT_ONLY.to_string()]).unwrap();
+    assert_eq!(done.status, ProposalStatus::Approved);
+    assert!(!vault.join(OLD_SERVICE).exists());
+    assert!(
+        VaultMeta::load(&vault)
+            .unwrap()
+            .by_path(OLD_SERVICE)
+            .is_none()
+    );
+    // The one left out stays, as history, and is never proposed again.
+    assert!(vault.join(TEXT_ONLY).exists());
+    assert_eq!(entry_of(r, TEXT_ONLY).gone, Some(cw_vault::Gone::History));
+    let report = run(r);
+    assert!(
+        report.retire.is_empty() && report.kept_gone.is_empty(),
+        "{report:?}"
+    );
+    assert_eq!(entry_of(r, TEXT_ONLY).gone, Some(cw_vault::Gone::History));
+    assert_eq!(
+        retire_proposals(&vault)
+            .iter()
+            .filter(|p| p.status == ProposalStatus::Pending)
+            .count(),
+        0
+    );
+    // A second decision on it is refused.
+    assert!(cw_wiki::explanations::approve(r, &id).is_err());
+}
+
+#[test]
+fn rejecting_a_retire_proposal_keeps_every_note_as_history() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    retire_legacy(r);
+    commit_all(r, "retire legacy");
+    run(r);
+    let id = retire_proposals(&vault)[0].id.clone();
+
+    let done = cw_wiki::explanations::reject(r, &id).unwrap();
+    assert_eq!(done.status, ProposalStatus::Rejected);
+    for note in [OLD_SERVICE, TEXT_ONLY] {
+        assert!(vault.join(note).exists());
+        assert_eq!(entry_of(r, note).gone, Some(cw_vault::Gone::History));
+    }
+    let report = run(r);
+    assert!(report.retire.is_empty(), "{report:?}");
+    assert_eq!(retire_proposals(&vault).len(), 1, "only the rejected one");
+}
+
+#[test]
+fn a_note_changed_after_the_proposal_is_not_deleted_by_it() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    retire_legacy(r);
+    commit_all(r, "retire legacy");
+    run(r);
+    let id = retire_proposals(&vault)[0].id.clone();
+    // The owner writes in one of the notes before deciding.
+    let edited = read(&vault, OLD_SERVICE) + "\nKeep this thought.\n";
+    write(&vault, OLD_SERVICE, &edited);
+
+    cw_wiki::explanations::approve(r, &id).unwrap();
+    assert_eq!(read(&vault, OLD_SERVICE), edited);
+    assert!(!vault.join(TEXT_ONLY).exists());
+    // It is still a note about nothing, but git does not hold it now.
+    let report = run(r);
+    assert_eq!(kept_gone(&report), [(OLD_SERVICE, cw_vault::Gone::Unsaved)]);
+}
+
+#[test]
+fn a_file_that_comes_back_takes_its_note_out_of_the_proposal() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    retire_legacy(r);
+    commit_all(r, "retire legacy");
+    run(r);
+    assert_eq!(retire_proposals(&vault).len(), 1);
+
+    write(r, "legacy/util.cfg", "# back\n");
+    write(r, "legacy/service.cfg", "# back\n");
+    let report = run(r);
+    assert!(report.retire.is_empty(), "{report:?}");
+    assert!(retire_proposals(&vault).is_empty());
+    assert_eq!(entry_of(r, OLD_SERVICE).gone, None);
+}
+
+#[test]
+fn the_home_note_reaches_every_folder_of_hand_written_notes() {
+    let dir = fixture();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    // A folder with a map note of its owner's, and one without.
+    write(
+        &vault,
+        "07-Desktop/_index.md",
+        "---\ntags: [moc]\n---\n\n# Desktop\n\n> The desktop app.\n\n- [[Shell Behaviour]]\n- [[Risk Gate]]\n",
+    );
+    write(
+        &vault,
+        "07-Desktop/Shell Behaviour.md",
+        &hand_note("Shell Behaviour", "The window hides to the tray."),
+    );
+    write(
+        &vault,
+        "07-Desktop/Risk Gate.md",
+        &hand_note("Risk Gate", "Every order passes the gate."),
+    );
+    write(
+        &vault,
+        GLOSSARY,
+        &hand_note("Glossary", "A `tick` is the smallest step of a price."),
+    );
+
+    let report = run(r);
+    assert_eq!(report.link_rate, 1.0, "{report:?}");
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains(
+            "## 📝 Notes written by hand\n\n- 06-Notes/ — 1 note: [[Glossary]]\n- [[07-Desktop/_index|07-Desktop/]] — 2 notes\n"
+        ),
+        "{home}"
+    );
+    // The folders rules write are linked where they always were, once.
+    assert!(home.contains("**Start with the architecture flows**"));
+    assert!(!home.contains("- 01-Core/"), "{home}");
+    assert!(run(r).written.is_empty());
+}
+
+#[test]
+fn a_repository_without_code_gets_a_home_note_that_names_no_crates() {
+    let (_dir, root) = named_repo(
+        "papers",
+        &[
+            ("README.md", "# Papers\n\nNotes on reading.\n"),
+            ("docs/plan.txt", "one\ntwo\n"),
+        ],
+    );
+    let vault = root.join("obsidian");
+    write(
+        &vault,
+        "07-Desktop/Shell Behaviour.md",
+        &hand_note("Shell Behaviour", "The window hides to the tray."),
+    );
+    let report = run(&root);
+    assert_eq!(report.link_rate, 1.0, "{report:?}");
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("A graph-linked tour of the repository.\n"),
+        "{home}"
+    );
+    assert!(
+        !home.contains("crates") && !home.contains("packages"),
+        "{home}"
+    );
+    assert!(
+        home.contains("- 07-Desktop/ — 1 note: [[Shell Behaviour]]\n"),
+        "{home}"
+    );
+}
+
+#[test]
+fn a_proposal_that_waits_for_a_note_of_something_gone_cannot_be_approved() {
+    let dir = explained_price();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    // Its owner edits the note, the code changes: a proposal waits.
+    let edited = read(&vault, PRICE).replace(PRICE_GOTCHA, &format!("{PRICE_GOTCHA}\n- Mine."));
+    write(&vault, PRICE, &edited);
+    run(r);
+    change_the_price_comment(r);
+    assert_eq!(run(r).proposed, [PRICE]);
+    let waiting = proposal::list(&vault).unwrap();
+    assert_eq!(waiting.len(), 1);
+
+    // Then the type goes. Without git the note stays, as it is.
+    remove_pricing(r);
+    let report = run(r);
+    assert_eq!(report.superseded, [PRICE], "{report:?}");
+    assert_eq!(
+        proposal::get(&vault, &waiting[0].id).unwrap().status,
+        ProposalStatus::Superseded
+    );
+    assert!(cw_wiki::explanations::approve(r, &waiting[0].id).is_err());
+    assert_eq!(read(&vault, PRICE), edited);
+    // Said once: the next run has nothing to overtake.
+    assert!(run(r).superseded.is_empty());
+}
+
+const BOOK: &str = "01-Core/engine/OrderBook.md";
+const LINKER: &str = "06-Notes/Linker.md";
+const DIRTY: &str = "06-Notes/Dirty.md";
+
+#[test]
+fn links_to_retired_notes_become_plain_words_and_their_attachments_go() {
+    let dir = hand_written();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    // The note that will be retired has a picture of its own and shares one.
+    write(
+        &vault,
+        OLD_SERVICE,
+        &hand_note(
+            "Old Service",
+            "## Source\n\n- `legacy/service.cfg`\n\n![[old-diagram.png]]\n\n![[shared.png]]",
+        ),
+    );
+    write(&vault, "_Attachments/old-diagram.png", "png one");
+    write(&vault, "_Attachments/shared.png", "png two");
+    write(
+        &vault,
+        LINKER,
+        &hand_note(
+            "Linker",
+            "Read [[Old Service|the old service]] and [[OrderBook]].\n\n![[shared.png]]\n\n![[missing.png]]",
+        ),
+    );
+    write(&vault, DIRTY, &hand_note("Dirty", "See [[Old Service]]."));
+    run(r);
+    explain(
+        r,
+        BOOK,
+        &[("How it works", "The settings were in [[Old Service]] once.")],
+        "",
+    );
+    commit_all(r, "more notes");
+    retire_legacy(r);
+    commit_all(r, "retire legacy");
+    run(r);
+    // Changed after its last commit: git does not hold it as it is.
+    let dirty = read(&vault, DIRTY) + "\nA thought of today.\n";
+    write(&vault, DIRTY, &dirty);
+    let id = retire_proposals(&vault)[0].id.clone();
+
+    cw_wiki::explanations::approve(r, &id).unwrap();
+    assert!(!vault.join(OLD_SERVICE).exists());
+
+    // A note of its owner: the link is plain words, the rest is as it was.
+    let linker = read(&vault, LINKER);
+    assert!(
+        linker.contains("Read the old service and [[OrderBook]].")
+            && linker.contains("![[shared.png]]")
+            && linker.contains("![[missing.png]]"),
+        "{linker}"
+    );
+    // A note an agent explained: plain words too, and an agent looks again.
+    let book = read(&vault, BOOK);
+    assert!(
+        book.contains("The settings were in Old Service once."),
+        "{book}"
+    );
+    assert_eq!(
+        entry_of(r, BOOK).behind,
+        ["a note it linked was removed: `Old Service`"]
+    );
+    // Nothing that git could not give back is touched.
+    assert_eq!(read(&vault, DIRTY), dirty);
+    // The picture only the retired note showed goes; the shared one stays.
+    assert!(!vault.join("_Attachments/old-diagram.png").exists());
+    assert!(vault.join("_Attachments/shared.png").exists());
+
+    // The reason stays until an agent writes the note again.
+    let report = run(r);
+    assert_eq!(report.behind, [BOOK], "{report:?}");
+    assert_eq!(read(&vault, BOOK), book);
+}
+
+#[test]
+fn a_dead_link_of_the_agents_is_mended_in_a_note_whose_facts_did_not_change() {
+    let dir = fixture();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    run(r);
+    // As after a note the agent linked was removed by an earlier run.
+    explain(
+        r,
+        BOOK,
+        &[(
+            "How it works",
+            "Prices come from [[No Such Note|the old rules]]. See [[Price]].",
+        )],
+        "",
+    );
+
+    let report = run(r);
+    assert_eq!(report.unlinked, [BOOK], "{report:?}");
+    assert!(
+        report.written.is_empty() && report.merged.is_empty(),
+        "{report:?}"
+    );
+    let note = read(&vault, BOOK);
+    assert!(
+        note.contains("Prices come from the old rules. See [[Price]]."),
+        "{note}"
+    );
+    assert_eq!(report.link_rate, 1.0);
+    assert_eq!(
+        entry_of(r, BOOK).behind,
+        ["a note it linked was removed: `No Such Note`"]
+    );
+    assert_eq!(report.behind, [BOOK]);
+    // Mended once: the next run changes nothing and keeps the reason.
+    let again = run(r);
+    assert!(again.unlinked.is_empty(), "{again:?}");
+    assert_eq!(read(&vault, BOOK), note);
+    assert_eq!(again.behind, [BOOK]);
+}
+
+#[test]
+fn a_sync_unlinks_what_it_removes_in_the_notes_of_their_owner() {
+    let dir = fixture();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    let reader = "06-Notes/Reader.md";
+    write(
+        &vault,
+        reader,
+        &hand_note(
+            "Reader",
+            "Prices: [[Pricing Module]] and [[Price|the price type]]. Orders: [[OrderBook]].",
+        ),
+    );
+    run(r);
+    git(r, &["init", "-q", "-b", "main"]);
+    commit_all(r, "code and wiki");
+    remove_pricing(r);
+    commit_all(r, "retire pricing");
+
+    let report = run(r);
+    assert_eq!(report.unlinked, [reader], "{report:?}");
+    assert!(
+        read(&vault, reader)
+            .contains("Prices: Pricing Module and the price type. Orders: [[OrderBook]]."),
+        "{}",
+        read(&vault, reader)
+    );
+    assert!(run(r).unlinked.is_empty());
+}
+
+#[test]
+fn folders_a_run_leaves_empty_are_removed() {
+    let dir = fixture();
+    let r = dir.path();
+    let vault = r.join("obsidian");
+    run(r);
+    assert!(vault.join("01-Core/cli").is_dir());
+    // Left behind by an earlier version, and two folders that are not notes'.
+    fs::create_dir_all(vault.join("01-Core/stale/deep")).unwrap();
+    fs::create_dir_all(vault.join(".obsidian/plugins")).unwrap();
+    fs::create_dir_all(vault.join("_Templates")).unwrap();
+    fs::create_dir_all(vault.join("_Attachments")).unwrap();
+
+    fs::remove_dir_all(r.join("crates/cli")).unwrap();
+    let report = run(r);
+    assert!(
+        report.removed.iter().any(|p| p.starts_with("01-Core/cli/")),
+        "{report:?}"
+    );
+    assert!(!vault.join("01-Core/cli").exists());
+    assert!(!vault.join("01-Core/stale").exists());
+    assert!(vault.join("01-Core/engine").is_dir());
+    for kept in [".obsidian/plugins", "_Templates", "_Attachments"] {
+        assert!(vault.join(kept).is_dir(), "{kept}");
+    }
 }
 
 #[test]
@@ -322,39 +1066,195 @@ fn duplicate_names_in_an_existing_vault_do_not_abort() {
     assert_eq!(read(&vault, "05-Operations/setup.md"), body);
 }
 
-#[test]
-fn notes_for_deleted_code_are_removed_unless_edited() {
-    let dir = fixture();
-    run(dir.path());
-    let vault = dir.path().join("obsidian");
-    let kept = "01-Core/engine/Price.md";
-    write(&vault, kept, &(read(&vault, kept) + "\nMy note.\n"));
+fn git(root: &Path, args: &[&str]) {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["-c", "user.name=Ann", "-c", "user.email=dev@example.com"])
+        .args(["-c", "commit.gpgsign=false", "-c", "core.autocrlf=false"])
+        .args(args)
+        .output()
+        .expect("git is installed");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
 
-    fs::remove_file(dir.path().join("crates/engine/src/pricing.rs")).unwrap();
+fn commit_all(root: &Path, message: &str) {
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-q", "-m", message]);
+}
+
+/// Take the price type and its module out of the fixture's code.
+fn remove_pricing(root: &Path) {
+    fs::remove_file(root.join("crates/engine/src/pricing.rs")).unwrap();
     write(
-        dir.path(),
+        root,
         "crates/engine/src/lib.rs",
         "//! Order matching engine.\npub mod book;\n",
     );
     write(
-        dir.path(),
+        root,
         "crates/engine/src/book.rs",
         "//! The order book.\n\n/// Holds resting orders.\npub struct OrderBook;\n",
     );
-    write(dir.path(), "crates/cli/src/main.rs", "fn main() {}\n");
+    write(root, "crates/cli/src/main.rs", "fn main() {}\n");
+}
+
+const PRICING_MODULE: &str = "01-Core/engine/Pricing Module.md";
+
+/// The fixture as a git repository: a first run done, the note about
+/// `Price` explained by an agent, the note about its module edited by
+/// hand, and all of it committed.
+fn committed_with_written_work() -> tempfile::TempDir {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    write(
+        &vault,
+        PRICING_MODULE,
+        &(read(&vault, PRICING_MODULE) + "\nMy note.\n"),
+    );
+    git(dir.path(), &["init", "-q", "-b", "main"]);
+    commit_all(dir.path(), "code and wiki");
+    dir
+}
+
+fn kept_gone(report: &Report) -> Vec<(&str, cw_vault::Gone)> {
+    report
+        .kept_gone
+        .iter()
+        .map(|kept| (kept.path.as_str(), kept.why))
+        .collect()
+}
+
+#[test]
+fn a_note_nobody_wrote_in_goes_with_its_subject_at_once() {
+    let dir = fixture();
+    run(dir.path());
+    let vault = dir.path().join("obsidian");
+    remove_pricing(dir.path());
     let report = run(dir.path());
-    assert!(
-        report
-            .removed
-            .iter()
-            .any(|p| p.ends_with("Pricing Module.md")),
+    for note in [PRICE, PRICING_MODULE] {
+        assert!(report.removed.iter().any(|p| p == note), "{report:?}");
+        assert!(!vault.join(note).exists());
+    }
+    assert!(report.kept_gone.is_empty(), "{report:?}");
+}
+
+#[test]
+fn without_git_written_work_outlives_its_subject() {
+    let dir = explained_price();
+    let vault = dir.path().join("obsidian");
+    let edited = read(&vault, PRICING_MODULE) + "\nMy note.\n";
+    write(&vault, PRICING_MODULE, &edited);
+    let explained = read(&vault, PRICE);
+    remove_pricing(dir.path());
+
+    let report = run(dir.path());
+    // Nothing could bring either note back, so neither is deleted. A note
+    // nobody wrote in still goes.
+    assert_eq!(
+        report.removed,
+        ["00-Architecture/cli Startup Flow.md"],
         "{report:?}"
     );
-    assert!(!vault.join("01-Core/engine/Pricing Module.md").exists());
-    assert!(
-        vault.join(kept).exists(),
-        "a human-edited note is never deleted"
+    assert_eq!(
+        kept_gone(&report),
+        [
+            (PRICE, cw_vault::Gone::Unsaved),
+            (PRICING_MODULE, cw_vault::Gone::Unsaved)
+        ]
     );
+    assert_eq!(read(&vault, PRICE), explained);
+    assert_eq!(read(&vault, PRICING_MODULE), edited);
+    assert!(vault.join("01-Core/engine/Price.openui").exists());
+    assert_eq!(
+        entry_of(dir.path(), PRICE).gone,
+        Some(cw_vault::Gone::Unsaved)
+    );
+    // The next run says the same and still deletes nothing.
+    assert_eq!(kept_gone(&run(dir.path())).len(), 2);
+}
+
+#[test]
+fn written_work_waits_until_the_deletion_is_committed() {
+    let dir = committed_with_written_work();
+    let vault = dir.path().join("obsidian");
+    remove_pricing(dir.path());
+
+    let report = run(dir.path());
+    assert_eq!(
+        report.removed,
+        ["00-Architecture/cli Startup Flow.md"],
+        "{report:?}"
+    );
+    assert_eq!(
+        kept_gone(&report),
+        [
+            (PRICE, cw_vault::Gone::Uncommitted),
+            (PRICING_MODULE, cw_vault::Gone::Uncommitted)
+        ]
+    );
+    assert!(vault.join(PRICE).exists() && vault.join(PRICING_MODULE).exists());
+
+    // The file comes back: the notes describe something again.
+    git(dir.path(), &["checkout", "-q", "--", "crates"]);
+    let report = run(dir.path());
+    assert!(
+        report.kept_gone.is_empty() && report.removed.is_empty(),
+        "{report:?}"
+    );
+    let entry = entry_of(dir.path(), PRICE);
+    assert_eq!(entry.gone, None);
+    assert!(entry.explained.is_some());
+    assert!(read(&vault, PRICE).contains(PRICE_WORKS));
+}
+
+#[test]
+fn committed_written_work_goes_once_the_deletion_is_committed() {
+    let dir = committed_with_written_work();
+    let vault = dir.path().join("obsidian");
+    remove_pricing(dir.path());
+    run(dir.path());
+    commit_all(dir.path(), "retire pricing");
+
+    let report = run(dir.path());
+    // The explained note and the note edited by hand both go: git has them.
+    for note in [PRICE, PRICING_MODULE] {
+        assert!(report.removed.iter().any(|p| p == note), "{report:?}");
+        assert!(!vault.join(note).exists());
+    }
+    assert!(report.kept_gone.is_empty(), "{report:?}");
+    assert!(!vault.join("01-Core/engine/Price.openui").exists());
+    assert!(VaultMeta::load(&vault).unwrap().by_path(PRICE).is_none());
+    assert_eq!(report.link_rate, 1.0);
+}
+
+#[test]
+fn a_note_git_cannot_bring_back_stays() {
+    let dir = committed_with_written_work();
+    let vault = dir.path().join("obsidian");
+    remove_pricing(dir.path());
+    commit_all(dir.path(), "retire pricing");
+    // Written after the last commit: deleting the note would lose it.
+    let edited = read(&vault, PRICE) + "\nOne more line of mine.\n";
+    write(&vault, PRICE, &edited);
+
+    let report = run(dir.path());
+    assert_eq!(kept_gone(&report), [(PRICE, cw_vault::Gone::Unsaved)]);
+    assert_eq!(read(&vault, PRICE), edited);
+    assert!(
+        report.removed.iter().any(|p| p == PRICING_MODULE),
+        "{report:?}"
+    );
+
+    // Once it is committed, the next run removes it.
+    commit_all(dir.path(), "wiki");
+    let report = run(dir.path());
+    assert!(report.removed.iter().any(|p| p == PRICE), "{report:?}");
+    assert!(!vault.join(PRICE).exists());
 }
 
 /// A repository in a folder with a known name, so notes named after the
@@ -1138,28 +2038,6 @@ fn an_explained_note_that_is_deleted_is_written_by_rules_again() {
 }
 
 #[test]
-fn an_explained_note_goes_with_its_subject() {
-    let dir = explained_price();
-    let vault = dir.path().join("obsidian");
-    fs::remove_file(dir.path().join("crates/engine/src/pricing.rs")).unwrap();
-    write(
-        dir.path(),
-        "crates/engine/src/lib.rs",
-        "//! Order matching engine.\npub mod book;\n",
-    );
-    write(
-        dir.path(),
-        "crates/engine/src/book.rs",
-        "//! The order book.\n\n/// Holds resting orders.\npub struct OrderBook;\n",
-    );
-    write(dir.path(), "crates/cli/src/main.rs", "fn main() {}\n");
-    let report = run(dir.path());
-    assert!(report.removed.iter().any(|p| p == PRICE), "{report:?}");
-    assert!(!vault.join(PRICE).exists());
-    assert!(!vault.join("01-Core/engine/Price.openui").exists());
-}
-
-#[test]
 fn an_explained_note_changed_by_hand_gets_a_proposal_with_the_explanation() {
     let dir = explained_price();
     let vault = dir.path().join("obsidian");
@@ -1223,9 +2101,14 @@ fn a_link_of_the_agents_to_a_note_that_is_gone_becomes_plain_words() {
     );
     // No link of the vault leads nowhere.
     assert_eq!(report.link_rate, 1.0);
+    // An agent must look again: the file changed, and so did its own text.
     assert_eq!(
         entry_of(dir.path(), book).behind,
-        ["crates/engine/src/book.rs changed"]
+        [
+            "crates/engine/src/book.rs changed",
+            "a note it linked was removed: `Price`",
+            "a note it linked was removed: `Pricing Module`"
+        ]
     );
 }
 
@@ -1285,4 +2168,68 @@ fn text_of_a_section_the_kind_lost_moves_and_its_picture_goes() {
     let again = run(dir.path());
     assert!(again.merged.is_empty(), "{again:?}");
     assert_eq!(entry_of(dir.path(), PRICE).behind, entry.behind);
+}
+
+/// A crate whose every public type has three methods, so each one is worth
+/// a note and only the limit of notes for one crate leaves any out.
+fn crate_of_types(names: &[&str]) -> String {
+    let mut lib = String::from("//! Many types.\n");
+    for name in names {
+        lib.push_str(&format!(
+            "\n/// The type {name}.\npub struct {name};\n\nimpl {name} {{\n    /// One.\n    pub fn one(&self) {{}}\n    /// Two.\n    pub fn two(&self) {{}}\n    /// Three.\n    pub fn three(&self) {{}}\n}}\n"
+        ));
+    }
+    lib
+}
+
+fn type_note(root: &Path, name: &str) -> Option<String> {
+    VaultMeta::load(&root.join("obsidian"))
+        .unwrap()
+        .notes
+        .get(&format!("type:many::{name}"))
+        .map(|entry| entry.path.clone())
+}
+
+#[test]
+fn an_explained_note_keeps_its_place_when_the_ranking_would_drop_it() {
+    let twelve: Vec<String> = (1..=12).map(|n| format!("T{n:02}")).collect();
+    let mut names: Vec<&str> = twelve.iter().map(String::as_str).collect();
+    let (_dir, root) = named_repo("many", &[("Cargo.toml", "[package]\nname = \"many\"\n")]);
+    write(&root, "src/lib.rs", &crate_of_types(&names));
+    run(&root);
+    let explained = type_note(&root, "T12").expect("the twelfth type has a note");
+    let plain = type_note(&root, "T11").expect("the eleventh type has a note");
+    explain(
+        &root,
+        &explained,
+        &[("How it works", "It does one, two and three.")],
+        "",
+    );
+
+    // Two more types that sort before the others: twelve notes are the
+    // limit, so the last two of the ranking lose their place.
+    names.splice(0..0, ["A01", "A02"]);
+    write(&root, "src/lib.rs", &crate_of_types(&names));
+    let report = run(&root);
+
+    let vault = root.join("obsidian");
+    assert!(type_note(&root, "A01").is_some() && type_note(&root, "A02").is_some());
+    assert_eq!(
+        type_note(&root, "T12").as_deref(),
+        Some(explained.as_str()),
+        "an explained note stays while its type exists: {report:?}"
+    );
+    assert!(
+        read(&vault, &explained).contains("It does one, two and three."),
+        "with its explanation"
+    );
+    assert!(
+        type_note(&root, "T11").is_none() && !vault.join(&plain).exists(),
+        "a note nobody explained follows the ranking: {report:?}"
+    );
+    assert!(report.removed.contains(&plain), "{report:?}");
+    // The ranking is not asked again: the note stays on every later run.
+    let again = run(&root);
+    assert!(again.removed.is_empty(), "{again:?}");
+    assert!(type_note(&root, "T12").is_some());
 }

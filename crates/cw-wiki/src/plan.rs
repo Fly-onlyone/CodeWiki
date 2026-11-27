@@ -346,12 +346,38 @@ fn enclosing_module<'a>(repo: &Repo<'a>, symbol: &'a Symbol) -> &'a str {
     }
 }
 
+/// Keep the first `limit` of `ranked`, and behind them every one that is
+/// pinned: a limit drops the least important notes, never an explained one.
+fn cut<T>(ranked: &mut Vec<T>, limit: usize, pinned: impl Fn(&T) -> bool) {
+    let mut place = 0;
+    ranked.retain(|item| {
+        place += 1;
+        place <= limit || pinned(item)
+    });
+}
+
 /// Select notes. `covered` maps source files already documented by adopted
 /// notes to the id of the adopted note; those files get no new module or type
 /// notes.
-pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
+///
+/// `pinned` holds the ids of the notes a coding agent explained. Which
+/// modules, types, integrations and patterns get a note is a ranking with
+/// limits, and a ranking moves when other code changes. A pinned note keeps
+/// its place for as long as what it describes exists, so that an
+/// explanation is lost only with its subject.
+pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<String>) -> Plan {
     let facts = repo.facts;
     let mut notes: Vec<Planned> = Vec::new();
+    let pinned_as = |prefix: &str| -> HashSet<&str> {
+        pinned
+            .iter()
+            .filter_map(|id| id.strip_prefix(prefix))
+            .collect()
+    };
+    let pinned_modules = pinned_as("mod:");
+    let pinned_types = pinned_as("type:");
+    let pinned_integrations = pinned_as("integration:");
+    let pinned_patterns = pinned_as("pattern:");
 
     for unit in &repo.units.list {
         let mut sources: Vec<String> = unit.manifests.iter().map(|m| m.path.clone()).collect();
@@ -388,9 +414,12 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             s.kind == SymbolKind::Module
                 && !repo.is_test(s)
                 && !covered.contains_key(&s.file)
-                && items > 0
                 && repo.unit_of(&s.qualified).is_some_and(|unit| {
                     if unit.root.as_deref() == Some(s.qualified.as_str()) {
+                        false
+                    } else if pinned_modules.contains(s.qualified.as_str()) {
+                        true
+                    } else if items == 0 {
                         false
                     } else if unit.is_rust() {
                         s.qualified.contains("::")
@@ -408,7 +437,9 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             .total_cmp(&repo.subtree_rank(&a.qualified))
             .then_with(|| a.qualified.cmp(&b.qualified))
     });
-    modules.truncate(MAX_MODULE_NOTES);
+    cut(&mut modules, MAX_MODULE_NOTES, |m| {
+        pinned_modules.contains(m.qualified.as_str())
+    });
     modules.sort_by(|a, b| a.qualified.cmp(&b.qualified));
     for m in &modules {
         let unit = repo.unit_of(&m.qualified).expect("filtered above");
@@ -430,7 +461,8 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             .iter()
             .filter(|s| {
                 s.kind.is_type()
-                    && s.visibility != Visibility::Private
+                    && (s.visibility != Visibility::Private
+                        || pinned_types.contains(s.qualified.as_str()))
                     && repo.units.index_of(s) == Some(index)
                     && !repo.is_test(s)
                     && !covered.contains_key(&s.file)
@@ -452,10 +484,13 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                         .implementors
                         .get(s.qualified.as_str())
                         .is_some_and(|v| v.len() >= 2)
+                    || pinned_types.contains(s.qualified.as_str())
             })
             .map(|(_, s)| *s)
-            .take(MAX_TYPES_PER_CRATE)
             .collect();
+        cut(&mut chosen, MAX_TYPES_PER_CRATE, |t| {
+            pinned_types.contains(t.qualified.as_str())
+        });
         chosen.sort_by(|a, b| a.qualified.cmp(&b.qualified));
         for t in chosen {
             let module = enclosing_module(repo, t);
@@ -552,6 +587,15 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
             // script is named after itself.
             let by_unit = format!("flow:startup:{}", unit.name);
             let own = entry.declared && !notes.iter().any(|n| n.id == by_unit);
+            let id = if own {
+                by_unit
+            } else {
+                format!("flow:startup:{}", entry.symbol)
+            };
+            // Past the limit only a flow an agent explained is still drawn.
+            if flows >= MAX_FLOWS_PER_UNIT && !pinned.contains(&id) {
+                continue;
+            }
             let label = match symbol.kind {
                 SymbolKind::Module => symbol.name.as_str(),
                 _ => {
@@ -560,11 +604,7 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                 }
             };
             notes.push(Planned {
-                id: if own {
-                    by_unit
-                } else {
-                    format!("flow:startup:{}", entry.symbol)
-                },
+                id,
                 dir: ZONE_ARCHITECTURE.into(),
                 title: if own {
                     format!("{} Startup Flow", unit.package)
@@ -581,9 +621,6 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
                 sources: vec![symbol.file.clone()],
             });
             flows += 1;
-            if flows == MAX_FLOWS_PER_UNIT {
-                break;
-            }
         }
     }
 
@@ -603,11 +640,13 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
     let threshold = if code_files < 30 { 2 } else { 3 };
     let mut integrations: Vec<(&str, &BTreeSet<&str>)> = usage
         .iter()
-        .filter(|(_, files)| files.len() >= threshold)
+        .filter(|(krate, files)| files.len() >= threshold || pinned_integrations.contains(*krate))
         .map(|(k, f)| (*k, f))
         .collect();
     integrations.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
-    integrations.truncate(MAX_INTEGRATIONS);
+    cut(&mut integrations, MAX_INTEGRATIONS, |(krate, _)| {
+        pinned_integrations.contains(krate)
+    });
     integrations.sort_by(|a, b| a.0.cmp(b.0));
     for (krate, files) in integrations {
         notes.push(Planned {
@@ -626,12 +665,15 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>) -> Plan {
         .implementors
         .iter()
         .filter(|(t, impls)| {
-            impls.len() >= 2 && repo.symbols.get(*t).is_some_and(|s| !repo.is_test(s))
+            (impls.len() >= 2 || pinned_patterns.contains(*t))
+                && repo.symbols.get(*t).is_some_and(|s| !repo.is_test(s))
         })
         .map(|(t, i)| (*t, i))
         .collect();
     patterns.sort_by(|a, b| b.1.len().cmp(&a.1.len()).then(a.0.cmp(b.0)));
-    patterns.truncate(MAX_PATTERNS);
+    cut(&mut patterns, MAX_PATTERNS, |(t, _)| {
+        pinned_patterns.contains(t)
+    });
     patterns.sort_by(|a, b| a.0.cmp(b.0));
     for (tr, _) in patterns {
         let symbol = repo.symbols[tr];

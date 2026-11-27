@@ -29,7 +29,7 @@ pub struct CheckFinding {
 }
 
 /// What each rule means, shown by tools that list rules.
-pub(crate) const RULES: [(&str, &str); 22] = [
+pub(crate) const RULES: [(&str, &str); 23] = [
     (
         "dead-code",
         "A private symbol that nothing in the repository refers to.",
@@ -73,6 +73,10 @@ pub(crate) const RULES: [(&str, &str); 22] = [
         "A note names a path that is not in the repository.",
     ),
     ("doc-drift/broken-link", "A wikilink that matches no note."),
+    (
+        "doc-drift/subject-gone",
+        "A note describes something that is gone from the repository.",
+    ),
     (
         "decision/stale",
         "A decision record cites code that changed after it was last updated.",
@@ -150,6 +154,7 @@ pub fn check(root: &Path, index: &Index) -> Result<Vec<CheckFinding>> {
             DriftKind::SourceChanged => ("doc-drift/source-changed", Level::Note),
             DriftKind::DeadPath => ("doc-drift/dead-path", Level::Warning),
             DriftKind::BrokenLink => ("doc-drift/broken-link", Level::Error),
+            DriftKind::SubjectGone => ("doc-drift/subject-gone", Level::Warning),
         };
         out.push(CheckFinding {
             rule: rule.into(),
@@ -389,7 +394,7 @@ mod tests {
     #[test]
     fn junit_fails_only_rules_at_the_threshold_and_escapes_text() {
         let xml = to_junit(&findings(), Level::Warning);
-        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"codewiki check\" tests=\"22\" failures=\"2\">"));
+        assert!(xml.starts_with("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<testsuite name=\"codewiki check\" tests=\"23\" failures=\"2\">"));
         assert!(xml.contains(
             "<testcase classname=\"codewiki\" name=\"security/tls-verification-disabled\">\n    <failure message=\"1 findings: TLS certificate or hostname verification is turned off.\">src/net.rs:40:"
         ));

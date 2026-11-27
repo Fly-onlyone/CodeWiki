@@ -69,6 +69,22 @@ pub struct Explained {
     pub commit: Option<String>,
 }
 
+/// Why a note is still in the vault although what it describes is gone
+/// from the repository.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Gone {
+    /// It waits in a retire proposal for its owner's decision.
+    Pending,
+    /// Its owner keeps it as history. It is never proposed again.
+    History,
+    /// The deletion of what it describes is not committed yet.
+    Uncommitted,
+    /// Git could not bring the note back: it is not tracked, or it changed
+    /// since its last commit.
+    Unsaved,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NoteEntry {
     pub id: String,
@@ -104,6 +120,14 @@ pub struct NoteEntry {
     /// an agent explains the note again.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub behind: Vec<String>,
+    /// Repository paths a note that CodeWiki did not write names anywhere
+    /// in its text, whether they still exist or not. Read again at each
+    /// sync; a note none of whose cited paths exists describes nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cited: Vec<String>,
+    /// Set while the note stays although what it describes is gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gone: Option<Gone>,
 }
 
 /// Hash used to tell whether a note changed on disk.
@@ -191,6 +215,13 @@ impl VaultMeta {
         Ok(registry)
     }
 
+    /// How many notes the wiki has: those that describe something. A note
+    /// kept after what it describes went is in the vault and not of the
+    /// wiki, whatever the reason it stays for.
+    pub fn live_notes(&self) -> usize {
+        self.notes.values().filter(|e| e.gone.is_none()).count()
+    }
+
     pub fn by_path(&self, path: &str) -> Option<&NoteEntry> {
         self.notes.values().find(|e| e.path == path)
     }
@@ -242,7 +273,30 @@ mod tests {
             illustration: None,
             explained: None,
             behind: Vec::new(),
+            cited: Vec::new(),
+            gone: None,
         }
+    }
+
+    #[test]
+    fn a_gone_note_is_remembered_and_an_older_line_still_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut meta = VaultMeta::default();
+        let mut kept = entry("a", "01-Core/A.md", "src/a.rs");
+        kept.cited = vec!["src/a.rs".into(), "src/b.rs".into()];
+        kept.gone = Some(Gone::History);
+        meta.notes.insert(kept.id.clone(), kept);
+        meta.save(dir.path()).unwrap();
+        let jsonl = std::fs::read_to_string(dir.path().join(".codewiki/notes.jsonl")).unwrap();
+        assert!(jsonl.contains(r#""gone":"history""#), "{jsonl}");
+        assert_eq!(VaultMeta::load(dir.path()).unwrap(), meta);
+
+        // A line written before the two fields existed.
+        let old = serde_json::to_string(&entry("b", "01-Core/B.md", "src/b.rs")).unwrap();
+        assert!(!old.contains("gone") && !old.contains("cited"), "{old}");
+        let loaded: NoteEntry = serde_json::from_str(&old).unwrap();
+        assert_eq!(loaded.gone, None);
+        assert!(loaded.cited.is_empty());
     }
 
     #[test]

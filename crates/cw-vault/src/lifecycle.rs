@@ -17,6 +17,9 @@ pub enum NoteState {
     HumanEdited,
     /// A human wrote or changed it and a cited source changed.
     HumanEditedStale,
+    /// What it describes is gone from the repository, and the note stays
+    /// for the reason its entry names ([`crate::manifest::Gone`]).
+    Gone,
 }
 
 /// What the updater should do with a note.
@@ -40,6 +43,9 @@ pub fn state(entry: &NoteEntry, disk: Option<&str>, sources_changed: bool) -> No
     let Some(text) = disk else {
         return NoteState::Missing;
     };
+    if entry.gone.is_some() {
+        return NoteState::Gone;
+    }
     let edited = entry.origin == Origin::Adopted || body_hash(text) != entry.body_hash;
     match (edited, sources_changed) {
         (false, false) => NoteState::Generated,
@@ -64,7 +70,9 @@ pub fn action(entry: &NoteEntry, state: NoteState, new_input_hash: &str) -> Acti
                 Action::Regenerate
             }
         }
-        NoteState::HumanEdited => Action::Keep,
+        // Nothing is left to write it from. Whether it goes is decided for
+        // the whole vault at once, not note by note.
+        NoteState::HumanEdited | NoteState::Gone => Action::Keep,
         NoteState::HumanEditedStale => {
             if entry.input_hash == new_input_hash
                 || entry.rejected_inputs.iter().any(|r| r == new_input_hash)
@@ -97,6 +105,25 @@ mod tests {
             illustration: None,
             explained: None,
             behind: Vec::new(),
+            cited: Vec::new(),
+            gone: None,
+        }
+    }
+
+    #[test]
+    fn a_note_whose_subject_is_gone_is_left_alone() {
+        use crate::manifest::Gone;
+        for origin in [Origin::Generated, Origin::Adopted] {
+            let mut e = entry(origin, "# N\n");
+            e.gone = Some(Gone::Pending);
+            for (text, changed) in [("# N\n", false), ("# N edited\n", true)] {
+                assert_eq!(state(&e, Some(text), changed), NoteState::Gone);
+            }
+            // The file itself is gone: that is the stronger fact.
+            assert_eq!(state(&e, None, false), NoteState::Missing);
+            for input in ["in-1", "in-2"] {
+                assert_eq!(action(&e, NoteState::Gone, input), Action::Keep);
+            }
         }
     }
 

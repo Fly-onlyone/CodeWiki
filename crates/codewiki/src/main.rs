@@ -405,6 +405,10 @@ fn print_report(report: &cw_wiki::Report, json: bool) -> Result<()> {
     for path in &report.behind {
         println!("  explanation may be behind in {path}");
     }
+    // What became of notes whose subject is gone or moved.
+    for line in &report.summary {
+        println!("{line}");
+    }
     if !report.behind.is_empty() || report.unexplained > 0 {
         println!(
             "A coding agent writes the explanations: in Claude Code with the CodeWiki plugin, run /codewiki:write-notes."

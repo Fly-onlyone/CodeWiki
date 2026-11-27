@@ -13,6 +13,7 @@ pub mod explanations;
 pub mod generate;
 pub mod git;
 pub mod gitintel;
+mod gone;
 pub mod health;
 mod level;
 pub mod manifests;
@@ -28,5 +29,5 @@ pub mod testmap;
 pub mod units;
 
 pub use analyze::{analyze, dependency_graph};
-pub use generate::{Report, TEMPLATE_VERSION, generate, generate_with};
+pub use generate::{KeptGone, Moved, Report, TEMPLATE_VERSION, generate, generate_with};
 pub use plan::{Plan, Planned, Repo, Subject};

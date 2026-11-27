@@ -128,7 +128,8 @@ impl Units {
     }
 
     pub fn all_rust(&self) -> bool {
-        self.list.iter().all(Unit::is_rust)
+        // No unit at all is no Rust either.
+        !self.list.is_empty() && self.list.iter().all(Unit::is_rust)
     }
 }
 

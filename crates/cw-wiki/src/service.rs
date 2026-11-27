@@ -108,7 +108,14 @@ pub fn index_notes(root: &Path, index: &mut Index) -> Result<usize> {
     let vault = root.join(VAULT_DIR);
     let meta = VaultMeta::load(&vault)?;
     let mut documents = Vec::new();
-    for entry in meta.notes.values() {
+    // A note that waits to be retired describes nothing and is on its way
+    // out: a search does not answer from it. One its owner chose to keep as
+    // history stays findable.
+    for entry in meta
+        .notes
+        .values()
+        .filter(|e| e.gone != Some(cw_vault::Gone::Pending))
+    {
         let Ok(text) = std::fs::read_to_string(vault.join(&entry.path)) else {
             continue;
         };

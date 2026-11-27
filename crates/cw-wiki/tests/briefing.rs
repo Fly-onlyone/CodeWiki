@@ -262,3 +262,55 @@ fn a_linked_worktree_is_told_from_the_main_checkout() {
     let bare = tempfile::tempdir().unwrap();
     assert!(!cw_wiki::git::is_linked_worktree(bare.path()));
 }
+
+#[test]
+fn a_note_that_waits_to_be_retired_is_no_note_of_the_wiki() {
+    const NOTE: &str = "06-Notes/Quokka Settings.md";
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    git(r, &["init", "-q", "-b", "main"]);
+    write(r, "Cargo.toml", "[package]\nname = \"demo\"\n");
+    write(r, "src/lib.rs", "//! Demo crate.\npub fn run() {}\n");
+    write(r, "legacy/quokka.cfg", "mode = old\nretries = 3\n");
+    write(
+        r,
+        &format!("obsidian/{NOTE}"),
+        "---\ntags: [notes]\n---\n\n# Quokka Settings\n\n> Mine, about the quokka.\n\n## Source\n\n- `legacy/quokka.cfg`\n",
+    );
+    update(r);
+    commit(r, "code and wiki");
+    fs::remove_dir_all(r.join("legacy")).unwrap();
+    commit(r, "retire legacy");
+    update(r);
+
+    let meta = cw_vault::VaultMeta::load(&r.join("obsidian")).unwrap();
+    assert_eq!(
+        meta.by_path(NOTE).unwrap().gone,
+        Some(cw_vault::Gone::Pending)
+    );
+    let live = meta.notes.len() - 1;
+    assert_eq!(meta.live_notes(), live);
+
+    // The briefing and the status count the notes that describe something.
+    let text = briefing::session_start(r, Explain::Facts).unwrap();
+    assert!(
+        text.contains(&format!("a maintained wiki of {live} notes")),
+        "{text}"
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    assert_eq!(cw_wiki::query::status(r, &index).unwrap().notes, live);
+    // A search does not answer from it.
+    assert_eq!(service::index_notes(r, &mut index).unwrap(), live);
+    // Read by name, it says what it is.
+    let note = cw_wiki::query::read_note(r, NOTE).unwrap();
+    assert_eq!(note.info.state, cw_vault::NoteState::Gone);
+    assert_eq!(note.info.gone, Some(cw_vault::Gone::Pending));
+    // One finding, not one for each path it names.
+    let drift = cw_wiki::health::doc_drift(r, &index).unwrap().drift;
+    let found: Vec<_> = drift.iter().filter(|d| d.note == NOTE).collect();
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].kind, cw_wiki::health::DriftKind::SubjectGone);
+    assert!(found[0].detail.contains("retire proposal"), "{found:?}");
+}

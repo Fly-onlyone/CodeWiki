@@ -10,7 +10,7 @@ use std::path::Path;
 use cw_core::{EdgeKind, Result, Symbol, SymbolKind, VAULT_DIR, Visibility};
 use cw_index::Index;
 use cw_vault::lifecycle::{self, NoteState};
-use cw_vault::{Note, VaultMeta};
+use cw_vault::{Gone, Note, VaultMeta};
 use serde::{Deserialize, Serialize};
 
 use crate::analyze::DEPENDENCY_KINDS;
@@ -186,6 +186,9 @@ pub enum DriftKind {
     DeadPath,
     /// A wikilink points at no note.
     BrokenLink,
+    /// What the note describes is gone from the repository, and the note
+    /// is still in the vault.
+    SubjectGone,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -243,6 +246,22 @@ pub fn doc_drift(root: &Path, index: &Index) -> Result<DocReport> {
     let mut drift = Vec::new();
     let mut cited: HashSet<&str> = HashSet::new();
     for entry in meta.notes.values() {
+        // One finding says it all for a note of something gone: each of
+        // its sources and paths is missing for that one reason.
+        if let Some(why) = entry.gone {
+            drift.push(Drift {
+                note: entry.path.clone(),
+                kind: DriftKind::SubjectGone,
+                detail: match why {
+                    Gone::Pending => "what it describes is gone; it waits in the retire proposal for a decision",
+                    Gone::History => "what it describes is gone; its owner keeps it as history",
+                    Gone::Uncommitted => "what it describes is gone in a change that is not committed; it stays until the change is",
+                    Gone::Unsaved => "what it describes is gone; it stays because git does not hold the note as it is",
+                }
+                .to_string(),
+            });
+            continue;
+        }
         let text = std::fs::read_to_string(vault.join(&entry.path)).ok();
         for source in &entry.sources {
             cited.insert(source.path.as_str());

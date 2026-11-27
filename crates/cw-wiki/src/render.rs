@@ -25,9 +25,21 @@ const MAX_NAMES: usize = 4;
 const MAX_MANIFESTS: usize = 3;
 /// Modules listed in the note of a unit that has no root module.
 const MAX_UNIT_MODULES: usize = 12;
+/// Notes the home note names of a folder of hand-written notes that has
+/// no map note of its own.
+const MAX_HAND_NOTES: usize = 8;
 
 /// Note-level dependency edges: note id -> other note id -> symbol names.
 type NoteDeps = HashMap<String, BTreeMap<String, BTreeSet<String>>>;
+
+/// A top folder of the vault that holds notes their owner wrote by hand.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HandZone {
+    /// Whether the folder has a map note of its owner's, `_index.md`.
+    pub index: bool,
+    /// Names of its notes, without the map note.
+    pub notes: Vec<String>,
+}
 
 pub struct RenderCtx<'a> {
     pub repo: &'a Repo<'a>,
@@ -35,6 +47,10 @@ pub struct RenderCtx<'a> {
     pub registry: &'a Registry,
     pub repo_name: &'a str,
     pub summaries: HashMap<String, String>,
+    /// The folders of the notes written by hand, by folder name. The home
+    /// note links each one that none of its other sections reaches, so
+    /// that a note of its owner is never cut off from the map.
+    pub hand_zones: BTreeMap<String, HandZone>,
     /// Ids of the notes this run will write or keep.
     planned: std::collections::HashSet<String>,
     depends_on: NoteDeps,
@@ -82,6 +98,7 @@ impl<'a> RenderCtx<'a> {
             registry,
             repo_name,
             summaries: HashMap::new(),
+            hand_zones: BTreeMap::new(),
             planned: plan.notes.iter().map(|n| n.id.clone()).collect(),
             depends_on,
             used_by,
@@ -1302,16 +1319,25 @@ impl<'a> RenderCtx<'a> {
 
     fn render_home(&self, note: &Planned) -> String {
         let mut out = front(&note.tags);
+        // Without a unit there are no flows, crates or modules to name.
+        let tour = if self.repo.units.list.is_empty() {
+            "A graph-linked tour of the repository.".to_string()
+        } else {
+            format!(
+                "A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into {}, modules and patterns.",
+                if self.repo.units.all_rust() {
+                    "crates"
+                } else {
+                    "packages"
+                }
+            )
+        };
         out.push_str(&format!(
-            "# {} — Knowledge Vault\n\nA graph-linked tour of the codebase. **Start with the architecture flows**, then drill into {}, modules and patterns.\n\n> {}\n",
-            self.repo_name,
-            if self.repo.units.all_rust() {
-                "crates"
-            } else {
-                "packages"
-            },
-            self.summaries[&note.id]
+            "# {} — Knowledge Vault\n\n{tour}\n\n> {}\n",
+            self.repo_name, self.summaries[&note.id]
         ));
+        // Top folders a section of this note links.
+        let mut reached: Vec<&str> = Vec::new();
         let in_zone = |zone: &str| -> Vec<&Planned> {
             let mut notes: Vec<&Planned> = self
                 .plan
@@ -1341,6 +1367,7 @@ impl<'a> RenderCtx<'a> {
             }
             if let Some(link) = zone_link(ZONE_ARCHITECTURE, "All architecture concepts") {
                 out.push_str(&format!("\n→ {link}\n"));
+                reached.push(ZONE_ARCHITECTURE);
             }
         }
 
@@ -1360,6 +1387,9 @@ impl<'a> RenderCtx<'a> {
                         c.package,
                         lower_first(summary)
                     ));
+                    if !reached.contains(&ZONE_CORE) {
+                        reached.push(ZONE_CORE);
+                    }
                 }
             }
         }
@@ -1382,6 +1412,41 @@ impl<'a> RenderCtx<'a> {
                 "\n## {heading}\n\n→ {link} — {}.\n",
                 names.join(", ")
             ));
+            reached.push(zone);
+        }
+
+        // The folders of the notes their owner wrote, which no rule knows.
+        let by_hand: Vec<(&String, &HandZone)> = self
+            .hand_zones
+            .iter()
+            .filter(|(folder, zone)| {
+                !reached.contains(&folder.as_str()) && (zone.index || !zone.notes.is_empty())
+            })
+            .collect();
+        if !by_hand.is_empty() {
+            out.push_str("\n## 📝 Notes written by hand\n\n");
+            for (folder, zone) in by_hand {
+                let count = match zone.notes.len() {
+                    1 => "1 note".to_string(),
+                    n => format!("{n} notes"),
+                };
+                if zone.index {
+                    out.push_str(&format!("- [[{folder}/_index|{folder}/]] — {count}\n"));
+                } else {
+                    let mut names: Vec<&str> = zone.notes.iter().map(String::as_str).collect();
+                    names.sort_unstable();
+                    let more = names.len().saturating_sub(MAX_HAND_NOTES);
+                    let mut links: Vec<String> = names
+                        .iter()
+                        .take(MAX_HAND_NOTES)
+                        .map(|name| format!("[[{name}]]"))
+                        .collect();
+                    if more > 0 {
+                        links.push(format!("and {more} more"));
+                    }
+                    out.push_str(&format!("- {folder}/ — {count}: {}\n", links.join(", ")));
+                }
+            }
         }
 
         // Reading path: a flow, then the most depended-upon crate, then its top type.

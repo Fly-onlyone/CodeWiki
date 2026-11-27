@@ -155,9 +155,10 @@ pub fn tooltip(snapshot: &Snapshot) -> String {
     status::tooltip(snapshot.repo.as_deref(), &snapshot.state, &snapshot.mcp)
 }
 
-/// How a folder reads under "Recent repositories": its name, then where it
-/// is, since two folders may share a name.
-fn recent_label(path: &str) -> String {
+/// How a folder reads under "Recent repositories", and in the toolbar's
+/// Open recent menu: its name, then where it is, since two folders may
+/// share a name.
+pub fn recent_label(path: &str) -> String {
     let trimmed = path.trim_end_matches(['\\', '/']);
     match trimmed.rsplit_once(['\\', '/']) {
         Some((parent, name)) if !name.is_empty() => format!("{name}  ({parent})"),

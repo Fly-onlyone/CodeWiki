@@ -551,6 +551,10 @@ pub enum Block {
     },
     /// The app's logo.
     Logo,
+    /// The field that finds a project opened before, on Home. Its input
+    /// belongs to the app, which lists what it finds under it; a page drawn
+    /// without that input leaves the place empty.
+    Search,
 }
 
 /// A generated page.
@@ -717,7 +721,7 @@ impl Doc {
                     });
                     out.push(format!("{label}{percent}: {detail}"));
                 }
-                Block::Logo => {}
+                Block::Logo | Block::Search => {}
             }
             // The line of help under a control's name.
             if let Block::Switch {

@@ -47,6 +47,8 @@ app_icons! {
     NOTE = "article",
     BACK = "arrow-back",
     FORWARD = "arrow-forward",
+    // The projects opened before, in the toolbar's Open recent menu.
+    HISTORY = "history",
     // The view of a note that a coding agent gets.
     AGENT = "smart-toy",
     EDIT = "edit",
@@ -183,7 +185,6 @@ pub fn for_command(command: &Command) -> Glyph {
         Command::CloseTab | Command::Quit => CLOSE,
         Command::ToggleSidebar => SIDEBAR,
         Command::ToggleDetails => DETAILS,
-        Command::OpenInObsidian => EXTERNAL,
         Command::Reconnect => SYNC,
         Command::OpenFolder | Command::OpenLogs => FOLDER,
         Command::CheckUpdates | Command::InstallUpdate => UPDATE,

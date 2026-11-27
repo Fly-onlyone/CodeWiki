@@ -20,7 +20,7 @@ use std::ops::Range;
 use std::rc::Rc;
 
 use gpui_kit::base::motion as kit;
-use gpui_kit::component::input::InputState;
+use gpui_kit::component::input::{Escape, InputState, MoveDown, MoveUp};
 use gpui_kit::component::scroll::Scrollbar;
 use gpui_kit::component::{ActiveTheme as _, Icon, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
@@ -91,6 +91,35 @@ pub struct Controls {
     pub on_select: OnSelect,
 }
 
+/// The input of a page's [`Block::Search`], as Home's. The app owns it and
+/// handles its events, and draws the list of what it finds under the field.
+///
+/// The cached page can hold a text input because the input is a view of
+/// its own: what is typed redraws it and the views around it.
+pub struct SearchSlot {
+    pub input: Entity<InputState>,
+    /// Where the field is drawn, for the list to hang under.
+    pub anchor: AnchorBounds,
+    /// The view that draws the list, told when the field moves.
+    pub owner: EntityId,
+    /// Called with the keys that act on the list. The shell draws the page
+    /// beside the app, so the app's own key handlers never see a key typed
+    /// in this field. True when the key was used, which keeps it from the
+    /// input.
+    pub on_key: OnSearchKey,
+}
+
+/// A key typed in a page's search field that acts on its list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchKey {
+    Escape,
+    Up,
+    Down,
+}
+
+/// What a key of a page's search field does; see [`SearchSlot::on_key`].
+pub type OnSearchKey = Rc<dyn Fn(SearchKey, &mut Window, &mut App) -> bool>;
+
 /// A select that was clicked: where it is, and what it offers.
 pub struct SelectRequest {
     /// The path of the block, to tell this select from the others.
@@ -106,6 +135,7 @@ struct Page {
     serial: usize,
     on_action: OnAction,
     controls: Option<Rc<Controls>>,
+    search: Option<Rc<SearchSlot>>,
 }
 
 impl Page {
@@ -213,6 +243,8 @@ pub struct DocPage {
     /// each strip it has measured, and a strip off screen is not measured
     /// again by itself.
     zoom_seen: f32,
+    /// The input of the page's search field, while the page has one.
+    search: Option<Rc<SearchSlot>>,
 }
 
 impl DocPage {
@@ -230,6 +262,21 @@ impl DocPage {
             on_action,
             strips,
             zoom_seen: zoom::factor(),
+            search: None,
+        }
+    }
+
+    /// Give the page's [`Block::Search`] its input, or take it away. Cheap
+    /// to call on every frame, as [`Self::show`] is.
+    pub fn set_search(&mut self, search: Option<Rc<SearchSlot>>, cx: &mut Context<Self>) {
+        let same = match (&self.search, &search) {
+            (Some(old), Some(new)) => Rc::ptr_eq(old, new),
+            (None, None) => true,
+            _ => false,
+        };
+        if !same {
+            self.search = search;
+            notify_after_draw(cx.entity_id(), cx);
         }
     }
 
@@ -282,6 +329,7 @@ impl Render for DocPage {
             serial: self.serial,
             on_action: self.on_action.clone(),
             controls: None,
+            search: self.search.clone(),
         });
         let entrance = page.id("in");
         let (doc, strips) = (self.doc.clone(), self.strips.clone());
@@ -577,6 +625,39 @@ fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut Ap
             .size(px(LOGO_SIZE))
             .flex_none()
             .into_any_element(),
+        Block::Search => match &page.search {
+            Some(search) => {
+                let owner = search.owner;
+                let key = |key: SearchKey| {
+                    let on_key = search.on_key.clone();
+                    move |window: &mut Window, cx: &mut App| {
+                        if on_key(key, window, cx) {
+                            cx.stop_propagation();
+                        }
+                    }
+                };
+                let (escape, up, down) = (
+                    key(SearchKey::Escape),
+                    key(SearchKey::Up),
+                    key(SearchKey::Down),
+                );
+                search
+                    .anchor
+                    .track(
+                        TextField::new(page.id(path), &search.input).icon(icons::SEARCH),
+                        // The open list follows the field as the page
+                        // scrolls or the window is resized.
+                        move |_, cx| notify_after_draw(owner, cx),
+                    )
+                    .w_full()
+                    // Before the input, which would use them itself.
+                    .capture_action(move |_: &Escape, window, cx| escape(window, cx))
+                    .capture_action(move |_: &MoveUp, window, cx| up(window, cx))
+                    .capture_action(move |_: &MoveDown, window, cx| down(window, cx))
+                    .into_any_element()
+            }
+            None => div().into_any_element(),
+        },
     }
 }
 
@@ -594,6 +675,7 @@ pub fn column(
         serial,
         on_action,
         controls: Some(controls),
+        search: None,
     };
     let muted = cx.theme().muted_foreground;
     let head = v_flex()

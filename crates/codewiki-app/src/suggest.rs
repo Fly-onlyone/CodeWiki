@@ -43,6 +43,15 @@ impl Suggestions {
         self.highlighted = None;
     }
 
+    /// Show `groups`, found for `query` in the app itself, with no row
+    /// highlighted: Home's search of the projects opened before.
+    pub fn show_targets(&mut self, query: &str, groups: Vec<(&'static str, Vec<HitTarget>)>) {
+        self.query = query.trim().to_string();
+        self.groups = groups;
+        self.open = true;
+        self.highlighted = None;
+    }
+
     /// Hide the list, keeping its hits for when the field has the focus
     /// again, and drop a lookup that has not answered.
     pub fn close(&mut self) {
@@ -197,6 +206,41 @@ mod tests {
             suggestions.highlighted(),
             None,
             "typing gives the keys back to the field"
+        );
+    }
+
+    #[test]
+    fn targets_found_in_the_app_show_as_hits_do() {
+        let target = |label: &str| HitTarget {
+            icon: crate::icons::REPOSITORY,
+            label: label.into(),
+            detail: String::new(),
+            code: false,
+            action: Action::OpenRepo(label.into()),
+        };
+        let mut suggestions = shown();
+        suggestions.down();
+        suggestions.show_targets(
+            " al ",
+            vec![("Recent", vec![target("alpha"), target("salt")])],
+        );
+        assert!(suggestions.is_open());
+        assert_eq!(
+            suggestions.highlighted(),
+            None,
+            "a new list starts at the field"
+        );
+        assert_eq!(suggestions.groups().len(), 1);
+        suggestions.down();
+        suggestions.down();
+        assert_eq!(
+            suggestions.chosen().map(|t| t.action.clone()),
+            Some(Action::OpenRepo("salt".into()))
+        );
+        suggestions.close();
+        assert!(
+            suggestions.reopen("al"),
+            "the same text shows the list again"
         );
     }
 

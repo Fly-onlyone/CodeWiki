@@ -52,7 +52,6 @@ pub enum Command {
     ToggleSidebar,
     /// Hide the details pane, or show it again.
     ToggleDetails,
-    OpenInObsidian,
     /// Try to reach the backend again; listed only while it is unreachable.
     Reconnect,
     /// Ask for a folder and open it as a repository.
@@ -144,7 +143,6 @@ pub fn actions() -> Vec<Entry> {
         ("Zoom in", Command::ZoomIn),
         ("Zoom out", Command::ZoomOut),
         ("Reset zoom", Command::ZoomReset),
-        ("Open note in Obsidian", Command::OpenInObsidian),
         ("Open folder…", Command::OpenFolder),
         ("Check for updates", Command::CheckUpdates),
         ("Open logs folder", Command::OpenLogs),

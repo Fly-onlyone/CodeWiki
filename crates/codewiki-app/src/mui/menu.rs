@@ -43,6 +43,8 @@ const WINDOW_MARGIN: f32 = 16.0;
 const HEIGHT_INSET: f32 = 96.0;
 /// `List.js`: `paddingTop: 8, paddingBottom: 8`.
 const LIST_PADDING: f32 = 8.0;
+/// Above and below the line between two groups with no heading.
+const DIVIDER_MARGIN: f32 = 8.0;
 /// Between the anchor and the menu. MUI lays a menu over its anchor; here it
 /// hangs under it, so the control that opened it stays in view.
 const GAP: f32 = 4.0;
@@ -308,9 +310,14 @@ impl RenderOnce for Menu {
         // The place of the highlighted row among the list's children, for
         // the scroll handle, which counts headings too.
         let (mut index, mut child, mut highlighted_child) = (0, 0, 0);
-        for section in self.sections {
+        for (place, section) in self.sections.into_iter().enumerate() {
             if let Some(label) = section.label {
                 rows = rows.child(list::subheader(label, cx));
+                child += 1;
+            } else if place > 0 {
+                // A group with no heading is set off by a line, as MUI's
+                // `Divider` in a `MenuList` (`marginTop: 8, marginBottom: 8`).
+                rows = rows.child(surfaces::divider(cx).my(px(DIVIDER_MARGIN)));
                 child += 1;
             }
             for item in section.items {

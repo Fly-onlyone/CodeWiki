@@ -754,6 +754,14 @@ pub fn home_page(home: &HomeInput) -> Doc {
             button: Some(("Sync".into(), Action::Sync)),
         });
     }
+    // The search finds the projects opened before, so it needs one.
+    let opened = home
+        .projects
+        .iter()
+        .any(|project| home.recent.iter().any(|path| path == project.path));
+    if opened {
+        doc.push(Block::Search);
+    }
     doc.push(Block::Rows(vec![
         Row::new(icons::FOLDER, "Open folder…", Action::OpenFolder).detail(
             "Choose a project. Sync then indexes its code and writes the wiki into an \
@@ -865,6 +873,61 @@ fn by_recency<'a>(projects: &[Project<'a>], recent: &[String]) -> Vec<Project<'a
     rest.sort_by_key(|project| project.name.to_lowercase());
     ordered.extend(rest);
     ordered
+}
+
+/// How many projects Home's search suggests.
+pub const RECENT_MATCHES: usize = 8;
+
+/// What Home's search suggests for `query`, ignoring case: the projects of
+/// `recent` whose name holds it, then those whose folder matches it
+/// ([`path_matches`]), each newest first. A folder that is not among
+/// `projects`, the registered ones that are there, is left out, and so is
+/// every project never opened in the app.
+pub fn recent_matches(projects: &[Project], recent: &[String], query: &str) -> Vec<HitTarget> {
+    let query = query.trim().to_lowercase();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let (mut by_name, mut by_path) = (Vec::new(), Vec::new());
+    for project in recent
+        .iter()
+        .filter_map(|path| projects.iter().find(|project| project.path == path))
+    {
+        if project.name.to_lowercase().contains(&query) {
+            by_name.push(project);
+        } else if path_matches(project.path, &query) {
+            by_path.push(project);
+        }
+    }
+    by_name
+        .into_iter()
+        .chain(by_path)
+        .take(RECENT_MATCHES)
+        .map(|project| HitTarget {
+            icon: icons::REPOSITORY,
+            label: project.name.to_string(),
+            detail: project.path.to_string(),
+            code: false,
+            action: Action::OpenRepo(project.id.to_string()),
+        })
+        .collect()
+}
+
+/// Where a word of a folder path starts: after one of these.
+const WORD_BREAKS: [char; 6] = ['\\', '/', '-', '_', '.', ' '];
+
+/// Whether the folder `path` matches `query`, which is lowercase. Only
+/// where a folder name, or a word in one, starts with it: the folders every
+/// path goes through, such as `AppData\Local`, would otherwise match a
+/// query as short as "al". A query that holds a separator, such as
+/// `src\api`, names a piece of the path and matches anywhere in it.
+fn path_matches(path: &str, query: &str) -> bool {
+    let path = path.to_lowercase();
+    if query.contains(['\\', '/']) {
+        return path.contains(query);
+    }
+    path.match_indices(query)
+        .any(|(at, _)| at == 0 || path[..at].ends_with(WORD_BREAKS))
 }
 
 /// The page shown when no backend could be reached: that the app keeps
@@ -1027,6 +1090,120 @@ mod tests {
         assert!(page.words().contains(r"Beta — Open now · C:\code\beta"));
         assert!(page.words().contains(r"alpha — C:\code\alpha"));
         assert_eq!(page.words().matches("Open now").count(), 1);
+    }
+
+    #[test]
+    fn home_search_sits_above_open_folder_once_a_project_was_opened() {
+        let recent = [BETA.path.to_string()];
+        let page = home_page(&home(&[ALPHA, BETA], &recent));
+        let search = page.blocks.iter().position(|b| *b == Block::Search);
+        let folder = page.blocks.iter().position(|b| matches!(b, Block::Rows(_)));
+        assert_eq!(search, Some(1), "under the logo: {page:?}");
+        assert_eq!(folder, Some(2));
+        // Never opened, or opened but no longer registered: nothing to find.
+        for recent in [vec![], vec![r"C:\gone".to_string()]] {
+            let page = home_page(&home(&[ALPHA, BETA], &recent));
+            assert!(!page.blocks.contains(&Block::Search), "{page:?}");
+        }
+        assert!(!home_page(&home(&[], &[])).blocks.contains(&Block::Search));
+    }
+
+    fn labels(hits: &[HitTarget]) -> Vec<&str> {
+        hits.iter().map(|hit| hit.label.as_str()).collect()
+    }
+
+    #[test]
+    fn recent_matches_finds_name_or_folder_ignoring_case_newest_first() {
+        let recent = [
+            GAMMA.path.to_string(),
+            BETA.path.to_string(),
+            ALPHA.path.to_string(),
+        ];
+        let projects = [ALPHA, BETA, GAMMA];
+        assert_eq!(labels(&recent_matches(&projects, &recent, "BET")), ["Beta"]);
+        // `code` is in the folders of alpha and Beta only.
+        assert_eq!(
+            labels(&recent_matches(&projects, &recent, " code ")),
+            ["Beta", "alpha"]
+        );
+        assert_eq!(
+            labels(&recent_matches(&projects, &recent, "a")),
+            ["gamma", "Beta", "alpha"]
+        );
+        let hit = &recent_matches(&projects, &recent, "gam")[0];
+        assert_eq!(hit.detail, r"D:\gamma");
+        assert_eq!(hit.action, Action::OpenRepo("g3".into()));
+        assert!(recent_matches(&projects, &recent, "zzz").is_empty());
+        assert!(recent_matches(&projects, &recent, "  ").is_empty());
+    }
+
+    #[test]
+    fn recent_matches_finds_a_folder_only_where_a_word_starts() {
+        const BASE: &str = r"C:\Users\PC\AppData\Local\Temp\work";
+        let paths =
+            ["alpha-tools", "beta-service", "wiki-demo"].map(|name| format!(r"{BASE}\{name}"));
+        let projects: Vec<Project> = paths
+            .iter()
+            .zip(["alpha-tools", "beta-service", "wiki-demo"])
+            .map(|(path, name)| Project {
+                id: name,
+                name,
+                path,
+                kept: &Kept::Open,
+            })
+            .collect();
+        let find = |query: &str| labels(&recent_matches(&projects, &paths, query)).join(",");
+        // "Local" holds "al" mid-word; only the name alpha-tools starts it.
+        assert_eq!(find("al"), "alpha-tools");
+        assert_eq!(find("ppdata"), "", "not where a folder name starts");
+        // Folders every path goes through still match from their start.
+        assert_eq!(find("local"), "alpha-tools,beta-service,wiki-demo");
+        // A word starts after '-', '_', '.' or a space too.
+        assert!(path_matches(r"d:\src\beta-service", "serv"));
+        assert!(path_matches(r"d:\src\my_app.core", "core"));
+        assert!(!path_matches(r"d:\src\beta-service", "ervice"));
+        // A separator names a piece of the path, matched anywhere.
+        assert_eq!(find(r"rk\wiki"), "wiki-demo");
+        assert_eq!(find("temp/"), "", "the path has no '/'");
+    }
+
+    #[test]
+    fn recent_matches_puts_name_hits_before_folder_hits() {
+        let recent = [ALPHA.path.to_string(), BETA.path.to_string()];
+        let renamed = Project {
+            name: "code-review",
+            ..BETA
+        };
+        // alpha is newer, but only its folder holds "code"; the name of the
+        // other project does.
+        let hits = recent_matches(&[ALPHA, renamed], &recent, "code");
+        assert_eq!(labels(&hits), ["code-review", "alpha"]);
+    }
+
+    #[test]
+    fn recent_matches_leaves_out_projects_never_opened_or_gone() {
+        let recent = [BETA.path.to_string(), r"C:\code\gone".to_string()];
+        let hits = recent_matches(&[ALPHA, BETA, GAMMA], &recent, "code");
+        assert_eq!(labels(&hits), ["Beta"]);
+    }
+
+    #[test]
+    fn recent_matches_shows_at_most_eight() {
+        let paths: Vec<String> = (0..12).map(|n| format!(r"C:\p\project{n}")).collect();
+        let ids: Vec<String> = (0..12).map(|n| format!("id{n}")).collect();
+        let projects: Vec<Project> = paths
+            .iter()
+            .zip(&ids)
+            .map(|(path, id)| Project {
+                id,
+                name: "project",
+                path,
+                kept: &Kept::Open,
+            })
+            .collect();
+        let hits = recent_matches(&projects, &paths, "project");
+        assert_eq!(hits.len(), RECENT_MATCHES);
+        assert_eq!(hits[0].detail, r"C:\p\project0");
     }
 
     fn aside_of<'a>(page: &'a Doc, label: &str) -> Option<&'a (String, Action)> {

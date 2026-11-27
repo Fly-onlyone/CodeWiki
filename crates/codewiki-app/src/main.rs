@@ -113,6 +113,8 @@ const THEME_MENU_WIDTH: f32 = 340.0;
 const THEME_MARK: f32 = 18.0;
 /// Width of the menu a right-click on a tab or a sidebar note opens.
 const CONTEXT_MENU_WIDTH: f32 = 240.0;
+/// Width of the toolbar's Open recent menu: a name and where it is.
+const RECENT_MENU_WIDTH: f32 = 360.0;
 /// How long the sidebar follows a revealed note's row, besides the time its
 /// folder takes to open, which the motion setting scales.
 const REVEAL_FOLLOW: std::time::Duration = std::time::Duration::from_millis(400);
@@ -437,6 +439,22 @@ struct AppView {
     search_hint: &'static str,
     /// What the search field suggests while it is typed in.
     suggestions: suggest::Suggestions,
+    /// Home's search of the projects opened before. The toolbar is hidden
+    /// on Home, so it and the toolbar's field never show together.
+    home_search: Entity<InputState>,
+    /// What Home's search suggests; its anchor is the slot's.
+    home_suggestions: suggest::Suggestions,
+    /// What Home's page draws its search field with.
+    home_search_slot: Rc<doc_view::SearchSlot>,
+    /// Home was just opened: on the next frame, which has the window, its
+    /// search is emptied and takes the focus.
+    home_search_pending: bool,
+    /// The toolbar's Open recent menu: whether it is open, the row the keys
+    /// act on, the focus it holds while open, and where its button is.
+    recent_menu_open: bool,
+    recent_menu_highlight: usize,
+    recent_menu_focus: FocusHandle,
+    recent_anchor: AnchorBounds,
     /// Bumped on every page change so the viewer rebuilds its state.
     page_serial: usize,
     /// The generated page. The shell draws it, in the place this view
@@ -557,6 +575,58 @@ impl AppView {
                     }
                 }
             });
+        // Home's search filters the recent list at once: it is in memory.
+        let home_search = cx.new(|cx| InputState::new(window, cx).placeholder(HOME_SEARCH_HINT));
+        let home_subscription = cx.subscribe_in(
+            &home_search,
+            window,
+            |this, input, event: &InputEvent, _, cx| {
+                let text = input.read(cx).value().to_string();
+                match event {
+                    InputEvent::Change => this.suggest_recent(&text, cx),
+                    // The highlighted project, or the first one found.
+                    InputEvent::PressEnter { .. } => {
+                        let chosen = this
+                            .home_suggestions
+                            .chosen()
+                            .or_else(|| this.home_suggestions.target(0))
+                            .filter(|_| this.home_suggestions.is_open())
+                            .map(|hit| hit.action.clone());
+                        this.home_suggestions.close();
+                        if let Some(action) = chosen {
+                            this.run_action(&action, cx);
+                        }
+                        cx.notify();
+                    }
+                    InputEvent::Focus => {
+                        if this.home_suggestions.reopen(&text) {
+                            cx.notify();
+                        }
+                    }
+                    InputEvent::Blur => {
+                        if this.home_suggestions.is_open() {
+                            this.home_suggestions.close();
+                            cx.notify();
+                        }
+                    }
+                }
+            },
+        );
+        let home_suggestions = suggest::Suggestions::default();
+        let keys = cx.entity().downgrade();
+        let home_search_slot = Rc::new(doc_view::SearchSlot {
+            input: home_search.clone(),
+            anchor: home_suggestions.anchor.clone(),
+            owner: cx.entity_id(),
+            on_key: Rc::new(move |key, window, cx| {
+                keys.update(cx, |this, cx| this.home_search_key(key, window, cx))
+                    .unwrap_or(false)
+            }),
+        });
+        let recent_menu_focus = cx.focus_handle();
+        let recent_menu_blur = cx.on_blur(&recent_menu_focus, window, |this, window, cx| {
+            this.close_recent_menu(false, window, cx);
+        });
         let palette_input =
             cx.new(|cx| InputState::new(window, cx).placeholder("Type a note name or a command…"));
         let palette_subscription = cx.subscribe_in(
@@ -643,6 +713,14 @@ impl AppView {
             search,
             search_hint: SEARCH_HINT,
             suggestions: suggest::Suggestions::default(),
+            home_search,
+            home_suggestions,
+            home_search_slot,
+            home_search_pending: false,
+            recent_menu_open: false,
+            recent_menu_highlight: 0,
+            recent_menu_focus,
+            recent_anchor: AnchorBounds::default(),
             page_serial: 0,
             doc_page,
             page_slot,
@@ -678,9 +756,11 @@ impl AppView {
             settings,
             _subscriptions: vec![
                 subscription,
+                home_subscription,
                 palette_subscription,
                 appearance,
                 theme_menu_blur,
+                recent_menu_blur,
                 context_menu_blur,
                 tray_follows,
             ],
@@ -2249,6 +2329,11 @@ impl AppView {
         if matches!(self.page, Page::Waiting) {
             self.auto_explain = read_auto_explain();
         }
+        // Home opens ready to type in its search, with nothing in it.
+        self.home_search_pending = matches!(self.page, Page::Home);
+        self.home_suggestions.clear();
+        // The menu hangs from the toolbar of the page that was left.
+        self.recent_menu_open = false;
         self.prepare_page();
     }
 
@@ -2563,7 +2648,6 @@ impl AppView {
             Command::CloseTab => self.close_tabs(tab_ops::Close::One(self.active_tab), cx),
             Command::ToggleSidebar => self.toggle_pane(Pane::Sidebar, cx),
             Command::ToggleDetails => self.toggle_pane(Pane::Details, cx),
-            Command::OpenInObsidian => self.open_in_obsidian(cx),
             Command::Reconnect => self.reconnect(cx),
             Command::OpenFolder => self.open_folder(cx),
             Command::OpenLogs => self.open_logs(cx),
@@ -2646,14 +2730,6 @@ impl AppView {
         );
     }
 
-    /// Path of the current note on this machine, when the repository is local.
-    fn local_note_path(&self) -> Option<std::path::PathBuf> {
-        let Page::Note { path, .. } = &self.page else {
-            return None;
-        };
-        self.note_file(path)
-    }
-
     /// The file of the note at the vault path `path` on this machine, when
     /// the repository is local.
     fn note_file(&self, path: &str) -> Option<std::path::PathBuf> {
@@ -2661,22 +2737,6 @@ impl AppView {
             .join(cw_core::VAULT_DIR)
             .join(path);
         file.is_file().then_some(file)
-    }
-
-    fn open_in_obsidian(&mut self, cx: &mut Context<Self>) {
-        match self.local_note_path() {
-            Some(file) => {
-                let path = file.to_string_lossy();
-                let path = path.strip_prefix(r"\\?\").unwrap_or(&path);
-                cx.open_url(&format!("obsidian://open?path={}", encode(path)));
-            }
-            None => {
-                self.error = Some(
-                    "Open a note first. Notes of a repository on another machine cannot be opened in Obsidian.".into(),
-                );
-                cx.notify();
-            }
-        }
     }
 
     /// Build the viewer's Markdown for the current page. Nothing is drawn
@@ -2922,6 +2982,7 @@ impl AppView {
         if self.palette_open {
             self.toggle_palette(window, cx);
         }
+        self.close_recent_menu(false, window, cx);
         let active = cx.theme().theme_name().clone();
         self.theme_menu_highlight = themes::entries(cx)
             .iter()
@@ -2930,6 +2991,49 @@ impl AppView {
         self.theme_menu_open = true;
         window.focus(&self.theme_menu_focus, cx);
         cx.notify();
+    }
+
+    /// Open the toolbar's Open recent menu, or close it when it is open.
+    fn open_recent_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.recent_menu_open {
+            self.close_recent_menu(true, window, cx);
+            return;
+        }
+        if self.palette_open {
+            self.toggle_palette(window, cx);
+        }
+        self.close_theme_menu(false, window, cx);
+        self.recent_menu_highlight = 0;
+        self.recent_menu_open = true;
+        window.focus(&self.recent_menu_focus, cx);
+        cx.notify();
+    }
+
+    /// Close the Open recent menu. `restore_focus` is false when the focus
+    /// has already gone where it should be.
+    fn close_recent_menu(
+        &mut self,
+        restore_focus: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.recent_menu_open {
+            return;
+        }
+        self.recent_menu_open = false;
+        if restore_focus {
+            window.focus(&self.focus, cx);
+        }
+        cx.notify();
+    }
+
+    /// The projects the Open recent menu lists, by id and label.
+    fn recent_menu_rows(&self) -> Vec<(String, String)> {
+        recent_menu_entries(
+            &self.recent,
+            &self.repos,
+            self.repo.as_ref().map(|repo| repo.id.as_str()),
+        )
     }
 
     /// Close the theme menu. `restore_focus` is false when the focus has
@@ -3281,6 +3385,75 @@ impl AppView {
             return;
         };
         self.suggestions.close();
+        self.run_action(&action, cx);
+        cx.notify();
+    }
+
+    /// Show what Home's search finds for `text` among the projects opened
+    /// before, or no list while the field is empty.
+    fn suggest_recent(&mut self, text: &str, cx: &mut Context<Self>) {
+        if text.trim().is_empty() {
+            self.home_suggestions.clear();
+        } else {
+            let projects: Vec<live::Project> = self
+                .repos
+                .iter()
+                .map(|repo| live::Project {
+                    id: &repo.id,
+                    name: &repo.name,
+                    path: &repo.path,
+                    kept: &live::OPEN,
+                })
+                .collect();
+            let found = live::recent_matches(&projects, &self.recent, text);
+            self.home_suggestions
+                .show_targets(text, vec![("Recent projects", found)]);
+        }
+        cx.notify();
+    }
+
+    /// A key typed in Home's search: Up and Down move through its list, and
+    /// Escape empties the field and closes the list in one press. Whether
+    /// the key was used.
+    fn home_search_key(
+        &mut self,
+        key: doc_view::SearchKey,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use doc_view::SearchKey;
+        match key {
+            SearchKey::Down | SearchKey::Up if self.home_suggestions.is_open() => {
+                if key == SearchKey::Down {
+                    self.home_suggestions.down();
+                } else {
+                    self.home_suggestions.up();
+                }
+            }
+            SearchKey::Escape
+                if self.home_suggestions.is_open()
+                    || !self.home_search.read(cx).value().is_empty() =>
+            {
+                self.home_search
+                    .update(cx, |input, cx| input.set_value("", window, cx));
+                self.home_suggestions.clear();
+            }
+            _ => return false,
+        }
+        cx.notify();
+        true
+    }
+
+    /// Open the project at row `index` of Home's search list.
+    fn choose_recent(&mut self, index: usize, cx: &mut Context<Self>) {
+        let Some(action) = self
+            .home_suggestions
+            .target(index)
+            .map(|hit| hit.action.clone())
+        else {
+            return;
+        };
+        self.home_suggestions.close();
         self.run_action(&action, cx);
         cx.notify();
     }
@@ -3755,6 +3928,21 @@ impl AppView {
                     .disabled(self.history.is_empty())
                     .on_click(cx.listener(|this, _, _, cx| this.go_back(cx))),
             )
+            .child({
+                let view = cx.entity_id();
+                self.recent_anchor.track(
+                    IconButton::new("open-recent", icons::HISTORY)
+                        .tooltip("Open recent")
+                        .small()
+                        .toggled(self.recent_menu_open)
+                        .disabled(self.backend.is_none())
+                        .on_click(
+                            cx.listener(|this, _, window, cx| this.open_recent_menu(window, cx)),
+                        ),
+                    // An open menu follows its button when the window is resized.
+                    move |_, cx| doc_view::notify_after_draw(view, cx),
+                )
+            })
             // Never narrower than its magnifier.
             .child(div().flex_1().min_w(px(44.)).px_1().child({
                 let view = cx.entity_id();
@@ -4138,6 +4326,29 @@ impl AppView {
         }))
     }
 
+    /// What Home's search finds, under its field, while the list is open on
+    /// Home and the palette is not.
+    fn home_suggestions_view(&self, cx: &mut Context<Self>) -> Option<Listbox> {
+        if !self.home_suggestions.is_open() || self.palette_open || !matches!(self.page, Page::Home)
+        {
+            return None;
+        }
+        let mut listbox = Listbox::new("home-suggestions", self.home_suggestions.anchor.get()?)
+            .highlighted(self.home_suggestions.highlighted())
+            .empty("No recent project matches");
+        for (heading, hits) in self.home_suggestions.groups() {
+            let choices = hits
+                .iter()
+                .map(|hit| Choice::new(hit.icon, hit.label.clone()).secondary(hit.detail.clone()))
+                .collect();
+            listbox = listbox.group(Group::new(*heading, choices));
+        }
+        let view = cx.entity().downgrade();
+        Some(listbox.on_select(move |index, _, cx| {
+            _ = view.update(cx, |this, cx| this.choose_recent(index, cx));
+        }))
+    }
+
     /// The diagram viewer, drawn over everything else: a diagram of the note
     /// at a size it can be read at. The wheel zooms about the pointer and a
     /// drag moves the diagram. `shown` runs from 0 to 1 as for the palette.
@@ -4441,6 +4652,59 @@ impl AppView {
             })
             .on_close(move |window, cx| {
                 _ = close.update(cx, |this, cx| this.close_theme_menu(true, window, cx));
+            }),
+        )
+    }
+
+    /// The Open recent menu under its toolbar button: the projects opened
+    /// before, then a way to open a folder. `None` with no toolbar to hang
+    /// from.
+    fn recent_menu_view(&self, shown: f32, cx: &mut Context<Self>) -> Option<Menu> {
+        if self.fills_window() {
+            return None;
+        }
+        let anchor = self.recent_anchor.get()?;
+        let rows = self.recent_menu_rows();
+        let projects = rows
+            .iter()
+            .map(|(_, label)| MenuItem::new(label.clone()).icon(icons::REPOSITORY));
+        let folder = MenuItem::new("Open folder…")
+            .icon(icons::FOLDER)
+            .tint(icons::tint(icons::FOLDER, cx));
+        let mut menu = Menu::new("recent-menu", anchor, &self.recent_menu_focus)
+            .width(RECENT_MENU_WIDTH)
+            .align(mui::menu::Align::Start)
+            .highlighted(self.recent_menu_highlight)
+            .open(self.recent_menu_open)
+            .shown(shown);
+        if !rows.is_empty() {
+            menu = menu.section(MenuSection::plain().items(projects));
+        }
+        menu = menu.section(MenuSection::plain().items([folder]));
+        let (select, highlight, close) = (
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+            cx.entity().downgrade(),
+        );
+        Some(
+            menu.on_select(move |index, window, cx| {
+                _ = select.update(cx, |this, cx| {
+                    let rows = this.recent_menu_rows();
+                    this.close_recent_menu(true, window, cx);
+                    match rows.get(index) {
+                        Some((id, _)) => this.open_repo(id, cx),
+                        None => this.run_action(&Action::OpenFolder, cx),
+                    }
+                });
+            })
+            .on_highlight(move |index, _, cx| {
+                _ = highlight.update(cx, |this, cx| {
+                    this.recent_menu_highlight = index;
+                    cx.notify();
+                });
+            })
+            .on_close(move |window, cx| {
+                _ = close.update(cx, |this, cx| this.close_recent_menu(true, window, cx));
             }),
         )
     }
@@ -4765,8 +5029,11 @@ impl AppView {
     /// it goes in, which reports where it is.
     fn doc_element(&self, doc: &Rc<Doc>, cx: &mut Context<Self>) -> AnyElement {
         let (serial, width) = (self.page_serial, self.pane_width);
-        self.doc_page
-            .update(cx, |page, cx| page.show(doc, serial, width, cx));
+        let search = matches!(self.page, Page::Home).then(|| self.home_search_slot.clone());
+        self.doc_page.update(cx, |page, cx| {
+            page.set_search(search, cx);
+            page.show(doc, serial, width, cx);
+        });
         self.page_placed.set(true);
         let slot = self.page_slot.clone();
         div()
@@ -5151,14 +5418,6 @@ impl AppView {
                         pane = pane.child(div().text_xs().child(source.clone()));
                     }
                 }
-                if self.local_note_path().is_some() {
-                    pane = pane.child(
-                        Button::new("obsidian")
-                            .label("Open in Obsidian")
-                            .small()
-                            .on_click(cx.listener(|this, _, _, cx| this.open_in_obsidian(cx))),
-                    );
-                }
             }
             Page::Generated { title, .. } => {
                 pane = pane
@@ -5189,20 +5448,6 @@ impl AppView {
                     ));
             }
             Page::Message(_) | Page::Notice(_) | Page::Home | Page::Settings(_) => {}
-        }
-        // Home lists the repositories itself.
-        if self.repos.len() > 1 && !matches!(self.page, Page::Home) {
-            pane = pane.child(heading("REPOSITORIES"));
-            for repo in &self.repos {
-                let target = repo.id.clone();
-                pane = pane.child(
-                    Button::new(SharedString::from(format!("repo-{}", repo.id)))
-                        .label(repo.name.clone())
-                        .small()
-                        .text()
-                        .on_click(cx.listener(move |this, _, _, cx| this.open_repo(&target, cx))),
-                );
-            }
         }
         pane
     }
@@ -5294,6 +5539,23 @@ fn parse_notes(value: &Value) -> Vec<NoteInfo> {
 /// sample of its four colors, and a mark on the one in use. The toolbar's
 /// theme menu and the theme select of the settings list themes with it, so
 /// that a theme looks the same in both.
+/// What the toolbar's Open recent menu lists: the registered repositories of
+/// `recent`, newest first, by id and label, without the open one `current`,
+/// and at most as many as the tray's Recent menu.
+fn recent_menu_entries(
+    recent: &[String],
+    repos: &[Repo],
+    current: Option<&str>,
+) -> Vec<(String, String)> {
+    recent
+        .iter()
+        .filter_map(|path| repos.iter().find(|repo| &repo.path == path))
+        .filter(|repo| current != Some(repo.id.as_str()))
+        .take(tray::RECENT_ROWS)
+        .map(|repo| (repo.id.clone(), tray::recent_label(&repo.path)))
+        .collect()
+}
+
 fn theme_menu_item(entry: &themes::Entry, in_use: bool, cx: &App) -> MenuItem {
     let mark = cx.theme().primary;
     MenuItem::new(entry.name.clone())
@@ -5364,6 +5626,19 @@ impl Render for AppView {
         if !self.diagram_open && self.diagram_focus.is_focused(window) {
             window.focus(&self.focus, cx);
         }
+        // So are they once the Open recent menu closed with its page.
+        if !self.recent_menu_open && self.recent_menu_focus.is_focused(window) {
+            window.focus(&self.focus, cx);
+        }
+        if std::mem::take(&mut self.home_search_pending) && matches!(self.page, Page::Home) {
+            let focus = !self.palette_open;
+            self.home_search.update(cx, |input, cx| {
+                input.set_value("", window, cx);
+                if focus {
+                    input.focus(window, cx);
+                }
+            });
+        }
         self.draw_queued_diagrams(cx);
         if let Some(query) = self.pending_palette.take() {
             self.toggle_palette(window, cx);
@@ -5386,6 +5661,7 @@ impl Render for AppView {
         if zoom != self.zoom_seen {
             self.zoom_seen = zoom;
             self.close_theme_menu(true, window, cx);
+            self.close_recent_menu(true, window, cx);
             self.close_settings_menu(window, cx);
             self.close_context_menu(true, window, cx);
         }
@@ -5417,6 +5693,9 @@ impl Render for AppView {
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
             .sample(window, cx);
         let theme_menu = Presence::new("theme-menu-presence", self.theme_menu_open)
+            .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
+            .sample(window, cx);
+        let recent_menu = Presence::new("recent-menu-presence", self.recent_menu_open)
             .transition(Transition::new(mui::motion::scaled(mui::motion::EXIT)))
             .sample(window, cx);
         let diagram = Presence::new("diagram-presence", self.diagram_open)
@@ -5492,10 +5771,14 @@ impl Render for AppView {
             .when(theme_menu.should_render(), |root| {
                 root.children(self.theme_menu_view(theme_menu.progress, window, cx))
             })
+            .when(recent_menu.should_render(), |root| {
+                root.children(self.recent_menu_view(recent_menu.progress, cx))
+            })
             // The list of a select of the Settings page, while one is open.
             .children(self.settings_menu_view(cx))
             .children(self.context_menu_view(cx))
             .children(self.suggestions_view(cx))
+            .children(self.home_suggestions_view(cx))
             .children(diagram_viewer)
             .children(toasts)
             // The place of the title bar, which the shell draws.
@@ -5605,6 +5888,8 @@ fn toolbar_fit(width: f32, update: bool) -> ToolbarFit {
 /// The search field's placeholder, whole and short.
 const SEARCH_HINT: &str = "Search notes, symbols, files…";
 const SEARCH_HINT_SHORT: &str = "Search…";
+/// The placeholder of Home's search.
+const HOME_SEARCH_HINT: &str = "Find a recent project…";
 
 /// The placeholder for a search field `width` design units wide (icon and
 /// padding included): the whole hint, a short one, or none, where the
@@ -5998,7 +6283,8 @@ mod tests {
 
     use super::{
         Repo, SEARCH_HINT, SEARCH_HINT_SHORT, ToolbarFit, first_bounds, min_window_size,
-        parse_repos, search_hint, stops_backend_on_quit, toolbar_fit, window_title, zoom,
+        parse_repos, recent_menu_entries, search_hint, stops_backend_on_quit, toolbar_fit, tray,
+        window_title, zoom,
     };
 
     #[test]
@@ -6108,5 +6394,49 @@ mod tests {
         // Home belongs to no repository, though one stays open behind it.
         assert_eq!(window_title(Some("cw-core"), true), app);
         assert_eq!(window_title(None, false), app);
+    }
+
+    fn repo(id: &str, path: &str) -> Repo {
+        Repo {
+            id: id.into(),
+            name: id.into(),
+            path: path.into(),
+        }
+    }
+
+    #[test]
+    fn open_recent_lists_registered_projects_newest_first_without_the_open_one() {
+        let repos = [
+            repo("a", r"C:\code\a"),
+            repo("b", r"D:\b"),
+            repo("c", r"C:\c"),
+        ];
+        // A folder no longer registered is left out.
+        let recent = [r"D:\b", r"C:\gone", r"C:\code\a", r"C:\c"].map(String::from);
+        assert_eq!(
+            recent_menu_entries(&recent, &repos, Some("a")),
+            [
+                ("b".to_string(), r"b  (D:)".to_string()),
+                ("c".to_string(), r"c  (C:)".to_string()),
+            ]
+        );
+        let ids: Vec<String> = recent_menu_entries(&recent, &repos, None)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(ids, ["b", "a", "c"]);
+        // A project never opened in the app is not recent.
+        assert!(recent_menu_entries(&[], &repos, None).is_empty());
+    }
+
+    #[test]
+    fn open_recent_lists_as_many_as_the_tray() {
+        let repos: Vec<Repo> = (0..12)
+            .map(|n| repo(&format!("r{n}"), &format!(r"C:\p\r{n}")))
+            .collect();
+        let recent: Vec<String> = repos.iter().map(|repo| repo.path.clone()).collect();
+        let rows = recent_menu_entries(&recent, &repos, Some("r0"));
+        assert_eq!(rows.len(), tray::RECENT_ROWS);
+        assert_eq!(rows[0].0, "r1");
     }
 }

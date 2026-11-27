@@ -1055,7 +1055,7 @@ dependencies = [
 
 [[package]]
 name = "codewiki"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "clap",
  "cw-core",
@@ -1074,7 +1074,7 @@ dependencies = [
 
 [[package]]
 name = "codewiki-app"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "async-channel",
  "cw-client",
@@ -1096,7 +1096,7 @@ dependencies = [
 
 [[package]]
 name = "codewiki-mcp"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-client",
  "cw-core",
@@ -1480,7 +1480,7 @@ dependencies = [
 
 [[package]]
 name = "cw-client"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "log",
@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "cw-core"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hex",
  "log",
@@ -1505,7 +1505,7 @@ dependencies = [
 
 [[package]]
 name = "cw-embed"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "serde_json",
@@ -1514,14 +1514,14 @@ dependencies = [
 
 [[package]]
 name = "cw-graph"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
 ]
 
 [[package]]
 name = "cw-illustrate"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "openui-lang",
  "serde",
@@ -1529,7 +1529,7 @@ dependencies = [
 
 [[package]]
 name = "cw-index"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "cw-parse",
@@ -1541,14 +1541,14 @@ dependencies = [
 
 [[package]]
 name = "cw-mermaid"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "merman",
 ]
 
 [[package]]
 name = "cw-parse"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "ignore",
@@ -1570,7 +1570,7 @@ dependencies = [
 
 [[package]]
 name = "cw-server"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "axum",
  "cw-core",
@@ -1591,7 +1591,7 @@ dependencies = [
 
 [[package]]
 name = "cw-telemetry"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "log",
@@ -1600,7 +1600,7 @@ dependencies = [
 
 [[package]]
 name = "cw-update"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "hex",
  "log",
@@ -1616,7 +1616,7 @@ dependencies = [
 
 [[package]]
 name = "cw-vault"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "serde",
@@ -1627,7 +1627,7 @@ dependencies = [
 
 [[package]]
 name = "cw-wiki"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "cw-core",
  "cw-embed",
@@ -5433,7 +5433,7 @@ checksum = "7e036b411754132fd6b74e94b74e9a13c5cf606fa93d1885c35860d3060820b1"
 
 [[package]]
 name = "openui-lang"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "option-ext"

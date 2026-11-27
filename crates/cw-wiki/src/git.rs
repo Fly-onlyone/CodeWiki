@@ -229,6 +229,19 @@ pub fn is_linked_worktree(root: &Path) -> bool {
     }
 }
 
+/// The name of the repository at `root`, as its wiki calls it: the name of
+/// its folder. A linked worktree is a second copy of a repository in a
+/// folder named after a task, so it takes the name of its main checkout: a
+/// wiki synced in a worktree is the same wiki, and is merged back.
+pub fn repo_name(root: &Path) -> Option<String> {
+    let named = main_checkout(root);
+    named
+        .as_deref()
+        .unwrap_or(root)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+}
+
 /// The main checkout of the repository that the linked worktree `root`
 /// belongs to: the folder that holds the repository's common git directory.
 /// `None` when `root` is no linked worktree.

@@ -70,9 +70,13 @@ pub fn list_files(root: &Path) -> Result<Vec<String>> {
             // Go's `vendor` folder is a copy of the dependencies, which
             // `go mod vendor` describes in `modules.txt`.
             let vendored = is_dir && name == "vendor" && e.path().join("modules.txt").is_file();
+            // In a linked worktree and in a submodule `.git` is a file that
+            // points at the git directory: it is git's, like the folder.
+            let git_link = !is_dir && name == ".git";
             !(is_dir
                 && (SKIP_DIRS.contains(&name.as_ref()) || (e.depth() == 1 && name == VAULT_DIR)))
                 && !vendored
+                && !git_link
         })
         .build();
     for entry in walker {

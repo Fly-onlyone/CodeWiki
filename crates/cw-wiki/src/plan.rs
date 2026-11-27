@@ -124,10 +124,7 @@ impl<'a> Repo<'a> {
 
     /// Lookup tables for the repository checked out at `root`.
     pub fn at(root: &Path, facts: &'a RepoFacts, metrics: &'a [(String, NodeMetrics)]) -> Self {
-        let name = root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "repository".into());
+        let name = crate::git::repo_name(root).unwrap_or_else(|| "repository".into());
         let read = |path: &str| std::fs::read_to_string(root.join(path)).ok();
         Self::build(
             facts,

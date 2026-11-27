@@ -816,6 +816,42 @@ fn the_home_note_reaches_every_folder_of_hand_written_notes() {
 }
 
 #[test]
+fn a_wiki_synced_in_a_linked_worktree_keeps_the_name_of_its_repository() {
+    let (dir, root) = named_repo(
+        "acme",
+        &[
+            ("Cargo.toml", "[package]\nname = \"acme\"\n"),
+            ("src/lib.rs", "//! Acme.\npub fn run() {}\n"),
+        ],
+    );
+    git(&root, &["init", "-q", "-b", "main"]);
+    commit_all(&root, "first");
+    // A second copy for one task, in a folder named after the task.
+    let side = dir.path().join("fix-the-thing");
+    git(
+        &root,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            side.to_str().unwrap(),
+            "-b",
+            "side",
+        ],
+    );
+    assert_eq!(cw_wiki::git::repo_name(&root).as_deref(), Some("acme"));
+    assert_eq!(cw_wiki::git::repo_name(&side).as_deref(), Some("acme"));
+
+    run(&side);
+    let home = read(&side.join("obsidian"), "_HOME.md");
+    assert!(home.contains("# acme — Knowledge Vault"), "{home}");
+    assert!(!home.contains("fix-the-thing"), "{home}");
+    // The wiki written in the main checkout is the same, name for name.
+    run(&root);
+    assert_eq!(read(&root.join("obsidian"), "_HOME.md"), home);
+}
+
+#[test]
 fn a_repository_without_code_gets_a_home_note_that_names_no_crates() {
     let (_dir, root) = named_repo(
         "papers",

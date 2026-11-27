@@ -4,8 +4,10 @@ Status as of 2026-11-27. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (1186 tests) and `cargo deny check advisories bans sources` all pass. The licenses of dependencies are no longer checked, by the owner's decision of 2026-11-20.
-- Not released yet (2026-11-27), for 0.6.0: what becomes of a note when its code is deleted or moved, and linked git worktrees that are no longer projects ("M6 Notes of code that is gone" and "M6 Linked worktrees" below). It had no run in the clean VM.
+- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (1269 tests) and `cargo deny check advisories bans sources` all pass. The licenses of dependencies are no longer checked, by the owner's decision of 2026-11-20.
+- Not released yet (2026-11-27), for 0.6.0. None of it had a run in the clean VM:
+  - what becomes of a note when its code is deleted or moved, and linked git worktrees that are no longer projects ("M6 Notes of code that is gone" and "M6 Linked worktrees" below);
+  - more languages (the P5 rows below): every language without a parser mapped at file level, parsers for C#, Go, Kotlin, C and C++, TypeScript path aliases, whole Python packages without `__init__.py`, pnpm, yarn and bun, and impacted tests for every mapped language.
 - Version 0.5.0 is the sixth release (2026-11-26), built by CI from the tag `v0.5.0`. It brings:
   - "Notes per session" for auto explaining;
   - tab tools: right-click menus on tabs and sidebar notes, middle-click and Ctrl+click, a scrolling tab strip, and a Tabs card in Settings → Appearance;
@@ -25,7 +27,7 @@ Status as of 2026-11-27. "Verified" means covered by automated tests or by a liv
   Each ran in the clean VM ("M11 Release run of 0.4.0").
 - Version 0.3.1 was the fourth release (2026-11-22), built by CI from the tag `v0.3.1`. It adds a setup program beside the zip (`CodeWiki-0.3.1-windows-x64-setup.exe`, M11 Setup program), a list of folders kept from coding agents (`codewiki agents`, Settings → Repositories, Home and the palette), and `url` 2.5.9 for RUSTSEC-2026-0592. On the owner's word (a minor release) it had no release run in the clean VM: the four checks, CI and the release workflow passed, and the setup program's cases had run in the guest the same day (M11 Setup program).
 - Version 0.3.0 was the third release (2026-11-22): a Windows zip on GitHub Releases and a backend image on GHCR, both built by CI from the tag `v0.3.0`. It replaces the built-in writer with notes a coding agent explains through the plugin (M12), and the built-in embedding model with the local servers a user runs (LM Studio, Ollama, llama.cpp, Lemonade, mistral.rs; M7), and adds opt-in error reports to Sentry, the agent view, the diagram viewer, zoom and "Open the last repository". Each of those servers was run for real in a clean Windows and compared ("Embedding servers compared" below). 0.2.0 was the second release, on 2026-11-18; 0.1.0 the first, on 2026-11-15.
-- CodeWiki documents its own repository: 276 notes, 100% of wikilinks resolve, a second sync writes nothing.
+- CodeWiki documents its own repository: 311 notes, 100% of wikilinks resolve, a second sync writes nothing.
 - The Docker image builds (271 MB) and was exercised over HTTP and through the MCP bridge.
 
 ## Phase 1 — wiki core

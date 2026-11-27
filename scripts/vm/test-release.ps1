@@ -143,16 +143,11 @@ $powershell = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
 $results = [System.Collections.Generic.List[object]]::new()
 $shotCount = 0
 
-# A fixed sleep, as the script has always had. It writes itself into the timing
-# log with the line that called it, so that the slowest ones can be found and
-# replaced by a wait for what the case needs (Wait-Until, Wait-AppPage).
-function Wait-For {
-    param([double]$Seconds)
-    $line = (Get-PSCallStack)[1].ScriptLineNumber
-    $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    Start-Sleep -Milliseconds ([int]($Seconds * 1000 * $Pace))
-    Write-Timing -Kind wait -What "fixed sleep, line $line" -Sec $clock.Elapsed.TotalSeconds -Deadline ($Seconds * $Pace)
-}
+# There is no fixed sleep in this script. A case waits for what it needs (Wait-AppPage,
+# Wait-AppLog, Wait-Until, Wait-ScreenStill, Wait-ScreenSettled, Wait-GuestProcessGone,
+# Wait-GuestPort), with the time a sleep used to have as its deadline, or holds on
+# purpose (Hold-For, with the reason). Vm.ps1 has them; logs\timing.md says where the
+# time went.
 
 # Take a screenshot named after the case and return its file name.
 function Shot {
@@ -1990,6 +1985,10 @@ Test-Case "RV1" "New reviews arrive while the window is open" "three notes edite
     Start-GuestApp -Arguments $guestRepo, "_HOME"
     Wait-AppPage -TimeoutSec 20
     Hold-For 1.5 -Reason "the page's entrance animation"
+    # The toast is for reviews that are new to the app: it must have counted the ones
+    # that wait before the sync adds more, and it asks the backend every five seconds.
+    # The old fixed 15 s after the start gave it that time; the page line does not.
+    Hold-For 8 -Reason "RV1: the app takes its first count of waiting reviews on a poll of its own, before the sync"
     $mark = Get-AppLogMark
     $run = Invoke-GuestBackendScript -TimeoutSec 600 -Script (@'
 $id = Get-RepoId 'cw-core'

@@ -2517,11 +2517,18 @@ Test-Case "HM1" "A project whose folder is gone stays on Home" "it is still regi
 }
 
 Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes it off the list" {
-    # Where Remove is with one recent project and one missing, read off the
-    # screenshot "home-folder-not-found": from the client area's top right corner.
+    # Where Remove is with one recent project and one missing. Since 0.6.0 Home has a search
+    # field above the list, which moved the rows down 70 px: read off
+    # 131-home-folder-not-found.png of report\vm-rig-full-1 (2026-11-27, window 1536x820 at
+    # (32,12)): the button's centre is 285 px left of the client area's right edge and 636 px
+    # below its top. Home's column is at most 1040 wide and centred (reading.rs: WIDE_MEASURE,
+    # gutter), so the distance from the right edge is the gutter plus 37, whatever the window's
+    # width; the height does not depend on it unless the line above Remove wraps, which it
+    # does not above about 1100 px.
     $info = Get-GuestWindowInfo "codewiki-app"
     if (-not $info) { throw "the app has no window" }
-    $x = $info.Right - [int](284 * $info.Scale); $y = $info.Top + [int](566 * $info.Scale)
+    $gutter = [math]::Max(24, ($info.Width / $info.Scale - 1040) / 2)
+    $x = $info.Right - [int](($gutter + 37) * $info.Scale); $y = $info.Top + [int](636 * $info.Scale)
     Send-RestedClick -X $x -Y $y
     Wait-ScreenSettled -TimeoutSec 5
     $shot = Shot "home-project-removed"

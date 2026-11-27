@@ -158,6 +158,7 @@ function Shot {
     $file
 }
 
+
 function Add-Result {
     param(
         [string]$Id, [string]$Title, [string]$Expect,
@@ -178,6 +179,14 @@ function Save-Results {
     $file = Join-Path $logs "results.json"
     $results | ConvertTo-Json -Depth 5 | Set-Content "$file.tmp"
     Move-Item "$file.tmp" $file -Force
+}
+
+# Whether a case is run in this pass: -Only (ids and patterns) and -Skip.
+function Test-Selected {
+    param([string]$Id)
+    if ($Only -and -not ($Only | Where-Object { $Id -like $_ })) { return $false }
+    if ($Skip | Where-Object { $Id -like $_ }) { return $false }
+    $true
 }
 
 # Run one case; a thrown error becomes an "error" result and the run goes on.
@@ -1349,18 +1358,25 @@ function Exit-GuestApp {
 
 # The share of a screenshot's pixels (sampled) that differ clearly from
 # another's. A diagram viewer over the window changes a large part of it.
+# -Region (left, top, width, height in the screenshot's pixels) limits the
+# comparison to a part of it: the note's body, or the details pane.
 function Get-ImageChange {
-    param([string]$A, [string]$B)
+    param([string]$A, [string]$B, [int[]]$Region)
     Add-Type -AssemblyName System.Drawing
     $first = New-Object System.Drawing.Bitmap $A
     $second = New-Object System.Drawing.Bitmap $B
     try {
         $width = [math]::Min($first.Width, $second.Width)
         $height = [math]::Min($first.Height, $second.Height)
+        $x0 = 0; $y0 = 0
+        if ($Region) {
+            $x0 = [math]::Max(0, $Region[0]); $y0 = [math]::Max(0, $Region[1])
+            $width = [math]::Min($width, $Region[0] + $Region[2]); $height = [math]::Min($height, $Region[1] + $Region[3])
+        }
         $changed = 0
         $total = 0
-        for ($y = 0; $y -lt $height; $y += 8) {
-            for ($x = 0; $x -lt $width; $x += 8) {
+        for ($y = $y0; $y -lt $height; $y += 8) {
+            for ($x = $x0; $x -lt $width; $x += 8) {
                 $p = $first.GetPixel($x, $y)
                 $q = $second.GetPixel($x, $y)
                 if ([math]::Abs($p.R - $q.R) + [math]::Abs($p.G - $q.G) + [math]::Abs($p.B - $q.B) -gt 24) { $changed += 1 }
@@ -1558,6 +1574,15 @@ $layout = @{
     reviewRow3  = @(388, 304)   # the queue's third row, its label
     approve     = @(620, 157)   # "Approve N" / "Approve and write", its left part
     reject      = @(762, 157)   # "Reject" beside "Approve and write"
+    # 0.6.0. The outline's fourth entry in the details pane of a module note (Agents Off Module:
+    # "Items"); the entries are 36 px apart, the first at 355. Read off 33-view-note.png of
+    # report\vm-rig-full-1 (2026-11-27, window 1536x820 at (32,12)): the text of "Items" is at
+    # screen (1356,475), so 212 px left of the client area's right edge and 463 below its top.
+    # The first entry's height depends on the lines of the note's summary above the outline.
+    outlineItems = @(-205, 463)
+    # The first row of the toolbar's Open recent menu, under its button (recentIcon). A guess
+    # until a screenshot of the menu is read; the case photographs the menu first.
+    recentRow1  = @(440, 108)
 }
 function Get-LayoutPoint {
     param([Parameter(Mandatory)]$Info, [Parameter(Mandatory)][string]$Name)
@@ -2508,6 +2533,197 @@ Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes
         -Observed "clicked Remove at ($x,$y); the backend now lists: $((Get-Registered $probe | ForEach-Object { $_.name }) -join ', ')"
 }
 
+# ---------------------------------------------------------------- HS1 to HS3, Home's search and Open recent (0.6.0)
+# Home has a search field above its list once a project has been opened: it
+# suggests the projects opened before (live.rs recent_matches: by name, then
+# by a word of the folder; at most eight, newest first; none for a project
+# never opened, a folder that is gone or a linked worktree). Down and Enter
+# open the chosen project, Escape empties the field and closes the list. The
+# toolbar's Open recent button lists the other recent projects. The field has
+# the focus when Home is shown, and Ctrl+K must still open the palette from
+# it (broken in the first 0.6.0 build).
+# Two projects are opened for these cases, each from a folder with an empty
+# .git; the last of HS1 to HS3 that runs removes them.
+function Initialize-GuestBackend {
+    if (-not (Get-GuestBackendState | Where-Object { $_.Health -eq 200 })) { Start-GuestBackendOutside | Out-Null }
+}
+
+# Make a folder under the guest's repos and open it in the app once, so that it
+# is registered and among the recent projects, as a user opens a folder.
+function Register-GuestProject {
+    param([Parameter(Mandatory)][string]$Name)
+    $dir = "$guestHome\repos\$Name"
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force '$dir\.git' | Out-Null; Set-Content '$dir\lib.rs' 'pub fn demo() {}'" | Out-Null
+    Stop-GuestApp
+    Start-GuestApp -Arguments $dir
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    Stop-GuestApp
+    $dir
+}
+
+# Take the registered projects of these names off the list and delete their folders.
+function Remove-GuestProjects {
+    param([Parameter(Mandatory)][string[]]$Name)
+    Initialize-GuestBackend
+    $names = ($Name | ForEach-Object { "'$_'" }) -join ", "
+    Invoke-GuestBackendScript -Script (@'
+foreach ($name in @({{NAMES}})) {
+    $id = Get-RepoId $name
+    if ($id) { Invoke-Backend DELETE "/v1/repos/$id" | Out-Null }
+    Remove-Item -Recurse -Force (Join-Path '{{ROOT}}' $name) -ErrorAction SilentlyContinue
+}
+'@).Replace('{{NAMES}}', $names).Replace('{{ROOT}}', "$guestHome\repos") | Out-Null
+}
+
+$hsNames = "hs-alpha", "hs-beta"
+$hsReady = $false
+function Initialize-HsProjects {
+    if ($script:hsReady) { return }
+    foreach ($name in $hsNames) { [void](Register-GuestProject $name) }
+    $script:hsReady = $true
+}
+# The projects go with the last case of the group that runs.
+function Complete-HsCase {
+    param([string]$Id)
+    $order = @("HS1", "HS2", "HS3")
+    $at = [array]::IndexOf($order, $Id)
+    $later = @($order | Select-Object -Skip ($at + 1) | Where-Object { Test-Selected $_ })
+    if ($later.Count -eq 0 -and $script:hsReady) {
+        Stop-GuestApp
+        Remove-GuestProjects $hsNames
+        $script:hsReady = $false
+    }
+}
+
+Test-Case "HS1" "Home's search suggests recent projects" "typing in the field lists the projects opened before; Escape empties it; Down and Enter open the chosen project (the app's log says so)" {
+    Initialize-HsProjects
+    Stop-GuestApp
+    Start-GuestApp -Arguments $guestRepo, "home:"
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    # The field is the page's first control; a click in it takes its focus whatever the start did
+    # (HS3 tests the start without a click). The column is centred; the field is at 253 px.
+    Send-RestedClick -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int](253 * $info.Scale))
+    Wait-ScreenSettled -TimeoutSec 1
+    $empty = Shot "home-search-empty"
+    Send-Text "hs-"; Wait-ScreenSettled -TimeoutSec 3
+    $typed = Shot "home-search-suggestions"
+    Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
+    $chosen = Shot "home-search-down"
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
+    $escaped = Shot "home-search-escape"
+    $listed = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $typed)
+    $closed = Get-ImageChange (Join-Path $shots $typed) (Join-Path $shots $escaped)
+    $back = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $escaped)
+    # Again, and open the first project of the list.
+    Send-Text "hs-"; Wait-ScreenSettled -TimeoutSec 3
+    Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
+    $mark = Get-AppLogMark
+    Send-Keys "enter"
+    $line = Wait-AppLog -Pattern "repository: hs-(alpha|beta)" -Since $mark -TimeoutSec 10 -What "the app opens the project chosen in Home's search"
+    Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the opened project is drawn"
+    $opened = Shot "home-search-opened"
+    $ok = $listed -ge 0.01 -and $closed -ge 0.01 -and $back -lt $listed / 2 -and [bool]$line
+    Add-Result -Id "HS1" -Title "Home's search suggests recent projects" -Expect "a list under the field for 'hs-' (two projects); Escape empties the field and closes the list; Down, Enter opens a project" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($empty, $typed, $chosen, $escaped, $opened) `
+        -Observed "typed 'hs-' with hs-alpha and hs-beta opened before: $([math]::Round($listed * 100, 1)) percent of the window changed with the list; Down; Escape: $([math]::Round($closed * 100, 1)) percent changed back, $([math]::Round($back * 100, 1)) percent from the empty field; typed again, Down, Enter: the app's log says '$line'; read the screenshots: the list 'Recent projects' with hs-beta above hs-alpha and one row marked, then the empty field with no list, then the opened project"
+    Stop-GuestApp
+    Complete-HsCase "HS1"
+}
+
+Test-Case "HS2" "The toolbar's Open recent menu" "the button opens a menu of the other recent projects; a click on a row opens that project" {
+    Initialize-HsProjects
+    Stop-GuestApp
+    $info = Show-TabWindow
+    $x, $y = Get-LayoutPoint -Info $info -Name "recentIcon"
+    Send-RestedClick -X $x -Y $y
+    Wait-ScreenSettled -TimeoutSec 2
+    $menu = Shot "open-recent-menu"
+    $x, $y = Get-LayoutPoint -Info $info -Name "recentRow1"
+    $mark = Get-AppLogMark
+    Send-RestedClick -X $x -Y $y
+    $line = Wait-AppLog -Pattern "repository: hs-(alpha|beta)" -Since $mark -TimeoutSec 10 -What "the app opens the project chosen in Open recent"
+    Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the opened project is drawn"
+    $opened = Shot "open-recent-opened"
+    Add-Result -Id "HS2" -Title "The toolbar's Open recent menu" -Expect "a menu under the button with hs-alpha and hs-beta (not the open cw-core); a click on its first row opens that project" `
+        -Status $(if ($line) { "pass" } else { "fail" }) -Shots @($menu, $opened) `
+        -Observed "window placed at 992x688 on cw-core's wiki map; clicked the Open recent button, then the menu's first row at the layout point recentRow1: the app's log says '$line'; read the first screenshot: a menu under the button listing the recent projects other than cw-core"
+    Stop-GuestApp
+    Complete-HsCase "HS2"
+}
+
+Test-Case "HS3" "Ctrl+K from Home's search field" "right after a start from the Start menu on Home, with no click, Ctrl+K opens the palette over the page" {
+    Initialize-HsProjects
+    Stop-GuestApp
+    $search = Start-FromStartMenu
+    $before = Shot "home-search-focused"
+    Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
+    $after = Shot "palette-from-home-search"
+    $change = Get-ImageChange (Join-Path $shots $before) (Join-Path $shots $after)
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
+    $closed = Shot "palette-from-home-search-closed"
+    $again = Get-ImageChange (Join-Path $shots $before) (Join-Path $shots $closed)
+    Add-Result -Id "HS3" -Title "Ctrl+K from Home's search field" -Expect "the palette opens over Home with no click first; Escape closes it" `
+        -Status $(if ($change -ge 0.03 -and $again -lt $change / 2) { "pass" } else { "fail" }) -Shots @($search, $before, $after, $closed) `
+        -Observed "Home started from the Start menu with several projects opened before, no click; Ctrl+K changed $([math]::Round($change * 100, 1)) percent of the window, Escape left $([math]::Round($again * 100, 1)) percent changed from the start; read the screenshots: the palette's box over Home, and the search field with its focus before it"
+    Stop-GuestApp
+    Complete-HsCase "HS3"
+}
+
+# ---------------------------------------------------------------- OU1, the clickable outline (0.6.0)
+# The details pane lists the note's ## headings. A click on an entry glides the
+# body to the heading and keeps the entry lit; the wheel then moves the lit
+# entry with what is read (outline.rs). Compared by regions of the screenshots:
+# the note's body and the details pane. The background graph is off so that a
+# card's drift does not move either.
+Test-Case "OU1" "The outline in the details pane is clickable" "a click on an entry moves the note's body to its heading and lights it; the wheel moves the lit entry" {
+    if (-not $noteName) { throw "D2 produced no note to open" }
+    Stop-GuestApp
+    Invoke-GuestScript -Script 'New-Item -ItemType Directory -Force "$env:APPDATA\CodeWiki" | Out-Null; Set-Content "$env:APPDATA\CodeWiki\backdrop.txt" off -NoNewline' | Out-Null
+    try {
+        Start-GuestApp -Arguments $guestRepo, $noteName
+        Wait-AppPage -TimeoutSec 15
+        Hold-For 1.5 -Reason "the page's entrance animation"
+        $info = Set-GuestWindowClient -ProcessName "codewiki-app" -Left 16 -Top 12 -Width 992 -Height 688
+        if (-not $info) { throw "the app has no window" }
+        Wait-ScreenSettled -TimeoutSec 3
+        $body = @(($info.Left + [int](300 * $info.Scale)), ($info.Top + [int](150 * $info.Scale)), [int](420 * $info.Scale), [int](520 * $info.Scale))
+        $pane = @(($info.Left + $info.Width - [int](260 * $info.Scale)), ($info.Top + [int](150 * $info.Scale)), [int](260 * $info.Scale), [int](520 * $info.Scale))
+        $top = Shot "outline-top"
+        # The entry's height depends on the lines of the note's summary above the outline:
+        # the layout point is the fourth entry of a note with a two-line summary; the next
+        # tries are its neighbours.
+        $clicked = $null; $moved = 0; $jumped = $null
+        foreach ($dy in 0, -36, 36, -72, 72) {
+            $x, $y = Get-LayoutPoint -Info $info -Name "outlineItems"
+            $y += [int]($dy * $info.Scale)
+            $before = Shot "outline-before-click"
+            Send-RestedClick -X $x -Y $y
+            Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the body glides to the heading"
+            $jumped = Shot "outline-clicked"
+            $moved = Get-ImageChange (Join-Path $shots $before) (Join-Path $shots $jumped) -Region $body
+            if ($moved -ge 0.05) { $clicked = @($x, $y); break }
+        }
+        # Pointer over the body; the wheel scrolls it back up through the sections.
+        Move-Pointer -X ($info.Left + [int](520 * $info.Scale)) -Y ($info.Top + [int](400 * $info.Scale))
+        Wait-ScreenSettled -TimeoutSec 1
+        Send-Scroll 10; Wait-ScreenStill -TimeoutSec 4 -MinSec 1 -QuietMs 800 -What "the body stops after the wheel"
+        $scrolled = Shot "outline-wheel-up"
+        $bodyWheel = Get-ImageChange (Join-Path $shots $jumped) (Join-Path $shots $scrolled) -Region $body
+        $paneWheel = Get-ImageChange (Join-Path $shots $jumped) (Join-Path $shots $scrolled) -Region $pane
+        $ok = [bool]$clicked -and $bodyWheel -ge 0.05 -and $paneWheel -ge 0.01
+        Add-Result -Id "OU1" -Title "The outline in the details pane is clickable" -Expect "a click on an outline entry moves the body; the wheel then moves the body and the lit entry" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($top, $jumped, $scrolled) `
+            -Observed "note '$noteName' at 992x688; clicked an entry at $(if ($clicked) { "($($clicked[0]),$($clicked[1]))" } else { 'no point' }): $([math]::Round($moved * 100, 1)) percent of the body changed; wheel up 10 notches: $([math]::Round($bodyWheel * 100, 1)) percent of the body and $([math]::Round($paneWheel * 100, 1)) percent of the details pane changed; read the screenshots: the second shows the clicked heading at the top of the body with its entry lit, the third an earlier section with a different entry lit"
+    } finally {
+        Stop-GuestApp
+        Invoke-GuestScript -Script 'Remove-Item "$env:APPDATA\CodeWiki\backdrop.txt" -ErrorAction SilentlyContinue' | Out-Null
+    }
+}
+
 # ---------------------------------------------------------------- DV1, the diagram viewer
 # A drawn Mermaid diagram in a note is a link, and a click on it opens the
 # diagram viewer over the window; Escape closes it (main.rs, open_diagram). The
@@ -2624,6 +2840,312 @@ if ($id) { Invoke-Backend DELETE "/v1/repos/$id" | Out-Null }
 Remove-Item -Recurse -Force '{{DEMO}}' -ErrorAction SilentlyContinue
 '@).Replace('{{DEMO}}', $demo) | Out-Null
     Stop-GuestApp
+}
+
+# ---------------------------------------------------------------- fixtures built in the guest
+# A fixture is written as text: a line "=== <path>" starts a file, its lines
+# follow. The guest gets it as one base64 text (no quote to escape twice) and
+# writes the files under a folder.
+function ConvertFrom-FixtureText {
+    param([Parameter(Mandatory)][string]$Text)
+    $files = [ordered]@{}
+    $name = $null
+    $lines = New-Object System.Collections.Generic.List[string]
+    foreach ($line in ($Text -split "`r?`n")) {
+        if ($line -match '^=== (\S+)$') {
+            if ($name) { $files[$name] = ($lines -join "`n") + "`n" }
+            $name = $Matches[1]
+            $lines = New-Object System.Collections.Generic.List[string]
+        } elseif ($name) {
+            $lines.Add($line)
+        }
+    }
+    if ($name) { $files[$name] = ($lines -join "`n") + "`n" }
+    $files
+}
+
+# The guest script text that writes the fixture's files under the folder that
+# the script's $dir names (set by the caller before this text). The folder is
+# emptied first.
+function Get-FixtureWriter {
+    param([Parameter(Mandatory)]$Files)
+    $encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(($Files | ConvertTo-Json -Compress)))
+    (@'
+Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+$files = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{{FILES}}')) | ConvertFrom-Json
+foreach ($property in $files.PSObject.Properties) {
+    $path = Join-Path $dir ($property.Name -replace '/', '\')
+    New-Item -ItemType Directory -Force (Split-Path $path) | Out-Null
+    [System.IO.File]::WriteAllText($path, $property.Value)
+}
+'@).Replace('{{FILES}}', $encoded)
+}
+
+# A small Rust crate with four modules, and two settings files that hand-written notes can be about
+# (ND1 and ND2). Its wiki is made with init and update.
+$notesDemoText = @'
+=== Cargo.toml
+[package]
+name = "notes-demo"
+version = "0.1.0"
+edition = "2021"
+=== src/lib.rs
+pub mod alpha;
+pub mod beta;
+pub mod gamma;
+pub mod delta;
+=== src/alpha.rs
+/// Adds two numbers.
+pub fn add(a: u32, b: u32) -> u32 { a + b }
+/// Subtracts two numbers.
+pub fn sub(a: u32, b: u32) -> u32 { a - b }
+=== src/beta.rs
+/// Doubles a number.
+pub fn twice(x: u32) -> u32 { x * 2 }
+/// Triples a number.
+pub fn thrice(x: u32) -> u32 { x * 3 }
+=== src/gamma.rs
+/// Squares a number.
+pub fn square(x: u32) -> u32 { x * x }
+/// Cubes a number.
+pub fn cube(x: u32) -> u32 { x * x * x }
+=== src/delta.rs
+/// Halves a number.
+pub fn half(x: u32) -> u32 { x / 2 }
+/// Negates a number.
+pub fn negate(x: i32) -> i32 { -x }
+=== legacy/service.cfg
+# the service settings
+name = service
+mode = old
+retries = 3
+=== legacy/util.cfg
+# the util settings
+name = util
+mode = old
+retries = 3
+'@
+
+# ---------------------------------------------------------------- ND1, notes of deleted code (0.6.0)
+# README, "When code is deleted or moved": a note nobody wrote in is deleted
+# with its code; a note with someone's edits is not deleted by the sync alone.
+# Without git nothing that holds written work is ever deleted, and the guest
+# has none yet (git is installed by WK1, after the plugin cases), so this is
+# the case without it: the sync only. ND2 has git and the retire proposals.
+function Get-NoteOfSource {
+    # The guest script text of a function that finds the note whose Source section names a file.
+    @'
+function Get-NoteOf($source) {
+    Get-ChildItem (Join-Path $dir 'obsidian') -Recurse -Filter '*.md' |
+        Where-Object { $_.BaseName -notmatch '^_' -and (Get-Content $_.FullName -Raw).Contains('`' + $source + '`') } |
+        Sort-Object { if ($_.BaseName -match 'Module$') { 0 } else { 1 } }, { $_.FullName.Length } | Select-Object -First 1
+}
+'@
+}
+
+Test-Case "ND1" "A note of deleted code leaves the wiki; an edited one stays" "a sync after a source file is deleted removes the note nobody edited and keeps the note a person edited (no git: nothing written is deleted)" {
+    $dir = "$guestHome\repos\notes-demo"
+    $writer = "`$dir = '$dir'`n" + (Get-FixtureWriter (ConvertFrom-FixtureText $notesDemoText))
+    $run = Invoke-GuestScript -TimeoutSec 600 -Script ($writer + "`n" + (Get-NoteOfSource) + (@'
+Set-Location $dir
+& '{{EXE}}' init 2>&1 | Out-Null
+"init exit: $LASTEXITCODE"
+& '{{EXE}}' update 2>&1 | Out-Null
+"update exit: $LASTEXITCODE"
+$beta = Get-NoteOf 'src/beta.rs'
+$gamma = Get-NoteOf 'src/gamma.rs'
+"beta note: $(if ($beta) { $beta.FullName.Substring($dir.Length + 1) } else { 'none' })"
+"gamma note: $(if ($gamma) { $gamma.FullName.Substring($dir.Length + 1) } else { 'none' })"
+if ($gamma) { Add-Content -LiteralPath $gamma.FullName -Value "`nA line a person wrote by hand.`n" }
+Remove-Item (Join-Path $dir 'src\beta.rs'), (Join-Path $dir 'src\gamma.rs')
+$out = & '{{EXE}}' update 2>&1 | ForEach-Object { "$_" }
+"second update exit: $LASTEXITCODE"
+$out | Select-Object -First 12 | ForEach-Object { "update says: $_" }
+"beta note afterwards: $(if ($beta) { Test-Path -LiteralPath $beta.FullName } else { 'n/a' })"
+"gamma note afterwards: $(if ($gamma) { Test-Path -LiteralPath $gamma.FullName } else { 'n/a' })"
+"gamma still has the edit: $(if ($gamma -and (Test-Path -LiteralPath $gamma.FullName)) { (Get-Content -LiteralPath $gamma.FullName -Raw).Contains('A line a person wrote by hand.') } else { 'n/a' })"
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', "$guestTarget\codewiki.exe"))
+    $found = $run.Output -match "beta note: (?!none)" -and $run.Output -match "gamma note: (?!none)"
+    $ok = $found -and $run.Output -match "second update exit: 0" -and $run.Output -match "beta note afterwards: False" -and
+        $run.Output -match "gamma note afterwards: True" -and $run.Output -match "gamma still has the edit: True"
+    Add-Result -Id "ND1" -Title "A note of deleted code leaves the wiki; an edited one stays" -Expect "the unedited note of the deleted file is gone, the edited note is still there with its edit" `
+        -Status $(if ($ok) { "pass" } elseif (-not $found) { "error" } else { "fail" }) -Output $run.Output `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(beta|gamma) note' } | ForEach-Object { $_.Trim() }) -join '; '); the guest has no git here, so a note with edits stays until the deletion is committed (ND2 commits it)"
+    Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$dir' -ErrorAction SilentlyContinue" | Out-Null
+}
+
+# ---------------------------------------------------------------- LG1, languages and impacted tests (0.6.0)
+# C#, Go, Kotlin, C and C++ have parsers; a language without one is mapped
+# at file level. A small repository with a file or two of each is indexed, and
+# the CLI's own output says what it knows: symbols by name, files by search,
+# and impacted-tests with the command of each language's tool. No window.
+$langDemoText = @'
+=== go/go.mod
+module example.com/app
+
+go 1.22
+=== go/store/store.go
+package store
+
+type Store struct{ items map[string]string }
+
+func New() *Store { return &Store{items: map[string]string{}} }
+
+func (s *Store) Get(key string) string { return s.items[key] }
+=== go/store/store_test.go
+package store
+
+import "testing"
+
+func TestNew(t *testing.T) { New() }
+
+func TestGet(t *testing.T) { New().Get("a") }
+=== dotnet/Acme.slnx
+<Solution />
+=== dotnet/src/Core/Core.csproj
+<Project Sdk="Microsoft.NET.Sdk" />
+=== dotnet/src/Core/Helper.cs
+namespace Acme.Core;
+
+public static class Helper
+{
+    public static int Twice(int x) => x * 2;
+}
+=== dotnet/src/Core/Engine.cs
+namespace Acme.Core;
+
+public class Engine
+{
+    public int Run() => Helper.Twice(2);
+}
+=== dotnet/tests/Core.Tests/Core.Tests.csproj
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="..\..\src\Core\Core.csproj" /><PackageReference Include="Microsoft.NET.Test.Sdk" /><PackageReference Include="xunit.v3" /></ItemGroup></Project>
+=== dotnet/tests/Core.Tests/EngineTests.cs
+using Acme.Core;
+
+namespace Acme.Core.Tests;
+
+public class EngineTests
+{
+    [Fact]
+    public void Runs() { Assert.Equal(4, new Engine().Run()); }
+}
+=== kotlin/settings.gradle.kts
+include("core")
+=== kotlin/core/build.gradle.kts
+plugins { kotlin("jvm") }
+=== kotlin/core/src/main/kotlin/com/acme/core/Prices.kt
+package com.acme.core
+
+class Money {
+    fun cents(): Int = 1
+}
+
+fun total(m: Money): Int = m.cents() * 2
+=== kotlin/core/src/test/kotlin/com/acme/core/PricesTest.kt
+package com.acme.core
+
+import kotlin.test.Test
+
+class PricesTest {
+    @Test
+    fun totals() { total(Money()) }
+}
+=== cpp/CMakeLists.txt
+cmake_minimum_required(VERSION 3.20)
+project(geo CXX)
+enable_testing()
+add_subdirectory(src)
+add_subdirectory(tests)
+=== cpp/src/CMakeLists.txt
+add_library(geo geo/circle.cpp geo/area.cpp)
+target_include_directories(geo PUBLIC .)
+=== cpp/src/geo/circle.hpp
+#pragma once
+namespace geo { class Circle { public: double area() const; static Circle unit(); }; double square(double x); }
+=== cpp/src/geo/circle.cpp
+#include "geo/circle.hpp"
+namespace geo {
+double Circle::area() const { return 3.14 * square(1.0); }
+Circle Circle::unit() { return Circle(); }
+}
+=== cpp/src/geo/area.cpp
+#include "geo/circle.hpp"
+namespace geo { double square(double x) { return x * x; } }
+=== cpp/tests/CMakeLists.txt
+add_executable(geo_tests circle_test.cpp)
+target_link_libraries(geo_tests geo GTest::gtest_main)
+gtest_discover_tests(geo_tests)
+=== cpp/tests/circle_test.cpp
+#include <gtest/gtest.h>
+#include "geo/circle.hpp"
+
+TEST(Circle, Area) { EXPECT_GT(geo::Circle().area(), 0); }
+=== c/list.c
+int list_len(void) { return 3; }
+=== c/list.h
+int list_len(void);
+=== scripts/deploy.ps1
+param([string]$Target = "prod")
+function Invoke-Deploy { Write-Output "deploying to $Target" }
+Invoke-Deploy
+=== tools/util.lua
+local M = {}
+function M.shout(s) return s:upper() end
+return M
+'@
+
+Test-Case "LG1" "Languages and impacted tests" "symbols for C#, Go, Kotlin, C and C++; the language without a parser is mapped by file; impacted-tests names the tool's command for at least two languages" {
+    $dir = "$guestHome\repos\lang-demo"
+    $writer = "`$dir = '$dir'`n" + (Get-FixtureWriter (ConvertFrom-FixtureText $langDemoText))
+    $run = Invoke-GuestScript -TimeoutSec 600 -Script ($writer + "`n" + (@'
+Set-Location $dir
+function Run($arguments) { & '{{EXE}}' @arguments 2>&1 | ForEach-Object { "$_" } }
+Run @('init') | Out-Null
+"init exit: $LASTEXITCODE"
+Run @('update') | Out-Null
+"update exit: $LASTEXITCODE"
+foreach ($name in 'Engine', 'Store', 'total', 'Circle', 'list_len', 'Invoke-Deploy', 'shout') {
+    $lines = @(Run @('symbol', $name) | Where-Object { $_ -match '^\S' })
+    "symbol ${name}: $($lines.Count) $($lines -join ' | ')"
+}
+foreach ($word in 'deploy', 'util') {
+    $lines = @(Run @('search', $word, '--kind', 'file') | ForEach-Object { $_ })
+    "file search ${word}: $($lines.Count) $($lines -join ' | ')"
+}
+foreach ($case in @(
+        @('go', 'go/store/store.go'), @('csharp', 'dotnet/src/Core/Engine.cs'),
+        @('kotlin', 'kotlin/core/src/main/kotlin/com/acme/core/Prices.kt'), @('cpp', 'cpp/src/geo/circle.cpp'), @('c', 'c/list.c'))) {
+    $lines = @(Run @('impacted-tests', $case[1]))
+    "impacted $($case[0]): $($lines -join ' | ')"
+}
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', "$guestTarget\codewiki.exe"))
+    $out = $run.Output
+    $has = { param($name, $path) [bool]($out -match "(?m)^symbol ${name}: [1-9]\d* .*" + [regex]::Escape($path)) }
+    $symbols = [ordered]@{
+        "C#"     = (& $has "Engine" "dotnet/src/Core/Engine.cs")
+        "Go"     = (& $has "Store" "go/store/store.go")
+        "Kotlin" = (& $has "total" "Prices.kt")
+        "C++"    = (& $has "Circle" "cpp/src/geo/circle")
+        "C"      = (& $has "list_len" "c/list.")
+    }
+    $unparsedNoSymbols = $out -match "(?m)^symbol Invoke-Deploy: 0" -and $out -match "(?m)^symbol shout: 0"
+    $unparsedFiles = $out -match "(?m)^file search deploy: [1-9]\d* .*scripts/deploy\.ps1" -and $out -match "(?m)^file search util: [1-9]\d* .*tools/util\.lua"
+    $tools = [ordered]@{ "Go" = "go test"; "C#" = "dotnet test"; "Kotlin" = "gradle"; "C++" = "ctest"; "C" = "ctest" }
+    $commands = [ordered]@{}
+    foreach ($language in $tools.Keys) {
+        $key = @{ "Go" = "go"; "C#" = "csharp"; "Kotlin" = "kotlin"; "C++" = "cpp"; "C" = "c" }[$language]
+        $commands[$language] = [bool]($out -match "(?m)^impacted ${key}: .*" + [regex]::Escape($tools[$language]))
+    }
+    $namedTools = @($commands.Keys | Where-Object { $commands[$_] })
+    $allSymbols = @($symbols.Values | Where-Object { -not $_ }).Count -eq 0
+    $ok = $run.Output -match "update exit: 0" -and $allSymbols -and $unparsedNoSymbols -and $unparsedFiles -and $namedTools.Count -ge 2
+    Add-Result -Id "LG1" -Title "Languages and impacted tests" -Expect "symbols exist for C#, Go, Kotlin, C and C++; .ps1 and .lua files are found as files and have no symbols; impacted-tests prints the tool's command for at least two languages" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $out `
+        -Observed "symbols found: $(($symbols.Keys | ForEach-Object { "$_ $($symbols[$_])" }) -join ', '); the PowerShell and Lua files: files found $unparsedFiles, no symbols $unparsedNoSymbols; impacted-tests names its tool for: $(if ($namedTools) { $namedTools -join ', ' } else { 'no language' }) (looked for: $(($tools.Keys | ForEach-Object { "$_ '$($tools[$_])'" }) -join ', '))"
+    Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$dir' -ErrorAction SilentlyContinue" | Out-Null
 }
 
 # ---------------------------------------------------------------- IC, icon
@@ -2868,6 +3390,56 @@ Test-Case "ER2" "The switch in Settings" "Settings > Diagnostics shows 'Send err
     Stop-GuestApp
 }
 
+# ---------------------------------------------------------------- git for Windows, shared
+# After a restart of Windows the guest's network takes a while, and the
+# host's own (a VPN that reconnects) can drop it for a moment: names did
+# not resolve when the first download was asked for. Wait for them, so that
+# a slow network is not taken for a failed install.
+function Wait-GuestNetwork {
+    param([int]$TimeoutSec = 240)
+    $deadline = (Get-Date).AddSeconds($TimeoutSec)
+    do {
+        $run = Invoke-GuestScript -TimeoutSec 60 -Script 'try { [void][System.Net.Dns]::GetHostAddresses("api.github.com"); [void][System.Net.Dns]::GetHostAddresses("claude.ai"); "names resolve" } catch { "no names yet" }'
+        if ($run.Output -match "names resolve") { return $true }
+        Start-Sleep -Seconds 10
+    } while ((Get-Date) -lt $deadline)
+    $false
+}
+
+# Install Git for Windows the way git-scm.com hands it out: the installer of
+# the latest release at GitHub, its signature checked, run silently with the
+# rights "Yes" at its UAC prompt gives it. Needs no token and no login. The
+# checkpoints carry no git: call this only after every case that needs a
+# Windows without it (B1, D2). CC0 and WK1 use it; where git is there already
+# it installs nothing. Returns the run (Output).
+function Install-GuestGit {
+    if (-not (Wait-GuestNetwork)) { throw "the guest resolves no names: it has no network for the downloads" }
+    Invoke-GuestScript -Background -TimeoutSec 1200 -Script @'
+$ProgressPreference = "SilentlyContinue"
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+$git = "$env:ProgramFiles\Git\cmd\git.exe"
+if (Test-Path $git) {
+    "installer: already installed"
+    "setup exit: 0"
+} else {
+    $release = Invoke-RestMethod "https://api.github.com/repos/git-for-windows/git/releases/latest" -UseBasicParsing
+    $asset = $release.assets | Where-Object { $_.name -match '^Git-[\d\.]+-64-bit\.exe$' } | Select-Object -First 1
+    if (-not $asset) { throw "release $($release.tag_name) has no 64-bit installer" }
+    $file = Join-Path $env:TEMP $asset.name
+    Invoke-WebRequest $asset.browser_download_url -OutFile $file -UseBasicParsing
+    $signature = Get-AuthenticodeSignature $file
+    "installer: $($asset.name), signature $($signature.Status)"
+    if ($signature.Status -ne "Valid") { throw "the installer's signature is $($signature.Status)" }
+    $setup = Start-Process $file -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-" -Wait -PassThru
+    "setup exit: $($setup.ExitCode)"
+    Remove-Item $file -Force
+}
+"git: $(& $git --version 2>&1)"
+"bash: $(Test-Path "$env:ProgramFiles\Git\bin\bash.exe")"
+$global:LASTEXITCODE = 0
+'@
+}
+
 # ---------------------------------------------------------------- CC, Claude Code plugin
 # The plugin is tested with the real Claude Code: installed as its docs say,
 # then the plugin as README says, from the installation's own plugins folder.
@@ -2931,41 +3503,8 @@ if ($Plugin) {
     # after every case that needs a guest without it (B1, D2). The installer
     # is the one git-scm.com hands out, run with the rights that "Yes" at its
     # UAC prompt gives it.
-    # After a restart of Windows the guest's network takes a while, and the
-    # host's own (a VPN that reconnects) can drop it for a moment: names did
-    # not resolve when this block's first download was asked for. Wait for
-    # them, so that a slow network is not taken for a failed install.
-    function Wait-GuestNetwork {
-        param([int]$TimeoutSec = 240)
-        $deadline = (Get-Date).AddSeconds($TimeoutSec)
-        do {
-            $run = Invoke-GuestScript -TimeoutSec 60 -Script 'try { [void][System.Net.Dns]::GetHostAddresses("api.github.com"); [void][System.Net.Dns]::GetHostAddresses("claude.ai"); "names resolve" } catch { "no names yet" }'
-            if ($run.Output -match "names resolve") { return $true }
-            Start-Sleep -Seconds 10
-        } while ((Get-Date) -lt $deadline)
-        $false
-    }
-
     Test-Case "CC0" "Install Git for Windows" "git and Git Bash are installed" {
-        if (-not (Wait-GuestNetwork)) { throw "the guest resolves no names: it has no network for the downloads" }
-        $run = Invoke-GuestScript -Background -TimeoutSec 1200 -Script @'
-$ProgressPreference = "SilentlyContinue"
-[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-$release = Invoke-RestMethod "https://api.github.com/repos/git-for-windows/git/releases/latest" -UseBasicParsing
-$asset = $release.assets | Where-Object { $_.name -match '^Git-[\d\.]+-64-bit\.exe$' } | Select-Object -First 1
-if (-not $asset) { throw "release $($release.tag_name) has no 64-bit installer" }
-$file = Join-Path $env:TEMP $asset.name
-Invoke-WebRequest $asset.browser_download_url -OutFile $file -UseBasicParsing
-$signature = Get-AuthenticodeSignature $file
-"installer: $($asset.name), signature $($signature.Status)"
-if ($signature.Status -ne "Valid") { throw "the installer's signature is $($signature.Status)" }
-$setup = Start-Process $file -ArgumentList "/VERYSILENT", "/NORESTART", "/NOCANCEL", "/SP-" -Wait -PassThru
-"setup exit: $($setup.ExitCode)"
-Remove-Item $file -Force
-"git: $(& "$env:ProgramFiles\Git\cmd\git.exe" --version 2>&1)"
-"bash: $(Test-Path "$env:ProgramFiles\Git\bin\bash.exe")"
-$global:LASTEXITCODE = 0
-'@
+        $run = Install-GuestGit
         $ok = $run.Output -match "setup exit: 0" -and $run.Output -match "git: git version" -and $run.Output -match "bash: True"
         $version = if ($run.Output -match "git: git version (\S+)") { $Matches[1] } else { "none" }
         Add-Result -Id "CC0" -Title "Install Git for Windows" -Expect "git and Git Bash are installed" `
@@ -3337,6 +3876,147 @@ $global:LASTEXITCODE = 0
 
     # Whatever the cases did: the token does not stay in the guest.
     Remove-ClaudeLogin
+}
+
+# ---------------------------------------------------------------- WK1 and ND2, with git (0.6.0)
+# These need git, which the guest has none of until here: after every case
+# that needs a Windows without it (B1, D2, ND1), and after the plugin cases,
+# whose CC0 installs it the same way (Install-GuestGit). Run alone they
+# install it themselves.
+
+# A linked worktree is no project: Home gives it no row and its search does not
+# suggest it; the row of its repository says how many worktrees it has
+# (live.rs, README "Git worktrees"). Both are opened as a user opens them, and
+# the backend marks the second as a worktree of the first by asking git.
+Test-Case "WK1" "A git worktree on Home" "the worktree has no row on Home and its repository's row counts it; Home's search does not suggest it" {
+    $install = Install-GuestGit
+    if ($install.Output -notmatch "setup exit: 0" -or $install.Output -notmatch "git: git version") { throw "git is not in the guest: $($install.Output)" }
+    $main = "$guestHome\repos\wk-main"
+    $tree = "$guestHome\repos\wk-main-tree"
+    $made = Invoke-GuestScript -TimeoutSec 120 -Script (@'
+$ErrorActionPreference = 'Continue'
+$git = "$env:ProgramFiles\Git\cmd\git.exe"
+$main = '{{MAIN}}'; $tree = '{{TREE}}'
+Remove-Item -Recurse -Force $main, $tree -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $main | Out-Null
+Set-Content (Join-Path $main 'lib.rs') 'pub fn demo() {}'
+& $git -C $main init -q -b main 2>&1 | Out-String
+& $git -C $main add -A 2>&1 | Out-String
+& $git -C $main -c user.name=Tester -c user.email=tester@example.com commit -q -m first 2>&1 | Out-String
+& $git -C $main worktree add -q $tree -b feature 2>&1 | Out-String
+"worktrees:"
+& $git -C $main worktree list 2>&1 | ForEach-Object { "  $_" }
+$global:LASTEXITCODE = 0
+'@).Replace('{{MAIN}}', $main).Replace('{{TREE}}', $tree)
+    # The backend asks git for each folder it registers. One that started before git was
+    # installed has no git on its PATH: the app starts a new one.
+    Stop-GuestApp
+    Stop-GuestBackend
+    foreach ($dir in $main, $tree) {
+        Start-GuestApp -Arguments $dir
+        Wait-AppPage -TimeoutSec 30
+        Hold-For 1.5 -Reason "the page's entrance animation"
+        Stop-GuestApp
+    }
+    Initialize-GuestBackend
+    $state = Invoke-GuestBackendScript -Script @'
+$list = Invoke-Backend GET '/v1/repos' | ConvertFrom-Json
+foreach ($repo in @($list)) { "repo: $($repo.id) name=$($repo.name) worktree_of=$($repo.worktree_of)" }
+'@
+    $mainId = if ($state.Output -match "(?m)^repo: (\S+) name=wk-main worktree_of=\s*$") { $Matches[1] } else { $null }
+    $treeOf = if ($state.Output -match "(?m)^repo: \S+ name=wk-main-tree worktree_of=(\S+)") { $Matches[1] } else { $null }
+    $marked = $mainId -and $treeOf -eq $mainId
+    # Home with cw-core open: the main checkout's row counts the worktree, the worktree has none.
+    Start-GuestApp -Arguments $guestRepo, "home:"
+    Wait-AppPage -TimeoutSec 15
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $rows = Shot "home-worktree-count"
+    Send-RestedClick -X ($info.Left + [int]($info.Width / 2)) -Y ($info.Top + [int](253 * $info.Scale))
+    Wait-ScreenSettled -TimeoutSec 1
+    $empty = Shot "home-search-before-worktree"
+    Send-Text "wk-main-tree"; Wait-ScreenSettled -TimeoutSec 3
+    $tree1 = Shot "home-search-worktree-name"
+    $none = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $tree1)
+    Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
+    Send-Text "wk-"; Wait-ScreenSettled -TimeoutSec 3
+    $one = Shot "home-search-main-only"
+    Stop-GuestApp
+    Remove-GuestProjects "wk-main-tree", "wk-main"
+    Add-Result -Id "WK1" -Title "A git worktree on Home" -Expect "the backend marks wk-main-tree as a worktree of wk-main; Home lists wk-main with '1 worktree' and no row for the worktree; its search suggests wk-main and not the worktree" `
+        -Status $(if ($marked) { "note" } else { "fail" }) -Shots @($rows, $empty, $tree1, $one) -Output ($made.Output + "`n" + $state.Output) `
+        -Observed "git worktree add made $tree beside $main; the backend lists the second with worktree_of = the first's id: $([bool]$marked); typing the worktree's own name changed $([math]::Round($none * 100, 1)) percent of the window; read the screenshots: the first Home lists cw-core and wk-main '1 worktree' and no wk-main-tree; the third shows no suggestion for 'wk-main-tree'; the last suggests wk-main only"
+}
+
+# A note a person wrote by hand about code that is gone is never deleted by the
+# sync: all such notes wait in one retire proposal on the Review page, and a
+# deletion that is committed deletes a note somebody edited, since git holds it
+# (README, "When code is deleted or moved"). The Review page's buttons decide
+# it as RV2's do.
+Test-Case "ND2" "Notes of deleted code wait as a retire proposal" "after the deletion is committed: the edited note of the deleted file is gone, two hand-written notes wait in one retire proposal on the Review page, and its approval deletes them" {
+    $install = Install-GuestGit
+    if ($install.Output -notmatch "setup exit: 0" -or $install.Output -notmatch "git: git version") { throw "git is not in the guest: $($install.Output)" }
+    $dir = "$guestHome\repos\notes-demo"
+    $writer = "`$dir = '$dir'`n" + (Get-FixtureWriter (ConvertFrom-FixtureText $notesDemoText))
+    $run = Invoke-GuestScript -TimeoutSec 900 -Script ($writer + "`n" + (Get-NoteOfSource) + (@'
+$ErrorActionPreference = 'Continue'
+$git = "$env:ProgramFiles\Git\cmd\git.exe"
+function Git { & $git -C $dir -c user.name=Tester -c user.email=tester@example.com @args 2>&1 | Out-Null }
+Set-Location $dir
+& '{{EXE}}' init 2>&1 | Out-Null
+& '{{EXE}}' update 2>&1 | Out-Null
+$t = [string][char]96
+function Hand($title, $body) { "---`ntags: [notes]`n---`n`n# $title`n`n> Mine.`n`n$body`n" }
+$notes = Join-Path $dir 'obsidian\06-Notes'
+New-Item -ItemType Directory -Force $notes | Out-Null
+[IO.File]::WriteAllText((Join-Path $notes 'Old Service.md'), (Hand 'Old Service' "## Source`n`n- ${t}legacy/service.cfg${t}`n`nIt also reads ${t}legacy/util.cfg${t}."))
+[IO.File]::WriteAllText((Join-Path $notes 'Text Only.md'), (Hand 'Text Only' "The helpers live in ${t}legacy/util.cfg${t}."))
+[IO.File]::WriteAllText((Join-Path $notes 'Glossary.md'), (Hand 'Glossary' "A ${t}tick${t} is the smallest step."))
+$beta = Get-NoteOf 'src/beta.rs'
+$gamma = Get-NoteOf 'src/gamma.rs'
+"beta note: $(if ($beta) { $beta.FullName.Substring($dir.Length + 1) } else { 'none' })"
+"gamma note: $(if ($gamma) { $gamma.FullName.Substring($dir.Length + 1) } else { 'none' })"
+if ($gamma) { Add-Content -LiteralPath $gamma.FullName -Value "`nA line a person wrote by hand.`n" }
+& '{{EXE}}' update 2>&1 | Out-Null
+Git init -q -b main
+Git add -A
+Git commit -q -m 'code, wiki and notes'
+Remove-Item (Join-Path $dir 'src\beta.rs'), (Join-Path $dir 'src\gamma.rs'), (Join-Path $dir 'legacy\service.cfg'), (Join-Path $dir 'legacy\util.cfg')
+& '{{EXE}}' update 2>&1 | Out-Null
+"uncommitted: beta note $(if ($beta) { Test-Path -LiteralPath $beta.FullName } else { 'n/a' }), gamma note $(if ($gamma) { Test-Path -LiteralPath $gamma.FullName } else { 'n/a' }), proposals $(@(& '{{EXE}}' proposals 2>&1).Count)"
+Git add -A
+Git commit -q -m 'retire the old code'
+$out = & '{{EXE}}' update 2>&1 | ForEach-Object { "$_" }
+"update exit: $LASTEXITCODE"
+$out | Select-Object -First 12 | ForEach-Object { "update says: $_" }
+"beta note: $(if ($beta) { Test-Path -LiteralPath $beta.FullName } else { 'n/a' })"
+"gamma note (edited): $(if ($gamma) { Test-Path -LiteralPath $gamma.FullName } else { 'n/a' })"
+foreach ($name in 'Old Service', 'Text Only', 'Glossary') { "hand note ${name}: $(Test-Path -LiteralPath (Join-Path $notes ($name + '.md')))" }
+& '{{EXE}}' proposals 2>&1 | ForEach-Object { "proposal: $_" }
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', "$guestTarget\codewiki.exe"))
+    $found = $run.Output -match "beta note: (?!none)" -and $run.Output -match "gamma note: (?!none)"
+    $waits = $run.Output -match "(?m)^proposal: .*\[Pending\].*gone"
+    $syncOk = $found -and $run.Output -match "(?m)^beta note: False" -and $run.Output -match "(?m)^gamma note \(edited\): False" -and
+        $run.Output -match "hand note Old Service: True" -and $run.Output -match "hand note Text Only: True" -and $run.Output -match "hand note Glossary: True" -and $waits
+    # The Review page, as RV2 reaches it: the app opens on it, and the page's own button decides.
+    Stop-GuestApp
+    Start-GuestApp -Arguments $dir, "review:"
+    Wait-AppPage -TimeoutSec 20
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    $page = Shot "retire-proposal"
+    $x, $y = Get-LayoutPoint -Info $info -Name "approve"
+    Send-RestedClick -X $x -Y $y; Wait-ScreenSettled -TimeoutSec 8
+    $done = Shot "retire-approved"
+    $after = Invoke-GuestScript -Script ('foreach ($name in ''Old Service'', ''Text Only'', ''Glossary'') { "after approval ${name}: $(Test-Path -LiteralPath (Join-Path ''{{DIR}}\obsidian\06-Notes'' ($name + ''.md'')))" }'.Replace('{{DIR}}', $dir))
+    $decided = $after.Output -match "after approval Old Service: False" -and $after.Output -match "after approval Text Only: False" -and $after.Output -match "after approval Glossary: True"
+    Stop-GuestApp
+    Remove-GuestProjects "notes-demo"
+    Add-Result -Id "ND2" -Title "Notes of deleted code wait as a retire proposal" -Expect "edited note of the committed deletion gone; two hand-written notes wait in one retire proposal; its approval deletes them and leaves the Glossary" `
+        -Status $(if ($syncOk -and $decided) { "pass" } elseif (-not $found) { "error" } else { "fail" }) -Shots @($page, $done) -Output ($run.Output + "`n" + $after.Output) `
+        -Observed "$(($run.Output -split "`n" | Where-Object { $_ -match '^(uncommitted|beta note|gamma note|hand note|proposal)' } | ForEach-Object { $_.Trim() }) -join '; '); after the Review page's first button: $(($after.Output -split "`n" | ForEach-Object { $_.Trim() } | Where-Object { $_ }) -join '; '); read the screenshots: the first is the Review page with one proposal 'Notes about code that is gone' listing Old Service and Text Only with their gone files, the button 'Delete 2 notes'; the second the page after it"
 }
 
 # ---------------------------------------------------------------- SE, a stand-in embedding server

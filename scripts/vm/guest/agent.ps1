@@ -24,7 +24,9 @@
 #            environment block of the user as Windows builds it for a new
 #            logon (so PATH after an install and a user variable set a minute
 #            ago are seen), no console window, and a job object that ends the
-#            script's children with it, as Stop-ScheduledTask did.
+#            script's children when the script has to be stopped (a timeout),
+#            as Stop-ScheduledTask did. A script that ends by itself leaves its
+#            children alone.
 #   inproc   a new runspace in this process, for the rig's own instruments
 #            that read the screen or the log and start nothing.
 #
@@ -166,7 +168,26 @@ namespace VmTestAgent {
             if (Jobbed) { TerminateJobObject(job, 1); } else { TerminateProcess(process, 1); }
         }
 
-        // Closing the job ends whatever the script left running.
+        // The script ended by itself: what it left running is let alone, as a
+        // scheduled task that has ended lets it alone (the uninstaller of Inno
+        // Setup returns at once and its copy goes on deleting the folder; a job
+        // that killed it left unins000.exe behind). Only a script that has to
+        // be stopped takes its children with it.
+        public void Release() {
+            if (!Jobbed || job == IntPtr.Zero) { return; }
+            JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = new JOBOBJECT_EXTENDED_LIMIT_INFORMATION();
+            int size = Marshal.SizeOf(typeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION));
+            IntPtr buffer = Marshal.AllocHGlobal(size);
+            try {
+                Marshal.StructureToPtr(limits, buffer, false);
+                // JobObjectExtendedLimitInformation with no limit flags
+                SetInformationJobObject(job, 9, buffer, (uint)size);
+            } finally {
+                Marshal.FreeHGlobal(buffer);
+            }
+        }
+
+        // Closing the job ends whatever the script left running, unless it was released.
         public void Dispose() {
             if (job != IntPtr.Zero) { CloseHandle(job); job = IntPtr.Zero; }
             if (process != IntPtr.Zero) { CloseHandle(process); process = IntPtr.Zero; }
@@ -258,6 +279,7 @@ while (-not $stopAfter) {
                     Set-Beat
                     if ($clock.Elapsed.TotalSeconds -ge $timeout) { $child.Kill(); $status = "timeout"; break }
                 }
+                if ($status -eq "exit") { $child.Release() }
             } finally {
                 $child.Dispose()
             }

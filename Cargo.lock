@@ -1557,6 +1557,7 @@ dependencies = [
  "toml 1.2.1+spec-1.1.0",
  "tree-sitter",
  "tree-sitter-c-sharp",
+ "tree-sitter-go",
  "tree-sitter-java",
  "tree-sitter-python",
  "tree-sitter-rust",
@@ -8171,6 +8172,16 @@ name = "tree-sitter-c-sharp"
 version = "0.24.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "54b3cdb7aeae9018e60908aa18937708de29338c83ecf3701de534b23d365c30"
+dependencies = [
+ "cc",
+ "tree-sitter-language",
+]
+
+[[package]]
+name = "tree-sitter-go"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c8560a4d2f835cc0d4d2c2e03cbd0dde2f6114b43bc491164238d333e28b16ea"
 dependencies = [
  "cc",
  "tree-sitter-language",

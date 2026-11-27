@@ -79,6 +79,13 @@ impl<'a> RenderCtx<'a> {
             if from == to {
                 continue;
             }
+            // A Go test is no user of the code it tests: its package owns it,
+            // and a note would list its own tests among the code that uses it.
+            if repo.symbols.get(e.src.as_str()).is_some_and(|s| {
+                Language::from_path(&s.file) == Language::Go && is_test_file(&s.file)
+            }) {
+                continue;
+            }
             let name = |q: &str| q.rsplit("::").next().unwrap_or(q).to_string();
             depends_on
                 .entry(from.clone())
@@ -163,7 +170,15 @@ impl<'a> RenderCtx<'a> {
                             if unit.tests { "test " } else { "" },
                             unit_noun(unit.language),
                             note.title,
-                            count(repo.module_count(unit), "module")
+                            count(
+                                repo.module_count(unit),
+                                // A Go package is a folder, not a file's module.
+                                if unit.language == Language::Go {
+                                    "package"
+                                } else {
+                                    "module"
+                                }
+                            )
                         ),
                         None => {
                             let modules = repo
@@ -260,6 +275,9 @@ impl<'a> RenderCtx<'a> {
                 let how = match symbol.kind {
                     SymbolKind::Class => "extending the class",
                     SymbolKind::Interface => "implementing the interface",
+                    SymbolKind::Struct if Language::from_path(&symbol.file) == Language::Go => {
+                        "embedding the struct"
+                    }
                     _ => "implementing the trait",
                 };
                 format!(
@@ -402,6 +420,30 @@ impl<'a> RenderCtx<'a> {
         };
         if Language::from_path(&symbol.file) == Language::Rust {
             return "main".into();
+        }
+        if Language::from_path(&symbol.file) == Language::Go {
+            // The folder of the program, relative to its module: what
+            // `go run` is given.
+            let unit_dir = self
+                .repo
+                .units
+                .of_file(&symbol.file)
+                .map_or("", |u| u.dir.as_str());
+            let folder = symbol.file.rsplit_once('/').map_or("", |(dir, _)| dir);
+            let relative = folder
+                .strip_prefix(unit_dir)
+                .unwrap_or(folder)
+                .trim_start_matches('/');
+            return if relative.is_empty() {
+                symbol
+                    .file
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or(&symbol.file)
+                    .to_string()
+            } else {
+                relative.to_string()
+            };
         }
         let top_level = symbol.kind == SymbolKind::Function
             && Language::from_path(&symbol.file) == Language::CSharp;
@@ -556,7 +598,13 @@ impl<'a> RenderCtx<'a> {
                 } else {
                     format!("under `{}`", k.dir)
                 };
-                let mut shape = format!("Holds {} {place}.", count(repo.module_count(k), "module"));
+                // A Go package is a folder of files, not a module of one.
+                let noun = if k.language == Language::Go {
+                    "package"
+                } else {
+                    "module"
+                };
+                let mut shape = format!("Holds {} {place}.", count(repo.module_count(k), noun));
                 let entries: Vec<String> = k
                     .entries
                     .iter()
@@ -771,8 +819,22 @@ impl<'a> RenderCtx<'a> {
         let foundations = names(&|n| !internal_deps.contains_key(n) && dependents.contains_key(n));
         let tops = names(&|n| !dependents.contains_key(n) && internal_deps.contains_key(n));
         let csharp = crates.iter().any(|c| c.language == Language::CSharp);
+        let go = crates.iter().any(|c| c.language == Language::Go);
         let mut prose = vec![if rust {
             "An arrow points from a crate to a crate it depends on.".to_string()
+        } else if go {
+            let mut declaring: Vec<String> = Vec::new();
+            if csharp || crates.iter().any(|c| c.is_rust()) {
+                declaring.push("Rust crates".to_string());
+            }
+            if csharp {
+                declaring.push("C# projects".to_string());
+            }
+            declaring.push("Go modules".to_string());
+            format!(
+                "An arrow points from a package to a package it depends on. {} declare their dependencies; for other languages they are read from imports.",
+                join_and(&declaring)
+            )
         } else if csharp {
             "An arrow points from a package to a package it depends on. Rust crates and C# projects declare their dependencies; for other languages they are read from imports.".to_string()
         } else {
@@ -1071,6 +1133,21 @@ impl<'a> RenderCtx<'a> {
                 code.push('}');
                 ("java", code)
             }
+            Language::Go if symbol.kind == SymbolKind::Interface => {
+                let mut code = "type NewType struct{}".to_string();
+                for m in methods.iter().take(MAX_LISTED) {
+                    code.push_str(&format!(
+                        "\n\nfunc (t *NewType) {} {{\n\tpanic(\"not implemented\")\n}}",
+                        m.signature
+                    ));
+                }
+                ("go", code)
+            }
+            // A struct is taken on by embedding it.
+            Language::Go => (
+                "go",
+                format!("type NewType struct {{\n\t{}\n}}", symbol.name),
+            ),
             Language::CSharp => {
                 let mut code = format!("class NewType : {} {{\n", symbol.name);
                 for m in methods
@@ -1342,6 +1419,48 @@ impl<'a> RenderCtx<'a> {
                     && !unit.entries.is_empty()
                 {
                     out.push(format!("dotnet run --project {}", quote(&project.path)));
+                }
+            }
+            Language::Go => {
+                if !unit
+                    .manifests
+                    .first()
+                    .is_some_and(|m| m.path.ends_with("go.mod"))
+                {
+                    return out;
+                }
+                // `-C` runs the command in the module's folder, so that every
+                // command runs from the repository root.
+                let from = if unit.dir.is_empty() {
+                    String::new()
+                } else {
+                    format!(" -C {}", quote(&unit.dir))
+                };
+                out.push(format!("go build{from} ./..."));
+                let tested = repo.facts.files.iter().any(|f| {
+                    f.path.ends_with("_test.go")
+                        && repo
+                            .units
+                            .of_file(&f.path)
+                            .is_some_and(|u| u.name == unit.name)
+                });
+                if tested {
+                    out.push(format!("go test{from} ./..."));
+                }
+                for entry in &unit.entries {
+                    let Some(symbol) = repo.symbols.get(entry.symbol.as_str()) else {
+                        continue;
+                    };
+                    let folder = dir_of(&symbol.file);
+                    let relative = folder
+                        .strip_prefix(unit.dir.as_str())
+                        .unwrap_or(&folder)
+                        .trim_start_matches('/');
+                    out.push(if relative.is_empty() {
+                        format!("go run{from} .")
+                    } else {
+                        format!("go run{from} ./{}", quote(relative))
+                    });
                 }
             }
             Language::Java => {
@@ -1715,6 +1834,7 @@ fn language_name(language: Language) -> &'static str {
         Language::JavaScript => "JavaScript",
         Language::Java => "Java",
         Language::CSharp => "C#",
+        Language::Go => "Go",
         _ => "source",
     }
 }
@@ -1725,6 +1845,7 @@ fn unit_noun(language: Language) -> &'static str {
         Language::Rust => "crate",
         Language::Java => "module",
         Language::CSharp => "project",
+        Language::Go => "module",
         _ => "package",
     }
 }
@@ -1777,6 +1898,9 @@ fn build_role(path: &str) -> &'static str {
         "package.json" => "package manifest",
         "pom.xml" => "Maven build",
         "build.gradle" | "build.gradle.kts" => "Gradle build",
+        "go.mod" => "Go module",
+        "go.work" => "Go workspace",
+        "go.sum" => "Go module checksums",
         "Directory.Packages.props" => "central NuGet package versions",
         "Directory.Build.props" | "Directory.Build.targets" => "shared MSBuild properties",
         "global.json" => ".NET SDK version",
@@ -1840,6 +1964,10 @@ mod tests {
         assert_eq!(build_role("a/b/App.slnx"), "solution");
         assert_eq!(language_name(Language::CSharp), "C#");
         assert_eq!(unit_noun(Language::CSharp), "project");
+        assert_eq!(language_name(Language::Go), "Go");
+        assert_eq!(unit_noun(Language::Go), "module");
+        assert_eq!(build_role("services/api/go.mod"), "Go module");
+        assert_eq!(build_role("go.work"), "Go workspace");
     }
 
     #[test]

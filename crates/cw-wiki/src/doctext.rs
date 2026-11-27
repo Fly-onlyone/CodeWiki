@@ -273,6 +273,7 @@ fn blocks(doc: &str, language: Language) -> Vec<Block> {
                 // The app would draw a diagram, which belongs in a flow note.
                 "mermaid" => "text",
                 "" if rust => "rust",
+                "" if language == Language::Go => "go",
                 w if rust && RUSTDOC_FENCE_WORDS.contains(&w) => "rust",
                 w => w,
             };
@@ -613,6 +614,26 @@ mod tests {
         assert_eq!(
             doc_body("> [!note] Mind #this and [that](https://x.y).", RUST, false),
             "Mind this and that."
+        );
+    }
+
+    #[test]
+    fn an_untagged_block_in_a_go_comment_is_go() {
+        assert_eq!(
+            doc_body(
+                "Runs it.
+
+```
+run()
+```",
+                Language::Go,
+                false
+            ),
+            "Runs it.
+
+```go
+run()
+```"
         );
     }
 

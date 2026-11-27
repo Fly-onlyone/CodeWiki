@@ -9,6 +9,7 @@ use std::path::Path;
 
 use cw_core::{EdgeKind, Result, Symbol, SymbolKind, VAULT_DIR, Visibility};
 use cw_index::Index;
+use cw_parse::GENERATED_ATTR;
 use cw_vault::lifecycle::{self, NoteState};
 use cw_vault::{Gone, Note, VaultMeta};
 use serde::{Deserialize, Serialize};
@@ -77,6 +78,37 @@ fn is_test_symbol(symbol: &Symbol) -> bool {
             .any(|s| matches!(s, "tests" | "benches" | "examples"))
         || symbol.file.ends_with("build.rs")
         || (symbol.file.ends_with(".cs") && is_test_file(&symbol.file))
+        || symbol.file.ends_with("_test.go")
+}
+
+/// The functions the Go runtime calls: `main`, and each `init`.
+fn is_go_entry_point(symbol: &Symbol) -> bool {
+    symbol.file.ends_with(".go")
+        && symbol.kind == SymbolKind::Function
+        && matches!(symbol.name.as_str(), "main" | "init")
+}
+
+/// An exported Go name outside `package main` and outside an `internal`
+/// folder is the package's API, which code outside the repository may use.
+fn is_go_api(symbol: &Symbol, by_name: &HashMap<&str, &Symbol>) -> bool {
+    if !symbol.file.ends_with(".go")
+        || symbol.visibility != Visibility::Public
+        || symbol.file.split('/').any(|d| d == "internal")
+    {
+        return false;
+    }
+    let mut current = symbol;
+    while let Some(parent) = current
+        .parent
+        .as_deref()
+        .and_then(|p| by_name.get(p).copied())
+    {
+        if parent.kind == SymbolKind::Module {
+            return parent.signature != "package main";
+        }
+        current = parent;
+    }
+    false
 }
 
 /// A C# program's `Main`, which the runtime calls.
@@ -134,6 +166,10 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
             || is_test_symbol(symbol)
             || (symbol.kind == SymbolKind::Function && symbol.name == "main")
             || is_csharp_main(symbol)
+            || is_go_entry_point(symbol)
+            // Generated code is nobody's to delete.
+            || symbol.attrs.iter().any(|a| a == GENERATED_ATTR)
+            || is_go_api(symbol, &by_name)
         {
             continue;
         }
@@ -175,7 +211,7 @@ pub fn dead_code(index: &Index) -> Result<Vec<DeadSymbol>> {
                 ),
             )
         } else if cw_core::Language::from_path(&symbol.file) != cw_core::Language::Rust {
-            // Python, TypeScript, JavaScript, Java and C# reach code through
+            // Python, TypeScript, JavaScript, Java, C# and Go reach code through
             // reflection, decorators, frameworks and duck typing that a
             // static index cannot follow.
             (
@@ -447,6 +483,26 @@ const WIDE_API: usize = 30;
 /// Counts top-level commas of the first parenthesised group, so generic
 /// arguments and nested tuples do not inflate it.
 fn parameter_count(signature: &str) -> usize {
+    // A Go method names its receiver in a group of its own, before its name,
+    // and a channel direction is no bracket.
+    let go;
+    let mut signature = signature;
+    if let Some(rest) = signature.strip_prefix("func (") {
+        let mut depth = 1usize;
+        let after = rest.char_indices().find_map(|(i, c)| {
+            match c {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                _ => {}
+            }
+            (depth == 0).then_some(i + 1)
+        });
+        signature = after.map_or(signature, |at| &rest[at..]);
+    }
+    if signature.starts_with("func ") || signature.contains("<-") {
+        go = signature.replace("<-", "  ");
+        signature = &go;
+    }
     let Some(open) = signature.find('(') else {
         return 0;
     };
@@ -731,6 +787,14 @@ mod tests {
                 1,
             ),
             ("struct S", 0),
+            ("func (s *Store) Get(key string, n int) (Item, error)", 2),
+            ("func Map[T, U any](xs []T, f func(T) U) []U", 2),
+            ("func New() *Store", 0),
+            (
+                "func Send(out chan<- int, in <-chan string, rest ...int)",
+                3,
+            ),
+            ("Read(key string) (Item, error)", 1),
         ] {
             assert_eq!(parameter_count(signature), expected, "{signature}");
         }

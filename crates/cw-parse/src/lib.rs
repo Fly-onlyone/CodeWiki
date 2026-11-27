@@ -1,6 +1,8 @@
 //! Source parsing and symbol extraction for CodeWiki.
 
 pub mod csharp;
+pub mod go;
+pub mod gomod;
 pub mod java;
 pub mod lang;
 pub mod python;
@@ -11,6 +13,11 @@ pub mod typescript;
 pub mod workspace;
 
 pub use csharp::parse_csharp;
+pub use go::{GENERATED_ATTR, is_exported, package_name, parse_go};
+pub use gomod::{
+    GoMod, GoModules, GoReplace, GoRequire, go_sum_versions, guess_package_name, parse_go_mod,
+    parse_go_work,
+};
 pub use java::parse_java;
 pub use lang::{python_module, resolve_ts_import, ts_module};
 pub use python::{MAIN_GUARD_ATTR, parse_python};

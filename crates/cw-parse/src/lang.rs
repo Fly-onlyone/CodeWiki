@@ -1,4 +1,4 @@
-//! Plumbing shared by the Python, TypeScript, Java and C# extractors: the fact
+//! Plumbing shared by the Python, TypeScript, Java, C# and Go extractors: the fact
 //! sink, text helpers, the file-to-module mapping and import classification.
 //!
 //! Qualified names use `::` between segments in every language, so one
@@ -11,6 +11,7 @@ use std::collections::HashSet;
 use cw_core::{Language, Symbol, SymbolKind, Visibility};
 use tree_sitter::Node;
 
+use crate::gomod::GoModules;
 use crate::rust::{CallSite, ImplFact, ModDecl, ParsedFile, TypeRef, UseImport, ValueRef};
 
 const MAX_SIGNATURE_CHARS: usize = 300;
@@ -848,14 +849,96 @@ fn spread_global_usings(
     out
 }
 
-/// Decide, for every Python, Java and C# import, whether it names repository
-/// code, an outside package, or the language's own library. Imports of the
-/// last kind are dropped. Also records which Python package holds which
-/// module.
-pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String]) {
+/// What the repository's Go build files say, which turns an import path into
+/// a package of the repository or a module outside it.
+#[derive(Debug, Default)]
+pub(crate) struct GoBuild {
+    /// Every `go.mod`: its folder and module path.
+    pub modules: GoModules,
+    /// The module paths the `go.mod` files require or replace.
+    pub requires: Vec<String>,
+}
+
+/// Number of leading path segments that name the module of an import path
+/// outside the repository, when no `go.mod` of the repository says: a host
+/// that gives every project an owner takes three (`github.com/spf13/cobra`),
+/// any other two (`gopkg.in/yaml.v3`, `google.golang.org/grpc`); a major
+/// version element after them (`/v5`) belongs to the module.
+fn go_module_len(segments: &[String]) -> usize {
+    let first = segments.first().map_or("", String::as_str);
+    let base = if matches!(
+        first,
+        "github.com" | "gitlab.com" | "bitbucket.org" | "codeberg.org" | "golang.org" | "git.sr.ht"
+    ) {
+        3
+    } else {
+        2
+    };
+    let base = base.min(segments.len());
+    let versioned = segments.get(base).is_some_and(|s| {
+        s.strip_prefix('v')
+            .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+    });
+    base + usize::from(versioned)
+}
+
+/// A Go import is a whole package, never a name inside one. It names a
+/// package of the repository when its path, made into a qualified name, is
+/// one; the standard library has no dot in its first element and is no
+/// integration; a path under a module of the repository that holds no such
+/// package (generated code, a folder with no Go file) names nothing. What
+/// is left belongs to a module outside the repository: the longest module
+/// path a `go.mod` requires that starts it, else a guess from the host.
+fn link_go(import: UseImport, packages: &HashSet<String>, go: &GoBuild) -> Option<UseImport> {
+    let raw = import.path.join("/");
+    let qualified: Vec<String> = import.path.iter().map(|s| sanitize(s)).collect();
+    if packages.contains(&qualified.join("::")) {
+        return Some(UseImport {
+            path: qualified,
+            ..import
+        });
+    }
+    let inside = |module: &str| raw == module || raw.starts_with(&format!("{module}/"));
+    if go.modules.list.iter().any(|(_, module)| inside(module)) {
+        return None;
+    }
+    if !import.path.first()?.contains('.') {
+        return None;
+    }
+    let len = go
+        .requires
+        .iter()
+        .filter(|module| inside(module))
+        .map(|module| module.split('/').count())
+        .max()
+        .unwrap_or_else(|| go_module_len(&import.path))
+        .min(import.path.len());
+    let package = import.path[..len].join("/");
+    let mut taken = import.path[len..].join("/");
+    if import.glob {
+        if !taken.is_empty() {
+            taken.push('/');
+        }
+        taken.push('*');
+    }
+    Some(UseImport {
+        path: vec![package],
+        alias: String::new(),
+        glob: false,
+        external: taken,
+        ..import
+    })
+}
+
+/// Decide, for every Python, Java, C# and Go import, whether it names
+/// repository code, an outside package, or the language's own library.
+/// Imports of the last kind are dropped. Also records which Python package
+/// holds which module.
+pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String], go: &GoBuild) {
     let python = modules_of(parsed, Language::Python);
     let java = modules_of(parsed, Language::Java);
     let csharp = modules_of(parsed, Language::CSharp);
+    let packages = modules_of(parsed, Language::Go);
     for (file, facts) in parsed.iter_mut() {
         let uses = std::mem::take(&mut facts.uses);
         match Language::from_path(file) {
@@ -895,6 +978,12 @@ pub(crate) fn link_imports(parsed: &mut [(String, ParsedFile)], nuget: &[String]
                 facts.uses = spread_global_usings(uses, &csharp, &home)
                     .into_iter()
                     .filter_map(|u| link_csharp(u, &csharp, nuget))
+                    .collect();
+            }
+            Language::Go => {
+                facts.uses = uses
+                    .into_iter()
+                    .filter_map(|u| link_go(u, &packages, go))
                     .collect();
             }
             _ => facts.uses = uses,

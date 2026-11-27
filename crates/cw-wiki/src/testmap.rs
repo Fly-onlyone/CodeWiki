@@ -11,7 +11,9 @@
 //! tests) and the command that runs it. Rust finds tests with a lexical scan
 //! ([`crate::rustscan`]) because the structural parser leaves unit-test
 //! modules out of the index; C# reads them from the attributes the parser
-//! recorded. A language joins the map by adding one entry to [`LANGUAGES`].
+//! recorded; Go reads them from the names and signatures of the functions of
+//! its `_test.go` files. A language joins the map by adding one entry to
+//! [`LANGUAGES`].
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
@@ -85,6 +87,8 @@ struct Env<'a> {
     projects: BTreeMap<String, String>,
     /// The C# project files that hold tests.
     test_projects: HashSet<String>,
+    /// The folders of the Go modules, by `go.mod`.
+    go_modules: BTreeSet<String>,
 }
 
 impl Env<'_> {
@@ -130,7 +134,7 @@ trait TestLanguage: Sync {
 /// The languages whose tests the map follows. Adding a language is adding an
 /// entry here and the type that fills in [`TestLanguage`]: reachability,
 /// the report, the MCP tool and the app need no change.
-static LANGUAGES: [&dyn TestLanguage; 2] = [&RustTests, &CSharpTests];
+static LANGUAGES: [&dyn TestLanguage; 3] = [&RustTests, &CSharpTests, &GoTests];
 
 fn language_of(language: Language) -> Option<&'static dyn TestLanguage> {
     LANGUAGES.iter().copied().find(|l| l.language() == language)
@@ -365,6 +369,238 @@ impl TestLanguage for CSharpTests {
     }
 }
 
+/// More tests than this in one package, and the package runs whole: a list of
+/// names would be longer than the run it saves.
+const MAX_GO_NAMES: usize = 8;
+
+struct GoTests;
+
+/// What kind of test a Go function is, by the rules of `go test`: the name
+/// starts with `Test`, `Benchmark`, `Fuzz` or `Example` and what follows does
+/// not start with a lower-case letter, and the parameter says which: a
+/// `*testing.T`, `*testing.B` or `*testing.F`, none for an example.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum GoTest {
+    Test,
+    Benchmark,
+    Fuzz,
+    Example,
+}
+
+fn go_test_kind(symbol: &Symbol) -> Option<GoTest> {
+    if symbol.kind != SymbolKind::Function || !symbol.file.ends_with("_test.go") {
+        return None;
+    }
+    let after = |prefix: &str| -> bool {
+        symbol
+            .name
+            .strip_prefix(prefix)
+            .is_some_and(|rest| !rest.starts_with(char::is_lowercase))
+    };
+    let takes = |ty: &str| symbol.signature.contains(&format!("testing.{ty}"));
+    if after("Test") && takes("T") {
+        Some(GoTest::Test)
+    } else if after("Benchmark") && takes("B") {
+        Some(GoTest::Benchmark)
+    } else if after("Fuzz") && takes("F") {
+        Some(GoTest::Fuzz)
+    } else if after("Example") && symbol.signature.trim_end().ends_with("()") {
+        Some(GoTest::Example)
+    } else {
+        None
+    }
+}
+
+impl GoTests {
+    /// The module folder of `dir` and the package path `go test` is given
+    /// from there: `./internal/store`, or `.` for the module's root.
+    fn package(env: &Env, dir: &str) -> (String, String) {
+        let module = env
+            .go_modules
+            .iter()
+            .filter(|m| m.is_empty() || dir == m.as_str() || dir.starts_with(&format!("{m}/")))
+            .max_by_key(|m| m.len())
+            .cloned()
+            .unwrap_or_default();
+        let below = dir
+            .strip_prefix(module.as_str())
+            .unwrap_or(dir)
+            .trim_start_matches('/');
+        let package = if below.is_empty() {
+            ".".to_string()
+        } else {
+            format!("./{below}")
+        };
+        (module, package)
+    }
+}
+
+/// The parts of a command [`GoTests::command`] wrote: what runs the package,
+/// the names `-run` selects and the names `-bench` selects.
+fn split_go_command(command: &str) -> (String, Vec<String>, Vec<String>) {
+    let names = |flag: &str| -> Option<(usize, Vec<String>)> {
+        let at = command.find(&format!(" {flag} '"))?;
+        let rest = &command[at + flag.len() + 3..];
+        let inner = &rest[..rest.find('\'')?];
+        let list = inner.trim_start_matches('^').trim_end_matches('$');
+        let list = list
+            .strip_prefix('(')
+            .and_then(|l| l.strip_suffix(')'))
+            .unwrap_or(list);
+        Some((
+            at,
+            list.split('|')
+                .filter(|n| !n.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ))
+    };
+    let run = names("-run");
+    let bench = names("-bench");
+    let end = [run.as_ref(), bench.as_ref()]
+        .into_iter()
+        .flatten()
+        .map(|(at, _)| *at)
+        .min()
+        .unwrap_or(command.len());
+    (
+        command[..end].to_string(),
+        run.map(|(_, n)| n).unwrap_or_default(),
+        bench.map(|(_, n)| n).unwrap_or_default(),
+    )
+}
+
+impl TestLanguage for GoTests {
+    fn language(&self) -> Language {
+        Language::Go
+    }
+
+    /// A `_test.go` file, or one under a `testdata` folder.
+    fn is_test_file(&self, _: &Env, path: &str) -> bool {
+        is_test_file(path)
+    }
+
+    fn tests(&self, env: &Env, path: &str, _: &str) -> Vec<TestCase> {
+        env.symbols_of(path)
+            .iter()
+            .filter(|s| go_test_kind(s).is_some())
+            .map(|s| TestCase {
+                name: s.name.clone(),
+                line: s.start_line,
+            })
+            .collect()
+    }
+
+    /// `go test <package> -run '^(TestA|TestB)$'`, from the module's folder
+    /// (`-C`) when it is not the repository root. Tests, fuzz targets and
+    /// examples go to `-run`, benchmarks to `-bench`; a file of benchmarks
+    /// alone runs no test (`-run '^$'`).
+    fn command(&self, env: &Env, path: &str, _: TestKind, tests: &[TestCase]) -> String {
+        let dir = path.rsplit_once('/').map_or("", |(d, _)| d);
+        let (module, package) = Self::package(env, dir);
+        let quoted = |p: &str| {
+            if p.contains(' ') {
+                format!("\"{p}\"")
+            } else {
+                p.to_string()
+            }
+        };
+        let mut command = String::from("go test");
+        if !module.is_empty() {
+            command.push_str(&format!(" -C {}", quoted(&module)));
+        }
+        command.push_str(&format!(" {}", quoted(&package)));
+        let kinds: HashMap<&str, GoTest> = env
+            .symbols_of(path)
+            .iter()
+            .filter_map(|s| Some((s.name.as_str(), go_test_kind(s)?)))
+            .collect();
+        let (benches, runs): (Vec<&str>, Vec<&str>) = tests
+            .iter()
+            .map(|t| t.name.as_str())
+            .partition(|n| kinds.get(n) == Some(&GoTest::Benchmark));
+        if runs.is_empty() {
+            command.push_str(" -run '^$'");
+        } else {
+            command.push_str(&format!(" -run '^({})$'", runs.join("|")));
+        }
+        if !benches.is_empty() {
+            command.push_str(&format!(" -bench '^({})$'", benches.join("|")));
+        }
+        command
+    }
+
+    /// One run for each package, over the tests of every impacted file in
+    /// it. Past [`MAX_GO_NAMES`] names the package runs whole.
+    fn commands(&self, files: &[&ImpactedTestFile]) -> Vec<String> {
+        // Package command -> the names `-run` takes, and the ones `-bench` takes.
+        let mut runs: Vec<(String, Vec<String>, Vec<String>)> = Vec::new();
+        for file in files.iter().filter(|f| !f.command.is_empty()) {
+            let (base, run, bench) = split_go_command(&file.command);
+            let at = match runs.iter().position(|(known, _, _)| *known == base) {
+                Some(at) => at,
+                None => {
+                    runs.push((base, Vec::new(), Vec::new()));
+                    runs.len() - 1
+                }
+            };
+            for name in run {
+                if !runs[at].1.contains(&name) {
+                    runs[at].1.push(name);
+                }
+            }
+            for name in bench {
+                if !runs[at].2.contains(&name) {
+                    runs[at].2.push(name);
+                }
+            }
+        }
+        runs.into_iter()
+            .map(|(base, run, bench)| {
+                let mut command = base;
+                // Past the limit: every test of the package, no filter.
+                if run.len() <= MAX_GO_NAMES {
+                    if run.is_empty() {
+                        command.push_str(" -run '^$'");
+                    } else {
+                        command.push_str(&format!(" -run '^({})$'", run.join("|")));
+                    }
+                }
+                if !bench.is_empty() {
+                    command.push_str(&format!(" -bench '^({})$'", bench.join("|")));
+                }
+                command
+            })
+            .collect()
+    }
+}
+
+/// A Go test file builds with every file of its package, without importing
+/// it: the tests of `package store` and of `package store_test` in one folder
+/// both run for a change to any non-test file of that folder. Each such file
+/// gets those test files as dependents. The edges stay out of the index, where
+/// a package of hundreds of files would make tens of thousands of them.
+fn add_go_package_dependents(files: &[String], dependents: &mut HashMap<String, BTreeSet<String>>) {
+    let mut by_folder: BTreeMap<&str, (Vec<&String>, Vec<&String>)> = BTreeMap::new();
+    for file in files.iter().filter(|f| f.ends_with(".go")) {
+        let folder = file.rsplit_once('/').map_or("", |(dir, _)| dir);
+        let entry = by_folder.entry(folder).or_default();
+        if file.ends_with("_test.go") {
+            entry.0.push(file);
+        } else if !is_test_file(file) {
+            entry.1.push(file);
+        }
+    }
+    for (tests, sources) in by_folder.values() {
+        for source in sources {
+            dependents
+                .entry((*source).clone())
+                .or_default()
+                .extend(tests.iter().map(|t| (*t).clone()));
+        }
+    }
+}
+
 /// Everything the analyses below need, gathered once.
 struct Facts {
     test_files: Vec<TestFile>,
@@ -406,12 +642,18 @@ fn gather(root: &Path, index: &Index) -> Result<Facts> {
         })
         .cloned()
         .collect();
+    let go_modules: BTreeSet<String> = files
+        .iter()
+        .filter(|f| f.rsplit('/').next() == Some("go.mod"))
+        .map(|f| f.rsplit_once('/').map_or("", |(d, _)| d).to_string())
+        .collect();
     let env = Env {
         root,
         crates: index.crates()?,
         symbols_by_file,
         projects,
         test_projects,
+        go_modules,
     };
     let mut test_files = Vec::new();
     let mut sources = Vec::new();
@@ -444,10 +686,12 @@ fn gather(root: &Path, index: &Index) -> Result<Facts> {
     }
     test_files.sort_by(|a, b| a.path.cmp(&b.path));
     sources.sort();
+    let mut dependents = dependents_by_file(index)?;
+    add_go_package_dependents(&files, &mut dependents);
     Ok(Facts {
         test_files,
         sources,
-        dependents: dependents_by_file(index)?,
+        dependents,
     })
 }
 

@@ -1,6 +1,7 @@
 //! Walk a repository and produce every fact the index needs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::Path;
 
 use cw_core::{
@@ -10,8 +11,10 @@ use cw_core::{
 use ignore::WalkBuilder;
 
 use crate::csharp::parse_csharp;
+use crate::go::{package_name, parse_go};
+use crate::gomod::parse_go_mod;
 use crate::java::parse_java;
-use crate::lang::{link_imports, nuget_ids, python_module, resolve_ts_import, ts_module};
+use crate::lang::{GoBuild, link_imports, nuget_ids, python_module, resolve_ts_import, ts_module};
 use crate::python::parse_python;
 use crate::resolve::{ExternalUse, Resolver};
 use crate::rust::{ParsedFile, parse_rust};
@@ -59,8 +62,12 @@ pub fn list_files(root: &Path) -> Result<Vec<String>> {
         .filter_entry(|e| {
             let name = e.file_name().to_string_lossy();
             let is_dir = e.file_type().is_some_and(|t| t.is_dir());
+            // Go's `vendor` folder is a copy of the dependencies, which
+            // `go mod vendor` describes in `modules.txt`.
+            let vendored = is_dir && name == "vendor" && e.path().join("modules.txt").is_file();
             !(is_dir
                 && (SKIP_DIRS.contains(&name.as_ref()) || (e.depth() == 1 && name == VAULT_DIR)))
+                && !vendored
         })
         .build();
     for entry in walker {
@@ -125,6 +132,24 @@ fn merge_partial(symbols: &mut [Symbol], part: &Symbol) {
     first.attrs = attrs;
 }
 
+/// The parts of a Go package are one module. The file that stands for it is
+/// the first one that is not a test file, and its documentation is the first
+/// comment any file of the package has above its `package` clause.
+fn merge_package(symbols: &mut [Symbol], at: usize, part: &Symbol) {
+    let first = &mut symbols[at];
+    if first.file.ends_with("_test.go") && !part.file.ends_with("_test.go") {
+        let doc = if part.doc.is_empty() {
+            first.doc.clone()
+        } else {
+            part.doc.clone()
+        };
+        *first = part.clone();
+        first.doc = doc;
+    } else if first.doc.is_empty() {
+        first.doc.clone_from(&part.doc);
+    }
+}
+
 /// Scan the whole repository at `root`.
 pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
     let paths = list_files(root)?;
@@ -150,6 +175,52 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
     let mut parsed: Vec<(String, ParsedFile)> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     let file_set: HashSet<&str> = paths.iter().map(String::as_str).collect();
+
+    // The Go modules of the repository name the packages inside them; the
+    // names the packages give themselves tell what an import is called.
+    let mut go = GoBuild::default();
+    for path in paths
+        .iter()
+        .filter(|p| p.rsplit('/').next() == Some("go.mod"))
+    {
+        let Ok(text) = std::fs::read_to_string(root.join(path)) else {
+            continue;
+        };
+        let parsed_mod = parse_go_mod(&text);
+        if !parsed_mod.module.is_empty() {
+            let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+            go.modules.list.push((dir.to_string(), parsed_mod.module));
+        }
+        go.requires
+            .extend(parsed_mod.requires.into_iter().map(|r| r.path));
+        go.requires
+            .extend(parsed_mod.replaces.into_iter().map(|r| r.old));
+    }
+    go.requires.sort();
+    go.requires.dedup();
+    let mut go_names: HashMap<String, String> = HashMap::new();
+    for path in paths
+        .iter()
+        .filter(|p| p.ends_with(".go") && !p.ends_with("_test.go"))
+    {
+        let dir = path.rsplit_once('/').map_or("", |(dir, _)| dir);
+        if go_names.contains_key(dir) {
+            continue;
+        }
+        // The package clause stands above the first declaration: the top of
+        // the file is enough.
+        let head = std::fs::File::open(root.join(path)).ok().and_then(|file| {
+            let mut head = Vec::new();
+            file.take(16 * 1024).read_to_end(&mut head).ok()?;
+            Some(String::from_utf8_lossy(&head).into_owned())
+        });
+        if let Some(name) = head.as_deref().and_then(package_name) {
+            go_names.insert(dir.to_string(), name.to_string());
+        }
+    }
+    let go_import_name =
+        |import: &str| -> Option<String> { go_names.get(&go.modules.folder_of(import)?).cloned() };
+    let mut go_module_at: HashMap<String, usize> = HashMap::new();
 
     for path in &paths {
         let full = root.join(path);
@@ -196,6 +267,9 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
                 }
                 Language::Java => parse_java(path, &source)?,
                 Language::CSharp => parse_csharp(path, &source)?,
+                Language::Go => {
+                    parse_go(path, &source, &go.modules.package_of(path), &go_import_name)?
+                }
                 _ => continue,
             };
             if file_parsed.has_errors {
@@ -205,9 +279,17 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
                 // Overloads, stubs, the files of one Java package and the
                 // parts of a C# partial type share a name; keep the first.
                 if seen.insert(symbol.qualified.clone()) {
+                    if language == Language::Go && symbol.kind == SymbolKind::Module {
+                        go_module_at.insert(symbol.qualified.clone(), facts.symbols.len());
+                    }
                     facts.symbols.push(symbol.clone());
                 } else if language == Language::CSharp {
                     merge_partial(&mut facts.symbols, symbol);
+                } else if language == Language::Go
+                    && symbol.kind == SymbolKind::Module
+                    && let Some(at) = go_module_at.get(&symbol.qualified)
+                {
+                    merge_package(&mut facts.symbols, *at, symbol);
                 }
             }
             parsed.push((path.clone(), file_parsed));
@@ -257,8 +339,8 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
     }
     nuget.sort();
     nuget.dedup();
-    link_imports(&mut parsed, &nuget);
-    // The first segment of every Python, TypeScript, Java and C# module is a
+    link_imports(&mut parsed, &nuget, &go);
+    // The first segment of every Python, TypeScript, Java, C# and Go module is a
     // root that paths may start at, as crate names are for Rust.
     let mut roots: Vec<&str> = facts.crates.iter().map(|c| c.name.as_str()).collect();
     roots.extend(
@@ -1086,6 +1168,278 @@ public class Other
                 ),
                 ("src/App/Sub/Deep.cs", "Serilog.Sinks", vec!["File.*"]),
             ]
+        );
+    }
+
+    #[test]
+    fn scans_go_modules() {
+        let facts = scan_files(&[
+            (
+                "go.mod",
+                "module example.com/app\n\ngo 1.22\n\nrequire (\n\tgithub.com/spf13/cobra v1.8.0\n\tgolang.org/x/sync v0.7.0\n)\n",
+            ),
+            (
+                "internal/store/doc.go",
+                "// Package store keeps things.\npackage store\n",
+            ),
+            (
+                "internal/store/store.go",
+                "package store\n\nimport (\n\t\"fmt\"\n\t\"example.com/app/internal/words\"\n\t\"golang.org/x/sync/errgroup\"\n\t\"github.com/spf13/cobra\"\n\t\"github.com/unknown/lib/v2/sub\"\n)\n\ntype Reader interface {\n\tRead(key string) string\n}\n\ntype Store struct {\n\ttext.Base\n\titems map[string]string\n}\n\nvar _ Reader = (*Store)(nil)\n\nfunc New() *Store { return &Store{} }\n\nfunc (s *Store) Read(key string) string {\n\tfmt.Println(key)\n\tvar g errgroup.Group\n\t_ = g\n\tcobra.Execute()\n\treturn text.Shout(s.items[key]) + s.pad(key) + helper()\n}\n\nfunc (s *Store) pad(key string) string { return key }\n\nfunc helper() string { return \"\" }\n",
+            ),
+            (
+                "internal/store/store_test.go",
+                "package store\n\nimport \"testing\"\n\nfunc TestRead(t *testing.T) {\n\ts := New()\n\ts.Read(\"a\")\n}\n",
+            ),
+            (
+                "internal/store/api_test.go",
+                "package store_test\n\nimport (\n\t\"testing\"\n\t\"example.com/app/internal/store\"\n)\n\nfunc TestApi(t *testing.T) { _ = store.New() }\n",
+            ),
+            // The package is called `text`, whatever its folder says.
+            (
+                "internal/words/words.go",
+                "package text\n\nimport \"strings\"\n\ntype Base struct{}\n\nfunc Shout(s string) string { return strings.ToUpper(s) }\n",
+            ),
+            (
+                "cmd/app/main.go",
+                "package main\n\nimport (\n\t\"example.com/app/internal/store\"\n\t\"example.com/app/internal/words\"\n\t. \"example.com/app/internal/words\"\n\t_ \"embed\"\n)\n\nfunc main() {\n\ts := store.New()\n\t_ = text.Shout(\"x\")\n\t_ = s\n}\n",
+            ),
+            // A second module of the repository, with its own path.
+            (
+                "tools/gen/go.mod",
+                "module example.com/gen\n\nrequire example.com/app v0.0.0\n",
+            ),
+            (
+                "tools/gen/main.go",
+                "package main\n\nimport \"example.com/app/internal/words\"\n\nfunc main() { text.Shout(\"gen\") }\n",
+            ),
+            // The vendored copy is not the repository's code.
+            ("vendor/modules.txt", "# github.com/spf13/cobra v1.8.0\n"),
+            (
+                "vendor/github.com/spf13/cobra/cobra.go",
+                "package cobra\n\nfunc Execute() {}\n",
+            ),
+        ]);
+        assert!(
+            facts.files_with_errors.is_empty(),
+            "{:?}",
+            facts.files_with_errors
+        );
+        assert!(
+            facts.files.iter().all(|f| !f.path.starts_with("vendor/")),
+            "vendor is skipped"
+        );
+
+        let store = "example_com::app::internal::store";
+        let words = "example_com::app::internal::words";
+        assert_eq!(kind_of(&facts, store), Some(SymbolKind::Module));
+        assert_eq!(
+            kind_of(&facts, "example_com::app::cmd::app"),
+            Some(SymbolKind::Module)
+        );
+        assert_eq!(
+            kind_of(&facts, "example_com::gen"),
+            Some(SymbolKind::Module)
+        );
+        assert_eq!(
+            kind_of(&facts, &format!("{store}::Store")),
+            Some(SymbolKind::Struct)
+        );
+        assert_eq!(
+            kind_of(&facts, &format!("{store}::Store::Read")),
+            Some(SymbolKind::Method)
+        );
+        // The package stands for its non-test file, with the first doc.
+        let package = facts.symbols.iter().find(|s| s.qualified == store).unwrap();
+        assert_eq!(package.file, "internal/store/doc.go");
+        assert_eq!(package.doc, "Package store keeps things.");
+        assert_eq!(
+            facts
+                .symbols
+                .iter()
+                .filter(|s| s.kind == SymbolKind::Module && s.file.ends_with("_test.go"))
+                .count(),
+            1,
+            "only the external test package is a module of its own"
+        );
+        assert_eq!(
+            kind_of(&facts, &format!("{store}_test")),
+            Some(SymbolKind::Module)
+        );
+
+        let edge = |src: &str, dst: &str, kind| edge_of(&facts, src, dst, kind);
+        // Through an import whose package calls itself `text`.
+        assert_eq!(
+            edge(
+                &format!("{store}::Store::Read"),
+                &format!("{words}::Shout"),
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                "example_com::app::cmd::app::main",
+                &format!("{store}::New"),
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // `text.Shout` there: the package is called `text`, its folder `words`.
+        assert_eq!(
+            edge(
+                "example_com::app::cmd::app::main",
+                &format!("{words}::Shout"),
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // The module of another `go.mod` of the repository, by its path.
+        assert_eq!(
+            edge(
+                "example_com::gen::main",
+                &format!("{words}::Shout"),
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // The receiver's own method, a package function.
+        assert_eq!(
+            edge(
+                &format!("{store}::Store::Read"),
+                &format!("{store}::Store::pad"),
+                EdgeKind::Calls
+            ),
+            Some(Confidence::Medium)
+        );
+        assert_eq!(
+            edge(
+                &format!("{store}::Store::Read"),
+                &format!("{store}::helper"),
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // Embedding and the compile-time assertion are the inheritance.
+        assert_eq!(
+            edge(
+                &format!("{store}::Store"),
+                &format!("{words}::Base"),
+                EdgeKind::Implements
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge(
+                &format!("{store}::Store"),
+                &format!("{store}::Reader"),
+                EdgeKind::Implements
+            ),
+            Some(Confidence::High)
+        );
+        // `s.Read` on a variable: the name alone, and a common one at that.
+        assert!(
+            edge(
+                &format!("{store}::TestRead"),
+                &format!("{store}::Store::Read"),
+                EdgeKind::Calls
+            )
+            .is_none()
+        );
+        // Files: an import of a package reaches its file.
+        assert!(
+            edge(
+                "file:cmd/app/main.go",
+                "file:internal/store/doc.go",
+                EdgeKind::Imports
+            )
+            .is_some()
+        );
+
+        // The standard library is no integration; a module is named by the
+        // requirement that holds the import, else by its host.
+        let uses: Vec<(&str, &str, Vec<&str>)> = facts
+            .external_uses
+            .iter()
+            .map(|u| {
+                (
+                    u.file.as_str(),
+                    u.krate.as_str(),
+                    u.names.iter().map(String::as_str).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            uses,
+            vec![
+                ("internal/store/store.go", "github.com/spf13/cobra", vec![]),
+                (
+                    "internal/store/store.go",
+                    "github.com/unknown/lib/v2",
+                    vec!["sub"]
+                ),
+                (
+                    "internal/store/store.go",
+                    "golang.org/x/sync",
+                    vec!["errgroup"]
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_dot_import_opens_a_package_to_bare_names() {
+        let facts = scan_files(&[
+            (
+                "go.mod",
+                "module example.com/app
+",
+            ),
+            (
+                "words/words.go",
+                "package words
+
+func Shout() {}
+",
+            ),
+            (
+                "main.go",
+                "package main
+
+import . \"example.com/app/words\"
+
+func main() { Shout() }
+",
+            ),
+        ]);
+        assert_eq!(
+            edge_of(
+                &facts,
+                "example_com::app::main",
+                "example_com::app::words::Shout",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+    }
+
+    #[test]
+    fn a_go_file_without_a_module_is_named_by_its_folder() {
+        let facts = scan_files(&[
+            (
+                "tools/gen/main.go",
+                "package main\n\nfunc main() { helper() }\n",
+            ),
+            ("tools/gen/helper.go", "package main\n\nfunc helper() {}\n"),
+        ]);
+        assert_eq!(kind_of(&facts, "tools::gen"), Some(SymbolKind::Module));
+        assert_eq!(
+            edge_of(
+                &facts,
+                "tools::gen::main",
+                "tools::gen::helper",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
         );
     }
 

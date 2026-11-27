@@ -9,7 +9,7 @@ use std::path::Path;
 
 use cw_core::{Edge, EdgeKind, Language, Symbol, SymbolKind, Visibility};
 use cw_index::NodeMetrics;
-use cw_parse::RepoFacts;
+use cw_parse::{GENERATED_ATTR, RepoFacts};
 use cw_vault::NoteKind;
 
 use crate::filemap::{self, FileMap};
@@ -233,6 +233,7 @@ impl<'a> Repo<'a> {
             .filter(|s| {
                 s.kind == SymbolKind::Module
                     && Some(s.qualified.as_str()) != root
+                    && !self.is_go_test_package(s)
                     && self
                         .unit_of(&s.qualified)
                         .is_some_and(|u| u.name == unit.name)
@@ -257,6 +258,7 @@ impl<'a> Repo<'a> {
             .filter(|s| {
                 s.kind == SymbolKind::Module
                     && !s.file.contains("__init__.")
+                    && !self.is_go_test_package(s)
                     && self
                         .unit_of(&s.qualified)
                         .is_some_and(|u| u.name == unit.name)
@@ -272,11 +274,21 @@ impl<'a> Repo<'a> {
             .sum()
     }
 
-    /// True for test code, which gets no notes of its own.
+    /// True for a Go package that holds tests alone (an external test
+    /// package, or a folder of `_test.go` files): no part of the code.
+    fn is_go_test_package(&self, module: &Symbol) -> bool {
+        Language::from_path(&module.file) == Language::Go && self.is_test(module)
+    }
+
+    /// True for test code, which gets no notes of its own. Generated Go code
+    /// is kept out the same way: its symbols exist and are called, but a
+    /// note about code nobody writes would rank among those that matter.
     pub fn is_test(&self, symbol: &Symbol) -> bool {
         is_test_path(&symbol.qualified)
             || (Language::from_path(&symbol.file) != Language::Rust
-                && (is_test_file(&symbol.file) || self.units.is_test(&symbol.file)))
+                && (is_test_file(&symbol.file)
+                    || self.units.is_test(&symbol.file)
+                    || symbol.attrs.iter().any(|a| a == GENERATED_ATTR)))
     }
 
     pub fn rank_of(&self, qualified: &str) -> f64 {
@@ -713,6 +725,10 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
             dir: ZONE_PATTERNS.into(),
             title: if symbol.kind == SymbolKind::Class {
                 format!("Extending {} Pattern", symbol.name)
+            } else if symbol.kind == SymbolKind::Struct
+                && Language::from_path(&symbol.file) == Language::Go
+            {
+                format!("Embedding {} Pattern", symbol.name)
             } else {
                 format!("Implementing {} Pattern", symbol.name)
             },

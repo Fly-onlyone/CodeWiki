@@ -447,6 +447,49 @@ fn return_type(signature: &str, language: Language) -> Option<String> {
             }
             rest
         }
+        Language::Go => {
+            // After the parameter list: `func (s *Store) Get[T any](k T) (Item, error)`.
+            // A method of an interface has no `func`; a method of a type has
+            // a receiver in parentheses before its name.
+            let after = |text: &str| -> Option<usize> {
+                let mut depth = 0usize;
+                for (i, c) in text.char_indices() {
+                    match c {
+                        '(' => depth += 1,
+                        ')' => {
+                            depth = depth.checked_sub(1)?;
+                            if depth == 0 {
+                                return Some(i + 1);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                None
+            };
+            let mut rest = signature
+                .strip_prefix("func")
+                .map_or(signature, str::trim_start);
+            if rest.starts_with('(') {
+                rest = rest[after(rest)?..].trim_start();
+            }
+            // The first `(` outside the type parameters opens the parameters.
+            let mut brackets = 0usize;
+            let open = rest.char_indices().find_map(|(i, c)| match c {
+                '[' => {
+                    brackets += 1;
+                    None
+                }
+                ']' => {
+                    brackets = brackets.saturating_sub(1);
+                    None
+                }
+                '(' if brackets == 0 => Some(i),
+                _ => None,
+            })?;
+            let rest = &rest[open..];
+            &rest[after(rest)?..]
+        }
         Language::TypeScript | Language::JavaScript => {
             // After the parameter list: `(x: number): string`.
             let open = signature.find('(')?;
@@ -616,7 +659,12 @@ pub(crate) fn items(ctx: &RenderCtx, parent: &str, walk: &Walk) -> String {
             if text.is_empty() {
                 format!("- {} — {}", label(s), facts(ctx, s))
             } else {
-                format!("- {} — {}", label(s), lower_first(&text))
+                // A Go comment starts with the name it documents: that word
+                // is a name, never a sentence's first word.
+                let named = Language::from_path(&s.file) == Language::Go
+                    && text.split([' ', ',']).next() == Some(s.name.as_str());
+                let text = if named { text } else { lower_first(&text) };
+                format!("- {} — {text}", label(s))
             }
         })
         .collect();
@@ -678,6 +726,25 @@ mod tests {
         assert_eq!(csharp("public void Run()"), None);
         assert_eq!(csharp("public App(Label label)"), None);
         assert_eq!(csharp("T Name()").as_deref(), Some("T"));
+        let go = |signature| return_type(signature, Language::Go);
+        assert_eq!(
+            go("func New(name string) *Store").as_deref(),
+            Some("*Store")
+        );
+        assert_eq!(
+            go("func (s *Store) Get(key string) (Item, error)").as_deref(),
+            Some("(Item, error)")
+        );
+        assert_eq!(
+            go("func Map[T, U any](xs []T, f func(T) U) []U").as_deref(),
+            Some("[]U")
+        );
+        assert_eq!(
+            go("Read(key string) (Item, error)").as_deref(),
+            Some("(Item, error)")
+        );
+        assert_eq!(go("func (s *Set[T]) Add(x T)"), None);
+        assert_eq!(go("func main()"), None);
     }
 
     #[test]

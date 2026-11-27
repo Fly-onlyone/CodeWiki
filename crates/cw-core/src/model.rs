@@ -14,6 +14,7 @@ pub enum Language {
     JavaScript,
     Java,
     CSharp,
+    Go,
     Markdown,
     Toml,
     Json,
@@ -32,6 +33,7 @@ impl Language {
             "js" | "jsx" | "mjs" | "cjs" => Self::JavaScript,
             "java" => Self::Java,
             "cs" => Self::CSharp,
+            "go" => Self::Go,
             "md" | "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -48,6 +50,7 @@ impl Language {
             Self::JavaScript => "javascript",
             Self::Java => "java",
             Self::CSharp => "csharp",
+            Self::Go => "go",
             Self::Markdown => "markdown",
             Self::Toml => "toml",
             Self::Json => "json",
@@ -64,6 +67,7 @@ impl Language {
             "javascript" => Self::JavaScript,
             "java" => Self::Java,
             "csharp" => Self::CSharp,
+            "go" => Self::Go,
             "markdown" => Self::Markdown,
             "toml" => Self::Toml,
             "json" => Self::Json,
@@ -82,6 +86,7 @@ impl Language {
                 | Self::JavaScript
                 | Self::Java
                 | Self::CSharp
+                | Self::Go
         )
     }
 
@@ -105,7 +110,6 @@ impl Language {
         let file = path.rsplit('/').next().unwrap_or(path);
         let (_, ext) = file.rsplit_once('.')?;
         Some(match ext.to_ascii_lowercase().as_str() {
-            "go" => "Go",
             "kt" | "kts" => "Kotlin",
             "c" | "h" => "C",
             "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "ipp" | "inl" => "C++",
@@ -176,9 +180,9 @@ pub enum SymbolKind {
     TypeAlias,
     Macro,
     /// A class in Python, TypeScript, Java or C#; also a Java record and a C#
-    /// record (a C# record struct is a [`SymbolKind::Struct`]).
+    /// record (a C# record struct is a [`SymbolKind::Struct`]). Go has none.
     Class,
-    /// An interface in TypeScript, Java or C#; also a Java annotation type.
+    /// An interface in TypeScript, Java, C# or Go; also a Java annotation type.
     Interface,
 }
 
@@ -395,13 +399,17 @@ mod tests {
         assert_eq!(Language::from_path("src/App/Program.CS"), Language::CSharp);
         assert_eq!(Language::parse(Language::CSharp.as_str()), Language::CSharp);
         assert!(Language::CSharp.has_symbol_support());
+        assert_eq!(Language::from_path("cmd/app/Main.GO"), Language::Go);
+        assert_eq!(Language::parse(Language::Go.as_str()), Language::Go);
+        assert!(Language::Go.has_symbol_support());
         assert!(Language::JavaScript.has_symbol_support());
     }
 
     #[test]
     fn names_the_language_of_a_file_without_a_parser() {
         for (path, name) in [
-            ("main.go", "Go"),
+            ("app.swift", "Swift"),
+            ("lib/tool.rb", "Ruby"),
             ("a/B.KT", "Kotlin"),
             ("lib/x.c", "C"),
             ("include/x.h", "C"),
@@ -430,6 +438,7 @@ mod tests {
             "A.java",
             "src/App/Program.cs",
             "ui/Main.axaml.cs",
+            "cmd/app/main.go",
             "README.md",
             "a.json",
             "a.yaml",

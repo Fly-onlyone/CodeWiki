@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use cw_core::{Error, Language, MANIFEST_DIR, Result};
-use cw_parse::Locked;
 use cw_parse::workspace::{dependency_specs, locked_versions, package_description};
+use cw_parse::{Locked, go_sum_versions, parse_go_mod};
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Repo;
@@ -173,6 +173,9 @@ fn other(unit: &Unit, package: &str) -> Vec<Declared> {
     if unit.language == Language::CSharp {
         return nuget(unit, package);
     }
+    if unit.language == Language::Go {
+        return go(unit, package);
+    }
     let named = unit.declares(package);
     unit.manifests
         .iter()
@@ -200,6 +203,62 @@ fn asked_in(manifest: &Manifest, package: &str) -> Option<(String, Vec<String>)>
         }
         _ => python(&manifest.text, package),
     }
+}
+
+/// What a Go module's `go.mod` asks of the module `package` (an import path
+/// outside the repository, cut to the module that holds it): the version of
+/// its `require` line, marked when the line is `// indirect` or a `replace`
+/// sends the module elsewhere, and the version `go.sum` holds a hash of.
+fn go(unit: &Unit, package: &str) -> Vec<Declared> {
+    let Some(manifest) = unit
+        .manifests
+        .first()
+        .filter(|m| m.path.ends_with("go.mod"))
+    else {
+        return Vec::new();
+    };
+    let go_mod = parse_go_mod(&manifest.text);
+    let Some(require) = go_mod.requires.iter().find(|r| r.path == package) else {
+        return Vec::new();
+    };
+    let mut requirement = require.version.clone();
+    if require.indirect {
+        requirement.push_str(" (indirect)");
+    }
+    let replaced = go_mod.replaces.iter().find(|r| {
+        r.old == package && (r.old_version.is_empty() || r.old_version == require.version)
+    });
+    if let Some(replace) = replaced {
+        requirement.push_str(&format!(
+            ", replaced by {}{}{}",
+            replace.new,
+            if replace.new_version.is_empty() {
+                ""
+            } else {
+                " "
+            },
+            replace.new_version
+        ));
+    }
+    let locked = unit
+        .lock
+        .as_ref()
+        .and_then(|lock| go_sum_versions(&lock.text).remove(package))
+        .map(|versions| {
+            // The version asked for, when go.sum has it; else the newest.
+            versions
+                .iter()
+                .find(|v| **v == require.version)
+                .or_else(|| versions.last())
+                .cloned()
+                .unwrap_or_default()
+        })
+        .unwrap_or_default();
+    vec![Declared {
+        requirement,
+        locked,
+        ..Declared::bare(&manifest.path)
+    }]
 }
 
 /// The NuGet package a C# namespace root names, from the ids a build file
@@ -946,6 +1005,86 @@ mod tests {
             nuget(&unit, "Avalonia")
                 .iter()
                 .all(|d| d.manifest == csproj)
+        );
+    }
+
+    fn go_unit(go_mod: &str, go_sum: Option<&str>) -> Unit {
+        Unit {
+            name: "app".into(),
+            package: "app".into(),
+            slug: "app".into(),
+            dir: String::new(),
+            description: String::new(),
+            deps: Vec::new(),
+            has_lib: false,
+            has_bin: false,
+            language: Language::Go,
+            manifests: vec![Manifest {
+                path: "go.mod".into(),
+                text: go_mod.into(),
+            }],
+            root: None,
+            strip: 0,
+            entries: Vec::new(),
+            scripts: Vec::new(),
+            tests: false,
+            lock: go_sum.map(|text| Manifest {
+                path: "go.sum".into(),
+                text: text.into(),
+            }),
+        }
+    }
+
+    #[test]
+    fn reads_go_requirements_from_the_go_mod_and_the_go_sum() {
+        let unit = go_unit(
+            "module example.com/app\n\nrequire (\n\tgithub.com/spf13/cobra v1.8.0\n\tgolang.org/x/sync v0.7.0 // indirect\n\tgithub.com/google/uuid v1.6.0\n\tgithub.com/local/lib v0.1.0\n)\n\nreplace github.com/google/uuid => github.com/fork/uuid v1.6.1\nreplace github.com/local/lib => ../lib\n",
+            Some(
+                "github.com/spf13/cobra v1.8.0 h1:a=\ngithub.com/spf13/cobra v1.8.0/go.mod h1:b=\ngithub.com/spf13/cobra v1.7.0 h1:c=\ngolang.org/x/sync v0.6.0 h1:d=\n",
+            ),
+        );
+        let asked = |package: &str| -> Vec<(String, String, String)> {
+            go(&unit, package)
+                .into_iter()
+                .map(|d| (d.manifest, d.requirement, d.locked))
+                .collect()
+        };
+        assert_eq!(
+            asked("github.com/spf13/cobra"),
+            [("go.mod".into(), "v1.8.0".into(), "v1.8.0".into())]
+        );
+        // `// indirect` is said; go.sum holds another version than go.mod
+        // asks for, and the newest of those stands.
+        assert_eq!(
+            asked("golang.org/x/sync"),
+            [("go.mod".into(), "v0.7.0 (indirect)".into(), "v0.6.0".into())]
+        );
+        // A replace by another module, and by a folder of this machine.
+        assert_eq!(
+            asked("github.com/google/uuid"),
+            [(
+                "go.mod".into(),
+                "v1.6.0, replaced by github.com/fork/uuid v1.6.1".into(),
+                "".into()
+            )]
+        );
+        assert_eq!(
+            asked("github.com/local/lib"),
+            [(
+                "go.mod".into(),
+                "v0.1.0, replaced by ../lib".into(),
+                "".into()
+            )]
+        );
+        assert!(asked("github.com/other/thing").is_empty());
+        // Without a go.sum nothing is locked.
+        let bare = go_unit("module x\nrequire a.com/b/c v1.0.0\n", None);
+        assert_eq!(go(&bare, "a.com/b/c")[0].locked, "");
+        // A package from outside has no description on a machine without one.
+        let machine = Machine::with_cargo_home(Path::new("."), None);
+        assert_eq!(
+            machine.describe(Language::Go, "github.com/spf13/cobra", None),
+            None
         );
     }
 

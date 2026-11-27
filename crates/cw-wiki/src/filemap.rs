@@ -127,7 +127,7 @@ impl Tally {
         ranked
     }
 
-    /// `C#`, `C# and AXAML`, `Go, SQL, Shell, and 2 other languages`.
+    /// `C#`, `C# and AXAML`, `Lua, Ruby, SQL, and 2 other languages`.
     pub fn language_names(&self) -> String {
         self.names_up_to(MAX_LANGUAGES_NAMED)
     }
@@ -796,16 +796,16 @@ mod tests {
     fn projects_under_a_container_are_units() {
         let map = map(
             &[
-                ("src/A/a1.go", 1),
-                ("src/A/a2.go", 1),
-                ("src/A/a3.go", 1),
-                ("src/B/b1.go", 1),
-                ("src/B/b2.go", 1),
-                ("src/B/b3.go", 1),
-                ("tests/A/t1.go", 1),
-                ("tests/A/t2.go", 1),
-                ("tests/A/t3.go", 1),
-                ("build.go", 1),
+                ("src/A/a1.swift", 1),
+                ("src/A/a2.swift", 1),
+                ("src/A/a3.swift", 1),
+                ("src/B/b1.swift", 1),
+                ("src/B/b2.swift", 1),
+                ("src/B/b3.swift", 1),
+                ("tests/A/t1.swift", 1),
+                ("tests/A/t2.swift", 1),
+                ("tests/A/t3.swift", 1),
+                ("build.swift", 1),
             ],
             false,
         );
@@ -819,7 +819,7 @@ mod tests {
 
     #[test]
     fn a_small_unit_folds_into_the_root_and_a_mapped_repository_needs_three() {
-        let paths = [("src/A/a1.go", 1), ("src/A/a2.go", 1), ("x.go", 1)];
+        let paths = [("src/A/a1.swift", 1), ("src/A/a2.swift", 1), ("x.swift", 1)];
         let map_of = |mapped| map(&paths, mapped);
         let alone = map_of(false);
         assert_eq!(alone.units.len(), 1);
@@ -834,14 +834,14 @@ mod tests {
     fn folders_roll_up_until_they_hold_enough() {
         let map = map(
             &[
-                ("a/x1.go", 1),
-                ("a/x2.go", 1),
-                ("a/b/y.go", 1),
-                ("a/b/c/z.go", 1),
-                ("p/q/1.go", 1),
-                ("p/q/2.go", 1),
-                ("p/q/3.go", 1),
-                ("p/q/r/4.go", 1),
+                ("a/x1.swift", 1),
+                ("a/x2.swift", 1),
+                ("a/b/y.swift", 1),
+                ("a/b/c/z.swift", 1),
+                ("p/q/1.swift", 1),
+                ("p/q/2.swift", 1),
+                ("p/q/3.swift", 1),
+                ("p/q/r/4.swift", 1),
             ],
             false,
         );
@@ -859,7 +859,7 @@ mod tests {
         let mut paths: Vec<(String, u32)> = Vec::new();
         for dir in ["a", "a/b"] {
             for n in 0..3 {
-                paths.push((format!("{dir}/f{n}.go"), 1));
+                paths.push((format!("{dir}/f{n}.swift"), 1));
             }
         }
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, l)| (p.as_str(), *l)).collect();
@@ -879,7 +879,7 @@ mod tests {
         let mut paths: Vec<(String, u32)> = Vec::new();
         for n in 1..=(MAX_FOLDER_NOTES + 2) {
             for f in 0..3 {
-                paths.push((format!("d{n:03}/f{f}.go"), n as u32));
+                paths.push((format!("d{n:03}/f{f}.swift"), n as u32));
             }
         }
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, l)| (p.as_str(), *l)).collect();
@@ -907,12 +907,12 @@ mod tests {
             "src/B/views/models",
         ] {
             for n in 0..3 {
-                paths.push((format!("{dir}/f{n}.go"), 1));
+                paths.push((format!("{dir}/f{n}.swift"), 1));
             }
         }
         for n in 0..3 {
-            paths.push((format!("src/A/x{n}.go"), 1));
-            paths.push((format!("src/B/x{n}.go"), 1));
+            paths.push((format!("src/A/x{n}.swift"), 1));
+            paths.push((format!("src/B/x{n}.swift"), 1));
         }
         let refs: Vec<(&str, u32)> = paths.iter().map(|(p, l)| (p.as_str(), *l)).collect();
         let map = map(&refs, false);
@@ -931,19 +931,24 @@ mod tests {
     #[test]
     fn language_sentences() {
         let two = map(
-            &[("a.go", 1), ("b.go", 1), ("c.axaml", 1), ("d/e.go", 1)],
+            &[
+                ("a.swift", 1),
+                ("b.swift", 1),
+                ("c.axaml", 1),
+                ("d/e.swift", 1),
+            ],
             false,
         );
-        assert_eq!(two.total.language_names(), "Go and AXAML");
+        assert_eq!(two.total.language_names(), "Swift and AXAML");
         assert_eq!(two.total.folders(), 2);
         let home = two.home_summary("ta", "Tail.");
         assert_eq!(
             home,
-            "**ta** is a Go and AXAML codebase of 2 folders and 4 source files, mapped at file level: CodeWiki has no parser for Go and AXAML yet. Tail."
+            "**ta** is a Swift and AXAML codebase of 2 folders and 4 source files, mapped at file level: CodeWiki has no parser for Swift and AXAML yet. Tail."
         );
         let many = map(
             &[
-                ("a.go", 1),
+                ("a.rb", 1),
                 ("b.sql", 1),
                 ("c.sh", 1),
                 ("d.lua", 1),
@@ -953,12 +958,12 @@ mod tests {
         );
         assert_eq!(
             many.total.language_names(),
-            "Go, Lua, SQL, and 2 other languages"
+            "Lua, Ruby, SQL, and 2 other languages"
         );
         // The headline names two, the parser sentence all.
         assert_eq!(
             many.home_summary("x", "T."),
-            "**x** is a Go and Lua codebase of 1 folder and 5 source files, mapped at file level: CodeWiki has no parser for Go, Lua, SQL, Shell, and Zig yet. T."
+            "**x** is a Lua and Ruby codebase of 1 folder and 5 source files, mapped at file level: CodeWiki has no parser for Lua, Ruby, SQL, Shell, and Zig yet. T."
         );
     }
 }

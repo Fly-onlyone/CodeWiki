@@ -4,13 +4,13 @@
 //! A Cargo package is a unit. Code in other languages has no manifest the
 //! scanner understands, so its units are derived here from the layout: a
 //! Python top-level package, a JavaScript or TypeScript package directory, a
-//! Java build module, a C# project. Every unit has the same shape, so
+//! Java build module, a C# project, a Go module. Every unit has the same shape, so
 //! planning and rendering treat them alike.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use cw_core::{EdgeKind, Language, Symbol, SymbolKind};
-use cw_parse::{MAIN_GUARD_ATTR, RepoFacts};
+use cw_parse::{MAIN_GUARD_ATTR, RepoFacts, parse_go_mod, parse_go_work};
 
 /// Directories a bundler writes to; `main` in `package.json` often points
 /// into one while the source sits under `src`.
@@ -29,6 +29,9 @@ const JAVA_MANIFESTS: [&str; 3] = ["pom.xml", "build.gradle", "build.gradle.kts"
 const CSHARP_SHARED: [&str; 2] = ["Directory.Packages.props", "Directory.Build.props"];
 /// The lock file a C# project writes beside itself.
 const CSHARP_LOCK: &str = "packages.lock.json";
+/// The sums of a Go module's dependencies, kept apart from the files a note
+/// describes as the lock file of a C# project is.
+const GO_LOCK: &str = "go.sum";
 /// Attributes that make a C# method a test, under any test framework.
 const CSHARP_TEST_ATTRIBUTES: [&str; 11] = [
     "Fact",
@@ -187,6 +190,7 @@ enum Family {
     Js,
     Java,
     CSharp,
+    Go,
 }
 
 impl Family {
@@ -196,6 +200,7 @@ impl Family {
             Language::TypeScript | Language::JavaScript => Some(Self::Js),
             Language::Java => Some(Self::Java),
             Language::CSharp => Some(Self::CSharp),
+            Language::Go => Some(Self::Go),
             _ => None,
         }
     }
@@ -206,6 +211,7 @@ impl Family {
             Self::Js => "js",
             Self::Java => "java",
             Self::CSharp => "csharp",
+            Self::Go => "go",
         }
     }
 }
@@ -220,6 +226,10 @@ pub fn is_test_file(path: &str) -> bool {
             "tests" | "test" | "__tests__" | "spec" | "e2e" | "testing"
         )
     }) {
+        return true;
+    }
+    // The Go tool ignores `testdata`: what lies there is fixtures of tests.
+    if file.ends_with(".go") && dirs.contains(&"testdata") {
         return true;
     }
     let stem = file.split('.').next().unwrap_or(file);
@@ -397,6 +407,33 @@ fn is_csharp_entry(symbol: &Symbol) -> bool {
         }
         _ => false,
     }
+}
+
+/// True for a Go program's way in: `func main()` of a package called `main`.
+fn is_go_entry(symbol: &Symbol, symbols: &HashMap<&str, &Symbol>) -> bool {
+    symbol.kind == SymbolKind::Function
+        && symbol.name == "main"
+        && !is_test_file(&symbol.file)
+        && symbol
+            .parent
+            .as_deref()
+            .and_then(|parent| symbols.get(parent))
+            .is_some_and(|module| module.signature == "package main")
+}
+
+/// What a Go module is called: the last element of its path, leaving out a
+/// major-version element (`github.com/acme/app/v2` is `app`).
+fn go_module_name(path: &str) -> String {
+    let mut segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
+    if segments.len() > 1
+        && segments.last().is_some_and(|last| {
+            last.strip_prefix('v')
+                .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()))
+        })
+    {
+        segments.pop();
+    }
+    segments.last().copied().unwrap_or("").to_string()
 }
 
 fn parent_dir(path: &str) -> &str {
@@ -617,6 +654,13 @@ pub fn discover(
             .map(str::to_string)
     };
 
+    // The folders of the Go modules, which every `.go` file below belongs to.
+    let go_modules: HashSet<&str> = files
+        .iter()
+        .filter(|p| p.rsplit('/').next() == Some("go.mod"))
+        .map(|p| parent_dir(p))
+        .collect();
+
     let mut groups: BTreeMap<(Family, String), Group> = BTreeMap::new();
     for file in &facts.files {
         let path = file.path.as_str();
@@ -652,6 +696,15 @@ pub fn discover(
                 Some(dir) => (format!("dir:{dir}"), Some(dir)),
                 None => (format!("pkg:{first}"), None),
             },
+            // A module holds every package below its `go.mod`, the `cmd`
+            // folders of its programs among them.
+            Family::Go => match ancestors(parent_dir(path))
+                .into_iter()
+                .find(|d| go_modules.contains(d))
+            {
+                Some(dir) => (format!("dir:{dir}"), Some(dir.to_string())),
+                None => (format!("pkg:{first}"), None),
+            },
         };
         let group = groups.entry((family, key)).or_default();
         group.manifest_dir = manifest_dir;
@@ -662,6 +715,8 @@ pub fn discover(
     let mut used: HashSet<String> = units.list.iter().map(|u| u.name.to_lowercase()).collect();
     let mut used_slugs: HashSet<String> =
         units.list.iter().map(|u| u.slug.to_lowercase()).collect();
+    // The module path of each Go unit, by unit index.
+    let mut go_unit_paths: Vec<(usize, String)> = Vec::new();
     for ((family, key), group) in &groups {
         let members: Vec<&Symbol> = group
             .files
@@ -744,6 +799,28 @@ pub fn discover(
                 }
                 found
             }
+            Family::Go => {
+                let mut found: Vec<String> = group
+                    .manifest_dir
+                    .iter()
+                    .map(|d| join(d, "go.mod"))
+                    .collect();
+                // The workspace file that lists the module, nearest above.
+                if let Some(at) = nearest_with(&files, &dir, &["go.work"])
+                    && !found.is_empty()
+                {
+                    let work = join(at, "go.work");
+                    let listed = read(&work).is_some_and(|text| {
+                        parse_go_work(&text)
+                            .iter()
+                            .any(|used| resolve_relative(at, used).as_deref() == Some(dir.as_str()))
+                    });
+                    if listed {
+                        found.push(work);
+                    }
+                }
+                found
+            }
             Family::Python => nearest_with(&files, &dir, &PYTHON_MANIFESTS)
                 .map(|d| {
                     let mut found: Vec<String> = PYTHON_MANIFESTS
@@ -789,7 +866,16 @@ pub fn discover(
             .first()
             .filter(|m| m.path.ends_with(".csproj"))
             .map(|m| m.path.rsplit('/').next().unwrap_or(&m.path).to_string());
+        let go_path = match family {
+            Family::Go => manifests
+                .first()
+                .map(|m| parse_go_mod(&m.text).module)
+                .unwrap_or_default(),
+            _ => String::new(),
+        };
         let own_name = match family {
+            Family::Go if !go_path.is_empty() => go_module_name(&go_path),
+            Family::Go => prefix.replace("::", "."),
             Family::CSharp => match &project_file {
                 Some(file) => file.strip_suffix(".csproj").unwrap_or(file).to_string(),
                 None => prefix.replace("::", "."),
@@ -808,6 +894,15 @@ pub fn discover(
                 .manifest_dir
                 .as_deref()
                 .map(|d| join(d, CSHARP_LOCK))
+                .filter(|p| files.contains(p.as_str()))
+                .map(|path| Manifest {
+                    text: read(&path).unwrap_or_default(),
+                    path,
+                }),
+            Family::Go => group
+                .manifest_dir
+                .as_deref()
+                .map(|d| join(d, GO_LOCK))
                 .filter(|p| files.contains(p.as_str()))
                 .map(|path| Manifest {
                     text: read(&path).unwrap_or_default(),
@@ -890,6 +985,15 @@ pub fn discover(
                 );
                 entries.sort();
             }
+            Family::Go => {
+                entries.extend(
+                    members
+                        .iter()
+                        .filter(|s| is_go_entry(s, &symbols))
+                        .map(|s| s.qualified.clone()),
+                );
+                entries.sort();
+            }
             Family::Java => {
                 entries.extend(
                     members
@@ -908,7 +1012,7 @@ pub fn discover(
         }
         // A lone `main` is the module's way in; a lone script is still
         // just a script and keeps its own name.
-        if matches!(family, Family::Java | Family::CSharp) && entries.len() == 1 {
+        if matches!(family, Family::Java | Family::CSharp | Family::Go) && entries.len() == 1 {
             declared = 1;
         }
 
@@ -958,6 +1062,9 @@ pub fn discover(
                 .join(" "),
             _ => package_json.description,
         };
+        if *family == Family::Go && !go_path.is_empty() {
+            go_unit_paths.push((index, go_path.clone()));
+        }
         units.list.push(Unit {
             name,
             package,
@@ -1025,7 +1132,56 @@ pub fn discover(
             project_deps.push((index, names));
         }
     }
-    for (index, names) in project_deps {
+    // A Go module depends on the modules of the repository its `go.mod`
+    // requires, or replaces by a path of this machine.
+    let by_path: HashMap<&str, usize> = go_unit_paths
+        .iter()
+        .map(|(i, path)| (path.as_str(), *i))
+        .collect();
+    let by_dir: HashMap<String, usize> = go_unit_paths
+        .iter()
+        .map(|(i, _)| (units.list[*i].dir.clone(), *i))
+        .collect();
+    let mut go_deps: Vec<(usize, Vec<String>)> = Vec::new();
+    for (index, _) in &go_unit_paths {
+        let unit = &units.list[*index];
+        let Some(go_mod) = unit
+            .manifests
+            .first()
+            .filter(|m| m.path.ends_with("go.mod"))
+            .map(|m| parse_go_mod(&m.text))
+        else {
+            continue;
+        };
+        let mut targets: Vec<usize> = go_mod
+            .requires
+            .iter()
+            .filter_map(|r| by_path.get(r.path.as_str()).copied())
+            .collect();
+        for replace in &go_mod.replaces {
+            if let Some(&to) = by_path.get(replace.old.as_str()) {
+                targets.push(to);
+            }
+            if replace.new_version.is_empty()
+                && let Some(dir) = resolve_relative(&unit.dir, &replace.new)
+                && let Some(&to) = by_dir.get(&dir)
+            {
+                targets.push(to);
+            }
+        }
+        let mut names: Vec<String> = Vec::new();
+        for to in targets {
+            let name = units.list[to].name.clone();
+            if to != *index && !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        if !names.is_empty() {
+            go_deps.push((*index, names));
+        }
+    }
+    for (index, names) in project_deps.into_iter().chain(go_deps) {
+        referencing.insert(index);
         units.list[index].deps = names;
     }
 
@@ -1201,7 +1357,7 @@ mod tests {
         assert_eq!(resolve_relative("a", "../../b"), None);
     }
 
-    fn csharp_discovery(files: &[(&str, &str)]) -> Units {
+    fn discovery(files: &[(&str, &str)]) -> Units {
         let dir = tempfile::tempdir().unwrap();
         for (rel, text) in files {
             let path = dir.path().join(rel);
@@ -1217,7 +1373,7 @@ mod tests {
 
     #[test]
     fn a_csharp_project_is_a_unit() {
-        let units = csharp_discovery(&[
+        let units = discovery(&[
             (
                 "Directory.Packages.props",
                 "<Project><ItemGroup><PackageVersion Include=\"Serilog\" Version=\"4.2.0\" /></ItemGroup></Project>",
@@ -1314,7 +1470,7 @@ mod tests {
 
     #[test]
     fn csharp_files_without_a_project_are_grouped_by_namespace() {
-        let units = csharp_discovery(&[
+        let units = discovery(&[
             (
                 "a/One.cs",
                 "namespace Acme.Util;\n\npublic class One { void Go() { } }\n",
@@ -1331,7 +1487,7 @@ mod tests {
 
     #[test]
     fn a_project_that_names_no_reference_depends_on_what_it_imports() {
-        let units = csharp_discovery(&[
+        let units = discovery(&[
             ("src/Core/Core.csproj", "<Project />"),
             (
                 "src/Core/Engine.cs",
@@ -1344,5 +1500,235 @@ mod tests {
             ),
         ]);
         assert_eq!(units.by_name("app").unwrap().deps, ["core"]);
+    }
+
+    #[test]
+    fn recognises_go_test_files() {
+        for path in [
+            "internal/store/store_test.go",
+            "store_test.go",
+            "internal/store/testdata/fixture.go",
+        ] {
+            assert!(is_test_file(path), "{path}");
+        }
+        for path in [
+            "internal/store/store.go",
+            "internal/store/testing_helpers.go",
+            "internal/contest.go",
+        ] {
+            assert!(!is_test_file(path), "{path}");
+        }
+        // `testdata` is the Go tool's, no other language's.
+        assert!(!is_test_file("data/testdata/fixture.py"));
+    }
+
+    #[test]
+    fn a_go_module_is_a_unit() {
+        let units = discovery(&[
+            (
+                "go.mod",
+                "module github.com/acme/app/v2
+
+go 1.22
+
+require github.com/acme/shared v1.0.0
+require github.com/spf13/cobra v1.8.0
+",
+            ),
+            (
+                "go.sum",
+                "github.com/spf13/cobra v1.8.0 h1:x=
+",
+            ),
+            (
+                "go.work",
+                "go 1.22
+use (
+	.
+	./shared
+)
+",
+            ),
+            (
+                "cmd/app/main.go",
+                "package main
+
+import \"github.com/acme/app/v2/internal/store\"
+
+func main() { store.New() }
+",
+            ),
+            (
+                "cmd/worker/main.go",
+                "package main
+
+func main() {}
+
+func helper() {}
+",
+            ),
+            (
+                "cmd/worker/main_test.go",
+                "package main
+
+func main2() {}
+",
+            ),
+            (
+                "internal/store/store.go",
+                "package store
+
+func New() int { return 1 }
+
+func main() {}
+",
+            ),
+            (
+                "internal/store/store_test.go",
+                "package store
+
+func TestNew() {}
+",
+            ),
+            (
+                "internal/store/testdata/fixture.go",
+                "package fixture
+
+func Fixture() {}
+",
+            ),
+            (
+                "shared/go.mod",
+                "module github.com/acme/shared
+",
+            ),
+            (
+                "shared/shared.go",
+                "package shared
+
+func Shared() {}
+",
+            ),
+            (
+                "tools/gen/go.mod",
+                "module example.com/gen
+
+require github.com/acme/app/v2 v2.0.0
+
+replace github.com/acme/app/v2 => ../..
+",
+            ),
+            (
+                "tools/gen/main.go",
+                "package main
+
+func main() {}
+",
+            ),
+            (
+                "other/go.mod",
+                "module example.com/other
+",
+            ),
+            (
+                "other/other.go",
+                "package other
+
+import \"github.com/acme/shared\"
+
+func Other() { shared.Shared() }
+",
+            ),
+        ]);
+        let names: Vec<&str> = units.list.iter().map(|u| u.name.as_str()).collect();
+        assert_eq!(names, ["app", "other", "shared", "gen"]);
+
+        let app = units.by_name("app").unwrap();
+        // Named from the module path, without its major version.
+        assert_eq!(app.package, "app");
+        assert_eq!(app.language, Language::Go);
+        assert_eq!(app.dir, "");
+        let manifests: Vec<&str> = app.manifests.iter().map(|m| m.path.as_str()).collect();
+        assert_eq!(manifests, ["go.mod", "go.work"]);
+        assert_eq!(app.lock.as_ref().unwrap().path, "go.sum");
+        assert_eq!(app.description, "");
+        // The `cmd` folders belong to the module's unit.
+        assert!(
+            units
+                .of_file("cmd/app/main.go")
+                .is_some_and(|u| u.name == "app")
+        );
+        assert!(
+            units
+                .of_file("internal/store/store.go")
+                .is_some_and(|u| u.name == "app")
+        );
+        // No `.go` file at the module's root: no package stands for the module.
+        assert_eq!(app.root, None);
+        assert_eq!(app.strip, 4);
+
+        // Two programs, neither one the module's own way in; a `main` that
+        // is not in `package main`, and one in a test file, start nothing.
+        let entries: Vec<(&str, bool)> = app
+            .entries
+            .iter()
+            .map(|e| (e.symbol.as_str(), e.declared))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("github_com::acme::app::v2::cmd::app::main", false),
+                ("github_com::acme::app::v2::cmd::worker::main", false),
+            ]
+        );
+        assert!(app.has_bin);
+        let generator = units.by_name("gen").unwrap();
+        assert_eq!(generator.entries.len(), 1);
+        assert!(generator.entries[0].declared);
+        assert!(units.by_name("shared").unwrap().entries.is_empty());
+        // The workspace file is a build file of the modules it lists, and of
+        // no other.
+        let shared: Vec<&str> = units
+            .by_name("shared")
+            .unwrap()
+            .manifests
+            .iter()
+            .map(|m| m.path.as_str())
+            .collect();
+        assert_eq!(shared, ["shared/go.mod", "go.work"]);
+        assert_eq!(generator.manifests.len(), 1);
+
+        // `require` and a `replace` by a folder name another module of the
+        // repository; a module that names none is read from its imports.
+        assert_eq!(app.deps, ["shared"]);
+        assert_eq!(generator.deps, ["app"]);
+        assert_eq!(units.by_name("other").unwrap().deps, ["shared"]);
+
+        // The fixtures of the Go tool are test code.
+        assert!(is_test_file("internal/store/testdata/fixture.go"));
+    }
+
+    #[test]
+    fn go_files_without_a_module_are_grouped_by_their_top_folder() {
+        let units = discovery(&[
+            (
+                "tools/gen/main.go",
+                "package main
+
+func main() {}
+",
+            ),
+            (
+                "tools/gen/util.go",
+                "package main
+
+func util() {}
+",
+            ),
+        ]);
+        assert_eq!(units.list.len(), 1);
+        assert_eq!(units.list[0].package, "tools.gen");
+        assert!(units.list[0].manifests.is_empty());
+        assert_eq!(units.list[0].entries.len(), 1);
     }
 }

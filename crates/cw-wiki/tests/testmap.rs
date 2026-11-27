@@ -342,3 +342,225 @@ fn lists_the_csharp_tests_a_change_can_break() {
         ["dotnet test tests/Mtp.Tests/Mtp.Tests.csproj"]
     );
 }
+
+/// A Go module with a package that has an in-package test file and an external
+/// test package, a package that imports it, one with ten tests, one with
+/// none, and a second module in a folder of its own.
+fn go_fixture() -> (tempfile::TempDir, Index) {
+    let dir = tempfile::tempdir().unwrap();
+    let r = dir.path();
+    write(r, "go.mod", "module example.com/app\n\ngo 1.22\n");
+    write(
+        r,
+        "store/store.go",
+        "package store\n\ntype Store struct{ items map[string]string }\n\nfunc New() *Store { return &Store{items: map[string]string{}} }\n\nfunc (s *Store) Get(key string) string { return s.items[key] }\n",
+    );
+    write(
+        r,
+        "store/extra.go",
+        "package store\n\nfunc Extra() int { return 1 }\n",
+    );
+    write(
+        r,
+        "store/store_test.go",
+        "package store\n\nimport \"testing\"\n\nfunc TestMain(m *testing.M) { m.Run() }\n\nfunc TestNew(t *testing.T) { New() }\n\nfunc TestGet(t *testing.T) { New().Get(\"a\") }\n\nfunc testHelper(t *testing.T) {}\n\nfunc Testimony(t *testing.T) {}\n\nfunc BenchmarkNew(b *testing.B) { New() }\n\nfunc ExampleNew() { New() }\n\nfunc FuzzGet(f *testing.F) { New() }\n",
+    );
+    write(
+        r,
+        "store/cache_test.go",
+        "package store_test\n\nimport (\n\t\"testing\"\n\n\t\"example.com/app/store\"\n)\n\nfunc TestCache(t *testing.T) { store.New() }\n",
+    );
+    write(
+        r,
+        "words/words.go",
+        "package words\n\nimport \"example.com/app/store\"\n\nfunc Shout() { store.New() }\n",
+    );
+    write(
+        r,
+        "words/words_test.go",
+        "package words\n\nimport \"testing\"\n\nfunc TestShout(t *testing.T) { Shout() }\n",
+    );
+    write(
+        r,
+        "lonely/lonely.go",
+        "package lonely\n\nfunc Nobody() {}\n",
+    );
+    write(r, "many/many.go", "package many\n\nfunc Many() {}\n");
+    let mut many = String::from("package many\n\nimport \"testing\"\n");
+    for n in 0..10 {
+        many.push_str(&format!("\nfunc TestMany{n}(t *testing.T) {{ Many() }}\n"));
+    }
+    write(r, "many/many_test.go", &many);
+    write(r, "tools/gen/go.mod", "module example.com/gen\n");
+    write(r, "tools/gen/gen.go", "package gen\n\nfunc Gen() {}\n");
+    write(
+        r,
+        "tools/gen/gen_test.go",
+        "package gen\n\nimport \"testing\"\n\nfunc TestGen(t *testing.T) { Gen() }\n\nfunc BenchmarkGen(b *testing.B) { Gen() }\n",
+    );
+    write(
+        r,
+        "tools/gen/bench_test.go",
+        "package gen\n\nimport \"testing\"\n\nfunc BenchmarkOnly(b *testing.B) { Gen() }\n",
+    );
+    let mut index = Index::open_in_memory().unwrap();
+    support::no_model_server();
+    service::reindex(r, &mut index).unwrap();
+    (dir, index)
+}
+
+#[test]
+fn maps_go_tests_and_the_command_that_runs_them() {
+    let (dir, index) = go_fixture();
+    let map = testmap::test_map(dir.path(), &index).unwrap();
+
+    let found: Vec<(&str, TestKind, Vec<&str>)> = map
+        .test_files
+        .iter()
+        .map(|t| {
+            (
+                t.path.as_str(),
+                t.kind,
+                t.tests.iter().map(|c| c.name.as_str()).collect(),
+            )
+        })
+        .collect();
+    // `TestMain`, a lower-case helper and `Testimony` are no tests; benchmarks,
+    // fuzz targets and examples are.
+    let many: Vec<String> = (0..10).map(|n| format!("TestMany{n}")).collect();
+    assert_eq!(found.len(), 6);
+    assert_eq!(
+        found[0],
+        (
+            "many/many_test.go",
+            TestKind::Integration,
+            many.iter().map(String::as_str).collect()
+        )
+    );
+    assert_eq!(
+        found[1],
+        (
+            "store/cache_test.go",
+            TestKind::Integration,
+            vec!["TestCache"]
+        )
+    );
+    assert_eq!(
+        found[2],
+        (
+            "store/store_test.go",
+            TestKind::Integration,
+            vec![
+                "TestNew",
+                "TestGet",
+                "BenchmarkNew",
+                "ExampleNew",
+                "FuzzGet"
+            ]
+        )
+    );
+    let command = |path: &str| {
+        map.test_files
+            .iter()
+            .find(|t| t.path == path)
+            .map(|t| t.command.as_str())
+            .unwrap()
+    };
+    assert_eq!(
+        command("store/store_test.go"),
+        "go test ./store -run '^(TestNew|TestGet|ExampleNew|FuzzGet)$' -bench '^(BenchmarkNew)$'"
+    );
+    assert_eq!(
+        command("store/cache_test.go"),
+        "go test ./store -run '^(TestCache)$'"
+    );
+    // A module below the root runs from its own folder.
+    assert_eq!(
+        command("tools/gen/gen_test.go"),
+        "go test -C tools/gen . -run '^(TestGen)$' -bench '^(BenchmarkGen)$'"
+    );
+    // A file of benchmarks alone runs no test.
+    assert_eq!(
+        command("tools/gen/bench_test.go"),
+        "go test -C tools/gen . -run '^$' -bench '^(BenchmarkOnly)$'"
+    );
+
+    // Test files are no source files; a package's tests reach every file of it.
+    let paths: Vec<&str> = map.files.iter().map(|f| f.path.as_str()).collect();
+    assert_eq!(
+        paths,
+        [
+            "lonely/lonely.go",
+            "many/many.go",
+            "store/extra.go",
+            "store/store.go",
+            "tools/gen/gen.go",
+            "words/words.go"
+        ]
+    );
+    let extra = map
+        .files
+        .iter()
+        .find(|f| f.path == "store/extra.go")
+        .unwrap();
+    assert_eq!(extra.direct, ["store/cache_test.go", "store/store_test.go"]);
+    let store = map
+        .files
+        .iter()
+        .find(|f| f.path == "store/store.go")
+        .unwrap();
+    assert_eq!(store.indirect, ["words/words_test.go"]);
+    assert_eq!(map.untested, ["lonely/lonely.go"]);
+}
+
+#[test]
+fn lists_the_go_tests_a_change_can_break() {
+    let (dir, index) = go_fixture();
+    let changed = ["store\\store.go".to_string()];
+    let impact = testmap::impacted_tests(dir.path(), &index, &changed).unwrap();
+
+    assert_eq!(impact.changed, ["store/store.go"]);
+    let rows: Vec<(&str, u32)> = impact
+        .test_files
+        .iter()
+        .map(|t| (t.path.as_str(), t.distance))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            ("store/cache_test.go", 1),
+            ("store/store_test.go", 1),
+            ("words/words_test.go", 2),
+        ],
+        "nearest first"
+    );
+    // One run for each package, over the tests of every file of it.
+    assert_eq!(
+        impact.commands,
+        [
+            "go test ./store -run '^(TestCache|TestNew|TestGet|ExampleNew|FuzzGet)$' -bench '^(BenchmarkNew)$'",
+            "go test ./words -run '^(TestShout)$'",
+        ]
+    );
+    assert!(impact.untested_changes.is_empty());
+
+    // Many tests in one package: the package runs whole.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["many/many.go".to_string()]).unwrap();
+    assert_eq!(impact.tests_total, 10);
+    assert_eq!(impact.commands, ["go test ./many"]);
+
+    // The module below the root, and the benchmarks of two files folded.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["tools/gen/gen.go".to_string()]).unwrap();
+    assert_eq!(
+        impact.commands,
+        ["go test -C tools/gen . -run '^(TestGen)$' -bench '^(BenchmarkOnly|BenchmarkGen)$'"]
+    );
+
+    // A file no test reaches.
+    let impact =
+        testmap::impacted_tests(dir.path(), &index, &["lonely/lonely.go".to_string()]).unwrap();
+    assert!(impact.test_files.is_empty() && impact.commands.is_empty());
+    assert_eq!(impact.untested_changes, ["lonely/lonely.go"]);
+}

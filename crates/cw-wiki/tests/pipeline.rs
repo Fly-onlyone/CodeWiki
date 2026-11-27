@@ -2239,32 +2239,32 @@ fn lines_of(n: usize) -> String {
     (1..=n).map(|i| format!("// line {i}\n")).collect()
 }
 
-/// A Go repository with an AXAML front, laid out like a .NET solution.
-fn go_axaml_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+/// A Swift repository with an AXAML front, laid out like a .NET solution.
+fn swift_axaml_repo() -> (tempfile::TempDir, std::path::PathBuf) {
     named_repo(
         "tradingagent",
         &[
             ("TradingAgent.slnx", "<Solution />\n"),
             ("README.md", "# Trading agent\n"),
-            ("src/App/Program.go", &lines_of(12)),
-            ("src/App/ViewModels/MainVm.go", &lines_of(7)),
+            ("src/App/Program.swift", &lines_of(12)),
+            ("src/App/ViewModels/MainVm.swift", &lines_of(7)),
             ("src/App/Views/Main.axaml", &lines_of(30)),
-            ("src/App/Views/Main.axaml.go", &lines_of(9)),
+            ("src/App/Views/Main.axaml.swift", &lines_of(9)),
             ("src/App/Views/Settings.axaml", &lines_of(21)),
-            ("src/Core/Engine.go", &lines_of(40)),
-            ("src/Core/Models/Order.go", &lines_of(15)),
-            ("src/Core/Models/Trade.go", &lines_of(11)),
-            ("src/Core/Models/Fill.go", &lines_of(5)),
-            ("tests/Core.Tests/EngineTests.go", &lines_of(20)),
-            ("tests/Core.Tests/OrderTests.go", &lines_of(10)),
-            ("tests/Core.Tests/TradeTests.go", &lines_of(8)),
+            ("src/Core/Engine.swift", &lines_of(40)),
+            ("src/Core/Models/Order.swift", &lines_of(15)),
+            ("src/Core/Models/Trade.swift", &lines_of(11)),
+            ("src/Core/Models/Fill.swift", &lines_of(5)),
+            ("tests/Core.Tests/EngineTests.swift", &lines_of(20)),
+            ("tests/Core.Tests/OrderTests.swift", &lines_of(10)),
+            ("tests/Core.Tests/TradeTests.swift", &lines_of(8)),
         ],
     )
 }
 
 #[test]
-fn a_go_axaml_repository_is_mapped_at_file_level() {
-    let (_dir, root) = go_axaml_repo();
+fn a_swift_axaml_repository_is_mapped_at_file_level() {
+    let (_dir, root) = swift_axaml_repo();
     run_settled(&root);
     assert_notes(
         &root,
@@ -2296,7 +2296,7 @@ fn a_go_axaml_repository_is_mapped_at_file_level() {
     let home = read(&vault, "_HOME.md");
     assert!(
         home.contains(
-            "**tradingagent** is a Go and AXAML codebase of 6 folders and 12 source files, mapped at file level: CodeWiki has no parser for Go and AXAML yet."
+            "**tradingagent** is a Swift and AXAML codebase of 6 folders and 12 source files, mapped at file level: CodeWiki has no parser for Swift and AXAML yet."
         ),
         "{home}"
     );
@@ -2306,7 +2306,7 @@ fn a_go_axaml_repository_is_mapped_at_file_level() {
     let views = read(&vault, "01-Core/app/views/Views Folder.md");
     assert!(
         views.contains("- `Main.axaml` — AXAML, 30 lines\n")
-            && views.contains("- `Main.axaml.go` — Go, 9 lines\n")
+            && views.contains("- `Main.axaml.swift` — Swift, 9 lines\n")
             && views.contains("- `Settings.axaml` — AXAML, 21 lines\n"),
         "{views}"
     );
@@ -2331,7 +2331,7 @@ fn a_go_axaml_repository_is_mapped_at_file_level() {
         sources,
         [
             "src/App/Views/Main.axaml",
-            "src/App/Views/Main.axaml.go",
+            "src/App/Views/Main.axaml.swift",
             "src/App/Views/Settings.axaml"
         ]
     );
@@ -2340,8 +2340,8 @@ fn a_go_axaml_repository_is_mapped_at_file_level() {
     let app = read(&vault, "01-Core/app/App.md");
     assert!(app.contains("[[Views Folder]]"), "{app}");
     assert!(
-        app.contains("- `Program.go` — Go, 12 lines\n")
-            && app.contains("- `ViewModels/MainVm.go` — Go, 7 lines\n"),
+        app.contains("- `Program.swift` — Swift, 12 lines\n")
+            && app.contains("- `ViewModels/MainVm.swift` — Swift, 7 lines\n"),
         "{app}"
     );
     let core_index = read(&vault, "01-Core/_index.md");
@@ -2356,9 +2356,9 @@ fn a_flat_repository_with_two_unmapped_languages_has_one_unit() {
     let (_dir, root) = named_repo(
         "gateway",
         &[
-            ("main.go", &lines_of(10)),
-            ("server.go", &lines_of(20)),
-            ("handler.go", &lines_of(30)),
+            ("main.rb", &lines_of(10)),
+            ("server.rb", &lines_of(20)),
+            ("handler.rb", &lines_of(30)),
             ("db/schema.sql", &lines_of(4)),
             ("db/seed.sql", &lines_of(5)),
             ("db/views.sql", &lines_of(6)),
@@ -2379,13 +2379,13 @@ fn a_flat_repository_with_two_unmapped_languages_has_one_unit() {
     let home = read(&vault, "_HOME.md");
     assert!(
         home.contains(
-            "is a Go and SQL codebase of 2 folders and 6 source files, mapped at file level: CodeWiki has no parser for Go and SQL yet."
+            "is a Ruby and SQL codebase of 2 folders and 6 source files, mapped at file level: CodeWiki has no parser for Ruby and SQL yet."
         ),
         "{home}"
     );
     let unit = read(&vault, "01-Core/gateway/gateway.md");
     assert!(
-        unit.contains("- `main.go` — Go, 10 lines\n") && unit.contains("[[Db Folder]]"),
+        unit.contains("- `main.rb` — Ruby, 10 lines\n") && unit.contains("[[Db Folder]]"),
         "{unit}"
     );
 }
@@ -2460,8 +2460,8 @@ fn small_folders_roll_up_into_the_note_of_their_parent() {
             ("src/App/Views/Side.axaml", &lines_of(3)),
             ("src/App/Views/Controls/Button.axaml", &lines_of(3)),
             ("src/App/Views/Controls/Deep/Knob.axaml", &lines_of(3)),
-            ("src/App/Program.go", &lines_of(3)),
-            ("src/App/Other/One.go", &lines_of(3)),
+            ("src/App/Program.swift", &lines_of(3)),
+            ("src/App/Other/One.swift", &lines_of(3)),
         ],
     );
     run_settled(&root);
@@ -2481,14 +2481,17 @@ fn small_folders_roll_up_into_the_note_of_their_parent() {
         "{views}"
     );
     let app = read(&vault, "01-Core/app/App.md");
-    assert!(app.contains("- `Other/One.go` — Go, 3 lines\n"), "{app}");
+    assert!(
+        app.contains("- `Other/One.swift` — Swift, 3 lines\n"),
+        "{app}"
+    );
 }
 
 #[test]
 fn an_explained_folder_note_keeps_its_place_when_the_ranking_would_drop_it() {
     let folders = |from: usize, to: usize| -> Vec<(String, String)> {
         (from..=to)
-            .flat_map(|n| ["a", "b", "c"].map(|f| (format!("d{n:03}/{f}.go"), lines_of(n))))
+            .flat_map(|n| ["a", "b", "c"].map(|f| (format!("d{n:03}/{f}.swift"), lines_of(n))))
             .collect()
     };
     let (_dir, root) = named_repo("many", &[]);
@@ -2743,4 +2746,217 @@ fn csharp_notes_of_a_repository_with_a_global_namespace_file_name_it_by_its_fold
     );
     let unit = read(&vault, "01-Core/tool/Tool.md");
     assert!(unit.contains("Runs from `Program.cs`"), "{unit}");
+}
+
+fn go_ledger() -> (tempfile::TempDir, std::path::PathBuf) {
+    named_repo(
+        "ledger",
+        &[
+            (
+                "go.mod",
+                "module github.com/acme/ledger\n\ngo 1.22\n\nrequire (\n\tgithub.com/spf13/cobra v1.8.0\n\tgolang.org/x/sync v0.7.0 // indirect\n)\n",
+            ),
+            (
+                "go.sum",
+                "github.com/spf13/cobra v1.8.0 h1:abc=\ngithub.com/spf13/cobra v1.8.0/go.mod h1:def=\n",
+            ),
+            (
+                "ledger.go",
+                "// Package ledger keeps double-entry books.\npackage ledger\n\nimport \"github.com/acme/ledger/internal/accounts\"\n\n// Open starts a book with one account.\nfunc Open(name string) *accounts.Account {\n\treturn accounts.New(name)\n}\n",
+            ),
+            (
+                "internal/accounts/accounts.go",
+                "// Package accounts holds the places money is kept.\npackage accounts\n\nimport (\n\t\"fmt\"\n\n\t\"github.com/spf13/cobra\"\n)\n\n// Named is anything with a display name.\ntype Named interface {\n\t// Name is the name shown to people.\n\tName() string\n}\n\n// Account is a place where money is kept.\ntype Account struct {\n\tname string\n}\n\nvar _ Named = (*Account)(nil)\n\n// New makes an account.\nfunc New(name string) *Account { return &Account{name: name} }\n\n// Name returns the account's name.\nfunc (a *Account) Name() string { return a.name }\n\n// Describe says what the account is.\nfunc (a *Account) Describe() string {\n\tcmd := &cobra.Command{Use: a.Name()}\n\treturn fmt.Sprintf(\"%s %s\", cmd.Use, a.Name())\n}\n",
+            ),
+            (
+                "internal/accounts/vault.go",
+                "package accounts\n\nimport \"github.com/spf13/cobra\"\n\n// Vault is a locked account.\ntype Vault struct{ Account }\n\nvar _ Named = Vault{}\n\n// Open unlocks the vault.\nfunc (v *Vault) Open() string {\n\t_ = cobra.Command{}\n\treturn v.Describe()\n}\n",
+            ),
+            (
+                "internal/accounts/accounts_test.go",
+                "package accounts\n\nimport \"testing\"\n\nfunc TestDescribe(t *testing.T) {\n\tif New(\"cash\").Describe() == \"\" {\n\t\tt.Fatal(\"empty\")\n\t}\n}\n\nfunc BenchmarkNew(b *testing.B) { New(\"x\") }\n",
+            ),
+            (
+                "internal/accounts/external_test.go",
+                "package accounts_test\n\nimport (\n\t\"testing\"\n\n\t\"github.com/acme/ledger/internal/accounts\"\n)\n\nfunc TestName(t *testing.T) { _ = accounts.New(\"a\").Name() }\n",
+            ),
+            (
+                "internal/pb/ledger.pb.go",
+                "// Code generated by protoc-gen-go. DO NOT EDIT.\n\npackage pb\n\n// Entry is a ledger line.\ntype Entry struct{ Amount int }\n\nfunc (e *Entry) Reset() {}\n",
+            ),
+            (
+                "cmd/ledger/main.go",
+                "package main\n\nimport (\n\t\"fmt\"\n\n\t\"github.com/acme/ledger\"\n)\n\nfunc main() {\n\taccount := ledger.Open(\"cash\")\n\tfmt.Println(account.Describe())\n}\n",
+            ),
+            (
+                "cmd/seed/main.go",
+                "package main\n\nimport \"github.com/acme/ledger/internal/accounts\"\n\nfunc main() {\n\taccounts.New(\"seed\")\n}\n",
+            ),
+            ("vendor/modules.txt", "# github.com/spf13/cobra v1.8.0\n"),
+            (
+                "vendor/github.com/spf13/cobra/cobra.go",
+                "package cobra\n\ntype Command struct{ Use string }\n",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_go_module_gets_a_full_vault() {
+    let (_dir, root) = go_ledger();
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "00-Architecture/Ledger Startup Flow.md",
+            "01-Core/ledger/ledger.md",
+            "01-Core/ledger/internal/Account.md",
+            "01-Core/ledger/internal/Accounts Module.md",
+            "01-Core/ledger/internal/Named.md",
+            "03-Integrations/github.com spf13 cobra.md",
+            "04-Patterns/Implementing Named Pattern.md",
+            "05-Operations/Build and Test.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("**ledger** is a Go codebase of 1 module and 10 source files."),
+        "{home}"
+    );
+
+    // The unit is the module, named from its path; the package at its root
+    // gives the comment, and the `go.mod` is its build file.
+    let unit = read(&vault, "01-Core/ledger/ledger.md");
+    assert!(
+        unit.contains("> Package ledger keeps double-entry books.")
+            && unit.contains("- `go.mod` — Go module")
+            && unit.contains(
+                "Holds 5 packages at the repository root. Runs from `cmd/ledger` and `cmd/seed`."
+            ),
+        "{unit}"
+    );
+    // A struct, its methods, the interface it implements by assertion and by
+    // embedding.
+    let account = read(&vault, "01-Core/ledger/internal/Account.md");
+    assert!(
+        account.contains("Declared as `type Account struct`.")
+            && account
+                .contains("- `func (a *Account) Name() string` — Name returns the account's name.")
+            && account.contains("Implemented by `Vault`."),
+        "{account}"
+    );
+    let named = read(&vault, "01-Core/ledger/internal/Named.md");
+    assert!(
+        named.contains("Declared as `type Named interface`.")
+            && named.contains("Implemented by [[Account]] and `Vault`."),
+        "{named}"
+    );
+
+    // The module a package comes from, with the version asked for and the
+    // one go.sum holds; the standard library is no integration.
+    let cobra = read(&vault, "03-Integrations/github.com spf13 cobra.md");
+    assert!(
+        cobra.contains("> External package `github.com/spf13/cobra`, imported by 2 source files.")
+            && cobra
+                .contains("`go.mod` — declares the dependency: version `v1.8.0`, locked `v1.8.0`"),
+        "{cobra}"
+    );
+    assert!(
+        !meta
+            .notes
+            .keys()
+            .any(|id| id.starts_with("integration:fmt"))
+    );
+
+    // The pattern stub is Go.
+    let pattern = read(&vault, "04-Patterns/Implementing Named Pattern.md");
+    assert!(
+        pattern.contains(
+            "```go\ntype NewType struct{}\n\nfunc (t *NewType) Name() string {\n\tpanic(\"not implemented\")\n}\n```"
+        ),
+        "{pattern}"
+    );
+
+    // The commands: the module, its tests, and each program.
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains("- `go.mod` — Go module")
+            && ops.contains(
+                "```sh\ngo build ./...\ngo test ./...\ngo run ./cmd/ledger\ngo run ./cmd/seed\n```"
+            )
+            && ops.contains("[[ledger]] — runs from `cmd/ledger`"),
+        "{ops}"
+    );
+    // A program that calls across packages gets a startup flow.
+    let flow = read(&vault, "00-Architecture/Ledger Startup Flow.md");
+    assert!(
+        flow.contains("Call sequence from the `cmd/ledger` entry point of `ledger`")
+            && flow.contains("p0->>p1: Describe()"),
+        "{flow}"
+    );
+
+    // Tests, generated code and the vendored copy have no note of their own.
+    let ids: Vec<&String> = meta.notes.keys().collect();
+    for gone in ["TestDescribe", "Entry", "pb", "vendor", "cobra::Command"] {
+        assert!(
+            !ids.iter().any(|id| id.contains(&format!("::{gone}"))
+                && (id.starts_with("type:") || id.starts_with("mod:"))),
+            "{gone} in {ids:?}"
+        );
+    }
+    assert!(
+        !meta.notes.values().any(|e| e.path.contains("vendor")),
+        "{ids:?}"
+    );
+}
+
+#[test]
+fn a_go_workspace_has_a_flow_between_its_modules() {
+    let (_dir, root) = named_repo(
+        "shop",
+        &[
+            ("go.work", "go 1.22\n\nuse (\n\t./api\n\t./shared\n)\n"),
+            ("shared/go.mod", "module example.com/shared\n\ngo 1.22\n"),
+            (
+                "shared/shared.go",
+                "// Package shared holds what the services have in common.\npackage shared\n\n// Greet says hello.\nfunc Greet(who string) string { return \"hello \" + who }\n",
+            ),
+            (
+                "api/go.mod",
+                "module example.com/api\n\ngo 1.22\n\nrequire example.com/shared v0.0.0\n\nreplace example.com/shared => ../shared\n",
+            ),
+            (
+                "api/main.go",
+                "package main\n\nimport (\n\t\"fmt\"\n\n\t\"example.com/shared\"\n)\n\nfunc main() {\n\tfmt.Println(shared.Greet(\"world\"))\n}\n",
+            ),
+            (
+                "api/main_test.go",
+                "package main\n\nimport \"testing\"\n\nfunc TestMain2(t *testing.T) { main() }\n",
+            ),
+        ],
+    );
+    run_settled(&root);
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+    assert!(meta.notes.contains_key("crate:api") && meta.notes.contains_key("crate:shared"));
+    let flow = read(&vault, "00-Architecture/Package Dependency Flow.md");
+    assert!(
+        flow.contains("Go modules declare their dependencies") && flow.contains("n0 --> n1"),
+        "{flow}"
+    );
+    let api = read(&vault, "01-Core/api/api.md");
+    assert!(
+        api.contains("- `api/go.mod` — Go module") && api.contains("- `go.work` — Go workspace"),
+        "{api}"
+    );
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains(
+            "```sh\ngo build -C api ./...\ngo test -C api ./...\ngo run -C api .\ngo build -C shared ./...\n```"
+        ),
+        "{ops}"
+    );
 }

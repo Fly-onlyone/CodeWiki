@@ -223,6 +223,63 @@ const COMMON_CSHARP_METHODS: [&str; 52] = [
     "Where",
 ];
 
+/// The same for Go, whose exported names are capitalized: methods of the
+/// standard library that nearly every receiver of unknown type has.
+const COMMON_GO_METHODS: [&str; 52] = [
+    "Add",
+    "Append",
+    "Clear",
+    "Clone",
+    "Close",
+    "Contains",
+    "Copy",
+    "Delete",
+    "Do",
+    "Done",
+    "Err",
+    "Error",
+    "Exec",
+    "Flush",
+    "Format",
+    "Get",
+    "Handle",
+    "Info",
+    "Init",
+    "Join",
+    "Len",
+    "Less",
+    "Load",
+    "Lock",
+    "Log",
+    "Marshal",
+    "Next",
+    "Open",
+    "Parse",
+    "Print",
+    "Printf",
+    "Put",
+    "Query",
+    "Read",
+    "Remove",
+    "Reset",
+    "Run",
+    "Scan",
+    "Send",
+    "Set",
+    "Start",
+    "Stop",
+    "Store",
+    "String",
+    "Swap",
+    "Unlock",
+    "Unmarshal",
+    "Update",
+    "Wait",
+    "Write",
+    "WriteString",
+    "Value",
+];
+
 pub struct Resolver<'a> {
     symbols: HashMap<&'a str, &'a Symbol>,
     by_name: HashMap<&'a str, Vec<&'a Symbol>>,
@@ -234,6 +291,9 @@ pub struct Resolver<'a> {
     /// Namespaces of C# code. Their `using` lines are no re-exports, so a
     /// name is never followed through them while a path is resolved.
     csharp_modules: HashSet<String>,
+    /// Packages of Go code. An import there binds a name in one file and
+    /// re-exports nothing, so a name is never followed through one.
+    go_modules: HashSet<String>,
     /// crate -> the crates its manifest lets its code name, itself excluded
     crate_deps: HashMap<&'a str, HashSet<&'a str>>,
 }
@@ -257,6 +317,13 @@ impl<'a> Resolver<'a> {
             globs: HashMap::new(),
             crate_names: crate_names.into_iter().collect(),
             csharp_modules: HashSet::new(),
+            go_modules: symbols
+                .iter()
+                .filter(|s| {
+                    s.kind == SymbolKind::Module && Language::from_path(&s.file) == Language::Go
+                })
+                .map(|s| s.qualified.clone())
+                .collect(),
             crate_deps: HashMap::new(),
         };
         this.see_enclosing_namespaces();
@@ -359,7 +426,7 @@ impl<'a> Resolver<'a> {
         }
         for i in (1..segs.len()).rev() {
             let module = segs[..i].join("::");
-            if self.csharp_modules.contains(&module) {
+            if self.csharp_modules.contains(&module) || self.go_modules.contains(&module) {
                 continue;
             }
             if let Some(target) = self.imports.get(&module).and_then(|m| m.get(&segs[i])) {
@@ -481,10 +548,12 @@ impl<'a> Resolver<'a> {
             // for the parts of a partial type, which the parser of one file
             // cannot see, but never for a constructor, which is named like
             // its class.
-            let class = self
-                .symbols
-                .get(scope.join("::").as_str())
-                .filter(|s| matches!(s.kind, SymbolKind::Class | SymbolKind::Interface));
+            let class = self.symbols.get(scope.join("::").as_str()).filter(|s| {
+                matches!(s.kind, SymbolKind::Class | SymbolKind::Interface)
+                    // A Go type is no scope either: a bare name in a method is
+                    // a function of the package, never a sibling method.
+                    || (s.kind.is_type() && Language::from_path(&s.file) == Language::Go)
+            });
             let csharp = class.is_some_and(|s| Language::from_path(&s.file) == Language::CSharp);
             if class.is_some() && !csharp {
                 scope.pop();
@@ -693,7 +762,8 @@ impl<'a> Resolver<'a> {
                             // On a receiver of unknown type, a common name
                             // nearly always means a standard library method.
                             let common = COMMON_METHODS.contains(&name)
-                                || COMMON_CSHARP_METHODS.contains(&name);
+                                || COMMON_CSHARP_METHODS.contains(&name)
+                                || COMMON_GO_METHODS.contains(&name);
                             self.by_bare_name(
                                 name,
                                 &c.module,

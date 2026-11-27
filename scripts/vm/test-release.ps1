@@ -303,7 +303,7 @@ function Test-Case {
         & $Body
     } catch {
         Add-Result -Id $Id -Title $Title -Expect $Expect -Status error `
-            -Observed "the harness failed: $($_.Exception.Message)" -Shots @(Shot "$Id-error")
+            -Observed "the harness failed: $($_.Exception.Message) (at $(($_.ScriptStackTrace -split "`n" | Select-Object -First 2) -join '; '))" -Shots @(Shot "$Id-error")
     } finally {
         $seconds = [math]::Round($clock.Elapsed.TotalSeconds, 1)
         for ($i = $first; $i -lt $results.Count; $i++) {
@@ -369,7 +369,8 @@ function Get-AppLogMark {
         } catch { }
         if ($text -eq '') { 'mark=0' } else { 'mark=' + @($text.TrimEnd([char]13, [char]10) -split "\r?\n").Count }
     }
-    if ($run.Output -match 'mark=(\d+)') { [int]$Matches[1] } else { 0 }
+    # Output is a list when the guest said more than one line, and -match on a list sets no $Matches.
+    if ((@($run.Output) -join "`n") -match 'mark=(\d+)') { [int]$Matches[1] } else { 0 }
 }
 
 # Wait for a line of the app's log after a mark that matches a regular
@@ -1037,11 +1038,11 @@ Test-Case "E3" "Open a folder from Home" "Open folder… asks for a folder, regi
         -Observed "palette: 'open folder', Enter; typed $guestRepo, Enter; registered: $(($registered | ForEach-Object { $_.name }) -join ', '); the app's log says it opened '$opened'"
 }
 
-# The pass without a graphics card (-NoGpuSubset) skips the tray cases, which
+# The pass without a graphics card (-NoGpuSubset, or -Only with NG0) skips the tray cases, which
 # end by closing the app they were left with. E3 leaves its app running, and a
 # later start would hand over to it: this ends it, so that the window cases
 # start their own.
-if ($NoGpuSubset) {
+if ($Only -contains "NG0") {
     Test-Case "NG0" "End the app the setup started" "the app E3 left open is ended, so that each window case starts its own" {
         Stop-GuestApp
         Add-Result -Id "NG0" -Title "End the app the setup started" -Expect "no app is left" -Status note `
@@ -2721,6 +2722,25 @@ foreach ($name in @({{NAMES}})) {
 '@).Replace('{{NAMES}}', $names).Replace('{{ROOT}}', "$guestHome\repos") | Out-Null
 }
 
+# The guest's clock, for telling a line of the app's log written after an action from an older one
+# (a count of lines, which Wait-AppLog uses, is no proof after the app has restarted its log).
+function Get-GuestUtcNow {
+    $run = Invoke-GuestScript -InProcess -TimeoutSec 60 -Script '[DateTime]::UtcNow.ToString("o")'
+    [DateTimeOffset]::Parse($run.Output.Trim())
+}
+
+# Wait until the app's log says "repository: <Name>" in a line stamped after -After. Returns the
+# line, or null at the deadline.
+function Wait-AppRepository {
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][DateTimeOffset]$After, [double]$TimeoutSec = 10)
+    $log = Get-AppLogPath
+    Wait-Until -What "the app logs 'repository: $Name' after the action" -TimeoutSec $TimeoutSec -IntervalMs 1000 {
+        $run = Invoke-GuestScript -InProcess -TimeoutSec 60 -Script "Get-Content -LiteralPath '$log' -ErrorAction SilentlyContinue | Select-String 'repository: $Name' | ForEach-Object { `$_.Line }"
+        $fresh = @($run.Output -split "`r?`n" | Where-Object { $_ -match '^(\S+Z)\s' -and [DateTimeOffset]::Parse($Matches[1]) -ge $After })
+        if ($fresh) { $fresh[-1] }
+    }
+}
+
 $hsNames = "hs-alpha", "hs-beta"
 $hsReady = $false
 function Initialize-HsProjects {
@@ -2766,9 +2786,10 @@ Test-Case "HS1" "Home's search suggests recent projects" "typing in the field li
     # Again, and open the first project of the list.
     Send-Text "hs-"; Wait-ScreenSettled -TimeoutSec 3
     Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
-    $mark = Get-AppLogMark
+    $after = Get-GuestUtcNow
     Send-Keys "enter"
-    $line = Wait-AppLog -Pattern "repository: hs-(alpha|beta)" -Since $mark -TimeoutSec 10 -What "the app opens the project chosen in Home's search"
+    # The newest opened project heads the list: hs-beta.
+    $line = Wait-AppRepository -Name "hs-beta" -After $after
     Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the opened project is drawn"
     $opened = Shot "home-search-opened"
     $ok = $listed -ge 0.01 -and $closed -ge 0.01 -and $back -lt $listed / 2 -and [bool]$line
@@ -2788,9 +2809,10 @@ Test-Case "HS2" "The toolbar's Open recent menu" "the button opens a menu of the
     Wait-ScreenSettled -TimeoutSec 2
     $menu = Shot "open-recent-menu"
     $x, $y = Get-LayoutPoint -Info $info -Name "recentRow1"
-    $mark = Get-AppLogMark
+    $after = Get-GuestUtcNow
     Send-RestedClick -X $x -Y $y
-    $line = Wait-AppLog -Pattern "repository: hs-(alpha|beta)" -Since $mark -TimeoutSec 10 -What "the app opens the project chosen in Open recent"
+    # The menu lists the newest project first: hs-beta.
+    $line = Wait-AppRepository -Name "hs-beta" -After $after
     Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the opened project is drawn"
     $opened = Shot "open-recent-opened"
     Add-Result -Id "HS2" -Title "The toolbar's Open recent menu" -Expect "a menu under the button with hs-alpha and hs-beta (not the open cw-core); a click on its first row opens that project" `
@@ -4128,6 +4150,9 @@ foreach ($repo in @($list)) { "repo: $($repo.id) name=$($repo.name) worktree_of=
     $mainId = if ($state.Output -match "(?m)^repo: (\S+) name=wk-main worktree_of=\s*$") { $Matches[1] } else { $null }
     $treeOf = if ($state.Output -match "(?m)^repo: \S+ name=wk-main-tree worktree_of=(\S+)") { $Matches[1] } else { $null }
     $marked = $mainId -and $treeOf -eq $mainId
+    # For the guide's Home picture the main checkout is also kept from coding agents, so that its row says so
+    # (codewiki agents off; put back below).
+    if ($GuideShots) { Invoke-GuestScript -Script "& '$guestTarget\codewiki.exe' agents off '$main' 2>&1 | Out-Null; `$global:LASTEXITCODE = 0" | Out-Null }
     # Home with cw-core open: the main checkout's row counts the worktree, the worktree has none.
     Start-GuestApp -Arguments $guestRepo, "home:"
     Wait-AppPage -TimeoutSec 15
@@ -4146,6 +4171,7 @@ foreach ($repo in @($list)) { "repo: $($repo.id) name=$($repo.name) worktree_of=
     $one = Shot "home-search-main-only"
     if ($GuideShots) { Save-GuideShot -Name "home.png" -Frame (Join-Path $shots $one) }
     Stop-GuestApp
+    if ($GuideShots) { Invoke-GuestScript -Script "& '$guestTarget\codewiki.exe' agents on '$main' 2>&1 | Out-Null; `$global:LASTEXITCODE = 0" | Out-Null }
     Remove-GuestProjects "wk-main-tree", "wk-main"
     Add-Result -Id "WK1" -Title "A git worktree on Home" -Expect "the backend marks wk-main-tree as a worktree of wk-main; Home lists wk-main with '1 worktree' and no row for the worktree; its search suggests wk-main and not the worktree" `
         -Status $(if ($marked) { "note" } else { "fail" }) -Shots @($rows, $empty, $tree1, $one) -Output ($made.Output + "`n" + $state.Output) `

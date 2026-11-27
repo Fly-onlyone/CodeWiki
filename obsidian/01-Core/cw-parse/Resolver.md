@@ -4,7 +4,7 @@ tags: [core, cw-parse]
 
 # Resolver
 
-> `Resolver` struct defined in `cw_parse::resolve` with 9 methods.
+> `Resolver` struct defined in `cw_parse::resolve` with 17 methods.
 
 ## What it does
 
@@ -29,9 +29,17 @@ Declared as `pub struct Resolver<'a>`.
 Members:
 
 - `new` — public method, returns `Self`; called by `scan_repo`.
+- `fn see_c_modules(&mut self, symbols: &[Symbol], files: &[(String, ParsedFile)])` — find the modules of C and C++ code, what each includes, and the namespaces that were declared.
+- `fn c_seen(&self, module: &str) -> Rc<HashMap<String, u8>>` — the modules `module` sees, nearest first: itself, what its files include, and what those include. Transitive, as the preprocessor is.
+- `fn c_home<'s>(&self, symbol: &'s Symbol) -> Option<&'s str>` — the module a C or C++ symbol is declared in.
+- `fn c_sees(&self, module: &str, symbol: &Symbol) -> bool` — whether code in `module` can name `symbol`: it is in the module or in a header the module includes, and not private to another file.
+- `lookup_c` — resolve a name written in a C or C++ module. The enclosing scopes of `from` come first (the class, then the module), then whatever the module sees, the nearest header first. A name that two headers at the same distance both declare names nothing.
+- `fn c_callee(&self, symbol: &'a Symbol) -> Option<&'a Symbol>` — the function a call of `symbol` runs: a constructor for a type, the function or macro itself.
+- `fn see_enclosing_namespaces(&mut self)` — C# code sees the types of the namespaces around its own without a `using`: in `A.B.C`, the types of `A.B` and `A`. Each namespace of a C# file opens its ancestors as glob imports, nearest first. These are no import of any file, so they give no import edge.
 - `absolutize` — rewrite `crate`, `self`, `super` and `Self` prefixes to absolute form. Paths with no such prefix are returned unchanged (still relative).
 - `fn resolve_abs(&self, segs: &[String], depth: usize) -> Option<&'a Symbol>` — resolve an absolute path, following re-exports through `use` aliases and glob imports of the modules along the way.
 - `lookup` — resolve a path as written at a use site inside `module`.
+- `fn lookup_csharp(&self, path: &[String], module: &str) -> Option<&'a Symbol>` — `Self::lookup` for code in a C# namespace. A name there is a symbol at the place its alias, its namespace, a namespace around it or a `using` gives, so each candidate is one direct lookup.
 - `lookup_from` — `Self::lookup`, then the scopes enclosing `from`: an item declared inside a function is visible to the code around it.
 - `pub fn with_crates(mut self, crates: &'a [CrateInfo]) -> Self` — tell the resolver which crates each Cargo package depends on, so that a name never matches a method in a crate the caller cannot reach.
 - `fn reaches(&self, module: &str, symbol: &Symbol) -> bool` — whether code in `module` can reach the crate `symbol` is declared in: its own crate, or one its manifest depends on. A crate no manifest describes reaches every crate.
@@ -40,14 +48,14 @@ Members:
 
 ## Depends on
 
-- [[Resolve Module]] — uses `COMMON_METHODS`, `ExternalUse`, `MAX_REEXPORT_DEPTH`, `Resolved`
+- [[Resolve Module]] — uses `COMMON_CSHARP_METHODS`, `COMMON_C_METHODS`, `COMMON_GO_METHODS`, `COMMON_KOTLIN_METHODS`
 - [[Model Module]] — uses `Edge`, `EdgeKind`, `file_node`
-- [[Language]] — uses `Language`, `from_path`
+- [[Language]] — uses `Language`, `from_path`, `is_c_family`
 - [[SymbolKind]] — uses `SymbolKind`, `is_type`
-- [[Workspace Module]] — uses `CrateInfo`
+- [[C Module]] — uses `NAMESPACE_ATTR`
+- [[Kotlin Module]] — uses `EXTENSION_ATTR`
 - [[Confidence]] — uses `Confidence`
 - [[Symbol]] — uses `Symbol`
-- [[ParsedFile]] — uses `ParsedFile`
 
 ## Used by
 

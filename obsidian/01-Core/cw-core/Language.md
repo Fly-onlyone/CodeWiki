@@ -27,20 +27,22 @@ Declared as `pub enum Language`.
 Members:
 
 - `pub fn from_path(path: &str) -> Self` — detect the language from a repo-relative path.
-- `pub fn as_str(self) -> &'static str` — public method, returns `&'static str`; called by `Language::from_path`.
+- `pub fn as_str(self) -> &'static str` — public method, returns `&'static str`; called by `Language::file_level_name`, `Language::from_path`.
 - `pub fn parse(s: &str) -> Self` — public method, returns `Self`; called by `Index::files`.
 - `pub fn has_symbol_support(self) -> bool` — true when symbols and edges are extracted for this language.
+- `pub fn is_c_family(self) -> bool` — C and C++ are one family: they share headers, modules and names, and a `.h` file may be either.
+- `pub fn file_level_name(path: &str) -> Option<&'static str>` — display name of the language of a source file that CodeWiki has no parser for, read from the extension alone: `C#` for `Program.cs`. Such a file is mapped at file level: its folder, language and size are known, its symbols are not. `None` for a file of a language with symbol support (a parser maps it), for data and prose (Markdown, JSON, YAML, TOML, text, lock files, images) and for anything else. A language that gets a parser leaves this table by giving its extensions a `Language` variant that has symbol support. C and C++ have parsers and are not in the table; `.m` and `.mm` are Objective-C and stay file-level.
 
 ## Used by
 
-- [[RenderCtx]] — from `composition`, `entry_label`, `render_crate`, `render_module`
-- [[Explain Module]] — from `facts`, `is_rust`, `items`, `return_type`
-- [[Lang Module]] — from `link_imports`, `modules_of`, `resolve_ts_import`
+- [[RenderCtx]] — from `composition`, `entry_label`, `new`, `render_crate`
+- [[Resolver]] — from `by_bare_name`, `lookup_c`, `lookup_from`, `new`
+- [[Explain Module]] — from `facts`, `is_rust`, `items`, `name_in`
+- [[Testmap Module]] — from `covers`, `gather`, `impacted_tests`, `language`
+- [[Health Module]] — from `dead_code`, `doc_drift`, `file_health`, `is_c_api`
 - [[Doctext Module]] — from `blocks`, `doc_body`, `item_text`
-- [[Health Module]] — from `dead_code`, `doc_drift`, `file_health`
+- [[Manifests Module]] — from `describe`, `describe_in`, `other`
 - [[Render Module]] — from `external_noun`, `language_name`, `unit_noun`
-- [[Units Module]] — from `discover`, `of`
-- [[Resolver]] — from `by_bare_name`, `resolve`
 
 ## Gotchas
 

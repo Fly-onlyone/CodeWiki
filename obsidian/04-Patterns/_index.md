@@ -10,6 +10,7 @@ tags: [moc, pattern]
 
 - [[Implementing Embedder Pattern]] — add a new `Embedder` by implementing the trait; 5 types already follow this shape.
 - [[Implementing PackageInfo Pattern]] — add a new `PackageInfo` by implementing the trait; 3 types already follow this shape.
+- [[Implementing TestLanguage Pattern]] — add a new `TestLanguage` by implementing the trait; 7 types already follow this shape.
 
 ## See also
 

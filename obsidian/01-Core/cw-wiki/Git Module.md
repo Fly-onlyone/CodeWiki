@@ -36,6 +36,7 @@ A private helper `run` calls `git -C <root> <args>` and returns trimmed output o
 - `pub fn vault_is_behind(root: &Path, generated: Option<&str>) -> bool` — true when the code moved on since the vault was generated at commit `generated`. Commits that touch only the vault do not count: committing the wiki must not make the wiki look out of date.
 - `pub fn changed_files(root: &Path, base: &str) -> Option<Vec<String>>` — Repo-relative paths changed between `base` and `HEAD`. `None` when `base` is unknown to the repository (rebased away, shallow clone).
 - `pub fn is_linked_worktree(root: &Path) -> bool` — true when `root` is a linked worktree: its git directory is not the repository's common one. Any failure counts as false. Git 2.31 and later print both directories as absolute paths when asked with `--path-format=absolute`. An older git echoes the flag it does not know as a line of its own and prints paths relative to `root`, so that line is skipped and a relative path is read against `root`.
+- `pub fn repo_name(root: &Path) -> Option<String>` — the name of the repository at `root`, as its wiki calls it: the name of its folder. A linked worktree is a second copy of a repository in a folder named after a task, so it takes the name of its main checkout: a wiki synced in a worktree is the same wiki, and is merged back.
 - `pub fn main_checkout(root: &Path) -> Option<std::path::PathBuf>` — the main checkout of the repository that the linked worktree `root` belongs to: the folder that holds the repository's common git directory. `None` when `root` is no linked worktree.
 
 ## Depends on
@@ -44,14 +45,14 @@ A private helper `run` calls `git -C <root> <args>` and returns trimmed output o
 
 ## Used by
 
-- [[cw-wiki]] — from `a_deletion_that_is_not_committed_is_still_at_head`, `a_linked_worktree_is_told_from_the_main_checkout`, `a_repository_inside_a_bigger_checkout_reads_its_own_paths`, `history_keeps_deleted_paths_and_follows_moves_to_their_end`
+- [[cw-wiki]] — from `a_deletion_that_is_not_committed_is_still_at_head`, `a_linked_worktree_is_told_from_the_main_checkout`, `a_repository_inside_a_bigger_checkout_reads_its_own_paths`, `a_wiki_synced_in_a_linked_worktree_keeps_the_name_of_its_repository`
 - [[Git]] — from `changed`, `head`, `history`, `moves`
 - [[Service Module]] — from `is_stale`, `reindex`, `run_update`
 - [[codewiki]] — from `session_start_hook`
 - [[Repos Module]] — from `main_of`
 - [[Briefing Module]] — from `session_start`
 - [[Explanations Module]] — from `submit`
-- [[Query Module]] — from `status`
+- [[Generate Module]] — from `generate_with`
 
 ## Gotchas
 

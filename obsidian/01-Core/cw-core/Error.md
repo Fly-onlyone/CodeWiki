@@ -27,7 +27,7 @@ Declared as `pub enum Error`.
 Members:
 
 - `pub fn io(path: impl Into<PathBuf>, source: std::io::Error) -> Self` — public method, returns `Self`; called by `Index::open`, `VaultMeta::load`, `VaultMeta::save`, `adopt_existing` and 36 more.
-- `pub fn invalid(message: impl Into<String>) -> Self` — public method, returns `Self`; called by `Embedder::embed_query`, `Jobs::begin`, `OllamaEmbedder::embed_query`, `OpenAiEmbedder::check_listed` and 39 more.
+- `pub fn invalid(message: impl Into<String>) -> Self` — public method, returns `Self`; called by `Embedder::embed_query`, `Jobs::begin`, `OllamaEmbedder::embed_query`, `OpenAiEmbedder::check_listed` and 43 more.
 - `pub fn not_found(what: impl Into<String>) -> Self` — public method, returns `Self`; called by `brief`, `dependency_path`, `find_entry`, `get` and 8 more.
 - `pub fn external(context: impl Into<String>, err: impl std::fmt::Display) -> Self` — wrap an error from a third-party library with the operation that failed.
 

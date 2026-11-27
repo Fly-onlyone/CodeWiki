@@ -4,7 +4,7 @@ tags: [integration]
 
 # serde
 
-> External crate `serde`, imported by 33 source files.
+> External crate `serde`, imported by 34 source files.
 
 ## What it does
 
@@ -12,16 +12,16 @@ serde turns Rust structs and enums into data formats and back. In CodeWiki the f
 
 ## Used for
 
-Imported by 33 source files. Main users:
+Imported by 34 source files. Main users:
 
 - [[Agents Off Module]] — imports `Deserialize`, `Serialize`
 - [[Api Module]] — imports `Deserialize`, `Serialize`
+- [[Cdeps Module]] — imports `Deserialize`
 - [[Ci Module]] — imports `Deserialize`, `Serialize`
 - [[Contracts Module]] — imports `Deserialize`, `Serialize`
 - [[Coverage Module]] — imports `Deserialize`, `Serialize`
 - [[Decisions Module]] — imports `Deserialize`, `Serialize`
 - [[Embed Job Module]] — imports `Serialize`
-- [[Explanations Module]] — imports `Deserialize`, `Serialize`
 
 ## Configuration
 

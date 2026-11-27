@@ -4,7 +4,7 @@ tags: [moc, core, cw-vault]
 
 # Core / cw-vault — Map of Content
 
-> Notes for `cw-vault`: 16 concepts.
+> Notes for `cw-vault`: 15 concepts.
 
 ## Notes
 
@@ -20,7 +20,6 @@ tags: [moc, core, cw-vault]
 - [[Proposal Module]] — the review queue: proposed changes to human-edited notes.
 - [[Registry]] — maps note names (file stem, compared case-insensitively because Windows file names and Obsidian links are) to entries.
 - [[Registry Module]] — the note-name registry.
-- [[RegistryEntry]] — `RegistryEntry` struct defined in `cw_vault::registry`.
 - [[Section]] — `Section` struct defined in `cw_vault::note`.
 - [[SourceRef]] — A source file a note describes, with the content hash seen at generation.
 - [[VaultMeta]] — everything under `.codewiki/`, loaded.

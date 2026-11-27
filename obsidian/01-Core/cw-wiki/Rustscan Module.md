@@ -50,7 +50,7 @@ A small scanner for Rust source, not a parser. The main parser skips unit-test m
 - [[Contracts Module]] — from `scan`, `scan_source`
 - [[Security Module]] — from `scan`, `scan_source`
 - [[Coverage Module]] — from `report`
-- [[Testmap Module]] — from `gather`
+- [[Testmap Module]] — from `is_test_file`
 
 ## Gotchas
 

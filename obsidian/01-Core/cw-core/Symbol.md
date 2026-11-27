@@ -26,19 +26,19 @@ Declared as `pub struct Symbol`.
 
 ## Depends on
 
-- [[Model Module]] — uses `Visibility`
 - [[SymbolKind]] — uses `SymbolKind`
+- [[Visibility]] — uses `Visibility`
 
 ## Used by
 
+- [[Resolver]] — from `Resolver`, `by_bare_name`, `c_callee`, `c_home`
 - [[Explain Module]] — from `Callers`, `Step`, `Walk`, `callers_sentence`
-- [[Resolver]] — from `Resolver`, `by_bare_name`, `lookup`, `lookup_from`
-- [[Repo]] — from `Repo`, `build`, `children_of`, `is_test`
-- [[Refactor Module]] — from `Facts`, `extract_types`, `lines_of`, `split_files`
-- [[Index]] — from `find_symbols`, `symbol`, `symbols`, `symbols_in_file`
-- [[Health Module]] — from `dead_code`, `file_health`, `is_test_symbol`
-- [[Plan Module]] — from `enclosing_module`, `module_title`, `plan`
-- [[Query Module]] — from `FileContext`, `SymbolDetail`, `symbol_detail`
+- [[Testmap Module]] — from `Env`, `command`, `ctest_alternative`, `framework`
+- [[Health Module]] — from `dead_code`, `file_health`, `is_c_api`, `is_csharp_main`
+- [[Repo]] — from `Repo`, `build`, `children_of`, `is_go_test_package`
+- [[Units Module]] — from `discover`, `is_c_entry`, `is_csharp_entry`, `is_go_entry`
+- [[Scan Module]] — from `RepoFacts`, `merge_package`, `merge_partial`, `scan_repo`
+- [[Plan Module]] — from `enclosing_module`, `files_of`, `module_title`, `plan`
 
 ## Gotchas
 

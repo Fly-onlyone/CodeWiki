@@ -22,9 +22,6 @@ The helpers are small. `join_and` writes lists with an Oxford comma. `count` plu
 
 ## Items
 
-- `const MAX_MANIFESTS: usize` — build files named on one line of an integration note.
-- `const MAX_UNIT_MODULES: usize` — modules listed in the note of a unit that has no root module.
-- `const MAX_HAND_NOTES: usize` — notes the home note names of a folder of hand-written notes that has no map note of its own.
 - `type NoteDeps = HashMap<String, BTreeMap<String, BTreeSet<String>>>` — Note-level dependency edges: note id -> other note id -> symbol names.
 - `pub struct HandZone` — A top folder of the vault that holds notes their owner wrote by hand.
 - [[RenderCtx]] — struct
@@ -32,21 +29,27 @@ The helpers are small. `join_and` writes lists with an Oxford comma. `count` plu
 - `fn front(tags: &[String]) -> String` — private function, returns `String`; called by `Doc::new`, `RenderCtx::render_home`, `RenderCtx::render_index`.
 - `fn zone_label(segment: &str) -> &str` — `01-Core` -> `Core`; other folder names are kept.
 - `fn top_children<'a>(repo: &Repo<'a>, parent: &str, limit: usize) -> Vec<&'a Symbol>` — private function, returns `Vec<&'a Symbol>`; called by `RenderCtx::summary`.
-- `fn join_and(items: &[String]) -> String` — private function, returns `String`; called by `RenderCtx::render_crate`, `RenderCtx::render_crate_flow`, `RenderCtx::render_operations`, `RenderCtx::render_pattern` and 2 more.
-- `fn count(n: usize, noun: &str) -> String` — `1 module`, `3 modules`.
-- `fn language_name(language: Language) -> &'static str` — private function, returns `&'static str`; called by `RenderCtx::composition`, `RenderCtx::summary`.
+- `pub(crate) fn join_and(items: &[String]) -> String` — internal function, returns `String`; called by `FileMap::home_summary`, `RenderCtx::render_crate`, `RenderCtx::render_crate_flow`, `RenderCtx::render_operations` and 5 more.
+- `pub(crate) fn count(n: usize, noun: &str) -> String` — `1 module`, `3 modules`.
+- `fn language_name(language: Language) -> &'static str` — private function, returns `&'static str`; called by `RenderCtx::composition`, `RenderCtx::unit_language`.
 - `fn unit_noun(language: Language) -> &'static str` — what one unit of a language is called.
 - `fn external_noun(files: &BTreeSet<&str>) -> &'static str` — `crate` when only Rust files import the dependency, else `package`.
+- `fn implementation_files(symbol: &Symbol) -> Vec<&str>` — the files, besides the header a symbol stands in, that define what the header declares (C and C++).
+- `fn cpp_override(signature: &str) -> String` — A member of a C++ interface as the override a class that takes it on writes: `virtual` goes, `override` comes, and a pure virtual's `= 0` goes.
+- `fn csharp_override(signature: &str) -> String` — A C# member as a stub in a type that extends or implements it: an interface member has no modifier and becomes public, an abstract or virtual one is overridden.
+- `fn kotlin_type_parameters(signature: &str, name: &str) -> Vec<String>` — the names of the type parameters a Kotlin declaration lists after its name: `T` and `R` for `interface Mapper<in T, out R : Any> : Base<T>`.
+- `fn kotlin_override(signature: &str) -> String` — A Kotlin member as a stub in a type that extends or implements it: what let it be overridden is replaced by `override`.
 - `fn build_role(path: &str) -> &'static str` — what a build file outside Cargo is for.
 - `pub(crate) fn lower_first(text: &str) -> String` — lowercase the first letter unless the text starts with code or an acronym.
-- `const PROPER_NOUNS: [&str; 17]` — product and technology names that keep their capital at the start of a list item.
+- `fn starts_with_language_unit(text: &str) -> bool` — true for the sentence of a unit that starts with the name of its language and that name is an ordinary word: `Go module `app` with 3 packages.` keeps its capital, a sentence that starts with "Go to" does not. (`C`, `C++` and `C#` are never lowered, whatever follows.).
 
-And 2 more private items with no comment.
+And 6 more items.
 
 ## Depends on
 
 - [[Repo]] — uses `Repo`, `children_of`, `subtree_rank`
 - [[Language]] — uses `Language`, `from_path`
+- [[C Module]] — uses `IMPL_ATTR`
 - [[Note Module]] — uses `join`
 - [[Plan Module]] — uses `Planned`
 - [[Symbol]] — uses `Symbol`
@@ -55,8 +58,10 @@ And 2 more private items with no comment.
 ## Used by
 
 - [[RenderCtx]] — from `RenderCtx`, `composition`, `dep_bullets`, `link`
+- [[Filemap Module]] — from `file_lines`, `folder_bullet`, `folder_summary`, `holds`
 - [[Explain Module]] — from `items`
 - [[Generate Module]] — from `generate_with`
+- [[Tally]] — from `names_up_to`
 
 ## Gotchas
 

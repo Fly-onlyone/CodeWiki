@@ -13,10 +13,10 @@ tags: [moc, integration]
 - [[rusqlite]] — external crate `rusqlite`, imported by 3 source files.
 - [[semver]] — external crate `semver`, imported by 3 source files.
 - [[sentry]] — external crate `sentry`, imported by 3 source files.
-- [[serde]] — external crate `serde`, imported by 33 source files.
-- [[serde_json]] — external crate `serde_json`, imported by 29 source files.
+- [[serde]] — external crate `serde`, imported by 34 source files.
+- [[serde_json]] — external crate `serde_json`, imported by 31 source files.
 - [[sha2]] — external crate `sha2`, imported by 3 source files.
-- [[tree_sitter]] — external crate `tree_sitter`, imported by 5 source files.
+- [[tree_sitter]] — external crate `tree_sitter`, imported by 9 source files.
 - [[windows_registry]] — external crate `windows_registry`, imported by 3 source files.
 
 ## See also

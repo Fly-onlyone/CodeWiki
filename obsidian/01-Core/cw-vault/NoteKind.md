@@ -35,13 +35,13 @@ Members:
 ## Used by
 
 - [[Explanations Module]] — from `Brief`, `Waiting`, `brief`, `review_section`
-- [[cw-wiki]] — from `a_run_counts_the_notes_no_agent_has_explained`, `every_explainable_note_splits_and_joins_to_itself`, `the_line_about_waiting_notes_goes_when_none_waits`, `the_queue_lists_what_waits_and_counts_all_of_it`
+- [[cw-wiki]] — from `a_run_counts_the_notes_no_agent_has_explained`, `a_swift_axaml_repository_is_mapped_at_file_level`, `every_explainable_note_splits_and_joins_to_itself`, `the_line_about_waiting_notes_goes_when_none_waits`
 - [[Generate Module]] — from `adopt_existing`, `adopted_kind`, `generate_with`, `weave_kept`
 - [[codewiki]] — from `has_template`, `note_style_skill_follows_the_lint`, `write_notes_skill_follows_the_tools_and_the_limits`
 - [[Lint Module]] — from `lint`, `lint_lines`, `max_words`
 - [[Query Module]] — from `NoteInfo`, `agent_view`, `info`
 - [[Explanation Module]] — from `extract`, `weave`
-- [[Plan Module]] — from `Planned`
+- [[Registry Module]] — from `RegistryEntry`
 
 ## Gotchas
 

@@ -4,7 +4,7 @@ tags: [core, cw-wiki]
 
 # RenderCtx
 
-> `RenderCtx` struct defined in `cw_wiki::render` with 20 methods.
+> `RenderCtx` struct defined in `cw_wiki::render` with 21 methods.
 
 ## What it does
 
@@ -30,10 +30,11 @@ Members:
 
 - `new` — public method, returns `Self`; called by `generate_with`.
 - `pub fn link(&self, id: &str) -> Option<String>` — wikilink to the note with `id`, or `None` when it is not in the vault.
-- `fn name(&self, id: &str) -> String` — private method, returns `String`; called by `RenderCtx::new`, `RenderCtx::render`, `RenderCtx::render_crate`, `RenderCtx::render_home` and 3 more.
+- `fn name(&self, id: &str) -> String` — private method, returns `String`; called by `RenderCtx::new`, `RenderCtx::render`, `RenderCtx::render_crate`, `RenderCtx::render_home` and 4 more.
 - `fn summary(&self, note: &Planned) -> String` — private method, returns `String`; called by `RenderCtx::new`, `RenderCtx::render_crate`, `RenderCtx::render_home`.
+- `fn unit_language(&self, unit: &Unit) -> String` — the language a unit is called after: the one with more files. A Gradle or Maven module that holds both Java and Kotlin is named for both, the larger first (`Kotlin and Java`, and Kotlin on a tie).
 - `fn composition(&self) -> (Vec<String>, Vec<String>)` — the languages of the repository and how many units each has, the language with the most source files first.
-- `fn entry_label(&self, entry: &str) -> String` — how a reader names the entry point `entry`: `main` in Rust, the file for a script, `Class.main` in Java.
+- `fn entry_label(&self, entry: &str) -> String` — how a reader names the entry point `entry`: `main` in Rust, the file for a script or for the top-level statements of a C# file, `Class.main` in Java.
 - `fn dep_bullets(&self, map: &NoteDeps, id: &str, verb: &str) -> String` — bullets for a note-level dependency map.
 - `pub fn render(&self, note: &Planned) -> String` — public method, returns `String`.
 - `fn unit_commands(&self, unit: &Unit) -> Vec<String>` — commands that install, run and test a unit written in another language than Rust, read off its build files and entry points.
@@ -43,13 +44,13 @@ And 11 more private items with no comment.
 ## Depends on
 
 - [[Render Module]] — uses `Doc`, `HandZone`, `MAX_HAND_NOTES`, `MAX_LISTED`
+- [[Filemap Module]] — uses `folder`, `folder_sections`, `folder_summary`, `home_summary`
 - [[Plan Module]] — uses `FlowMessage`, `Plan`, `Planned`, `ZONE_ARCHITECTURE`
 - [[Repo]] — uses `Repo`, `children_of`, `module_count`, `subtree_rank`
 - [[Doctext Module]] — uses `clean_inline`, `doc_body`, `ensure_period`, `first_sentence`
+- [[Units]] — uses `all_rust`, `by_name`, `c_tests`, `of_file`
 - [[Explain Module]] — uses `items`, `text`, `walk`
-- [[Language]] — uses `Language`, `from_path`
-- [[Registry]] — uses `Registry`, `by_id`
-- [[Unit]] — uses `Unit`, `is_rust`
+- [[Pm Module]] — uses `install`, `run_script`
 
 ## Used by
 

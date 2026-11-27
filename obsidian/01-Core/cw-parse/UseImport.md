@@ -26,7 +26,7 @@ Declared as `pub struct UseImport`.
 
 ## Used by
 
-- [[Lang Module]] — from `external`, `link_java`, `link_python`
+- [[Lang Module]] — from `external`, `link_csharp`, `link_go`, `link_jvm`
 - [[Sink]] — from `import`, `import_external`
 - [[Rust Module]] — from `flatten_use`
 - [[ParsedFile]] — from `ParsedFile`

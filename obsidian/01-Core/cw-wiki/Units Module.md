@@ -26,40 +26,49 @@ Finds the top-level parts of a repository, called units. Each unit gets its own 
 
 ## Items
 
-- `const JS_OUTPUT_DIRS: [&str; 4]` — directories a bundler writes to; `main` in `package.json` often points into one while the source sits under `src`.
+- `const CSHARP_TEST_ATTRIBUTES: [&str; 11]` — attributes that make a C# method a test, under any test framework.
 - `pub struct Manifest` — A build or dependency file that belongs to a unit.
 - `pub struct Entry` — A symbol where execution starts.
 - [[Unit]] — one top-level part of the repository.
 - [[Units]] — every unit of a repository and the lookup from code to unit.
 - `enum Family` — language family: one unit never mixes two of these.
 - `pub fn is_test_file(path: &str) -> bool` — true for a test file of a language other than Rust.
-- `fn slug(name: &str) -> String` — lowercase name safe as a folder and as a tag.
-- `fn parent_dir(path: &str) -> &str` — private function, returns `&str`; called by `discover`.
-- `fn join(dir: &str, file: &str) -> String` — private function, returns `String`; called by `discover`, `nearest_with`, `resolve_js_entry`.
-- `fn ancestors(dir: &str) -> Vec<&str>` — `dir` and each of its ancestors, nearest first, ending at the root (`""`).
-- `fn nearest_with<'a>(files: &HashSet<&str>, dir: &'a str, names: &[&str]) -> Option<&'a str>` — nearest directory at or above `dir` that holds one of `names`.
-- `fn resolve_js_entry(files: &HashSet<&str>, dir: &str, spec: &str) -> Option<String>` — source file a `package.json` path names. Published packages point at build output, so the matching file under `src` is tried as well.
-- `struct PackageJson` — what a `package.json` says about its package.
-- `fn parse_package_json(text: &str) -> PackageJson` — private function, returns `PackageJson`; called by `discover`.
-- `struct Group<'a>` — files of one unit that is still being put together.
+- `fn is_c_test_name(file: &str, stem: &str) -> bool` — A C or C++ file named like a test: `list_test.c`, `test_list.cpp`, `list_tests.cc`, `ListTest.cpp`, `ListTests.cpp`. A file in a `test` or `tests` folder is caught by its folder.
+- `pub(crate) fn links_a_test_framework(links: &[String]) -> bool` — true when a target links a test framework: `GTest::gtest_main`, `Catch2::Catch2WithMain`, `doctest::doctest`.
+- `fn in_jvm_test_set(dirs: &[&str]) -> bool` — true for a folder of a Gradle source set of tests: `src/test`, and the ones that name their target, such as Kotlin Multiplatform's `src/commonTest`, `src/jvmTest` and Android's `src/androidTest`.
+- `pub(crate) fn is_jvm_test_file(path: &str) -> bool` — true for a Java or Kotlin file of test code, the source sets of tests included. `is_test_file` leaves the sets of a Java file alone, since a Java repository's notes must not change; the test map looks further.
+- `pub(crate) fn is_kotlin_entry(symbol: &Symbol) -> bool` — A Kotlin program's `main`: a function at the top of a file, or an `@JvmStatic` one of an `object` or a companion, taking no parameter or the arguments (`Array<String>`, or `vararg String`).
+- `pub(crate) fn is_csharp_test_attribute(attribute: &str) -> bool` — true when `attribute` (as written: `Fact`, `Xunit.Fact`, `FactAttribute`) marks a C# test.
+- `pub(crate) fn xml_element<'a>(xml: &'a str, tag: &str) -> Option<&'a str>` — text of the first `<tag>` element of `xml`, trimmed.
+- `pub(crate) fn xml_elements<'a>(xml: &'a str, tag: &str) -> Vec<(&'a str, &'a str)>` — every element named `tag` in `xml` with its attribute text and, for one that is not self-closing, its inner text.
+- `pub(crate) fn xml_attribute(attributes: &str, name: &str) -> Option<String>` — the value of attribute `name` in the attribute text of an element.
+- `pub(crate) fn resolve_relative(dir: &str, target: &str) -> Option<String>` — the repo-relative path that the relative `target` names from `dir`, with its `..` and `.` segments resolved and either slash accepted; `None` when it climbs out of the repository.
+- `pub(crate) fn slug(name: &str) -> String` — lowercase name safe as a folder and as a tag.
+- `pub(crate) fn references_a_test_framework(project: &str) -> bool` — true when a project file references a test framework or says it is a test project.
 - `discover` — find the units of a repository. `repo_name` names a unit that is the repository itself; `read` returns the text of a repo-relative file.
 
-And 3 more private items with no comment.
+And 22 more items.
 
 ## Depends on
 
-- [[Language]] — uses `Language`, `from_path`
-- [[Python Module]] — uses `MAIN_GUARD_ATTR`
-- [[Scan Module]] — uses `RepoFacts`
-- [[Symbol]] — uses `Symbol`
-- [[Unit]] — uses `Unit`
-- [[Units]] — uses `Units`
+- [[Language]] — uses `Language`, `from_path`, `is_c_family`
+- [[JsRepo]] — uses `manager_of`, `package_at`, `read`
+- [[PythonRoots]] — uses `in_package`, `project_of`, `read`
+- [[C Module]] — uses `ENTRY_NAMES`, `TEST_ATTR`
+- [[Cfamily Module]] — uses `c_module_map`, `is_header`
+- [[Gomod Module]] — uses `parse_go_mod`, `parse_go_work`
+- [[Cmake]] — uses `Cmake`, `target_of`
+- [[Cmake Module]] — uses `read_cmake`
 
 ## Used by
 
+- [[Manifests Module]] — from `asked_in`, `central_version`, `js_lock`, `js_locked`
+- [[Testmap Module]] — from `add_go_package_dependents`, `command`, `gather`, `is_csharp_test`
 - [[Repo]] — from `at`, `is_test`, `new`
-- [[Manifests Module]] — from `asked_in`
-- [[RenderCtx]] — from `unit_commands`
+- [[Health Module]] — from `dead_code`, `is_test_symbol`
+- [[RenderCtx]] — from `new`, `unit_commands`
+- [[Filemap Module]] — from `build`
+- [[Machine]] — from `nuget_description`
 - [[Unit]] — from `Unit`
 
 ## Gotchas

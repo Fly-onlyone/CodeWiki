@@ -105,8 +105,23 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_parse::c",
+    "path": "01-Core/cw-parse/C Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:codewiki_app::settings::Category",
     "path": "01-Core/codewiki-app/Category.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::cdeps",
+    "path": "01-Core/cw-parse/Cdeps Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::cfamily",
+    "path": "01-Core/cw-parse/Cfamily Module.md",
     "kind": "concept"
   },
   {
@@ -130,8 +145,23 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_parse::cmake::Cmake",
+    "path": "01-Core/cw-parse/Cmake.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::cmake",
+    "path": "01-Core/cw-parse/Cmake Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "crate:codewiki",
     "path": "01-Core/codewiki/codewiki.md",
+    "kind": "concept"
+  },
+  {
+    "id": "unit:root-files",
+    "path": "01-Core/codewiki-files/CodeWiki (codewiki-files).md",
     "kind": "concept"
   },
   {
@@ -205,9 +235,24 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_parse::cfamily::CPlan",
+    "path": "01-Core/cw-parse/CPlan.md",
+    "kind": "concept"
+  },
+  {
     "id": "flow:crates",
     "path": "00-Architecture/Crate Dependency Flow.md",
     "kind": "flow"
+  },
+  {
+    "id": "type:cw_parse::workspace::CrateInfo",
+    "path": "01-Core/cw-parse/CrateInfo.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::csharp",
+    "path": "01-Core/cw-parse/Csharp Module.md",
+    "kind": "concept"
   },
   {
     "id": "mod:codewiki_app::mui::tokens::curve",
@@ -385,6 +430,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_wiki::filemap",
+    "path": "01-Core/cw-wiki/Filemap Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::fonts",
     "path": "01-Core/codewiki-app/Fonts Module.md",
     "kind": "concept"
@@ -420,6 +470,21 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_parse::go",
+    "path": "01-Core/cw-parse/Go Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::gomod",
+    "path": "01-Core/cw-parse/Gomod Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::gomod::GoModules",
+    "path": "01-Core/cw-parse/GoModules.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_vault::manifest::Gone",
     "path": "01-Core/cw-vault/Gone.md",
     "kind": "concept"
@@ -433,6 +498,11 @@
     "id": "integration:gpui_kit",
     "path": "03-Integrations/gpui_kit.md",
     "kind": "integration"
+  },
+  {
+    "id": "mod:cw_parse::gradle",
+    "path": "01-Core/cw-parse/Gradle Module.md",
+    "kind": "concept"
   },
   {
     "id": "type:cw_graph::graph::Graph",
@@ -452,6 +522,11 @@
   {
     "id": "mod:codewiki_mcp::guard",
     "path": "01-Core/codewiki-mcp/Guard Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "dir:scripts/vm/guest",
+    "path": "01-Core/codewiki-files/scripts/vm/guest/Guest Folder.md",
     "kind": "concept"
   },
   {
@@ -490,6 +565,11 @@
     "kind": "pattern"
   },
   {
+    "id": "pattern:cw_wiki::testmap::TestLanguage",
+    "path": "04-Patterns/Implementing TestLanguage Pattern.md",
+    "kind": "pattern"
+  },
+  {
     "id": "type:cw_index::store::Index",
     "path": "01-Core/cw-index/Index.md",
     "kind": "concept"
@@ -520,6 +600,26 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_wiki::testmap::js",
+    "path": "01-Core/cw-wiki/testmap/Js Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::jsbuild",
+    "path": "01-Core/cw-parse/Jsbuild Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::jsbuild::JsPackage",
+    "path": "01-Core/cw-parse/JsPackage.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::jsbuild::JsRepo",
+    "path": "01-Core/cw-parse/JsRepo.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_core::settings::Key",
     "path": "01-Core/cw-core/Key.md",
     "kind": "concept"
@@ -527,6 +627,11 @@
   {
     "id": "type:openui_lang::eval::Kind",
     "path": "01-Core/openui-lang/Kind.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_parse::kotlin",
+    "path": "01-Core/cw-parse/Kotlin Module.md",
     "kind": "concept"
   },
   {
@@ -607,6 +712,11 @@
   {
     "id": "type:cw_wiki::manifests::Machine",
     "path": "01-Core/cw-wiki/Machine.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::jsbuild::Manager",
+    "path": "01-Core/cw-parse/Manager.md",
     "kind": "concept"
   },
   {
@@ -750,6 +860,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_wiki::pm",
+    "path": "01-Core/cw-wiki/Pm Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_embed::prefix",
     "path": "01-Core/cw-embed/Prefix Module.md",
     "kind": "concept"
@@ -765,8 +880,28 @@
     "kind": "concept"
   },
   {
+    "id": "mod:cw_parse::pyroots",
+    "path": "01-Core/cw-parse/Pyroots Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_parse::python",
     "path": "01-Core/cw-parse/Python Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "mod:cw_wiki::testmap::python",
+    "path": "01-Core/cw-wiki/testmap/Python Module (testmap).md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_parse::pyroots::PythonRoots",
+    "path": "01-Core/cw-parse/PythonRoots.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::testmap::python::PythonTests",
+    "path": "01-Core/cw-wiki/testmap/PythonTests.md",
     "kind": "concept"
   },
   {
@@ -792,11 +927,6 @@
   {
     "id": "mod:cw_vault::registry",
     "path": "01-Core/cw-vault/Registry Module.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_vault::registry::RegistryEntry",
-    "path": "01-Core/cw-vault/RegistryEntry.md",
     "kind": "concept"
   },
   {
@@ -832,11 +962,6 @@
   {
     "id": "type:codewiki_mcp::guard::RepoArg",
     "path": "01-Core/codewiki-mcp/RepoArg.md",
-    "kind": "concept"
-  },
-  {
-    "id": "type:cw_wiki::generate::Report",
-    "path": "01-Core/cw-wiki/Report.md",
     "kind": "concept"
   },
   {
@@ -912,6 +1037,11 @@
   {
     "id": "mod:cw_index::schema",
     "path": "01-Core/cw-index/Schema Module.md",
+    "kind": "concept"
+  },
+  {
+    "id": "dir:scripts",
+    "path": "01-Core/codewiki-files/scripts/Scripts Folder.md",
     "kind": "concept"
   },
   {
@@ -1130,8 +1260,18 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_wiki::filemap::Tally",
+    "path": "01-Core/cw-wiki/Tally.md",
+    "kind": "concept"
+  },
+  {
     "id": "type:cw_wiki::rustscan::TestFn",
     "path": "01-Core/cw-wiki/TestFn.md",
+    "kind": "concept"
+  },
+  {
+    "id": "type:cw_wiki::testmap::TestKind",
+    "path": "01-Core/cw-wiki/TestKind.md",
     "kind": "concept"
   },
   {
@@ -1220,6 +1360,16 @@
     "kind": "concept"
   },
   {
+    "id": "type:cw_core::model::Visibility",
+    "path": "01-Core/cw-core/Visibility.md",
+    "kind": "concept"
+  },
+  {
+    "id": "dir:scripts/vm",
+    "path": "01-Core/codewiki-files/scripts/vm/Vm Folder.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::win32",
     "path": "01-Core/codewiki-app/Win32 Module.md",
     "kind": "concept"
@@ -1272,6 +1422,26 @@
   {
     "id": "index:01-Core/codewiki-app/mui/tokens",
     "path": "01-Core/codewiki-app/mui/tokens/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-files",
+    "path": "01-Core/codewiki-files/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-files/scripts",
+    "path": "01-Core/codewiki-files/scripts/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-files/scripts/vm",
+    "path": "01-Core/codewiki-files/scripts/vm/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/codewiki-files/scripts/vm/guest",
+    "path": "01-Core/codewiki-files/scripts/vm/guest/_index.md",
     "kind": "index"
   },
   {
@@ -1352,6 +1522,11 @@
   {
     "id": "index:01-Core/cw-wiki",
     "path": "01-Core/cw-wiki/_index.md",
+    "kind": "index"
+  },
+  {
+    "id": "index:01-Core/cw-wiki/testmap",
+    "path": "01-Core/cw-wiki/testmap/_index.md",
     "kind": "index"
   },
   {

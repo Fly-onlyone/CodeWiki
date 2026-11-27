@@ -27,43 +27,43 @@ Notes about outside packages need facts: the version asked for, the version lock
 - `const SAVED: &str` — file under the vault's manifest folder that keeps the descriptions.
 - `pub struct Declared` — what one build file asks of a package.
 - `pub struct Packages` — what the repository's own files say about outside packages, beyond each unit's build file, and what is known of each package.
-- `fn numbers(text: &str) -> Option<Vec<u64>>` — the leading numbers of a version or of a plain requirement: `1.0.229`, `0.8`. `None` for anything else, such as `>=1, <3` or `*`.
-- `fn accepts(asked: &[u64], version: &[u64]) -> bool` — Cargo's default rule: `version` is at least `asked` and equal to it up to the first number that is not zero.
 - `pub fn declared(repo: &Repo, package: &str) -> Vec<Declared>` — what each build file that names `package` asks of it, one entry for each file. `package` is the name integrations go by: a crate as used in paths, an npm package, the first segment of a Python import, the first two of a Java one.
 - `fn cargo(unit: &Unit, package: &str, packages: &Packages) -> Option<Declared>` — private function, returns `Option<Declared>`; called by `declared`.
 - `fn other(unit: &Unit, package: &str) -> Vec<Declared>` — private function, returns `Vec<Declared>`; called by `declared`.
+- `js_locked` — the version a JavaScript lock file pins for `package`, which the `package.json` `manifest` asks for as `requirement`; empty when the unit has no lock file the reader knows.
+- `fn cfamily(unit: &Unit, package: &str) -> Vec<Declared>` — what the build files of a C or C++ unit ask of a library: CMake's `find_package` and `FetchContent_Declare`, vcpkg's `dependencies` (with its `overrides` as the version in effect and its `builtin-baseline` where no version is written), Conan's `requires`, and Conan's lock file for the version in effect. One entry for each file that names the library.
+- `fn jvm_requirement(unit: &Unit, manifest: &Manifest, package: &str) -> Option<String>` — what a Gradle or Maven build file asks of `package` when its text does not name the package itself: by the library's artifact, or by its alias in the version catalog the unit keeps.
 - `fn asked_in(manifest: &Manifest, package: &str) -> Option<(String, Vec<String>)>` — the requirement and the extras `manifest` gives for `package`, read by the rules of the file's kind.
+- `fn go(unit: &Unit, package: &str) -> Vec<Declared>` — what a Go module's `go.mod` asks of the module `package` (an import path outside the repository, cut to the module that holds it): the version of its `require` line, marked when the line is `// indirect` or a `replace` sends the module elsewhere, and the version `go.sum` holds a hash of.
+- `fn nuget(unit: &Unit, package: &str) -> Vec<Declared>` — what the project files of a C# unit ask of `package`: the version written beside the reference or, for a reference with none, the central one, and the version the lock file pins.
 - `fn in_group(group: &str, package: &str) -> bool` — true when the Maven group `group` is the one a Java import of `package` (its first two segments) comes from.
-- `fn element<'a>(xml: &'a str, tag: &str) -> Option<&'a str>` — text of the first `<tag>` element in `xml`.
-- `fn gradle(text: &str, package: &str) -> Option<String>` — gradle names a dependency in a string, `"group:artifact:version"`.
-- `fn python(text: &str, package: &str) -> Option<(String, Vec<String>)>` — Python build files are of many kinds (`requirements.txt`, `pyproject.toml`, `setup.py`, `Pipfile`), so the text after the name is read as it stands: extras in brackets, then the version specifier.
+- `fn names_package(group: &str, artifact: &str, package: &str) -> bool` — true when the library `group:artifact` is the one a Java or Kotlin import of `package` comes from: its group is the package or starts with it, or, for the `kotlinx` libraries, whose group (`org.jetbrains.kotlinx`) does not say, its artifact (`kotlinx-coroutines-core`) starts with the package's name (`kotlinx.coroutines`).
 - `pub trait PackageInfo` — says what a package from outside the repository is.
 - `pub struct NoPackageInfo` — knows no package. A run with it writes what `packages.json` holds.
 - [[Machine]] — reads the files a build on this machine left behind: the sources cargo unpacked into its registry cache, and `node_modules`.
-- `struct Saved` — one package in `packages.json`.
 - `fn saved_path(vault: &Path) -> PathBuf` — private function, returns `PathBuf`; called by `describe`, `load`.
 - `fn load(vault: &Path) -> BTreeMap<String, String>` — private function, returns `BTreeMap<String, String>`; called by `describe`.
 - `describe` — say what each of `packages` is and keep the answers in the vault at `vault`. What `info` finds on this machine wins; what it does not find is taken from the file an earlier run wrote. The file then holds exactly the packages named here that have a description, and is written only when that differs from what it held.
 
-And 2 more private items with no comment.
+And 14 more items.
 
 ## Depends on
 
+- [[Cdeps Module]] — uses `names_library`, `parse_conan_lock`, `parse_conanfile_py`, `parse_conanfile_txt`
+- [[Units Module]] — uses `Manifest`, `xml_attribute`, `xml_element`, `xml_elements`
+- [[Jsbuild Module]] — uses `JsLock`, `read`, `version`
 - [[Workspace Module]] — uses `Locked`, `dependency_specs`, `locked_versions`
+- [[Language]] — uses `Language`, `from_path`, `is_c_family`
 - [[Unit]] — uses `Unit`, `declares`, `is_rust`
-- [[Error]] — uses `external`, `io`
-- [[Language]] — uses `Language`, `from_path`
-- [[cw-core]] — uses `MANIFEST_DIR`
-- [[Error Module]] — uses `Result`
-- [[Units Module]] — uses `Manifest`
-- [[Repo]] — uses `Repo`
+- [[Gomod Module]] — uses `go_sum_versions`, `parse_go_mod`
+- [[Gradle Module]] — uses `accessor`, `parse_version_catalog`
 
 ## Used by
 
 - [[Repo]] — from `Repo`, `at`, `build`
 - [[Generate Module]] — from `generate`, `generate_with`
+- [[Machine]] — from `Machine`, `new`
 - [[cw-wiki]] — from `KnowsSerde`
-- [[Machine]] — from `Machine`
 - [[RenderCtx]] — from `render_integration`
 
 ## Gotchas

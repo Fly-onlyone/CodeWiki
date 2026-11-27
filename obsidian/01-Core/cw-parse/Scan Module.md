@@ -26,22 +26,24 @@ When all files are parsed, `link_imports` ([[Lang Module]]) sorts out Python and
 
 - `const MAX_SOURCE_BYTES: u64` — files larger than this are recorded but not read as source.
 - `const SKIP_DIRS: [&str; 6]` — directories never worth indexing, on top of what `.gitignore` excludes.
-- `pub struct RepoFacts` — public struct; used by `Index::replace_facts`, `Repo`, `Repo::at`, `Repo::build` and 9 more.
+- `pub struct RepoFacts` — public struct; used by `Index::replace_facts`, `Repo`, `Repo::at`, `Repo::build` and 10 more.
 - `fn relative(root: &Path, path: &Path) -> Option<String>` — Repo-relative path with forward slashes.
 - `pub fn list_files(root: &Path) -> Result<Vec<String>>` — list indexable files under `root`, sorted, honoring `.gitignore`.
 - `fn inner_doc(source: &str) -> String` — leading `//!` documentation of a file.
+- `fn merge_partial(symbols: &mut [Symbol], part: &Symbol)` — the parts of a C# partial type are one symbol. The part that says most about it stands for it: the one with the documentation comment, then the one that lists the base types. What another part carries, its attributes and a comment the first lacks, is added.
+- `fn merge_package(symbols: &mut [Symbol], at: usize, part: &Symbol)` — the parts of a Go package are one module. The file that stands for it is the first one that is not a test file, and its documentation is the first comment any file of the package has above its `package` clause.
 - `pub fn scan_repo(root: &Path) -> Result<RepoFacts>` — scan the whole repository at `root`.
 
 ## Depends on
 
-- [[Lang Module]] — uses `link_imports`, `python_module`, `resolve_ts_import`, `ts_module`
-- [[Workspace Module]] — uses `CrateInfo`, `module_path`, `parse_manifest`
+- [[Lang Module]] — uses `link_imports`, `nuget_ids`, `resolve_ts_import`, `ts_module`
 - [[Resolver]] — uses `new`, `resolve`, `with_crates`
 - [[Model Module]] — uses `Edge`, `FileRecord`
+- [[C Module]] — uses `CInput`, `parse_c`
+- [[Go Module]] — uses `package_name`, `parse_go`
+- [[Workspace Module]] — uses `module_path`, `parse_manifest`
 - [[Error]] — uses `external`, `io`
-- [[cw-core]] — uses `VAULT_DIR`
-- [[Error Module]] — uses `Result`
-- [[Hash Module]] — uses `sha256_hex`
+- [[Language]] — uses `from_path`, `is_c_family`
 
 ## Used by
 
@@ -49,6 +51,7 @@ When all files are parsed, `link_imports` ([[Lang Module]]) sorts out Python and
 - [[Repo]] — from `Repo`, `at`, `build`, `new`
 - [[Generate Module]] — from `adopt_existing`, `generate`, `generate_with`
 - [[Analyze Module]] — from `analyze`, `dependency_graph`
+- [[Filemap Module]] — from `build`
 - [[Service Module]] — from `reindex`
 - [[Units Module]] — from `discover`
 - [[Index]] — from `replace_facts`

@@ -32,14 +32,14 @@ Members:
 
 ## Used by
 
+- [[Resolver]] — from `c_callee`, `lookup_c`, `lookup_from`, `resolve`
 - [[Rust Module]] — from `push_symbol`, `simple_item`, `type_item`
 - [[Refactor Module]] — from `extract_types`, `split_files`
-- [[Resolver]] — from `by_bare_name`, `resolve`
+- [[Testmap Module]] — from `classes`, `test_types`
 - [[Store Module]] — from `symbol_from_row`
-- [[Health Module]] — from `file_health`
-- [[Plan Module]] — from `plan`
-- [[Symbol]] — from `Symbol`
-- [[Sink]] — from `symbol`
+- [[Cfamily Module]] — from `merge`
+- [[Go Module]] — from `symbol`
+- [[Scan Module]] — from `merge_partial`
 
 ## Gotchas
 

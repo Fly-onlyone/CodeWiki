@@ -102,7 +102,7 @@ Defined at the crate root:
 - `enum ToolbarFit` — how much of the toolbar shows. Its buttons with labels need more room than a window about 1000 px wide leaves it, or one at 125% zoom: they ran past its right edge, and Sync, Review and To explain could not be reached.
 - `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
 - `fn search_hint(width: f32) -> &'static str` — the placeholder for a search field `width` design units wide (icon and padding included): the whole hint, a short one, or none, where the magnifier says it alone. Never a hint cut in the middle.
-- `fn main()` — private function.
+- `fn main()` — private function; called by `listed`.
 
 And 38 more items.
 

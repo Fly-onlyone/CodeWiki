@@ -49,7 +49,7 @@ Search hits go through `hit_groups`, which sorts them under Notes, Symbols and F
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
 - `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: that the app keeps looking for one, where its log is, and a button that tries again at once. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 15 more items.
+And 17 more items.
 
 ## Depends on
 

@@ -46,11 +46,11 @@ And 1 more private item with no comment.
 - [[Index]] — uses `Index`, `meta`, `metrics`, `open`
 - [[Paths Module]] — uses `data_dir`, `index_path`, `index_path_in`
 - [[Scan Module]] — uses `RepoFacts`, `scan_repo`
+- [[Generate Module]] — uses `Report`, `generate_with`
 - [[Git Module]] — uses `head_commit`, `vault_is_behind`
 - [[Gitintel Module]] — uses `mine`, `save`
 - [[cw-core]] — uses `VAULT_DIR`
 - [[cw-index]] — uses `replace_documents`
-- [[Error Module]] — uses `Result`
 
 ## Used by
 

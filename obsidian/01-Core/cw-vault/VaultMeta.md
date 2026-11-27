@@ -39,15 +39,15 @@ Members:
 - [[Error]] — uses `external`, `io`
 - [[cw-core]] — uses `MANIFEST_DIR`
 - [[Error Module]] — uses `Result`
+- [[Registry Module]] — uses `RegistryEntry`
 - [[NoteEntry]] — uses `NoteEntry`
-- [[RegistryEntry]] — uses `RegistryEntry`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_move_with_two_possible_ends_carries_nothing`, `a_new_way_of_writing_the_facts_keeps_the_explanation`, `a_note_that_waits_to_be_retired_is_no_note_of_the_wiki`, `a_run_counts_the_notes_no_agent_has_explained`
+- [[cw-wiki]] — from `a_c_project_gets_a_full_vault`, `a_cpp_project_gets_a_full_vault`, `a_csharp_solution_gets_a_full_vault`, `a_few_stray_files_next_to_mapped_code_get_no_notes`
 - [[Explanations Module]] — from `all_waiting`, `approve_keeping`, `brief`, `fits_all`
 - [[Query Module]] — from `find_entry`, `list_notes`, `notes_citing`, `read_note_as`
-- [[Generate Module]] — from `adopt_existing`, `carry_moves`, `generate_with`
+- [[Generate Module]] — from `adopt_existing`, `carry_moves`, `follow_units`, `generate_with`
 - [[Gone Module]] — from `after_removal`, `keep_all`, `retire`
 - [[Decisions Module]] — from `list`, `why`
 - [[Service Module]] — from `index_notes`, `is_stale`

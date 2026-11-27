@@ -420,6 +420,9 @@ pub fn file_page(context: &Value, risk: &Value, radius: &Value) -> Doc {
 /// One proposal for review.
 pub fn proposal_page(detail: &Value) -> Doc {
     let proposal = &detail["proposal"];
+    if proposal["kind"] == "retire" {
+        return retire_page(proposal);
+    }
     let mut doc = Doc::new("Proposed change");
     doc.push(Block::Text(vec![
         code(string(proposal, "note_path")),
@@ -448,6 +451,53 @@ pub fn proposal_page(detail: &Value) -> Doc {
     doc.push(Block::Code {
         language: "diff".into(),
         text: string(detail, "patch").trim_end().to_string(),
+    });
+    doc
+}
+
+/// Paths of a retired note's that the page names before it counts the rest.
+const RETIRE_PATHS_SHOWN: usize = 3;
+
+/// A retire proposal: the notes their owner wrote that name only files that
+/// are gone, each with those files. The check boxes that leave a note out
+/// stand above this page (`review_view.rs`).
+fn retire_page(proposal: &Value) -> Doc {
+    let mut doc = Doc::new("Notes about code that is gone");
+    doc.push(Block::Text(vec![text(string(proposal, "reason"))]));
+    doc.push(Block::Alert {
+        tone: Tone::Warning,
+        text: "Each of these notes names only files that are no longer in the repository. Approving deletes the ticked notes from the wiki. Git keeps every one of them as it is now. A note you keep stays as history and is not proposed again.".into(),
+        button: None,
+    });
+    let items: Vec<Line> = proposal["retire"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|note| {
+            let gone: Vec<&str> = note["cited"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
+            let mut line = vec![strong(string(note, "path")), text(" — ")];
+            for (index, path) in gone.iter().take(RETIRE_PATHS_SHOWN).enumerate() {
+                if index > 0 {
+                    line.push(text(", "));
+                }
+                line.push(code(*path));
+            }
+            line.push(text(match gone.len().saturating_sub(RETIRE_PATHS_SHOWN) {
+                0 if gone.len() == 1 => " is gone".to_string(),
+                0 => " are gone".to_string(),
+                more => format!(" and {more} more are gone"),
+            }));
+            line
+        })
+        .collect();
+    doc.push(Block::List {
+        items,
+        ordered: false,
     });
     doc
 }
@@ -520,6 +570,22 @@ pub fn sync_page(report: &Value) -> Doc {
                 "{waiting} notes wait for a coding agent to explain them. In Claude Code with the CodeWiki plugin, run /codewiki:write-notes."
             ),
             button: None,
+        });
+    }
+    // What became of notes whose subject is gone or moved, in the backend's
+    // words; an older backend sends none.
+    let gone: Vec<crate::doc::Line> = report["summary"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(crate::doc::rich)
+        .collect();
+    if !gone.is_empty() {
+        doc.push(Block::Heading("Notes of code that is gone or moved".into()));
+        doc.push(Block::List {
+            items: gone,
+            ordered: false,
         });
     }
     doc
@@ -714,6 +780,12 @@ pub struct Project<'a> {
     pub path: &'a str,
     /// Whether coding agents are kept out of the folder.
     pub kept: &'a Kept,
+    /// How many linked git worktrees of the repository are registered and
+    /// there. They are no projects and have no rows of their own.
+    pub worktrees: usize,
+    /// For a linked worktree, which is listed only while it is the open
+    /// repository: the name of the repository it belongs to.
+    pub worktree_of: Option<&'a str>,
 }
 
 /// What Home is made from.
@@ -777,6 +849,14 @@ pub fn home_page(home: &HomeInput) -> Doc {
                     let mut detail = String::new();
                     if open {
                         detail.push_str("Open now · ");
+                    }
+                    if let Some(main) = project.worktree_of {
+                        detail.push_str(&format!("Worktree of {main} · "));
+                    }
+                    match project.worktrees {
+                        0 => {}
+                        1 => detail.push_str("1 worktree · "),
+                        n => detail.push_str(&format!("{n} worktrees · ")),
                     }
                     // Short, so that the project's own path stays readable;
                     // Settings lists the entry in full.
@@ -962,19 +1042,64 @@ mod tests {
         name: "alpha",
         path: r"C:\code\alpha",
         kept: &Kept::Open,
+        worktrees: 0,
+        worktree_of: None,
     };
     const BETA: Project = Project {
         id: "b2",
         name: "Beta",
         path: r"C:\code\beta",
         kept: &Kept::Open,
+        worktrees: 0,
+        worktree_of: None,
     };
     const GAMMA: Project = Project {
         id: "g3",
         name: "gamma",
         path: r"D:\gamma",
         kept: &Kept::Open,
+        worktrees: 0,
+        worktree_of: None,
     };
+
+    #[test]
+    fn a_project_says_how_many_worktrees_it_has_and_an_open_worktree_whose_it_is() {
+        let main = Project {
+            worktrees: 2,
+            ..ALPHA
+        };
+        let side = Project {
+            id: "w7",
+            name: "ui-port",
+            path: r"C:\code\alpha\.claude\worktrees\ui-port",
+            worktree_of: Some("alpha"),
+            ..ALPHA
+        };
+        let page = home_page(&HomeInput {
+            current: Some("w7"),
+            ..home(&[main, side], &[])
+        });
+        let words = page.words();
+        assert!(
+            words.contains(r"alpha — 2 worktrees · C:\code\alpha"),
+            "{words}"
+        );
+        assert!(
+            words.contains(
+                r"ui-port — Open now · Worktree of alpha · C:\code\alpha\.claude\worktrees\ui-port"
+            ),
+            "{words}"
+        );
+        let one = Project {
+            worktrees: 1,
+            ..ALPHA
+        };
+        assert!(
+            home_page(&home(&[one], &[]))
+                .words()
+                .contains(r"alpha — 1 worktree · C:\code\alpha")
+        );
+    }
 
     #[test]
     fn home_without_projects_asks_for_a_folder() {
@@ -1473,6 +1598,36 @@ mod tests {
     }
 
     #[test]
+    fn a_retire_proposal_lists_each_note_with_the_files_that_are_gone() {
+        let page = proposal_page(&json!({
+            "proposal": {
+                "id": "retire-1", "kind": "retire", "note_path": "",
+                "reason": "2 notes describe code that is gone",
+                "retire": [
+                    {"path": "06-Notes/Old Service.md", "cited": ["legacy/service.cfg"]},
+                    {"path": "06-Notes/Big.md",
+                     "cited": ["legacy/a.cfg", "legacy/b.cfg", "legacy/c.cfg", "legacy/d.cfg", "legacy/e.cfg"]},
+                ]
+            },
+            "patch": "- 06-Notes/Old Service.md\n- 06-Notes/Big.md\n"
+        }));
+        assert_eq!(page.title, "Notes about code that is gone");
+        let words = page.words();
+        assert!(
+            words.contains("2 notes describe code that is gone"),
+            "{words}"
+        );
+        assert!(words.contains("Approving deletes the ticked notes from the wiki."));
+        assert!(words.contains("Git keeps every one of them"));
+        assert!(words.contains("06-Notes/Old Service.md — legacy/service.cfg is gone"));
+        assert!(words.contains(
+            "06-Notes/Big.md — legacy/a.cfg, legacy/b.cfg, legacy/c.cfg and 2 more are gone"
+        ));
+        // It is no change to a note that someone edited.
+        assert!(!words.contains("edited by hand"), "{words}");
+    }
+
+    #[test]
     fn a_proposal_of_an_agent_says_who_proposes_and_what_comes_with_it() {
         let page = proposal_page(&json!({
             "proposal": {"note_path": "01-Core/Parser.md", "kind": "agent",
@@ -1545,6 +1700,24 @@ mod tests {
         // Nothing about explanations when nothing waits.
         assert!(!words.contains("wait for a coding agent"));
         assert!(!words.contains("Not explained yet"));
+        // Nor about notes of code that is gone when the run met none.
+        assert!(!words.contains("gone or moved"));
+
+        let page = sync_page(&json!({
+            "written": [], "kept": 8, "proposed": [], "removed": ["06-Notes/Old.md"],
+            "adopted": [], "notes_total": 8, "link_rate": 1.0,
+            "summary": [
+                "Removed 1 note whose subject is gone: `06-Notes/Old.md`.",
+                "2 notes written by hand name only files that are gone."
+            ]
+        }));
+        let words = page.words();
+        assert!(
+            words.contains("Notes of code that is gone or moved"),
+            "{words}"
+        );
+        assert!(words.contains("Removed 1 note whose subject is gone: 06-Notes/Old.md."));
+        assert!(words.contains("2 notes written by hand name only files that are gone."));
 
         let page = sync_page(&json!({
             "written": [], "kept": 8, "proposed": [], "removed": [], "adopted": [],

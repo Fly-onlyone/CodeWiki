@@ -105,6 +105,37 @@ actions!(
     ]
 );
 
+/// Gives `el` the handlers of the app's shortcuts, which run on the app's
+/// view. The app's own root has them, and so does the generated page, which
+/// the shell draws beside the app: an input or a button focused there is not
+/// under the root, and without them every shortcut stayed dead until a click
+/// elsewhere moved the focus.
+fn shortcuts<E: InteractiveElement>(el: E, view: WeakEntity<AppView>) -> E {
+    fn on<A: gpui_kit::Action, E: InteractiveElement>(
+        el: E,
+        view: &WeakEntity<AppView>,
+        run: fn(&mut AppView, &mut Window, &mut Context<AppView>),
+    ) -> E {
+        let view = view.clone();
+        el.on_action(move |_: &A, window, cx| {
+            _ = view.update(cx, |this, cx| run(this, window, cx));
+        })
+    }
+    let el = on::<TogglePalette, _>(el, &view, |this, window, cx| {
+        this.toggle_palette(window, cx)
+    });
+    let el = on::<NewTab, _>(el, &view, |this, _, cx| this.new_tab(cx));
+    let el = on::<CloseTab, _>(el, &view, |this, _, cx| {
+        this.close_tabs(tab_ops::Close::One(this.active_tab), cx)
+    });
+    let el = on::<NextTab, _>(el, &view, |this, _, cx| this.next_tab(cx));
+    let el = on::<GoBack, _>(el, &view, |this, _, cx| this.go_back(cx));
+    let el = on::<SaveNote, _>(el, &view, |this, _, cx| this.save_edit(cx));
+    let el = on::<ToggleSidebar, _>(el, &view, |this, _, cx| this.toggle_pane(Pane::Sidebar, cx));
+    let el = on::<ToggleDetails, _>(el, &view, |this, _, cx| this.toggle_pane(Pane::Details, cx));
+    on::<OpenSettings, _>(el, &view, |this, _, cx| this.open_settings(None, cx))
+}
+
 /// Most entries the palette lists at once.
 const PALETTE_ROWS: usize = 14;
 
@@ -583,7 +614,10 @@ impl AppView {
             let new_tab = window.modifiers().control;
             _ = view.update(cx, |this, cx| this.run_action_with(&action, new_tab, cx));
         });
-        let doc_page = cx.new(|_| doc_view::DocPage::new(on_action));
+        let app = cx.entity().downgrade();
+        let doc_page = cx.new(|_| {
+            doc_view::DocPage::new(on_action, Rc::new(move |el| shortcuts(el, app.clone())))
+        });
         let search = cx.new(|cx| InputState::new(window, cx).placeholder(SEARCH_HINT));
         let subscription =
             cx.subscribe_in(&search, window, |this, input, event: &InputEvent, _, cx| {
@@ -6019,23 +6053,7 @@ impl Render for AppView {
             .id("root")
             .relative()
             .track_focus(&self.focus)
-            .on_action(
-                cx.listener(|this, _: &TogglePalette, window, cx| this.toggle_palette(window, cx)),
-            )
-            .on_action(cx.listener(|this, _: &NewTab, _, cx| this.new_tab(cx)))
-            .on_action(cx.listener(|this, _: &CloseTab, _, cx| {
-                this.close_tabs(tab_ops::Close::One(this.active_tab), cx)
-            }))
-            .on_action(cx.listener(|this, _: &NextTab, _, cx| this.next_tab(cx)))
-            .on_action(cx.listener(|this, _: &GoBack, _, cx| this.go_back(cx)))
-            .on_action(cx.listener(|this, _: &SaveNote, _, cx| this.save_edit(cx)))
-            .on_action(
-                cx.listener(|this, _: &ToggleSidebar, _, cx| this.toggle_pane(Pane::Sidebar, cx)),
-            )
-            .on_action(
-                cx.listener(|this, _: &ToggleDetails, _, cx| this.toggle_pane(Pane::Details, cx)),
-            )
-            .on_action(cx.listener(|this, _: &OpenSettings, _, cx| this.open_settings(None, cx)))
+            .map(|root| shortcuts(root, cx.entity().downgrade()))
             // The inputs of the palette and of the search field would
             // otherwise use these keys themselves.
             .capture_action(cx.listener(|this, _: &Escape, window, cx| {

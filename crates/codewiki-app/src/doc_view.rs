@@ -53,6 +53,11 @@ use crate::{themes, zoom};
 
 /// What a link, row or button of a page does when used.
 pub type OnAction = Rc<dyn Fn(&Action, &mut Window, &mut App)>;
+
+/// Gives the page's root the app's shortcut handlers. The shell draws the
+/// page beside the app, so a focused input or button in it is not under the
+/// app's root, which is where the shortcuts are handled.
+pub type Shortcuts = Rc<dyn Fn(Div) -> Div>;
 /// What a click on a select does: its owner opens the list.
 pub type OnSelect = Rc<dyn Fn(SelectRequest, &mut Window, &mut App)>;
 
@@ -237,6 +242,7 @@ pub struct DocPage {
     /// How wide the space for the page is.
     width: f32,
     on_action: OnAction,
+    shortcuts: Shortcuts,
     strips: Rc<Vec<Strip>>,
     list: ListState,
     /// The zoom the strips were measured at. The list keeps the height of
@@ -251,7 +257,7 @@ impl DocPage {
     // The room the list builds past its edges is set once, in the screen's
     // pixels.
     #[allow(clippy::disallowed_methods)]
-    pub fn new(on_action: OnAction) -> Self {
+    pub fn new(on_action: OnAction, shortcuts: Shortcuts) -> Self {
         let doc = Rc::new(Doc::default());
         let strips = Rc::new(strips(&doc));
         Self {
@@ -260,6 +266,7 @@ impl DocPage {
             serial: 0,
             width: 0.0,
             on_action,
+            shortcuts,
             strips,
             zoom_seen: zoom::factor(),
             search: None,
@@ -340,7 +347,7 @@ impl Render for DocPage {
             draw_strip(&doc, strips[index], index, last, gutter, &page, window, cx)
         })
         .size_full();
-        div()
+        (self.shortcuts)(div())
             .size_full()
             .relative()
             .child(items)

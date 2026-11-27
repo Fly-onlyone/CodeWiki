@@ -112,6 +112,12 @@ pub struct State {
 }
 
 impl State {
+    /// Whether the backend's settings have arrived, or the reason they did
+    /// not: the page then shows what it will show.
+    pub(crate) fn loaded(&self) -> bool {
+        self.backend.is_some() || self.error.is_some()
+    }
+
     /// The state, and the subscriptions that keep it up to date; the view
     /// holds them for as long as it lives.
     pub fn new(window: &mut Window, cx: &mut Context<AppView>) -> (Self, Vec<Subscription>) {
@@ -414,6 +420,7 @@ impl AppView {
                 match result {
                     Ok(body) => {
                         this.settings.embed_models = Some(body);
+                        this.page_filled = Some(crate::ready::Fill::Models);
                         this.retry_embed_models(seq, cx);
                     }
                     Err(error) => {
@@ -450,8 +457,12 @@ impl AppView {
                                 models["reachable"] != false,
                             )
                         });
+                        let first = before.is_none();
                         let came_up = embed_came_up(before, (&provider, reachable));
                         this.settings.embed_models = Some(body);
+                        if first {
+                            this.page_filled = Some(crate::ready::Fill::Models);
+                        }
                         if came_up {
                             this.notify_user(
                                 crate::toasts::Notice {

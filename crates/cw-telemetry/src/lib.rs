@@ -274,7 +274,10 @@ fn traces_rate(value: Option<String>) -> f32 {
 /// otherwise report about their own sending.
 fn log_filter(metadata: &log::Metadata<'_>) -> LogFilter {
     let target = metadata.target();
+    // "page" is the app's line about the page it drew (`ready.rs` in
+    // `codewiki-app`), which names the note: it stays on the machine.
     if target == "panic"
+        || target == "page"
         || ["sentry", "ureq", "rustls"]
             .iter()
             .any(|own| target.starts_with(own))
@@ -451,6 +454,11 @@ mod tests {
             LogFilter::Ignore
         );
         assert_eq!(filtered(log::Level::Error, "sentry"), LogFilter::Ignore);
+    }
+
+    #[test]
+    fn the_line_about_a_drawn_page_is_left_out() {
+        assert_eq!(filtered(log::Level::Info, "page"), LogFilter::Ignore);
     }
 
     /// What `map_record` sends of a record: `B` a breadcrumb, `E` an event.

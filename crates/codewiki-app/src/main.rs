@@ -35,6 +35,7 @@ mod palette;
 mod panes;
 mod prefs;
 mod reading;
+mod ready;
 mod review;
 mod review_view;
 mod settings;
@@ -397,6 +398,11 @@ struct AppView {
     /// The note or view to open on once a repository has loaded: what the
     /// launch named, or the last launch that handed over to this app.
     requested_view: Option<String>,
+    /// The label of the view a launch named (this app's, or one that handed
+    /// over), until the log says that the page which answers it was drawn
+    /// (`ready.rs`). The page may be another than the one named: a
+    /// repository without a wiki lands on Home whatever was asked.
+    asked: Option<String>,
     /// What a second launch asked for before the backend was reached; carried
     /// out as soon as it is.
     pending_request: Option<instance::Request>,
@@ -485,6 +491,10 @@ struct AppView {
     recent_anchor: AnchorBounds,
     /// Bumped on every page change so the viewer rebuilds its state.
     page_serial: usize,
+    /// The `page_serial` of the page the log already says was drawn.
+    page_announced: Option<usize>,
+    /// What arrived for the page since the last frame, for the log to say.
+    page_filled: Option<ready::Fill>,
     /// The generated page. The shell draws it, in the place this view
     /// leaves empty and reports through `page_slot`.
     doc_page: Entity<doc_view::DocPage>,
@@ -712,6 +722,9 @@ impl AppView {
             pending_command: None,
             pending_edit: false,
             requested_view: startup::launch().view.clone(),
+            asked: Some(ready::label(
+                startup::launch().view.as_deref().unwrap_or_default(),
+            )),
             pending_request: None,
             tray: None,
             backend_status: status::Backend::default(),
@@ -754,6 +767,8 @@ impl AppView {
             recent_menu_focus,
             recent_anchor: AnchorBounds::default(),
             page_serial: 0,
+            page_announced: None,
+            page_filled: None,
             doc_page,
             page_slot,
             page_placed: std::cell::Cell::new(false),
@@ -1372,10 +1387,12 @@ impl AppView {
         }
         match request.repo {
             Some(path) => {
+                self.asked = Some(ready::label(request.view.as_deref().unwrap_or_default()));
                 self.requested_view = request.view;
                 self.open_repo_folder(path, Landing::Startup, cx);
             }
             None if request.view.is_some() && self.repo.is_some() => {
+                self.asked = Some(ready::label(request.view.as_deref().unwrap_or_default()));
                 self.requested_view = request.view;
                 self.open_startup_view(cx);
                 cx.notify();
@@ -2063,6 +2080,9 @@ impl AppView {
             if self.requested_view.is_some() {
                 self.open_startup_view(cx);
                 cx.notify();
+            } else {
+                // No page answers this launch: the next one is not its.
+                self.asked = None;
             }
             return;
         }
@@ -2482,6 +2502,41 @@ impl AppView {
                 this.open_note(reopen, false, cx);
             },
         );
+    }
+
+    /// Say in the log, once for each page, that it was drawn with its data,
+    /// and what arrived for it afterwards (`ready.rs`). Called while a frame
+    /// is built; the lines are written once that frame is drawn and shown.
+    fn announce_page(&mut self, cx: &mut Context<Self>) {
+        if let Some(fill) = self.page_filled.take() {
+            let line = ready::filled(fill);
+            cx.defer(move |_| log::info!(target: ready::TARGET, "{line}"));
+        }
+        if self.page_announced == Some(self.page_serial) {
+            return;
+        }
+        // Work that is running, or a start argument still to be carried out,
+        // is about to change the page.
+        if self.busy.is_some()
+            || self.pending_command.is_some()
+            || self.pending_edit
+            || self.pending_palette.is_some()
+        {
+            return;
+        }
+        let facts = ready::Facts {
+            connected: self.backend.is_some(),
+            repo_open: self.repo.is_some(),
+            notes_loaded: self.notes_loaded,
+            waiting_loaded: self.waiting.is_some(),
+            settings_loaded: self.settings.loaded(),
+        };
+        let Some(kind) = ready::kind(&self.page, facts) else {
+            return;
+        };
+        self.page_announced = Some(self.page_serial);
+        let line = ready::drawn(&kind, self.asked.take().as_deref());
+        cx.defer(move |_| log::info!(target: ready::TARGET, "{line}"));
     }
 
     fn set_page(&mut self, page: Page, remember: bool) {
@@ -3003,6 +3058,7 @@ impl AppView {
                 // whichever page is shown now. The page's serial stays, so
                 // its scroll position and selection do too.
                 this.prepare_page();
+                this.page_filled = Some(ready::Fill::Diagrams);
                 cx.notify();
             });
         })
@@ -5907,6 +5963,7 @@ impl Render for AppView {
         // The note's view and the outline's glide, before either is drawn.
         self.sync_reader(cx);
         self.step_outline(window, cx);
+        self.announce_page(cx);
         // A menu hangs from where its button was when it opened; a new zoom
         // level moved the button.
         let zoom = zoom::percent(cx);

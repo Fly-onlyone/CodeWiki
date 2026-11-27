@@ -14,7 +14,7 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 
 - **Writes the wiki.** Parses the repository, builds a dependency graph, and writes notes for packages, modules, key types, startup flows, external integrations, patterns and operations, with Mermaid diagrams. Your coding agent then explains each note and adds pictures to it. With auto explaining on (Settings → Repositories), Claude Code with the plugin explains waiting notes in the background when a session starts, 20 by default, or as many as you choose, up to all of them; "To explain (N)" in the toolbar lists the notes that still wait.
 - **Keeps it current.** After new commits it rewrites only the notes whose source changed.
-- **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them. The Review page shows the queue beside the open proposal; you can select several (click, Ctrl, Shift or the checkboxes) and approve or reject them in one step.
+- **Protects your edits.** A note you edited is never overwritten. Proposed changes wait in a review queue until you approve or reject them. When the code a note describes is deleted, a note with written work goes only where git can bring it back, and notes you wrote yourself only after you approve. The Review page shows the queue beside the open proposal; you can select several (click, Ctrl, Shift or the checkboxes) and approve or reject them in one step.
 - **Tells you what happens.** A small notice appears in the corner of the window, and a Windows notification takes its place while the window is hidden or minimized. It says when the app has connected to its backend again and when new proposals wait for review.
 - **Reads in tabs.** Right-click a tab to close it, the others, those to its right or left, or all, to reveal its note in the sidebar, or to copy its path. Right-click a note in the sidebar to open it in a new tab, or Ctrl+click or middle-click it. Settings → Appearance → Tabs turns tabs off, or opens every note in a tab of its own.
 - **Reconnects by itself.** If the backend stops answering, the app tries again on its own, and so does the Settings page when your embedding model server is not running yet. No restart needed.
@@ -130,6 +130,19 @@ A note about a package from outside the repository (an integration) says what th
 **What a coding agent gets.** The MCP tool `read_note` gives an agent a note without its pictures. While How it works is only the list of calls that rules write, it is left out too: the agent reads the calls in the code it is about to edit. Once an agent explained that section, it is always included. `read_note` with `full: true` gives the whole text. In the app, "Agent view" in a note's toolbar shows the same.
 
 **Your edits.** A note you change by hand is yours from then on. Neither CodeWiki nor an agent writes over it. When its code changes, the new text waits as a proposal that you approve or reject; what an agent writes for it waits the same way, with its pictures. After a CodeWiki update that changes how notes are written, the facts of every note you did not edit are written again; explanations stay.
+
+**When code is deleted or moved.** A note describes something in the code. When that is gone, the note describes nothing, and CodeWiki takes it out of the wiki without losing anything you or an agent wrote:
+
+- A note nobody wrote in is deleted with its code.
+- A note with an agent's explanation or your edits follows its code when that only moved: the note moves with it, keeps what was written, and waits for an agent to look again. Where it is not clear what moved where, nothing is carried over, and the sync says so.
+- When the code is gone, such a note is deleted only after the deletion is committed, and only if git holds the note as it is now, so `git` can always bring it back. Until then it stays, marked "What it describes is gone from the repository", and counts as no note of the wiki.
+- A note you wrote yourself is about the files it names in backticks, anywhere in its text. When none of them exists any more, CodeWiki never deletes it by itself: all such notes wait in one proposal on the Review page. Untick the notes you want to keep, then approve; the others are deleted. A note you keep, or all of them if you reject, stays as history and is not proposed again. A note that still names a file that exists, or names no file at all, is left alone. When a file a note names was only moved, the path in the note is updated.
+- Links to a deleted note become plain words in the notes that stay, and a picture or other attachment only deleted notes showed goes with them.
+- An agent's explanation keeps its note for as long as its code exists, even when other code becomes more important than it.
+
+Without git, nothing that holds written work is ever deleted.
+
+**Git worktrees.** A linked git worktree, such as the ones a coding agent makes for a task, gets its answers from CodeWiki like any folder. It is not listed as a project on Home: the row of its repository says how many worktrees it has. When a worktree's folder is removed, CodeWiki forgets it and deletes its index.
 
 ### Search
 

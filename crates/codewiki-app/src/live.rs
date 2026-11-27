@@ -1275,6 +1275,8 @@ mod tests {
                 name,
                 path,
                 kept: &Kept::Open,
+                worktrees: 0,
+                worktree_of: None,
             })
             .collect();
         let find = |query: &str| labels(&recent_matches(&projects, &paths, query)).join(",");
@@ -1324,6 +1326,8 @@ mod tests {
                 name: "project",
                 path,
                 kept: &Kept::Open,
+                worktrees: 0,
+                worktree_of: None,
             })
             .collect();
         let hits = recent_matches(&projects, &paths, "project");

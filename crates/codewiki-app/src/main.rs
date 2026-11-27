@@ -3586,14 +3586,19 @@ impl AppView {
         if text.trim().is_empty() {
             self.home_suggestions.clear();
         } else {
+            // A linked worktree is no project: Home gives it no row, and its
+            // search finds none.
             let projects: Vec<live::Project> = self
                 .repos
                 .iter()
+                .filter(|repo| repo.worktree_of.is_none())
                 .map(|repo| live::Project {
                     id: &repo.id,
                     name: &repo.name,
                     path: &repo.path,
                     kept: &live::OPEN,
+                    worktrees: 0,
+                    worktree_of: None,
                 })
                 .collect();
             let found = live::recent_matches(&projects, &self.recent, text);
@@ -6665,6 +6670,7 @@ mod tests {
             id: id.into(),
             name: id.into(),
             path: path.into(),
+            worktree_of: None,
         }
     }
 

@@ -556,12 +556,6 @@ function Start-FromStartMenu {
         Wait-AppPage -Asked default -Since $mark -TimeoutSec 20
     }
     Hold-For 1.5 -Reason "the page's entrance animation"
-    if (-not $Running) {
-        # A window the Start menu has opened is not always the one that gets the
-        # keys (0.6.0: Ctrl+K did nothing until the window was clicked, which a
-        # user does as a matter of course). The click is what Show-GuestWindow does.
-        [void](Show-GuestWindow -ProcessName "codewiki-app")
-    }
     $found
 }
 
@@ -3407,12 +3401,6 @@ Test-Case "I1" "Restart Windows" "nothing of CodeWiki starts by itself; PATH kep
 # I1 has just shown that nothing starts by itself. The setting is reached
 # through the palette, which lists it for an installed copy.
 function Set-GuestAutostart {
-    # On Home, once it lists recent projects, 0.6.0 sends Ctrl+K and the typed
-    # text to a search of those projects (AS1's screenshot of 2026-11-27) and not to
-    # the palette: the command is reached from a page.
-    Start-GuestApp -Arguments $guestRepo, "_HOME"
-    Wait-AppPage -TimeoutSec 15
-    Hold-For 1.5 -Reason "the page's entrance animation"
     Send-Keys "ctrl+k"; Wait-ScreenSettled -TimeoutSec 2
     Send-Text "start with windows"; Wait-ScreenSettled -TimeoutSec 2
     $listed = Shot "autostart-in-palette"

@@ -14,20 +14,26 @@
 //! recorded; Go reads them from the names and signatures of the functions of
 //! its `_test.go` files; C and C++ read them from the test macros the parser
 //! recorded (`TEST`, `TEST_CASE`, `BOOST_AUTO_TEST_CASE`) and from what CMake
-//! registers with CTest. A language joins the map by adding one entry to
+//! registers with CTest; Python reads the functions and methods the parser
+//! recorded (`python.rs`); TypeScript and JavaScript read the titled calls
+//! of `test`, `it` and `describe` from the file's text (`js.rs`). A language joins the map by adding one entry to
 //! [`LANGUAGES`].
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::Path;
 
 use cw_core::{Language, Result, Symbol, SymbolKind};
 use cw_index::Index;
 use cw_parse::cmake::{Cmake, Target, read_cmake};
-use cw_parse::{CrateInfo, c_module_map, module_path, owning_crate};
+use cw_parse::{CrateInfo, JsRepo, PythonRoots, c_module_map, module_path, owning_crate};
 use serde::{Deserialize, Serialize};
 
 use crate::gitintel::dependents_by_file;
 use crate::rustscan::{Scanned, is_test_path};
+mod js;
+mod python;
+
 use crate::units::{
     is_csharp_test_attribute, is_jvm_test_file, is_test_file, xml_attribute, xml_elements,
 };
@@ -98,6 +104,13 @@ struct Env<'a> {
     files: HashSet<String>,
     /// The CMake targets and the tests registered with CTest.
     cmake: Cmake,
+    /// What the JavaScript build files say: packages, workspaces, the
+    /// package manager of each.
+    js: JsRepo,
+    /// The import roots and projects of Python.
+    py_roots: PythonRoots,
+    /// What each Python project says about its test runner, read when asked.
+    py_projects: RefCell<python::Projects>,
 }
 
 impl Env<'_> {
@@ -150,7 +163,15 @@ trait TestLanguage: Sync {
 /// The languages whose tests the map follows. Adding a language is adding an
 /// entry here and the type that fills in [`TestLanguage`]: reachability,
 /// the report, the MCP tool and the app need no change.
-static LANGUAGES: [&dyn TestLanguage; 5] = [&RustTests, &CSharpTests, &GoTests, &JvmTests, &CTests];
+static LANGUAGES: [&dyn TestLanguage; 7] = [
+    &RustTests,
+    &CSharpTests,
+    &GoTests,
+    &JvmTests,
+    &CTests,
+    &python::PythonTests,
+    &js::JsTests,
+];
 
 fn language_of(language: Language) -> Option<&'static dyn TestLanguage> {
     LANGUAGES.iter().copied().find(|l| l.covers(language))
@@ -1403,6 +1424,13 @@ fn gather(root: &Path, index: &Index) -> Result<Facts> {
         } else {
             Cmake::default()
         },
+        js: JsRepo::read(&files, &|path| {
+            std::fs::read_to_string(root.join(path)).ok()
+        }),
+        py_roots: PythonRoots::read(&files, &|path| {
+            std::fs::read_to_string(root.join(path)).ok()
+        }),
+        py_projects: RefCell::new(HashMap::new()),
     };
     let mut test_files = Vec::new();
     let mut sources = Vec::new();

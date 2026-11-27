@@ -85,7 +85,8 @@ enum Command {
     /// Tests per file, and source files no test reaches.
     Tests,
     /// Tests to run after changing the given files, or after the uncommitted
-    /// changes when no file is given.
+    /// changes when no file is given, with the commands that run them, for
+    /// every mapped language.
     ImpactedTests { files: Vec<String> },
     /// Import an LCOV or Cobertura coverage report and rank the least
     /// covered files by how often they change and how much depends on them.

@@ -3349,3 +3349,458 @@ fn a_cpp_project_gets_a_full_vault() {
         "{ops}"
     );
 }
+
+/// A React project: `@/` and `~lib/` aliases of its tsconfig, which extends a
+/// preset from `node_modules` and a file, with comments and trailing commas.
+fn react_project() -> (tempfile::TempDir, std::path::PathBuf) {
+    named_repo(
+        "storefront",
+        &[
+            (
+                "package.json",
+                "{\n  \"name\": \"storefront-web\",\n  \"description\": \"The shop front\",\n  \"scripts\": { \"build\": \"vite build\", \"test\": \"vitest run\" },\n  \"dependencies\": { \"react\": \"^18.2.0\" }\n}\n",
+            ),
+            (
+                "tsconfig.json",
+                "{\n  // aliases of the app\n  \"extends\": [\"@tsconfig/vite/tsconfig.json\", \"./tsconfig.base.json\"],\n  \"compilerOptions\": {\n    \"paths\": {\n      \"@/*\": [\"./src/*\"], /* the app */\n      \"~lib/*\": [\"./src/lib/*\"],\n    },\n  },\n}\n",
+            ),
+            (
+                "tsconfig.base.json",
+                "{ \"compilerOptions\": { \"baseUrl\": \".\", \"strict\": true } }\n",
+            ),
+            (
+                "node_modules/@tsconfig/vite/tsconfig.json",
+                "{ \"compilerOptions\": { \"jsx\": \"react-jsx\" } }\n",
+            ),
+            (
+                "src/main.tsx",
+                "import { createRoot } from \"react-dom/client\";\nimport { App } from \"@/App\";\n\ncreateRoot(document.body).render(<App />);\n",
+            ),
+            (
+                "src/App.tsx",
+                "import React from \"react\";\nimport { CartView } from \"@/components/CartView\";\nimport { shout } from \"~lib/text\";\n\n/** The root component. */\nexport function App() {\n  return <CartView title={shout(\"cart\")} />;\n}\n\nexport function Header() {\n  return <h1>{shout(\"shop\")}</h1>;\n}\n\nexport function Footer() {\n  return <p>bye</p>;\n}\n",
+            ),
+            (
+                "src/components/CartView.tsx",
+                "import React from \"react\";\nimport { useCart } from \"@/store/cart\";\n\n/** Shows what is in the cart. */\nexport function CartView(props: { title: string }) {\n  const cart = useCart();\n  return <h1>{props.title}{cart.items.length}</h1>;\n}\n\nexport function CartRow() {\n  return <li>{useCart().items.length}</li>;\n}\n\nexport function CartTotal() {\n  return <b>{useCart().items.length}</b>;\n}\n",
+            ),
+            (
+                "src/store/cart.ts",
+                "/** The cart of the visitor. */\nexport function useCart() {\n  return { items: [] as number[] };\n}\n\nexport function addItem(n: number) {\n  return useCart().items.concat(n);\n}\n\nexport function clearCart() {\n  return useCart().items.length;\n}\n",
+            ),
+            (
+                "src/lib/text.ts",
+                "export function shout(s: string): string {\n  return s.toUpperCase();\n}\n\nexport function whisper(s: string): string {\n  return s.toLowerCase();\n}\n\nexport function trim(s: string): string {\n  return s.trim();\n}\n",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_react_project_links_its_modules_through_the_aliases_of_its_tsconfig() {
+    let (_dir, root) = react_project();
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/storefront-web/storefront-web.md",
+            "01-Core/storefront-web/components/CartView Module.md",
+            "01-Core/storefront-web/store/Cart Module.md",
+            "01-Core/storefront-web/lib/Text Module.md",
+            "03-Integrations/react.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    // The alias is an edge to a module of the repository, never a package.
+    let view = read(
+        &vault,
+        "01-Core/storefront-web/components/CartView Module.md",
+    );
+    assert!(view.contains("[[Cart Module]]"), "{view}");
+    let app = read(&vault, "01-Core/storefront-web/App Module.md");
+    assert!(
+        app.contains("[[CartView Module]]") && app.contains("[[Text Module]]"),
+        "{app}"
+    );
+    let integrations: Vec<String> = fs::read_dir(vault.join("03-Integrations"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| !name.starts_with('_'))
+        .collect();
+    assert!(
+        integrations
+            .iter()
+            .all(|name| ["react.md", "react-dom.md"].contains(&name.as_str())),
+        "{integrations:?}"
+    );
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(
+        ops.contains("npm install\nnpm run build\nnpm run test\n"),
+        "{ops}"
+    );
+}
+
+/// A pnpm workspace of two packages; `web` imports `@acme/ui` by name.
+fn pnpm_workspace() -> (tempfile::TempDir, std::path::PathBuf) {
+    named_repo(
+        "monorepo",
+        &[
+            (
+                "package.json",
+                "{ \"name\": \"monorepo\", \"private\": true, \"packageManager\": \"pnpm@9.1.0\" }\n",
+            ),
+            ("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n"),
+            (
+                "pnpm-lock.yaml",
+                "lockfileVersion: '9.0'\n\nimporters:\n\n  .: {}\n\n  packages/ui:\n    dependencies:\n      react:\n        specifier: ^18.2.0\n        version: 18.2.0\n\n  packages/web:\n    dependencies:\n      '@acme/ui':\n        specifier: workspace:*\n        version: link:../ui\n      react:\n        specifier: ^18.0.0\n        version: 18.3.1\n\npackages:\n\n  react@18.2.0:\n    resolution: {integrity: x}\n",
+            ),
+            (
+                "node_modules/react/package.json",
+                "{ \"name\": \"react\", \"description\": \"React is a JavaScript library for building user interfaces.\" }\n",
+            ),
+            (
+                "packages/ui/package.json",
+                "{ \"name\": \"@acme/ui\", \"description\": \"Shared components\", \"main\": \"dist/index.js\", \"scripts\": { \"build\": \"tsc\", \"test\": \"vitest run\" }, \"dependencies\": { \"react\": \"^18.2.0\" } }\n",
+            ),
+            (
+                "packages/ui/src/index.ts",
+                "import React from \"react\";\n\n/** A button. */\nexport function Button() {\n  return React.createElement(\"button\");\n}\n",
+            ),
+            (
+                "packages/web/package.json",
+                "{ \"name\": \"web\", \"scripts\": { \"build\": \"vite build\", \"start\": \"vite\" }, \"dependencies\": { \"@acme/ui\": \"workspace:*\", \"react\": \"^18.0.0\" } }\n",
+            ),
+            (
+                "packages/web/src/main.ts",
+                "import React from \"react\";\nimport { Button } from \"@acme/ui\";\n\nexport function main() {\n  return [React, Button()];\n}\n",
+            ),
+        ],
+    )
+}
+
+#[test]
+fn a_pnpm_workspace_has_a_unit_for_each_package_and_pnpm_commands() {
+    let (_dir, root) = pnpm_workspace();
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/acme-ui/@acme ui.md",
+            "01-Core/web/web.md",
+            "03-Integrations/react.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    // `@acme/ui` is another unit of the repository, not an integration.
+    assert!(!vault.join("03-Integrations/acme-ui.md").exists());
+    let web = read(&vault, "01-Core/web/web.md");
+    assert!(web.contains("[[@acme ui]]"), "{web}");
+    let ops = read(&vault, "05-Operations/Build and Test.md");
+    assert!(ops.contains("pnpm install --frozen-lockfile\n"), "{ops}");
+    assert!(
+        ops.contains("pnpm --filter \"@acme/ui\" run build\npnpm --filter \"@acme/ui\" run test\n"),
+        "{ops}"
+    );
+    assert!(
+        ops.contains("pnpm --filter web run build\npnpm --filter web run start\n"),
+        "{ops}"
+    );
+    assert!(!ops.contains("npm run"), "{ops}");
+    // Each package asks for react by its own range and the lock file pins
+    // what each of them gets.
+    let react = read(&vault, "03-Integrations/react.md");
+    assert!(
+        react.contains(
+            "- `packages/ui/package.json` — declares the dependency: version `^18.2.0`, locked `18.2.0`"
+        ),
+        "{react}"
+    );
+    assert!(
+        react.contains(
+            "- `packages/web/package.json` — declares the dependency: version `^18.0.0`, locked `18.3.1`"
+        ),
+        "{react}"
+    );
+    // Lock files stay apart from the files a note describes.
+    assert!(!web.contains("pnpm-lock.yaml"), "{web}");
+}
+
+#[test]
+fn the_installed_description_of_a_package_reads_through_node_modules() {
+    let (_dir, root) = pnpm_workspace();
+    run(&root);
+    let facts = scan_repo(&root).unwrap();
+    let metrics = analyze(&facts);
+    let machine = cw_wiki::manifests::Machine::with_cargo_home(&root, None);
+    cw_wiki::generate_with(&root, &facts, &metrics, Some("commit-2".into()), &machine).unwrap();
+    let react = read(&root.join("obsidian"), "03-Integrations/react.md");
+    assert!(
+        react.contains("React is a JavaScript library for building user interfaces."),
+        "{react}"
+    );
+}
+
+#[test]
+fn yarn_and_bun_projects_print_their_commands_and_locked_versions() {
+    let package = "{ \"name\": \"app\", \"scripts\": { \"build\": \"tsc\", \"test\": \"jest\" }, \"dependencies\": { \"express\": \"^4.18.0\" } }\n";
+    let source =
+        "import express from \"express\";\n\nexport function serve() {\n  return express();\n}\n";
+    let other = "import express from \"express\";\n\nexport function router() {\n  return express.Router();\n}\n";
+    let case = |name: &str, lock: (&str, &str)| {
+        let (dir, root) = named_repo(
+            name,
+            &[
+                ("package.json", package),
+                ("src/app.ts", source),
+                ("src/routes.ts", other),
+                lock,
+            ],
+        );
+        run_settled(&root);
+        let vault = root.join("obsidian");
+        (
+            dir,
+            read(&vault, "05-Operations/Build and Test.md"),
+            read(&vault, "03-Integrations/express.md"),
+        )
+    };
+    let (_a, ops, express) = case(
+        "classic",
+        (
+            "yarn.lock",
+            "# yarn lockfile v1\n\n\nexpress@^4.18.0:\n  version \"4.19.2\"\n  resolved \"x\"\n",
+        ),
+    );
+    assert!(
+        ops.contains("yarn install --frozen-lockfile\nyarn run build\nyarn run test\n"),
+        "{ops}"
+    );
+    assert!(
+        express.contains("version `^4.18.0`, locked `4.19.2`"),
+        "{express}"
+    );
+    let (_b, ops, express) = case(
+        "berry",
+        (
+            "yarn.lock",
+            "# This file is generated by running \"yarn install\" inside your project.\n\n__metadata:\n  version: 8\n\n\"express@npm:^4.18.0\":\n  version: 4.20.0\n  resolution: \"express@npm:4.20.0\"\n",
+        ),
+    );
+    assert!(
+        ops.contains("yarn install --immutable\nyarn run build\n"),
+        "{ops}"
+    );
+    assert!(express.contains("locked `4.20.0`"), "{express}");
+    let (_c, ops, express) = case(
+        "bunny",
+        (
+            "bun.lock",
+            "{\n  \"lockfileVersion\": 1,\n  \"workspaces\": { \"\": { \"name\": \"app\" } },\n  \"packages\": {\n    \"express\": [\"express@4.21.0\", \"\", {}, \"sha512-x\"],\n  }\n}\n",
+        ),
+    );
+    assert!(
+        ops.contains("bun install --frozen-lockfile\nbun run build\nbun run test\n"),
+        "{ops}"
+    );
+    assert!(express.contains("locked `4.21.0`"), "{express}");
+    // The binary lock file is not read, and bun says nothing about it.
+    let (_d, ops, express) = case("binary", ("bun.lockb", "binary"));
+    assert!(ops.contains("bun install\nbun run build\n"), "{ops}");
+    assert!(!express.contains("locked"), "{express}");
+}
+
+/// A src-layout project with no `__init__.py` anywhere, and tests beside `src`.
+fn namespace_project(files_extra: &[(&str, &str)]) -> (tempfile::TempDir, std::path::PathBuf) {
+    let mut files = vec![
+        (
+            "pyproject.toml",
+            "[project]\nname = \"shopkit\"\ndescription = \"Order handling.\"\ndependencies = [\"requests\"]\n\n[tool.pytest.ini_options]\ntestpaths = [\"tests\"]\n",
+        ),
+        (
+            "src/shopkit/orders.py",
+            "\"\"\"Orders and where they are kept.\"\"\"\nimport requests\n\n\nclass OrderBook:\n    \"\"\"Holds the orders of one customer.\"\"\"\n\n    def add(self, quantity):\n        return quantity\n\n\ndef load_orders(url):\n    return requests.get(url).json()\n\n\ndef count_orders(url):\n    return len(load_orders(url))\n",
+        ),
+        (
+            "src/shopkit/services/billing.py",
+            "\"\"\"Billing.\"\"\"\nimport requests\nfrom shopkit.orders import OrderBook\nimport shopkit.orders\n\n\ndef bill(book: OrderBook):\n    return shopkit.orders.load_orders(\"x\")\n\n\ndef refund(book: OrderBook):\n    return requests.post(\"x\")\n\n\ndef audit(book: OrderBook):\n    return shopkit.orders.count_orders(\"x\")\n",
+        ),
+        (
+            "src/shopkit/__main__.py",
+            "from shopkit.services.billing import bill\n\n\ndef main():\n    bill(None)\n\n\nmain()\n",
+        ),
+        (
+            "tests/test_billing.py",
+            "from shopkit.services.billing import bill\n\n\ndef test_bill():\n    assert bill\n",
+        ),
+    ];
+    files.extend_from_slice(files_extra);
+    named_repo("shopkit-repo", &files)
+}
+
+#[test]
+fn a_python_src_layout_without_init_files_is_one_unit_whose_imports_resolve() {
+    let (_dir, root) = namespace_project(&[]);
+    run_settled(&root);
+    let vault = root.join("obsidian");
+    // One unit for the project, named by its build file, not one for each folder.
+    assert_notes(
+        &root,
+        &[
+            "01-Core/shopkit-repo/shopkit-repo.md",
+            "03-Integrations/requests.md",
+        ],
+    );
+    let units: Vec<String> = fs::read_dir(vault.join("01-Core"))
+        .unwrap()
+        .map(|e| e.unwrap())
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(units, ["shopkit-repo"], "{units:?}");
+    let unit = read(&vault, "01-Core/shopkit-repo/shopkit-repo.md");
+    assert!(
+        unit.contains("- `pyproject.toml` — Python project manifest"),
+        "{unit}"
+    );
+    // Only the real outside package is an integration.
+    let requests = read(&vault, "03-Integrations/requests.md");
+    assert!(
+        requests.contains("imported by 2 source files"),
+        "{requests}"
+    );
+    let billing = VaultMeta::load(&vault)
+        .unwrap()
+        .notes
+        .values()
+        .find(|e| e.path.ends_with("Billing Module.md"))
+        .map(|e| read(&vault, &e.path))
+        .expect("a note for the billing module");
+    assert!(billing.contains("[[Orders Module]]"), "{billing}");
+}
+
+#[test]
+fn an_explained_python_module_survives_the_change_of_its_module_path() {
+    // Before: no build file, so the folders above `shop` are part of the name.
+    let (_dir, root) = named_repo(
+        "svcrepo",
+        &[
+            (
+                "svc/src/shop/orders.py",
+                "\"\"\"Orders and where they are kept.\"\"\"\n\n\ndef place(quantity):\n    return quantity\n\n\ndef cancel(quantity):\n    return -quantity\n\n\ndef total(quantities):\n    return sum(quantities)\n",
+            ),
+            (
+                "svc/src/shop/billing.py",
+                "from shop.orders import place\n\n\ndef bill():\n    return place(1)\n\n\ndef refund():\n    return place(2)\n\n\ndef audit():\n    return place(3)\n",
+            ),
+        ],
+    );
+    run_settled(&root);
+    let note_of = |name: &str| -> String {
+        VaultMeta::load(&root.join("obsidian"))
+            .unwrap()
+            .notes
+            .values()
+            .find(|e| e.path.ends_with(name))
+            .unwrap_or_else(|| panic!("no note {name}"))
+            .path
+            .clone()
+    };
+    let old = note_of("Orders Module.md");
+    assert!(old.contains("svc"), "{old}");
+    explain(
+        &root,
+        &old,
+        &[("How it works", "Orders are placed one line at a time.")],
+        "",
+    );
+
+    // After: the build file makes `src` a root, and the module is `shop.orders`.
+    write(
+        &root,
+        "svc/pyproject.toml",
+        "[project]\nname = \"shop-svc\"\n",
+    );
+    let report = run(&root);
+    let new = note_of("Orders Module.md");
+    assert_ne!(old, new);
+    assert!(
+        report.moved.contains(&cw_wiki::Moved {
+            from: old.clone(),
+            to: new.clone()
+        }),
+        "{report:?}"
+    );
+    let vault = root.join("obsidian");
+    assert!(!vault.join(&old).exists());
+    let note = read(&vault, &new);
+    assert!(
+        note.contains("Orders are placed one line at a time."),
+        "{note}"
+    );
+    let entry = entry_of(&root, &new);
+    assert_eq!(entry.id, "mod:shop::orders");
+    assert!(entry.explained.is_some());
+    assert_eq!(report.link_rate, 1.0);
+    // The next run changes nothing.
+    let again = run(&root);
+    assert!(
+        again.written.is_empty() && again.moved.is_empty(),
+        "{again:?}"
+    );
+}
+
+/// A unit that changes its name or its folder while its notes keep their
+/// ids (a `package.json` gets a `name`) must not strand them in a folder
+/// whose map the run removes: the next run would fail on `[[_index]]`.
+#[test]
+fn notes_follow_their_unit_when_the_unit_changes_its_folder() {
+    let module = |name: &str| {
+        format!(
+            "/** The {name}. */\nexport function {name}A(): number {{\n  return 1;\n}}\n\nexport function {name}B(): number {{\n  return 2;\n}}\n\nexport function {name}C(): number {{\n  return 3;\n}}\n"
+        )
+    };
+    let (_dir, root) = named_repo(
+        "renamed",
+        &[
+            (
+                "web/package.json",
+                "{ \"scripts\": { \"build\": \"tsc\" } }\n",
+            ),
+            ("web/src/cart.ts", &module("cart")),
+            ("web/src/price.ts", &module("price")),
+        ],
+    );
+    run_settled(&root);
+    let vault = root.join("obsidian");
+    let old = "01-Core/web/Cart Module.md";
+    assert_notes(&root, &[old]);
+    explain(
+        &root,
+        old,
+        &[("How it works", "The cart counts what a visitor picked.")],
+        "",
+    );
+
+    write(
+        &root,
+        "web/package.json",
+        "{ \"name\": \"storefront\", \"scripts\": { \"build\": \"tsc\" } }\n",
+    );
+    let report = run(&root);
+    assert_eq!(report.link_rate, 1.0, "{report:?}");
+    let new = "01-Core/storefront/Cart Module.md";
+    assert_notes(&root, &[new, "01-Core/storefront/Price Module.md"]);
+    assert!(!vault.join(old).exists());
+    assert!(!vault.join("01-Core/web").exists(), "{report:?}");
+    // What an agent wrote goes along.
+    let note = read(&vault, new);
+    assert!(
+        note.contains("The cart counts what a visitor picked."),
+        "{note}"
+    );
+    assert!(entry_of(&root, new).explained.is_some());
+    // And the next run is quiet.
+    let again = run(&root);
+    assert!(again.written.is_empty(), "{again:?}");
+    assert_eq!(again.link_rate, 1.0);
+}

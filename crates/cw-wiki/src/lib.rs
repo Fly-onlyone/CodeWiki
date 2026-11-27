@@ -19,6 +19,7 @@ pub mod health;
 mod level;
 pub mod manifests;
 pub mod plan;
+pub mod pm;
 pub mod query;
 pub mod refactor;
 pub mod render;

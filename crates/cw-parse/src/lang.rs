@@ -12,6 +12,8 @@ use cw_core::{Language, Symbol, SymbolKind, Visibility};
 use tree_sitter::Node;
 
 use crate::gomod::GoModules;
+use crate::jsbuild::resolve_source;
+use crate::pyroots::PythonRoots;
 use crate::rust::{CallSite, ImplFact, ModDecl, ParsedFile, TypeRef, UseImport, ValueRef};
 
 const MAX_SIGNATURE_CHARS: usize = 300;
@@ -189,9 +191,6 @@ const NODE_BUILTINS: [&str; 34] = [
     "zlib",
     "inspector",
 ];
-
-/// Extensions a TypeScript import specifier may leave out.
-const TS_EXTENSIONS: [&str; 5] = ["ts", "tsx", "d.ts", "mts", "cts"];
 
 /// Named children of `node`, collected so the tree can be walked while the
 /// extractor is mutated.
@@ -508,27 +507,7 @@ impl<'a> Sink<'a> {
 /// it matches what `import` statements write. A file outside any package is
 /// named by its path from the repository root, minus a leading `src` or `lib`.
 pub fn python_module(files: &HashSet<&str>, path: &str) -> (String, bool) {
-    let stem_path = path.rsplit_once('.').map_or(path, |(stem, _)| stem);
-    let mut dirs: Vec<&str> = stem_path.split('/').collect();
-    let stem = dirs.pop().unwrap_or("");
-    let is_package = stem == "__init__";
-    let has_init = |depth: usize| {
-        let dir = dirs[..=depth].join("/");
-        ["py", "pyi"]
-            .iter()
-            .any(|ext| files.contains(format!("{dir}/__init__.{ext}").as_str()))
-    };
-    let start = (0..dirs.len())
-        .find(|&i| has_init(i))
-        .unwrap_or_else(|| usize::from(dirs.first().is_some_and(|d| matches!(*d, "src" | "lib"))));
-    let mut segments: Vec<String> = dirs[start..].iter().map(|d| sanitize(d)).collect();
-    if !is_package {
-        segments.push(sanitize(stem));
-    }
-    if segments.is_empty() {
-        segments.push("__init__".to_string());
-    }
-    (segments.join("::"), is_package)
+    PythonRoots::default().module(files, path)
 }
 
 /// Module a TypeScript file defines: its path without the extension.
@@ -540,9 +519,6 @@ pub fn ts_module(path: &str) -> String {
         .collect::<Vec<_>>()
         .join("::")
 }
-
-/// JavaScript source extensions, tried after the TypeScript ones.
-const JS_EXTENSIONS: [&str; 4] = ["js", "jsx", "mjs", "cjs"];
 
 /// File a relative TypeScript import specifier names, as written in `from`.
 /// Tries the specifier itself, then each source extension, then an `index`
@@ -562,36 +538,7 @@ pub fn resolve_ts_import(files: &HashSet<&str>, from: &str, spec: &str) -> Optio
             other => parts.push(other),
         }
     }
-    let base = parts.join("/");
-    let is_source = |p: &str| {
-        matches!(
-            Language::from_path(p),
-            Language::TypeScript | Language::JavaScript
-        )
-    };
-    if is_source(&base) && files.contains(base.as_str()) {
-        return Some(base);
-    }
-    // `./text.js` is how ESM TypeScript names `./text.ts`.
-    let stem = [".js", ".jsx", ".mjs", ".cjs"]
-        .iter()
-        .find_map(|ext| base.strip_suffix(ext))
-        .unwrap_or(&base);
-    let index = if base.is_empty() {
-        "index".to_string()
-    } else {
-        format!("{base}/index")
-    };
-    [stem, index.as_str()]
-        .iter()
-        .filter(|candidate| !candidate.is_empty())
-        .flat_map(|candidate| {
-            TS_EXTENSIONS
-                .iter()
-                .chain(JS_EXTENSIONS.iter())
-                .map(move |ext| format!("{candidate}.{ext}"))
-        })
-        .find(|candidate| files.contains(candidate.as_str()))
+    resolve_source(files, &parts.join("/"))
 }
 
 /// Package a non-relative TypeScript import specifier names, or `None` when

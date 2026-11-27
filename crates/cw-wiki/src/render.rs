@@ -7,6 +7,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use cw_core::{Language, Symbol, SymbolKind, Visibility};
+use cw_parse::PmInfo;
 use cw_vault::{NoteKind, Registry};
 
 use crate::analyze::DEPENDENCY_KINDS;
@@ -1471,15 +1472,11 @@ impl<'a> RenderCtx<'a> {
                 if unit.manifests.is_empty() {
                     return out;
                 }
-                let npm = if unit.dir.is_empty() {
-                    "npm".to_string()
-                } else {
-                    format!("npm --prefix {}", quote(&unit.dir))
-                };
-                out.push(format!("{npm} install"));
+                let pm = unit.pm.clone().unwrap_or_else(|| PmInfo::plain(&unit.dir));
+                out.push(crate::pm::install(&pm));
                 for script in ["build", "test", "lint", "start"] {
                     if unit.scripts.iter().any(|s| s == script) {
-                        out.push(format!("{npm} run {script}"));
+                        out.push(crate::pm::run_script(&pm, &unit.dir, script));
                     }
                 }
             }

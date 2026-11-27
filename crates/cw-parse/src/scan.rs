@@ -16,12 +16,14 @@ use crate::csharp::parse_csharp;
 use crate::go::{package_name, parse_go};
 use crate::gomod::parse_go_mod;
 use crate::java::parse_java;
+use crate::jsbuild::JsRepo;
 use crate::kotlin::parse_kotlin;
-use crate::lang::{GoBuild, link_imports, nuget_ids, python_module, resolve_ts_import, ts_module};
+use crate::lang::{GoBuild, link_imports, nuget_ids, resolve_ts_import, ts_module};
+use crate::pyroots::PythonRoots;
 use crate::python::parse_python;
 use crate::resolve::{ExternalUse, Resolver};
 use crate::rust::{ParsedFile, parse_rust};
-use crate::typescript::parse_typescript;
+use crate::typescript::parse_typescript_with;
 use crate::workspace::{CrateInfo, module_path, parse_manifest};
 
 /// Files larger than this are recorded but not read as source.
@@ -179,6 +181,15 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
     let mut seen: HashSet<String> = HashSet::new();
     let file_set: HashSet<&str> = paths.iter().map(String::as_str).collect();
 
+    // The tsconfig files and workspaces that say what a specifier names.
+    let js = JsRepo::read(&paths, &|path| {
+        std::fs::read_to_string(root.join(path)).ok()
+    });
+    // The folders Python's absolute imports start at.
+    let py = PythonRoots::read(&paths, &|path| {
+        std::fs::read_to_string(root.join(path)).ok()
+    });
+
     // The Go modules of the repository name the packages inside them; the
     // names the packages give themselves tell what an import is called.
     let mut go = GoBuild::default();
@@ -267,15 +278,18 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
             // These extractors emit the module symbol themselves.
             let file_parsed = match language {
                 Language::Python => {
-                    let (module, is_package) = python_module(&file_set, path);
+                    let (module, is_package) = py.module(&file_set, path);
                     parse_python(path, &module, is_package, &source)?
                 }
                 // JavaScript is parsed with the TSX grammar, which accepts it.
                 Language::TypeScript | Language::JavaScript => {
                     let resolve = |spec: &str| {
-                        resolve_ts_import(&file_set, path, spec).map(|file| ts_module(&file))
+                        resolve_ts_import(&file_set, path, spec)
+                            .or_else(|| js.resolve_import(&file_set, path, spec).0)
+                            .map(|file| ts_module(&file))
                     };
-                    parse_typescript(path, &ts_module(path), &source, &resolve)?
+                    let is_alias = |spec: &str| js.resolve_import(&file_set, path, spec).1;
+                    parse_typescript_with(path, &ts_module(path), &source, &resolve, &is_alias)?
                 }
                 Language::Java => parse_java(path, &source)?,
                 Language::Kotlin => parse_kotlin(path, &source)?,
@@ -2417,5 +2431,212 @@ pub fn read() -> u8 { LIMIT }
             edge_of(&facts, "only_a::g", "a::shared_name", EdgeKind::Calls),
             Some(Confidence::High)
         );
+    }
+
+    #[test]
+    fn typescript_path_aliases_resolve_through_tsconfig_and_extends() {
+        let facts = scan_files(&[
+            (
+                "app/tsconfig.base.json",
+                "{ \"compilerOptions\": { \"baseUrl\": \".\", \"strict\": true, }, }\n",
+            ),
+            (
+                "app/tsconfig.json",
+                "{\n  // paths are relative to baseUrl\n  \"extends\": \"./tsconfig.base.json\",\n  \"compilerOptions\": {\n    /* aliases */\n    \"paths\": {\n      \"@/*\": [\"./src/*\"],\n      \"~lib/*\": [\"./nowhere/*\", \"./src/lib/*\"],\n    },\n  },\n}\n",
+            ),
+            ("app/package.json", "{ \"name\": \"shop-web\" }\n"),
+            (
+                "app/src/store/cart.ts",
+                "export function addItem(): void {}\n",
+            ),
+            (
+                "app/src/lib/format.ts",
+                "export function money(): string { return \"\"; }\n",
+            ),
+            (
+                "app/src/components/Cart.tsx",
+                "import React from \"react\";\nimport { addItem } from \"@/store/cart\";\nimport { money } from \"~lib/format\";\nimport { missing } from \"@/store/gone\";\nimport { money as again } from \"src/lib/format\";\n\nexport function view() {\n  addItem();\n  again();\n  return money();\n}\n",
+            ),
+            (
+                "scripts/tool.ts",
+                "import { addItem } from \"@/store/cart\";\nimport { x } from \"~/y\";\nexport function run() { addItem(); }\n",
+            ),
+        ]);
+        assert!(facts.files_with_errors.is_empty());
+        let view = "app::src::components::Cart::view";
+        assert_eq!(
+            edge_of(
+                &facts,
+                view,
+                "app::src::store::cart::addItem",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // The second target of `~lib/*` is the one that exists.
+        assert_eq!(
+            edge_of(
+                &facts,
+                view,
+                "app::src::lib::format::money",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        for target in ["app/src/store/cart.ts", "app/src/lib/format.ts"] {
+            assert!(
+                edge_of(
+                    &facts,
+                    "file:app/src/components/Cart.tsx",
+                    &format!("file:{target}"),
+                    EdgeKind::Imports
+                )
+                .is_some(),
+                "{target}"
+            );
+        }
+        // A file outside any config resolves nothing, and an alias prefix is
+        // no package: only `react` is an integration.
+        assert!(
+            edge_of(
+                &facts,
+                "file:scripts/tool.ts",
+                "file:app/src/store/cart.ts",
+                EdgeKind::Imports
+            )
+            .is_none()
+        );
+        let packages: Vec<(&str, &str)> = facts
+            .external_uses
+            .iter()
+            .map(|u| (u.file.as_str(), u.krate.as_str()))
+            .collect();
+        assert_eq!(packages, [("app/src/components/Cart.tsx", "react")]);
+    }
+
+    #[test]
+    fn a_python_project_without_init_files_resolves_absolute_imports_from_its_roots() {
+        let facts = scan_files(&[
+            (
+                "backend/pyproject.toml",
+                "[project]\nname = \"shop\"\ndependencies = [\"requests\"]\n",
+            ),
+            (
+                "backend/src/shop/orders.py",
+                "import requests\n\n\ndef place():\n    return requests.get(\"x\")\n",
+            ),
+            (
+                "backend/src/shop/api/routes.py",
+                "import shop.orders\nfrom shop.orders import place\n\n\ndef handle():\n    place()\n    return shop.orders.place()\n",
+            ),
+            (
+                "backend/tests/test_orders.py",
+                "from shop.orders import place\n\n\ndef test_place():\n    place()\n",
+            ),
+        ]);
+        assert!(facts.files_with_errors.is_empty());
+        assert_eq!(kind_of(&facts, "shop::orders"), Some(SymbolKind::Module));
+        assert_eq!(
+            kind_of(&facts, "shop::api::routes::handle"),
+            Some(SymbolKind::Function)
+        );
+        assert_eq!(
+            kind_of(&facts, "tests::test_orders::test_place"),
+            Some(SymbolKind::Function)
+        );
+        assert_eq!(
+            edge_of(
+                &facts,
+                "shop::api::routes::handle",
+                "shop::orders::place",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge_of(
+                &facts,
+                "tests::test_orders::test_place",
+                "shop::orders::place",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        for from in [
+            "backend/src/shop/api/routes.py",
+            "backend/tests/test_orders.py",
+        ] {
+            assert!(
+                edge_of(
+                    &facts,
+                    &format!("file:{from}"),
+                    "file:backend/src/shop/orders.py",
+                    EdgeKind::Imports
+                )
+                .is_some(),
+                "{from}"
+            );
+        }
+        // Only the real outside package is an integration.
+        let packages: Vec<&str> = facts
+            .external_uses
+            .iter()
+            .map(|u| u.krate.as_str())
+            .collect();
+        assert_eq!(packages, ["requests"]);
+    }
+
+    #[test]
+    fn a_pnpm_workspace_package_is_imported_by_its_name() {
+        let facts = scan_files(&[
+            ("pnpm-workspace.yaml", "packages:\n  - 'packages/*'\n"),
+            (
+                "packages/ui/package.json",
+                "{ \"name\": \"@acme/ui\", \"main\": \"dist/index.js\" }\n",
+            ),
+            (
+                "packages/ui/src/index.ts",
+                "export function Button(): string { return \"b\"; }\n",
+            ),
+            (
+                "packages/ui/src/icon.ts",
+                "export function Icon(): string { return \"i\"; }\n",
+            ),
+            (
+                "packages/web/package.json",
+                "{ \"name\": \"web\", \"dependencies\": { \"@acme/ui\": \"workspace:*\" } }\n",
+            ),
+            (
+                "packages/web/src/app.ts",
+                "import { Button } from \"@acme/ui\";\nimport { Icon } from \"@acme/ui/src/icon\";\nimport { other } from \"@acme/other\";\n\nexport function app() {\n  Icon();\n  return Button();\n}\n",
+            ),
+            ("tools/package.json", "{ \"name\": \"@acme/other\" }\n"),
+        ]);
+        let app = "packages::web::src::app::app";
+        assert_eq!(
+            edge_of(
+                &facts,
+                app,
+                "packages::ui::src::index::Button",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        assert_eq!(
+            edge_of(
+                &facts,
+                app,
+                "packages::ui::src::icon::Icon",
+                EdgeKind::Calls
+            ),
+            Some(Confidence::High)
+        );
+        // A package that no workspace lists is an outside package.
+        let packages: Vec<&str> = facts
+            .external_uses
+            .iter()
+            .map(|u| u.krate.as_str())
+            .collect();
+        assert_eq!(packages, ["@acme/other"]);
     }
 }

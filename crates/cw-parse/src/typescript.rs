@@ -24,6 +24,20 @@ pub fn parse_typescript(
     source: &str,
     resolve: &dyn Fn(&str) -> Option<String>,
 ) -> Result<ParsedFile> {
+    parse_typescript_with(file, module, source, resolve, &|_| false)
+}
+
+/// As [`parse_typescript`], with `is_alias` saying that a specifier is an
+/// alias of the repository (a `paths` pattern of its tsconfig matches): such
+/// an import is the repository's own, so it is no outside package even
+/// when no file was found for it.
+pub fn parse_typescript_with(
+    file: &str,
+    module: &str,
+    source: &str,
+    resolve: &dyn Fn(&str) -> Option<String>,
+    is_alias: &dyn Fn(&str) -> bool,
+) -> Result<ParsedFile> {
     let lower = file.to_ascii_lowercase();
     // The TSX grammar also parses JavaScript and JSX. Plain `.ts` needs its
     // own grammar because `<T>value` casts are not valid TSX.
@@ -46,6 +60,7 @@ pub fn parse_typescript(
     let mut ex = Extractor {
         sink: Sink::new(file, source, module, root.has_error()),
         resolve,
+        is_alias,
         roots: HashSet::new(),
         exported: HashSet::new(),
     };
@@ -103,6 +118,7 @@ enum Target {
 struct Extractor<'a> {
     sink: Sink<'a>,
     resolve: &'a dyn Fn(&str) -> Option<String>,
+    is_alias: &'a dyn Fn(&str) -> bool,
     /// Names bound by imports and module-level declarations. Only a dotted
     /// call that starts at one of these is resolved as a path.
     roots: HashSet<String>,
@@ -194,6 +210,9 @@ impl<'a> Extractor<'a> {
     fn target(&self, spec: &str) -> Target {
         if let Some(module) = (self.resolve)(spec) {
             return Target::Module(split_qualified(&module));
+        }
+        if (self.is_alias)(spec) {
+            return Target::Unknown;
         }
         match ts_package(spec) {
             Some(package) => Target::Package(package),

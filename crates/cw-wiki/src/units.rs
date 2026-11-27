@@ -12,12 +12,10 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use cw_core::{EdgeKind, Language, Symbol, SymbolKind};
 use cw_parse::cmake::{Cmake, TargetKind, read_cmake};
 use cw_parse::{
-    ENTRY_NAMES, MAIN_GUARD_ATTR, RepoFacts, TEST_ATTR, c_module_map, parse_go_mod, parse_go_work,
+    ENTRY_NAMES, JsRepo, MAIN_GUARD_ATTR, PmInfo, PythonRoots, RepoFacts, TEST_ATTR, c_module_map,
+    parse_go_mod, parse_go_work, python_project_name, resolve_js_entry,
 };
 
-/// Directories a bundler writes to; `main` in `package.json` often points
-/// into one while the source sits under `src`.
-const JS_OUTPUT_DIRS: [&str; 4] = ["dist", "build", "lib", "out"];
 const JS_EXTENSIONS: [&str; 8] = ["ts", "tsx", "mts", "cts", "js", "jsx", "mjs", "cjs"];
 const PYTHON_MANIFESTS: [&str; 5] = [
     "pyproject.toml",
@@ -114,6 +112,10 @@ pub struct Unit {
     /// a lock does not count among the files a note describes. For a Gradle
     /// module with Kotlin files it is the version catalog.
     pub lock: Option<Manifest>,
+    /// The package manager of a JavaScript or TypeScript unit, and where it
+    /// installs from; `None` for every other language and for a folder with
+    /// no `package.json`.
+    pub pm: Option<PmInfo>,
 }
 
 impl Unit {
@@ -622,33 +624,6 @@ fn nearest_with<'a>(files: &HashSet<&str>, dir: &'a str, names: &[&str]) -> Opti
     })
 }
 
-/// Source file a `package.json` path names. Published packages point at
-/// build output, so the matching file under `src` is tried as well.
-fn resolve_js_entry(files: &HashSet<&str>, dir: &str, spec: &str) -> Option<String> {
-    let spec = spec.trim().trim_start_matches("./");
-    if spec.is_empty() || spec.starts_with("..") {
-        return None;
-    }
-    let stem = JS_EXTENSIONS
-        .iter()
-        .find_map(|ext| spec.strip_suffix(&format!(".{ext}")))
-        .unwrap_or(spec);
-    let mut stems = vec![stem.to_string()];
-    if let Some((first, rest)) = stem.split_once('/')
-        && JS_OUTPUT_DIRS.contains(&first)
-    {
-        stems.push(format!("src/{rest}"));
-    }
-    stems
-        .iter()
-        .flat_map(|s| {
-            JS_EXTENSIONS
-                .iter()
-                .map(move |ext| join(dir, &format!("{s}.{ext}")))
-        })
-        .find(|candidate| files.contains(candidate.as_str()))
-}
-
 /// What a `package.json` says about its package.
 #[derive(Default)]
 struct PackageJson {
@@ -773,6 +748,7 @@ pub fn discover(
             scripts: Vec::new(),
             tests: false,
             lock: None,
+            pm: None,
         });
     }
 
@@ -833,6 +809,11 @@ pub fn discover(
         HashMap::new()
     };
 
+    // Where Python's import names start, and what the JavaScript build files
+    // say: both are read from files, never run.
+    let py_roots = PythonRoots::read(&all_paths, read);
+    let js_repo = JsRepo::read(&all_paths, read);
+
     // A CMake target of tests: CTest runs it, or it links a test framework,
     // or every file it holds is test code.
     let c_tests_target = |group: &Group| -> bool {
@@ -885,16 +866,27 @@ pub fn discover(
         let first = symbol.qualified.split("::").next().unwrap_or("");
         let top_dir = path.split_once('/').map_or("", |(dir, _)| dir);
         let (key, manifest_dir) = match family {
+            // A file of a regular package belongs to the package that holds
+            // it. The rest (namespace folders, loose scripts) belongs to its
+            // Python project, the folder of the nearest build file, and
+            // without one to the repository's own unit.
             Family::Python => {
-                let lone = !symbol.qualified.contains("::") && !path.ends_with("__init__.py");
-                (
-                    if lone {
-                        String::new()
-                    } else {
-                        first.to_string()
-                    },
-                    None,
-                )
+                if PythonRoots::in_package(&files, path) {
+                    let lone = !symbol.qualified.contains("::") && !path.ends_with("__init__.py");
+                    (
+                        if lone {
+                            String::new()
+                        } else {
+                            first.to_string()
+                        },
+                        None,
+                    )
+                } else {
+                    match py_roots.project_of(path).filter(|p| !p.is_empty()) {
+                        Some(project) => (format!("proj:{project}"), Some(project.to_string())),
+                        None => (String::new(), None),
+                    }
+                }
             }
             Family::Js => match nearest_with(&files, parent_dir(path), &["package.json"]) {
                 Some(dir) => (format!("dir:{dir}"), Some(dir.to_string())),
@@ -1139,7 +1131,15 @@ pub fn discover(
                     .unwrap_or("")
                     .to_string(),
             },
-            Family::Python => key.clone(),
+            Family::Python => match key.strip_prefix("proj:") {
+                // A project is named by its build file, else by its folder.
+                Some(_) => manifests
+                    .iter()
+                    .find(|m| m.path.ends_with("pyproject.toml"))
+                    .and_then(|m| python_project_name(&m.text))
+                    .unwrap_or_else(|| dir_name.to_string()),
+                None => key.clone(),
+            },
             Family::Js if !package_json.name.is_empty() => package_json.name.clone(),
             Family::Js if group.manifest_dir.is_none() => {
                 key.strip_prefix("top:").unwrap_or("").to_string()
@@ -1148,7 +1148,15 @@ pub fn discover(
             Family::Java if group.manifest_dir.is_some() => dir_name.to_string(),
             Family::Java => prefix.replace("::", "."),
         };
+        let pm = (*family == Family::Js && !manifests.is_empty()).then(|| js_repo.manager_of(&dir));
         let lock = match family {
+            Family::Js => pm
+                .as_ref()
+                .and_then(|pm| pm.lock.clone())
+                .map(|path| Manifest {
+                    text: read(&path).unwrap_or_default(),
+                    path,
+                }),
             Family::CSharp => group
                 .manifest_dir
                 .as_deref()
@@ -1411,6 +1419,7 @@ pub fn discover(
             scripts: package_json.scripts,
             tests: test_project,
             lock,
+            pm,
         });
     }
 
@@ -1531,6 +1540,35 @@ pub fn discover(
         units.list[index].deps = names;
     }
 
+    // A package depends on the packages of the repository its `package.json`
+    // names: `workspace:*`, or a version of a package that is in the repository.
+    let by_package_name: HashMap<String, usize> = units
+        .list
+        .iter()
+        .enumerate()
+        .filter(|(_, u)| u.pm.is_some())
+        .filter_map(|(i, u)| Some((js_repo.package_at(&u.dir)?.name.clone(), i)))
+        .filter(|(name, _)| !name.is_empty())
+        .collect();
+    for index in 0..units.list.len() {
+        if units.list[index].pm.is_none() {
+            continue;
+        }
+        let Some(package) = js_repo.package_at(&units.list[index].dir) else {
+            continue;
+        };
+        for (name, _) in package.dependencies() {
+            if let Some(&to) = by_package_name.get(&name)
+                && to != index
+            {
+                let target = units.list[to].name.clone();
+                if !units.list[index].deps.contains(&target) {
+                    units.list[index].deps.push(target);
+                }
+            }
+        }
+    }
+
     // A unit depends on the units whose files its own files import.
     let mut deps: BTreeSet<(usize, usize)> = BTreeSet::new();
     for edge in facts.edges.iter().filter(|e| e.kind == EdgeKind::Imports) {
@@ -1548,7 +1586,9 @@ pub fn discover(
     }
     for (from, to) in deps {
         let name = units.list[to].name.clone();
-        units.list[from].deps.push(name);
+        if !units.list[from].deps.contains(&name) {
+            units.list[from].deps.push(name);
+        }
     }
     units
 }
@@ -1624,6 +1664,7 @@ mod tests {
             entries: Vec::new(),
             scripts: Vec::new(),
             tests: false,
+            pm: None,
             lock: None,
         };
         assert_eq!(

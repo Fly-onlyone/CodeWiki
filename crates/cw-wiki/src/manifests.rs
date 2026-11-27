@@ -9,8 +9,9 @@
 //! `packages.json` beside the vault's manifest, so that a machine without
 //! those files writes the same notes.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use cw_core::{Error, Language, MANIFEST_DIR, Result};
 use cw_parse::cdeps::{
@@ -18,7 +19,7 @@ use cw_parse::cdeps::{
 };
 use cw_parse::cmake::declared_packages;
 use cw_parse::workspace::{dependency_specs, locked_versions, package_description};
-use cw_parse::{Locked, go_sum_versions, parse_go_mod, parse_version_catalog};
+use cw_parse::{JsLock, Locked, go_sum_versions, parse_go_mod, parse_version_catalog};
 use serde::{Deserialize, Serialize};
 
 use crate::plan::Repo;
@@ -65,6 +66,9 @@ pub struct Packages {
     locked: BTreeMap<String, Locked>,
     /// Package -> what it is, in one line. Filled by [`describe`].
     pub descriptions: BTreeMap<String, String>,
+    /// The lock files of JavaScript packages, read once each, by path. A
+    /// format the reader does not know is kept as `None`.
+    js_locks: Mutex<HashMap<String, Option<Arc<JsLock>>>>,
 }
 
 impl Packages {
@@ -76,7 +80,18 @@ impl Packages {
                 .map(|lock| locked_versions(&lock))
                 .unwrap_or_default(),
             descriptions: BTreeMap::new(),
+            js_locks: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// The lock file of a JavaScript package, parsed the first time it is
+    /// asked for.
+    fn js_lock(&self, lock: &Manifest) -> Option<Arc<JsLock>> {
+        let mut known = self.js_locks.lock().ok()?;
+        known
+            .entry(lock.path.clone())
+            .or_insert_with(|| JsLock::read(&lock.path, &lock.text).map(Arc::new))
+            .clone()
     }
 
     /// The locked version of the crate `name` that `requirement` asks for.
@@ -137,7 +152,22 @@ pub fn declared(repo: &Repo, package: &str) -> Vec<Declared> {
         let of_unit = if unit.is_rust() {
             cargo(unit, package, &repo.packages).into_iter().collect()
         } else {
-            other(unit, package)
+            let mut asked = other(unit, package);
+            if unit.pm.is_some() {
+                for declared in &mut asked {
+                    let manifest = unit.manifests.iter().find(|m| m.path == declared.manifest);
+                    if let Some(manifest) = manifest {
+                        declared.locked = js_locked(
+                            unit,
+                            &repo.packages,
+                            manifest,
+                            package,
+                            &declared.requirement,
+                        );
+                    }
+                }
+            }
+            asked
         };
         for declared in of_unit {
             if !found.iter().any(|d| d.manifest == declared.manifest) {
@@ -216,6 +246,28 @@ fn other(unit: &Unit, package: &str) -> Vec<Declared> {
         }
     }
     out
+}
+
+/// The version a JavaScript lock file pins for `package`, which the
+/// `package.json` `manifest` asks for as `requirement`; empty when the unit
+/// has no lock file the reader knows.
+fn js_locked(
+    unit: &Unit,
+    packages: &Packages,
+    manifest: &Manifest,
+    package: &str,
+    requirement: &str,
+) -> String {
+    let (Some(lock), Some(pm)) = (&unit.lock, &unit.pm) else {
+        return String::new();
+    };
+    if !manifest.path.ends_with("package.json") {
+        return String::new();
+    }
+    packages
+        .js_lock(lock)
+        .and_then(|l| l.version(&pm.root, &unit.dir, package, requirement))
+        .unwrap_or_default()
 }
 
 /// True when the library a build file names is the one the scan called
@@ -649,6 +701,19 @@ pub trait PackageInfo {
     /// `package` is the name it is published under, `version` the locked
     /// one when the repository has a lock file.
     fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String>;
+
+    /// As [`PackageInfo::describe`], for a JavaScript package that may be
+    /// installed under one of the folders `dirs` (a workspace package has its
+    /// own `node_modules`).
+    fn describe_in(
+        &self,
+        language: Language,
+        package: &str,
+        version: Option<&str>,
+        _dirs: &[&str],
+    ) -> Option<String> {
+        self.describe(language, package, version)
+    }
 }
 
 /// Knows no package. A run with it writes what `packages.json` holds.
@@ -784,26 +849,62 @@ impl Machine {
     }
 }
 
-impl PackageInfo for Machine {
-    fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String> {
-        match language {
-            Language::Rust => package_description(&self.crate_manifest(package, version)?),
-            Language::TypeScript | Language::JavaScript => {
-                let path = self
-                    .root
-                    .join("node_modules")
-                    .join(package)
-                    .join("package.json");
-                let value: serde_json::Value =
-                    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()?;
+impl Machine {
+    /// The `description` of the `package.json` that `node_modules` holds for
+    /// `package`: in the folders `dirs` (each package of a workspace has its
+    /// own), then at the repository root, then in pnpm's hoisted store. A
+    /// pnpm `node_modules/<name>` is a link into `.pnpm`, and reading through
+    /// it needs nothing more than reading a folder.
+    fn node_description(&self, package: &str, dirs: &[&str]) -> Option<String> {
+        let mut bases: Vec<PathBuf> = dirs.iter().map(|d| self.root.join(d)).collect();
+        bases.push(self.root.clone());
+        bases.dedup();
+        for base in bases {
+            for modules in [
+                base.join("node_modules"),
+                base.join("node_modules").join(".pnpm").join("node_modules"),
+            ] {
+                let Ok(text) = std::fs::read_to_string(modules.join(package).join("package.json"))
+                else {
+                    continue;
+                };
+                let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
+                    continue;
+                };
                 let line = value
-                    .get("description")?
-                    .as_str()?
+                    .get("description")
+                    .and_then(|d| d.as_str())
+                    .unwrap_or("")
                     .split_whitespace()
                     .collect::<Vec<_>>()
                     .join(" ");
-                (!line.is_empty()).then_some(line)
+                if !line.is_empty() {
+                    return Some(line);
+                }
             }
+        }
+        None
+    }
+}
+
+impl PackageInfo for Machine {
+    fn describe_in(
+        &self,
+        language: Language,
+        package: &str,
+        version: Option<&str>,
+        dirs: &[&str],
+    ) -> Option<String> {
+        match language {
+            Language::TypeScript | Language::JavaScript => self.node_description(package, dirs),
+            _ => self.describe(language, package, version),
+        }
+    }
+
+    fn describe(&self, language: Language, package: &str, version: Option<&str>) -> Option<String> {
+        match language {
+            Language::Rust => package_description(&self.crate_manifest(package, version)?),
+            Language::TypeScript | Language::JavaScript => self.node_description(package, &[]),
             Language::CSharp => self.nuget_description(package, version),
             _ => None,
         }
@@ -854,11 +955,19 @@ pub fn describe(
             .into_iter()
             .map(|d| d.locked)
             .find(|locked| !locked.is_empty());
+        let folders: Vec<&str> = repo
+            .units
+            .list
+            .iter()
+            .filter(|u| u.pm.is_some())
+            .map(|u| u.dir.as_str())
+            .collect();
         let found = info
-            .describe(
+            .describe_in(
                 language,
                 repo.packages.published(package),
                 version.as_deref(),
+                &folders,
             )
             .or_else(|| before.get(*package).cloned());
         if let Some(description) = found {
@@ -1053,6 +1162,7 @@ mod tests {
             entries: Vec::new(),
             scripts: Vec::new(),
             tests: false,
+            pm: None,
             lock: catalog.map(|text| Manifest {
                 path: "gradle/libs.versions.toml".into(),
                 text: text.into(),
@@ -1135,6 +1245,43 @@ junit = \"junit:junit:4.13.2\"
     }
 
     #[test]
+    fn reads_node_modules_of_a_workspace_package_and_of_pnpms_store() {
+        let dir = tempfile::tempdir().unwrap();
+        let write = |rel: &str, text: &str| {
+            let path = dir.path().join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            "repo/packages/ui/node_modules/react/package.json",
+            "{\"description\": \"The UI library\"}",
+        );
+        write(
+            "repo/node_modules/.pnpm/node_modules/hoisted/package.json",
+            "{\"description\": \"Hoisted by pnpm\"}",
+        );
+        write(
+            "repo/node_modules/lodash/package.json",
+            "{\"description\": \"Utilities\"}",
+        );
+        let machine = Machine::with_cargo_home(&dir.path().join("repo"), None);
+        let ask = |package: &str, folders: &[&str]| {
+            machine.describe_in(Language::TypeScript, package, None, folders)
+        };
+        // The package's own folder first, then the root, then pnpm's store.
+        assert_eq!(
+            ask("react", &["packages/ui"]).as_deref(),
+            Some("The UI library")
+        );
+        assert_eq!(ask("react", &["packages/web"]), None);
+        assert_eq!(
+            ask("lodash", &["packages/ui"]).as_deref(),
+            Some("Utilities")
+        );
+        assert_eq!(ask("hoisted", &[]).as_deref(), Some("Hoisted by pnpm"));
+    }
+
+    #[test]
     fn reads_a_description_from_the_cargo_cache_and_node_modules() {
         let dir = tempfile::tempdir().unwrap();
         let write = |rel: &str, text: &str| {
@@ -1205,6 +1352,7 @@ junit = \"junit:junit:4.13.2\"
             entries: Vec::new(),
             scripts: Vec::new(),
             tests: false,
+            pm: None,
             lock: lock.map(|text| Manifest {
                 path: "src/Core/packages.lock.json".into(),
                 text: text.into(),
@@ -1295,6 +1443,7 @@ junit = \"junit:junit:4.13.2\"
             entries: Vec::new(),
             scripts: Vec::new(),
             tests: false,
+            pm: None,
             lock: go_sum.map(|text| Manifest {
                 path: "go.sum".into(),
                 text: text.into(),
@@ -1424,6 +1573,7 @@ junit = \"junit:junit:4.13.2\"
             entries: Vec::new(),
             scripts: Vec::new(),
             tests: false,
+            pm: None,
             lock: lock.map(|text| Manifest {
                 path: "conan.lock".into(),
                 text: text.into(),

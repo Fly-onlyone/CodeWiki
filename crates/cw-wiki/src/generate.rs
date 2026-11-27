@@ -394,6 +394,80 @@ fn planned_path(note: &Planned) -> String {
     }
 }
 
+/// The folder a vault path is in, when it is below a unit of `01-Core`.
+fn unit_subfolder(path: &str) -> Option<&str> {
+    let (dir, _) = path.rsplit_once('/')?;
+    (dir.starts_with("01-Core/")).then_some(dir)
+}
+
+/// A unit that changes its name or its folder (a `package.json` that gets a
+/// `name`, two Python folders that become one project) leaves its notes with
+/// their ids and their frozen paths in a folder that no planned note uses,
+/// where the run removes the folder's map and the notes link a map that is
+/// gone. Each such note, with its picture, moves to the folder its subject
+/// is planned in; it keeps its file name, which is unique in the vault, and
+/// everything written in it. A note moves only to a free place.
+///
+/// The files are not touched here; the renames are returned like those of
+/// [`carry_moves`].
+fn follow_units(
+    vault: &Path,
+    meta: &mut VaultMeta,
+    notes: &[Planned],
+    report: &mut Report,
+) -> Result<Vec<(String, String)>> {
+    let live: HashSet<&str> = notes.iter().map(|n| n.dir.as_str()).collect();
+    let mut occupied: HashSet<String> =
+        meta.notes.values().map(|e| e.path.to_lowercase()).collect();
+    let mut renames: Vec<(String, String)> = Vec::new();
+    for note in notes {
+        let Some(entry) = meta.notes.get(&note.id) else {
+            continue;
+        };
+        if entry.origin != Origin::Generated
+            || matches!(note.kind, NoteKind::Home | NoteKind::Index)
+        {
+            continue;
+        }
+        let (Some(old_dir), true) = (
+            unit_subfolder(&entry.path),
+            note.dir.starts_with("01-Core/"),
+        ) else {
+            continue;
+        };
+        if old_dir == note.dir || live.contains(old_dir) {
+            continue;
+        }
+        let file = entry.path.rsplit('/').next().unwrap_or(&entry.path);
+        let new_path = format!("{}/{file}", note.dir);
+        if occupied.contains(&new_path.to_lowercase()) || vault.join(&new_path).exists() {
+            continue;
+        }
+        let written_work = read_optional(&vault.join(&entry.path))?
+            .is_some_and(|text| entry.explained.is_some() || body_hash(&text) != entry.body_hash);
+        let Some(mut entry) = meta.notes.remove(&note.id) else {
+            continue;
+        };
+        let old_path = entry.path.clone();
+        renames.push((old_path.clone(), new_path.clone()));
+        if entry.illustration.is_some() {
+            let pictures = illustration_path(&new_path);
+            renames.push((illustration_path(&old_path), pictures.clone()));
+            entry.illustration = Some(pictures);
+        }
+        occupied.insert(new_path.to_lowercase());
+        entry.path = new_path;
+        if written_work {
+            report.moved.push(Moved {
+                from: old_path,
+                to: entry.path.clone(),
+            });
+        }
+        meta.notes.insert(entry.id.clone(), entry);
+    }
+    Ok(renames)
+}
+
 /// What a note describes, for the kinds of subject that can move: the kind
 /// and the name alone, without the place. `type:engine::pricing::Price`
 /// gives `("type", "Price")`.
@@ -581,7 +655,8 @@ pub fn generate_with(
         files,
     } = plan(&repo, &covered, &pinned);
     let git = gone::Git::new(root);
-    let renames = carry_moves(&vault, &mut meta, &notes, &git, &mut report)?;
+    let mut renames = carry_moves(&vault, &mut meta, &notes, &git, &mut report)?;
+    renames.extend(follow_units(&vault, &mut meta, &notes, &mut report)?);
     let integrations: Vec<&str> = notes
         .iter()
         .filter_map(|note| match &note.subject {

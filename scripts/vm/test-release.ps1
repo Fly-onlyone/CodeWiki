@@ -362,8 +362,8 @@ function Wait-AppPage {
     $line = Wait-AppLog -Pattern $pattern -Since $Since -TimeoutSec $TimeoutSec -What $what
     if ($AndFilled) {
         $left = [math]::Max(1, $TimeoutSec - $clock.Elapsed.TotalSeconds / $Pace)
-        $filled = Wait-AppLog -Pattern "page filled: $AndFilled" -Since $Since -TimeoutSec $left -What "page filled: $AndFilled"
-        if (-not $filled) { $line = $null }
+        $arrived = Wait-AppLog -Pattern "page filled: $AndFilled" -Since $Since -TimeoutSec $left -What "page filled: $AndFilled"
+        if (-not $arrived) { $line = $null }
     }
     if ($PassThru) { $line }
 }

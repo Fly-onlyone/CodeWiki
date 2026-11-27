@@ -250,7 +250,7 @@ function Get-AppLogPath { "$guestHome\AppData\Local\CodeWiki\logs\app.log" }
 # desktop, and the file is read with sharing so that the running app is not in
 # the way.
 function Get-AppLogMark {
-    $run = Invoke-InGuest -TimeoutSec 60 -ArgumentList (Get-AppLogPath) -ScriptBlock {
+    $run = Invoke-InGuest -Reuse -TimeoutSec 60 -ArgumentList (Get-AppLogPath) -ScriptBlock {
         param($path)
         $text = ''
         try {
@@ -280,7 +280,7 @@ function Wait-AppLog {
     $log = Get-AppLogPath
     $line = $null
     try {
-        $run = Invoke-InGuest -TimeoutSec ([int]$limit + 60) -ArgumentList $log, ($log -replace 'app\.log$', 'app.old.log'), $Since, $Pattern, [int]($limit * 1000) -ScriptBlock {
+        $run = Invoke-InGuest -Reuse -TimeoutSec ([int]$limit + 60) -ArgumentList $log, ($log -replace 'app\.log$', 'app.old.log'), $Since, $Pattern, [int]($limit * 1000) -ScriptBlock {
             param($log, $old, $mark, $pattern, $timeoutMs)
             function Read-Lines($path) {
                 try {

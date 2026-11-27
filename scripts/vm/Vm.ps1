@@ -54,6 +54,8 @@ function Initialize-Vm {
         Recorder   = $null
         # When the recording began, for the timing log's "rec" column.
         RecStart   = $null
+        # The one PowerShell Direct session that calls with -Reuse share.
+        Session    = $null
         # Whether the guest draws on a shared graphics card; widens the screen
         # compare's tolerance (Get-ScreenTolerance). The caller sets it.
         Gpu        = $false
@@ -330,8 +332,28 @@ function New-GuestSession {
     throw "no PowerShell Direct session to '$($script:Vm.Name)': $($problem.Exception.Message)"
 }
 
-# Run a script block in the guest in a session of its own, so that it sees
-# the environment (PATH and the rest) as a newly started program would.
+# The session that calls with -Reuse share. Opening one costs about a second
+# and a half, and a run makes some five hundred calls. It is dropped whenever
+# the guest stops or restarts, and when a call on it fails or times out.
+function Get-GuestSession {
+    param([int]$Attempts = 4)
+    $session = $script:Vm.Session
+    if ($session -and $session.State -eq "Opened") { return $session }
+    Clear-GuestSession
+    $script:Vm.Session = New-GuestSession -Attempts $Attempts
+    $script:Vm.Session
+}
+
+function Clear-GuestSession {
+    if ($script:Vm -and $script:Vm.Session) { Remove-PSSession $script:Vm.Session -ErrorAction SilentlyContinue }
+    if ($script:Vm) { $script:Vm.Session = $null }
+}
+
+# Run a script block in the guest. By default in a session of its own, so
+# that it sees the environment (PATH and the rest) as a newly started program
+# would. With -Reuse, in the session that calls share: for work that does not
+# depend on a fresh environment (the transport of a script, starting a
+# program, copying, reading a log).
 # Returns Completed (false after a timeout), Output and Errors.
 function Invoke-InGuest {
     param(
@@ -341,36 +363,58 @@ function Invoke-InGuest {
         # How often to try to open the session; 1 while Windows may not be up yet.
         [int]$Attempts = 4,
         # What the timing log calls this call; "none" for a call that a caller
-        # of its own writes down (Invoke-GuestScript).
-        [string]$Lane = "direct"
+        # of its own writes down (Invoke-GuestScript). Default: "direct", or
+        # "session" with -Reuse.
+        [string]$Lane = "",
+        [switch]$Reuse
     )
+    if (-not $Lane) { $Lane = if ($Reuse) { "session" } else { "direct" } }
     $clock = [System.Diagnostics.Stopwatch]::StartNew()
-    $session = New-GuestSession -Attempts $Attempts
-    $job = $null
     try {
-        $job = Invoke-Command -Session $session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -AsJob
-        if (-not (Wait-Job $job -Timeout $TimeoutSec)) {
-            return [pscustomobject]@{ Completed = $false; Output = @(); Errors = @("no answer within $TimeoutSec seconds") }
-        }
-        $problems = @()
-        $output = @(Receive-Job $job -ErrorAction SilentlyContinue -ErrorVariable problems)
-        $errors = @($problems | ForEach-Object { "$_" })
-        # A session that broke mid-way leaves its reason on the job, not in the output.
-        $reason = $job.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason } | Where-Object { $_ } | Select-Object -First 1
-        if ($reason) { $errors += "$($reason.Message)" }
-        [pscustomobject]@{
-            Completed = $job.State -eq "Completed"
-            Output    = $output
-            Errors    = $errors
+        foreach ($try in 1..2) {
+            $session = if ($Reuse) { Get-GuestSession -Attempts $Attempts } else { New-GuestSession -Attempts $Attempts }
+            $job = $null
+            $answer = $null
+            $lost = $false
+            try {
+                $job = Invoke-Command -Session $session -ScriptBlock $ScriptBlock -ArgumentList $ArgumentList -AsJob
+                if (-not (Wait-Job $job -Timeout $TimeoutSec)) {
+                    # The command still runs in the session: the session goes.
+                    $lost = $true
+                    return [pscustomobject]@{ Completed = $false; Output = @(); Errors = @("no answer within $TimeoutSec seconds") }
+                }
+                $problems = @()
+                $output = @(Receive-Job $job -ErrorAction SilentlyContinue -ErrorVariable problems)
+                $errors = @($problems | ForEach-Object { "$_" })
+                # A session that broke mid-way leaves its reason on the job, not in the output.
+                $reason = $job.ChildJobs | ForEach-Object { $_.JobStateInfo.Reason } | Where-Object { $_ } | Select-Object -First 1
+                if ($reason) { $errors += "$($reason.Message)" }
+                $answer = [pscustomobject]@{
+                    Completed = $job.State -eq "Completed"
+                    Output    = $output
+                    Errors    = $errors
+                }
+                $lost = $session.State -ne "Opened"
+            } catch {
+                if (-not $Reuse -or $try -eq 2) { throw }
+                $lost = $true
+            } finally {
+                if ($Reuse) {
+                    if ($lost -or $session.State -ne "Opened") { Clear-GuestSession }
+                } else {
+                    # Closing the session first ends a command that is still running.
+                    Remove-PSSession $session -ErrorAction SilentlyContinue
+                }
+                if ($job) { Remove-Job $job -Force -ErrorAction SilentlyContinue }
+            }
+            # A shared session that broke under the call, with nothing to show
+            # for it, is opened again once.
+            if ($answer -and -not ($Reuse -and $lost -and $try -eq 1 -and $answer.Output.Count -eq 0)) { return $answer }
         }
     } finally {
-        # Closing the session first ends a command that is still running.
-        Remove-PSSession $session -ErrorAction SilentlyContinue
-        if ($job) { Remove-Job $job -Force -ErrorAction SilentlyContinue }
         if ($Lane -ne "none") { Write-Timing -Kind guest -What "in-guest" -Sec $clock.Elapsed.TotalSeconds -Lane $Lane }
     }
 }
-
 # Guest-side code of Invoke-GuestExe: start the program named in {{SPEC}},
 # collect what it prints, and print the result as one line.
 $script:RunExeTemplate = @'
@@ -425,7 +469,7 @@ function Start-GuestExe {
     )
     $script:Vm.Sequence += 1
     $task = "vmtest-app-{0:d3}" -f $script:Vm.Sequence
-    $run = Invoke-InGuest -TimeoutSec 120 -ArgumentList $Exe, $Arguments, $WorkingDirectory, $task -ScriptBlock {
+    $run = Invoke-InGuest -Reuse -TimeoutSec 120 -ArgumentList $Exe, $Arguments, $WorkingDirectory, $task -ScriptBlock {
         param($exe, $arguments, $directory, $task)
         Get-ScheduledTask -TaskName "vmtest-app-*" -ErrorAction SilentlyContinue | Where-Object { $_.State -ne "Running" } |
             Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue
@@ -644,7 +688,7 @@ function Send-RestedClick {
 
 function New-GuestDirectory {
     param([Parameter(Mandatory)][string]$GuestPath)
-    Invoke-InGuest -ArgumentList $GuestPath -ScriptBlock {
+    Invoke-InGuest -Reuse -ArgumentList $GuestPath -ScriptBlock {
         param($path) New-Item -ItemType Directory -Force $path | Out-Null
     } | Out-Null
 }
@@ -674,7 +718,7 @@ function Copy-ToGuest {
             $archive.Dispose()
         }
     }
-    $session = New-GuestSession
+    $session = Get-GuestSession
     try {
         $guestPackage = Join-Path $script:Vm.GuestDir $name
         Invoke-Command -Session $session -ArgumentList $script:Vm.GuestDir -ScriptBlock {
@@ -682,7 +726,8 @@ function Copy-ToGuest {
         }
         Copy-Item -ToSession $session -Path $package -Destination $guestPackage -Force
     } finally {
-        Remove-PSSession $session -ErrorAction SilentlyContinue
+        # The shared session stays; one that broke under the copy goes.
+        if ($session.State -ne "Opened") { Clear-GuestSession }
         Remove-Item $package -Force -ErrorAction SilentlyContinue
     }
     # Unpacked by the user, so that the files belong to the user as downloaded files do.
@@ -699,11 +744,11 @@ function Copy-FromGuest {
         [Parameter(Mandatory)][string]$GuestPath,
         [Parameter(Mandatory)][string]$Destination
     )
-    $session = New-GuestSession
+    $session = Get-GuestSession
     try {
         Copy-Item -FromSession $session -Path $GuestPath -Destination $Destination -Recurse -Force
     } finally {
-        Remove-PSSession $session -ErrorAction SilentlyContinue
+        if ($session.State -ne "Opened") { Clear-GuestSession }
     }
 }
 
@@ -748,7 +793,9 @@ Write-Output "__EXIT=`$__code"
 } 2>&1 | ForEach-Object { "`$_" } | Out-File -FilePath "`$PSCommandPath.out" -Encoding utf8 -Width 8192
 "@
     $inBackground = [bool]$Background
-    $run = Invoke-InGuest -TimeoutSec ($TimeoutSec + 60) -Lane none -ArgumentList $file, $body, $TimeoutSec, $inBackground, $task -ScriptBlock {
+    # The transport may share a session; a background script runs as a child of
+    # it and so needs one of its own, with a fresh environment.
+    $run = Invoke-InGuest -Reuse:(-not $inBackground) -TimeoutSec ($TimeoutSec + 60) -Lane none -ArgumentList $file, $body, $TimeoutSec, $inBackground, $task -ScriptBlock {
         param($file, $body, $timeout, $background, $task)
         $ErrorActionPreference = "Continue"
         New-Item -ItemType Directory -Force (Split-Path -Parent $file) | Out-Null
@@ -870,6 +917,7 @@ function Clear-HostMemory {
 # and try once more when the start still fails.
 function Start-Guest {
     $script:Vm.Devices = $null
+    Clear-GuestSession
     if ((Get-VmState) -eq "Running") { return }
     $needed = [int]((Get-VM -Name $script:Vm.Name).MemoryStartup / 1MB) + 512
     if ((Get-HostFreeMemoryMb) -lt $needed) { Clear-HostMemory }
@@ -886,6 +934,7 @@ function Start-Guest {
 function Stop-Guest {
     param([int]$TimeoutSec = 180)
     $script:Vm.Devices = $null
+    Clear-GuestSession
     if ((Get-VmState) -eq "Off") { return }
     try {
         Stop-VM -Name $script:Vm.Name -Force -AsJob | Out-Null
@@ -909,6 +958,7 @@ function Restart-Guest {
 function Restore-Guest {
     param([string]$Snapshot = "clean")
     $script:Vm.Devices = $null
+    Clear-GuestSession
     if ((Get-VmState) -ne "Off") {
         Stop-VM -Name $script:Vm.Name -TurnOff -Force
         Wait-VmState -State "Off" -TimeoutSec 60 | Out-Null

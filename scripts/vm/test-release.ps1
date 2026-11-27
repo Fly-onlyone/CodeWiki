@@ -1300,6 +1300,18 @@ function Send-TitleBarClick {
     "($x,$y)"
 }
 
+# A click into the editor's text, which takes the keyboard from the page. The editor is the
+# column right of the sidebar (client x 296 to 521 in a window 992 wide, wider in a wider one),
+# and a window keeps the size it was left at: a click 520 px from the window's left edge, as
+# these cases once made, hit the preview in a window of 992 (the 0.6.0 pass without a card:
+# the editor was open and the text went nowhere). 420 px from the client area's left edge, in
+# the line of "# <title>", is inside the editor at every width.
+function Send-EditorClick {
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    Send-Click -X ($info.Left + [int](420 * $info.Scale)) -Y ($info.Top + [int](265 * $info.Scale))
+}
+
 $windowAtStart = $null
 Test-Case "W0" "The window opens clear of the taskbar" "the whole window is inside the part of the screen the taskbar leaves free" {
     if ($starved) { throw "the guest is too busy to be driven (P1)" }
@@ -1389,7 +1401,7 @@ Test-Case "W7" "Unsaved edits, the close button and Quit" "the X hides the windo
     Start-GuestApp -Arguments $guestRepo, "edit:$noteName"
     Wait-AppPage -TimeoutSec 15
     Hold-For 1.5 -Reason "the page's entrance animation"
-    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-ScreenSettled -TimeoutSec 1
+    Send-EditorClick
     Send-Text "unsavedmarker "; Wait-ScreenSettled -TimeoutSec 3
     $typed = Shot "unsaved-edits-typed"
     $at = Send-TitleBarClick "close"
@@ -2557,7 +2569,7 @@ Test-Case "G3" "Edit a note and save with Ctrl+S" "the typed text reaches the fi
     $a = Shot "editor-open"
     # The click that gave the window the focus took it from the editor; a
     # click into the text gives it back. The marker lands in line 1.
-    Send-Click -X ($appWindow.Left + 520) -Y ($appWindow.Top + 160); Wait-ScreenSettled -TimeoutSec 1
+    Send-EditorClick
     Send-Text "vmtestmarker "; Wait-ScreenSettled -TimeoutSec 3
     $b = Shot "editor-typed"
     Send-Keys "ctrl+s"; Wait-ScreenSettled -TimeoutSec 5

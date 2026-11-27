@@ -12,6 +12,7 @@ use cw_vault::{NoteKind, Registry};
 use crate::analyze::DEPENDENCY_KINDS;
 use crate::doctext::{clean_inline, doc_body, ensure_period, first_sentence};
 use crate::explain;
+use crate::filemap;
 use crate::manifests;
 use crate::plan::{
     Plan, Planned, Repo, Subject, ZONE_ARCHITECTURE, ZONE_CORE, ZONE_INTEGRATIONS, ZONE_OPERATIONS,
@@ -268,6 +269,18 @@ impl<'a> RenderCtx<'a> {
             Subject::Operations => {
                 "Commands and automation that build, check and test the repository.".into()
             }
+            Subject::FileUnit(name) => self
+                .plan
+                .files
+                .unit(name)
+                .map(filemap::unit_summary)
+                .unwrap_or_default(),
+            Subject::Folder(dir) => self
+                .plan
+                .files
+                .folder(dir)
+                .map(|f| filemap::folder_summary(&self.plan.files, f))
+                .unwrap_or_default(),
             Subject::Index(dir) => {
                 let count = self
                     .plan
@@ -282,6 +295,10 @@ impl<'a> RenderCtx<'a> {
                     }
                     ZONE_CORE if repo.units.all_rust() => {
                         "Crates, modules and key types that make up the codebase.".into()
+                    }
+                    ZONE_CORE if repo.units.list.is_empty() && !self.plan.files.is_empty() => {
+                        "Projects and folders of source files that make up the codebase, mapped at file level."
+                            .into()
                     }
                     ZONE_CORE => {
                         "Packages, modules and key types that make up the codebase.".into()
@@ -304,14 +321,23 @@ impl<'a> RenderCtx<'a> {
                 let files = repo.facts.files.len();
                 let tail = "This vault maps its architecture, modules and conventions.";
                 if repo.units.list.is_empty() {
+                    if !self.plan.files.is_empty() {
+                        return self.plan.files.home_summary(self.repo_name, tail);
+                    }
                     return format!(
                         "**{}** is a repository of {files} files with no code in a language CodeWiki maps. {tail}",
                         self.repo_name
                     );
                 }
                 let (languages, parts) = self.composition();
+                // Source no parser maps is told apart from the rest.
+                let unmapped = if self.plan.files.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", self.plan.files.mixed_sentence())
+                };
                 format!(
-                    "**{}** is a {} codebase of {} and {files} source files. {tail}",
+                    "**{}** is a {} codebase of {} and {files} source files.{unmapped} {tail}",
                     self.repo_name,
                     join_and(&languages),
                     parts.join(", ")
@@ -428,6 +454,23 @@ impl<'a> RenderCtx<'a> {
             Subject::Integration(krate) => self.render_integration(&mut doc, note, krate),
             Subject::TraitPattern(q) => self.render_pattern(&mut doc, note, q),
             Subject::Operations => self.render_operations(&mut doc, note),
+            Subject::FileUnit(name) => {
+                if let Some(unit) = self.plan.files.unit(name) {
+                    let link = |id: &str| self.link(id);
+                    for (heading, body) in filemap::unit_sections(&self.plan.files, unit, &link) {
+                        doc.section(heading, body);
+                    }
+                }
+            }
+            Subject::Folder(dir) => {
+                if let Some(folder) = self.plan.files.folder(dir) {
+                    let link = |id: &str| self.link(id);
+                    for (heading, body) in filemap::folder_sections(&self.plan.files, folder, &link)
+                    {
+                        doc.section(heading, body);
+                    }
+                }
+            }
             Subject::Index(dir) => return self.render_index(note, dir),
             Subject::Home => return self.render_home(note),
         }
@@ -1320,7 +1363,10 @@ impl<'a> RenderCtx<'a> {
     fn render_home(&self, note: &Planned) -> String {
         let mut out = front(&note.tags);
         // Without a unit there are no flows, crates or modules to name.
-        let tour = if self.repo.units.list.is_empty() {
+        let tour = if self.repo.units.list.is_empty() && !self.plan.files.is_empty() {
+            "A graph-linked tour of the codebase, mapped at file level: its projects, its folders and the files in them."
+                .to_string()
+        } else if self.repo.units.list.is_empty() {
             "A graph-linked tour of the repository.".to_string()
         } else {
             format!(
@@ -1372,19 +1418,30 @@ impl<'a> RenderCtx<'a> {
         }
 
         let crates = &self.repo.units.list;
-        if !crates.is_empty() {
-            out.push_str(if self.repo.units.all_rust() {
-                "\n## 🦀 Core\n\n"
-            } else {
-                "\n## 📦 Core\n\n"
-            });
-            for c in crates {
-                let dir = format!("{ZONE_CORE}/{}", c.slug);
+        if !crates.is_empty() || !self.plan.files.is_empty() {
+            out.push_str(
+                if self.repo.units.all_rust() && self.plan.files.is_empty() {
+                    "\n## 🦀 Core\n\n"
+                } else {
+                    "\n## 📦 Core\n\n"
+                },
+            );
+            let parts = crates
+                .iter()
+                .map(|c| (format!("crate:{}", c.name), &c.slug, &c.package))
+                .chain(
+                    self.plan
+                        .files
+                        .units
+                        .iter()
+                        .map(|u| (format!("unit:{}", u.name), &u.slug, &u.package)),
+                );
+            for (id, slug, package) in parts {
+                let dir = format!("{ZONE_CORE}/{slug}");
                 if self.registry.by_id(&format!("index:{dir}")).is_some() {
-                    let summary = &self.summaries[&format!("crate:{}", c.name)];
+                    let summary = &self.summaries[&id];
                     out.push_str(&format!(
-                        "- [[{dir}/_index|{}/]] — {}\n",
-                        c.package,
+                        "- [[{dir}/_index|{package}/]] — {}\n",
                         lower_first(summary)
                     ));
                     if !reached.contains(&ZONE_CORE) {
@@ -1556,7 +1613,7 @@ fn top_children<'a>(repo: &Repo<'a>, parent: &str, limit: usize) -> Vec<&'a Symb
     items
 }
 
-fn join_and(items: &[String]) -> String {
+pub(crate) fn join_and(items: &[String]) -> String {
     match items {
         [] => String::new(),
         [one] => one.clone(),
@@ -1566,7 +1623,7 @@ fn join_and(items: &[String]) -> String {
 }
 
 /// `1 module`, `3 modules`.
-fn count(n: usize, noun: &str) -> String {
+pub(crate) fn count(n: usize, noun: &str) -> String {
     if n == 1 {
         format!("1 {noun}")
     } else {

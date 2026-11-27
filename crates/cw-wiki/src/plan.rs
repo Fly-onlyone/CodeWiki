@@ -12,6 +12,7 @@ use cw_index::NodeMetrics;
 use cw_parse::RepoFacts;
 use cw_vault::NoteKind;
 
+use crate::filemap::{self, FileMap};
 use crate::manifests::Packages;
 use crate::units::{self, Unit, Units, is_test_file};
 
@@ -60,6 +61,10 @@ pub enum Subject {
     Integration(String),
     TraitPattern(String),
     Operations,
+    /// A unit of source files no parser maps, by its name in the file map.
+    FileUnit(String),
+    /// A folder of such files, by its repo-relative path.
+    Folder(String),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -81,11 +86,15 @@ pub struct Plan {
     pub notes: Vec<Planned>,
     /// Symbol qualified name -> id of the note that documents it.
     pub owner: HashMap<String, String>,
+    /// The units and folders of source no parser maps.
+    pub files: FileMap,
 }
 
 /// Lookup tables over the scanned facts.
 pub struct Repo<'a> {
     pub facts: &'a RepoFacts,
+    /// Name of the repository's folder.
+    pub name: String,
     /// Crates and their counterparts in other languages.
     pub units: Units,
     pub symbols: HashMap<&'a str, &'a Symbol>,
@@ -107,6 +116,7 @@ impl<'a> Repo<'a> {
         Self::build(
             facts,
             metrics,
+            "repository",
             units::discover(facts, "repository", &|_| None),
             Packages::default(),
         )
@@ -122,6 +132,7 @@ impl<'a> Repo<'a> {
         Self::build(
             facts,
             metrics,
+            &name,
             units::discover(facts, &name, &read),
             Packages::read(&read),
         )
@@ -130,6 +141,7 @@ impl<'a> Repo<'a> {
     fn build(
         facts: &'a RepoFacts,
         metrics: &'a [(String, NodeMetrics)],
+        name: &str,
         units: Units,
         packages: Packages,
     ) -> Self {
@@ -156,6 +168,7 @@ impl<'a> Repo<'a> {
         }
         Self {
             facts,
+            name: name.to_string(),
             units,
             symbols,
             children,
@@ -348,7 +361,7 @@ fn enclosing_module<'a>(repo: &Repo<'a>, symbol: &'a Symbol) -> &'a str {
 
 /// Keep the first `limit` of `ranked`, and behind them every one that is
 /// pinned: a limit drops the least important notes, never an explained one.
-fn cut<T>(ranked: &mut Vec<T>, limit: usize, pinned: impl Fn(&T) -> bool) {
+pub(crate) fn cut<T>(ranked: &mut Vec<T>, limit: usize, pinned: impl Fn(&T) -> bool) {
     let mut place = 0;
     ranked.retain(|item| {
         place += 1;
@@ -728,6 +741,49 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
         });
     }
 
+    // Source no parser maps: a note for each unit and each folder that holds
+    // enough of it. They come last among the content notes, so that no name
+    // a note above has reserved can change.
+    let taken: HashSet<String> = repo
+        .units
+        .list
+        .iter()
+        .map(|u| u.slug.to_lowercase())
+        .collect();
+    let files = filemap::build(
+        facts,
+        &repo.name,
+        &taken,
+        !repo.units.list.is_empty(),
+        pinned,
+    );
+    for unit in &files.units {
+        notes.push(Planned {
+            id: format!("unit:{}", unit.name),
+            dir: format!("{ZONE_CORE}/{}", unit.slug),
+            title: unit.package.clone(),
+            kind: NoteKind::Concept,
+            tags: vec!["core".into(), unit.slug.clone()],
+            subject: Subject::FileUnit(unit.name.clone()),
+            sources: unit.sources.iter().map(|f| f.path.clone()).collect(),
+        });
+    }
+    for folder in &files.folders {
+        notes.push(Planned {
+            id: format!("dir:{}", folder.dir),
+            dir: folder.vault_dir.clone(),
+            title: folder.title.clone(),
+            kind: NoteKind::Concept,
+            tags: vec![
+                "core".into(),
+                files.units[folder.unit].slug.clone(),
+                "folder".into(),
+            ],
+            subject: Subject::Folder(folder.dir.clone()),
+            sources: folder.sources.iter().map(|f| f.path.clone()).collect(),
+        });
+    }
+
     // Map notes: one per folder that holds notes, plus every ancestor folder.
     let mut dirs: BTreeSet<String> = BTreeSet::new();
     for n in &notes {
@@ -773,7 +829,11 @@ pub fn plan(repo: &Repo, covered: &HashMap<String, String>, pinned: &HashSet<Str
         sources: Vec::new(),
     });
 
-    Plan { notes, owner }
+    Plan {
+        notes,
+        owner,
+        files,
+    }
 }
 
 /// Follow calls outward from an entry point and keep those that cross from

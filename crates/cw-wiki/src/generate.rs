@@ -575,7 +575,11 @@ pub fn generate_with(
         .collect();
 
     let mut repo = Repo::at(root, facts, metrics);
-    let Plan { mut notes, owner } = plan(&repo, &covered, &pinned);
+    let Plan {
+        mut notes,
+        owner,
+        files,
+    } = plan(&repo, &covered, &pinned);
     let git = gone::Git::new(root);
     let renames = carry_moves(&vault, &mut meta, &notes, &git, &mut report)?;
     let integrations: Vec<&str> = notes
@@ -761,7 +765,11 @@ pub fn generate_with(
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "Repository".into());
-    let plan = Plan { notes, owner };
+    let plan = Plan {
+        notes,
+        owner,
+        files,
+    };
     let mut ctx = RenderCtx::new(&repo, &plan, &registry, &repo_name);
     ctx.hand_zones = hand_zones;
     let file_hashes: HashMap<&str, &str> = facts

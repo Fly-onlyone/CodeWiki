@@ -183,7 +183,7 @@ pub fn is_test_file(path: &str) -> bool {
 }
 
 /// Lowercase name safe as a folder and as a tag.
-fn slug(name: &str) -> String {
+pub(crate) fn slug(name: &str) -> String {
     let mut out = String::new();
     for c in name.chars() {
         if c.is_alphanumeric() || c == '_' {

@@ -2233,3 +2233,330 @@ fn an_explained_note_keeps_its_place_when_the_ranking_would_drop_it() {
     assert!(again.removed.is_empty(), "{again:?}");
     assert!(type_note(&root, "T12").is_some());
 }
+
+/// Source text of `n` lines.
+fn lines_of(n: usize) -> String {
+    (1..=n).map(|i| format!("// line {i}\n")).collect()
+}
+
+/// A C# repository in the layout of a .NET solution with an Avalonia front.
+fn csharp_repo() -> (tempfile::TempDir, std::path::PathBuf) {
+    named_repo(
+        "tradingagent",
+        &[
+            ("TradingAgent.slnx", "<Solution />\n"),
+            ("README.md", "# Trading agent\n"),
+            ("src/App/Program.cs", &lines_of(12)),
+            ("src/App/ViewModels/MainVm.cs", &lines_of(7)),
+            ("src/App/Views/Main.axaml", &lines_of(30)),
+            ("src/App/Views/Main.axaml.cs", &lines_of(9)),
+            ("src/App/Views/Settings.axaml", &lines_of(21)),
+            ("src/Core/Engine.cs", &lines_of(40)),
+            ("src/Core/Models/Order.cs", &lines_of(15)),
+            ("src/Core/Models/Trade.cs", &lines_of(11)),
+            ("src/Core/Models/Fill.cs", &lines_of(5)),
+            ("tests/Core.Tests/EngineTests.cs", &lines_of(20)),
+            ("tests/Core.Tests/OrderTests.cs", &lines_of(10)),
+            ("tests/Core.Tests/TradeTests.cs", &lines_of(8)),
+        ],
+    )
+}
+
+#[test]
+fn a_csharp_repository_is_mapped_at_file_level() {
+    let (_dir, root) = csharp_repo();
+    run_settled(&root);
+    assert_notes(
+        &root,
+        &[
+            "01-Core/app/App.md",
+            "01-Core/core/Core.md",
+            "01-Core/core-tests/Core.Tests.md",
+            "01-Core/app/views/Views Folder.md",
+            "01-Core/core/models/Models Folder.md",
+            "01-Core/_index.md",
+            "01-Core/app/views/_index.md",
+        ],
+    );
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+    for id in [
+        "unit:src-app",
+        "unit:src-core",
+        "unit:tests-core-tests",
+        "dir:src/App/Views",
+        "dir:src/Core/Models",
+    ] {
+        let entry = meta.notes.get(id).unwrap_or_else(|| panic!("no {id}"));
+        assert!(entry.kind.explainable(), "{id}");
+    }
+    // A folder of fewer than three files has no note of its own.
+    assert!(!meta.notes.contains_key("dir:src/App/ViewModels"));
+
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains(
+            "**tradingagent** is a C# and AXAML codebase of 6 folders and 12 source files, mapped at file level: CodeWiki has no parser for C# and AXAML yet."
+        ),
+        "{home}"
+    );
+    assert!(!home.contains("no code in a language"), "{home}");
+    assert!(home.contains("[[01-Core/app/_index|App/]]"), "{home}");
+
+    let views = read(&vault, "01-Core/app/views/Views Folder.md");
+    assert!(
+        views.contains("- `Main.axaml` — AXAML, 30 lines\n")
+            && views.contains("- `Main.axaml.cs` — C#, 9 lines\n")
+            && views.contains("- `Settings.axaml` — AXAML, 21 lines\n"),
+        "{views}"
+    );
+    assert!(
+        views.contains("3 source files") && views.contains("60 lines"),
+        "{views}"
+    );
+    assert!(views.contains("[[App]]"), "{views}");
+    // Only facts that never change by themselves: no symbols, no links
+    // between code, no git numbers.
+    assert!(
+        !views.contains("## Depends on")
+            && !views.contains("## Used by")
+            && !views.contains("commit"),
+        "{views}"
+    );
+    // The sources of a note are the files of its folder.
+    let entry = &meta.notes["dir:src/App/Views"];
+    let mut sources: Vec<&str> = entry.sources.iter().map(|s| s.path.as_str()).collect();
+    sources.sort();
+    assert_eq!(
+        sources,
+        [
+            "src/App/Views/Main.axaml",
+            "src/App/Views/Main.axaml.cs",
+            "src/App/Views/Settings.axaml"
+        ]
+    );
+
+    // The unit note holds what no folder note holds, and links the folders.
+    let app = read(&vault, "01-Core/app/App.md");
+    assert!(app.contains("[[Views Folder]]"), "{app}");
+    assert!(
+        app.contains("- `Program.cs` — C#, 12 lines\n")
+            && app.contains("- `ViewModels/MainVm.cs` — C#, 7 lines\n"),
+        "{app}"
+    );
+    let core_index = read(&vault, "01-Core/_index.md");
+    assert!(
+        core_index.contains("Projects and folders of source files"),
+        "{core_index}"
+    );
+}
+
+#[test]
+fn a_flat_repository_with_two_unmapped_languages_has_one_unit() {
+    let (_dir, root) = named_repo(
+        "gateway",
+        &[
+            ("main.go", &lines_of(10)),
+            ("server.go", &lines_of(20)),
+            ("handler.go", &lines_of(30)),
+            ("db/schema.sql", &lines_of(4)),
+            ("db/seed.sql", &lines_of(5)),
+            ("db/views.sql", &lines_of(6)),
+            ("go.mod", "module gateway\n"),
+        ],
+    );
+    run_settled(&root);
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+    let units: Vec<&str> = meta
+        .notes
+        .keys()
+        .filter(|id| id.starts_with("unit:"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(units, ["unit:root-files"]);
+    assert!(meta.notes.contains_key("dir:db"));
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains(
+            "is a Go and SQL codebase of 2 folders and 6 source files, mapped at file level: CodeWiki has no parser for Go and SQL yet."
+        ),
+        "{home}"
+    );
+    let unit = read(&vault, "01-Core/gateway/gateway.md");
+    assert!(
+        unit.contains("- `main.go` — Go, 10 lines\n") && unit.contains("[[Db Folder]]"),
+        "{unit}"
+    );
+}
+
+#[test]
+fn a_mixed_repository_keeps_its_rust_notes_and_gains_file_level_ones() {
+    let dir = fixture();
+    let r = dir.path();
+    run(r);
+    let vault = r.join("obsidian");
+    let before: Vec<(String, String)> = [
+        "01-Core/engine/engine.md",
+        "01-Core/engine/OrderBook.md",
+        "01-Core/engine/Price.md",
+        "01-Core/cli/cli.md",
+        "00-Architecture/Crate Dependency Flow.md",
+        "05-Operations/Build and Test.md",
+    ]
+    .iter()
+    .map(|p| (p.to_string(), read(&vault, p)))
+    .collect();
+
+    write(r, "scripts/build.sh", &lines_of(3));
+    write(r, "scripts/test.sh", &lines_of(4));
+    write(r, "scripts/release.ps1", &lines_of(5));
+    let report = run(r);
+    assert_eq!(report.link_rate, 1.0, "{report:?}");
+    let again = run(r);
+    assert!(again.written.is_empty(), "{:?}", again.written);
+
+    for (path, text) in &before {
+        assert_eq!(&read(&vault, path), text, "{path} changed");
+    }
+    let meta = VaultMeta::load(&vault).unwrap();
+    assert!(meta.notes.contains_key("dir:scripts"));
+    assert!(meta.notes.contains_key("unit:root-files"));
+    let home = read(&vault, "_HOME.md");
+    assert!(
+        home.contains("is a Rust codebase of 2 crates and"),
+        "{home}"
+    );
+    assert!(
+        home.contains("3 source files in Shell and PowerShell are mapped at file level: CodeWiki has no parser for them yet."),
+        "{home}"
+    );
+}
+
+#[test]
+fn a_few_stray_files_next_to_mapped_code_get_no_notes() {
+    let dir = fixture();
+    let r = dir.path();
+    write(r, "assets/site.css", &lines_of(3));
+    write(r, "scripts/run.sh", &lines_of(3));
+    run_settled(r);
+    let meta = VaultMeta::load(&r.join("obsidian")).unwrap();
+    assert!(
+        !meta
+            .notes
+            .keys()
+            .any(|id| id.starts_with("unit:") || id.starts_with("dir:")),
+        "{:?}",
+        meta.notes.keys().collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn small_folders_roll_up_into_the_note_of_their_parent() {
+    let (_dir, root) = named_repo(
+        "ui",
+        &[
+            ("src/App/Views/Main.axaml", &lines_of(3)),
+            ("src/App/Views/Side.axaml", &lines_of(3)),
+            ("src/App/Views/Controls/Button.axaml", &lines_of(3)),
+            ("src/App/Views/Controls/Deep/Knob.axaml", &lines_of(3)),
+            ("src/App/Program.cs", &lines_of(3)),
+            ("src/App/Other/One.cs", &lines_of(3)),
+        ],
+    );
+    run_settled(&root);
+    let vault = root.join("obsidian");
+    let meta = VaultMeta::load(&vault).unwrap();
+    let folders: Vec<&str> = meta
+        .notes
+        .keys()
+        .filter(|id| id.starts_with("dir:"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(folders, ["dir:src/App/Views"]);
+    let views = read(&vault, "01-Core/app/views/Views Folder.md");
+    assert!(
+        views.contains("- `Controls/Button.axaml` — AXAML, 3 lines\n")
+            && views.contains("- `Controls/Deep/Knob.axaml` — AXAML, 3 lines\n"),
+        "{views}"
+    );
+    let app = read(&vault, "01-Core/app/App.md");
+    assert!(app.contains("- `Other/One.cs` — C#, 3 lines\n"), "{app}");
+}
+
+#[test]
+fn an_explained_folder_note_keeps_its_place_when_the_ranking_would_drop_it() {
+    let folders = |from: usize, to: usize| -> Vec<(String, String)> {
+        (from..=to)
+            .flat_map(|n| ["a", "b", "c"].map(|f| (format!("d{n:03}/{f}.go"), lines_of(n))))
+            .collect()
+    };
+    let (_dir, root) = named_repo("many", &[]);
+    for (path, text) in folders(1, 300) {
+        write(&root, &path, &text);
+    }
+    run(&root);
+    let vault = root.join("obsidian");
+    let path_of = |id: &str| {
+        VaultMeta::load(&vault)
+            .unwrap()
+            .notes
+            .get(id)
+            .map(|e| e.path.clone())
+    };
+    let smallest = path_of("dir:d001").expect("the smallest folder has a note");
+    let next = path_of("dir:d002").expect("the next folder has a note");
+    explain(
+        &root,
+        &smallest,
+        &[("How it works", "It holds three tiny files.")],
+        "",
+    );
+
+    for (path, text) in folders(301, 302) {
+        write(&root, &path, &text);
+    }
+    let report = run(&root);
+    assert!(path_of("dir:d301").is_some() && path_of("dir:d302").is_some());
+    assert_eq!(
+        path_of("dir:d001").as_deref(),
+        Some(smallest.as_str()),
+        "{report:?}"
+    );
+    assert!(
+        read(&vault, &smallest).contains("It holds three tiny files."),
+        "with its explanation"
+    );
+    assert!(
+        path_of("dir:d002").is_none() && !vault.join(&next).exists(),
+        "a note nobody explained follows the ranking: {report:?}"
+    );
+    assert!(report.removed.contains(&next), "{report:?}");
+    let again = run(&root);
+    assert!(again.removed.is_empty(), "{again:?}");
+    assert!(path_of("dir:d001").is_some());
+}
+
+#[test]
+fn a_repository_of_documents_alone_keeps_the_old_sentence() {
+    let (_dir, root) = named_repo(
+        "papers",
+        &[
+            ("README.md", "# Papers\n"),
+            ("notes/a.json", "{}\n"),
+            ("notes/b.yaml", "a: 1\n"),
+            ("notes/c.toml", "a = 1\n"),
+            ("notes/d.txt", "text\n"),
+            ("Cargo.lock", "# lock\n"),
+            ("img/logo.png", "png"),
+        ],
+    );
+    run_settled(&root);
+    let home = read(&root.join("obsidian"), "_HOME.md");
+    assert!(
+        home.contains("is a repository of 7 files with no code in a language CodeWiki maps."),
+        "{home}"
+    );
+    let meta = VaultMeta::load(&root.join("obsidian")).unwrap();
+    assert!(!meta.notes.keys().any(|id| id.starts_with("unit:")));
+}

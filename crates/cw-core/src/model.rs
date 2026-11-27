@@ -75,6 +75,71 @@ impl Language {
             Self::Rust | Self::Python | Self::TypeScript | Self::JavaScript | Self::Java
         )
     }
+
+    /// Display name of the language of a source file that CodeWiki has no
+    /// parser for, read from the extension alone: `C#` for `Program.cs`.
+    ///
+    /// Such a file is mapped at file level: its folder, language and size
+    /// are known, its symbols are not. `None` for a file of a language with
+    /// symbol support (a parser maps it), for data and prose (Markdown,
+    /// JSON, YAML, TOML, text, lock files, images) and for anything else.
+    /// A language that gets a parser leaves this table by giving its
+    /// extensions a [`Language`] variant that has symbol support.
+    ///
+    /// `.h` is C: a header says nothing about which of the two languages
+    /// includes it, and a C++ project still names its headers `.hpp` or
+    /// `.hh` as often as not. `.m` and `.mm` are Objective-C.
+    pub fn file_level_name(path: &str) -> Option<&'static str> {
+        if Self::from_path(path) != Self::Other {
+            return None;
+        }
+        let file = path.rsplit('/').next().unwrap_or(path);
+        let (_, ext) = file.rsplit_once('.')?;
+        Some(match ext.to_ascii_lowercase().as_str() {
+            "cs" => "C#",
+            "go" => "Go",
+            "kt" | "kts" => "Kotlin",
+            "c" | "h" => "C",
+            "cc" | "cpp" | "cxx" | "c++" | "hpp" | "hh" | "hxx" | "ipp" | "inl" => "C++",
+            "m" | "mm" => "Objective-C",
+            "swift" => "Swift",
+            "rb" | "rake" => "Ruby",
+            "php" => "PHP",
+            "scala" => "Scala",
+            "dart" => "Dart",
+            "lua" => "Lua",
+            "r" => "R",
+            "pl" | "pm" => "Perl",
+            "hs" | "lhs" => "Haskell",
+            "ex" | "exs" => "Elixir",
+            "erl" | "hrl" => "Erlang",
+            "clj" | "cljs" | "cljc" => "Clojure",
+            "fs" | "fsi" | "fsx" => "F#",
+            "vb" => "Visual Basic",
+            "zig" => "Zig",
+            "nim" => "Nim",
+            "ml" | "mli" => "OCaml",
+            "jl" => "Julia",
+            "groovy" => "Groovy",
+            "sh" | "bash" | "zsh" => "Shell",
+            "ps1" | "psm1" => "PowerShell",
+            "bat" | "cmd" => "Batch",
+            "sql" => "SQL",
+            "vue" => "Vue",
+            "svelte" => "Svelte",
+            "html" | "htm" => "HTML",
+            "css" => "CSS",
+            "scss" | "sass" => "SCSS",
+            "less" => "Less",
+            "xaml" => "XAML",
+            "axaml" => "AXAML",
+            "razor" | "cshtml" => "Razor",
+            "proto" => "Protobuf",
+            "graphql" | "gql" => "GraphQL",
+            "tf" | "tfvars" => "Terraform",
+            _ => return None,
+        })
+    }
 }
 
 /// One indexed source file. `path` is repo-relative with forward slashes.
@@ -319,6 +384,53 @@ mod tests {
         assert!(Language::from_path("web/App.TSX").has_symbol_support());
         assert!(Language::Java.has_symbol_support());
         assert!(Language::JavaScript.has_symbol_support());
+    }
+
+    #[test]
+    fn names_the_language_of_a_file_without_a_parser() {
+        for (path, name) in [
+            ("src/App/Program.cs", "C#"),
+            ("main.go", "Go"),
+            ("a/B.KT", "Kotlin"),
+            ("lib/x.c", "C"),
+            ("include/x.h", "C"),
+            ("include/x.hpp", "C++"),
+            ("src/x.cpp", "C++"),
+            ("ui/Main.axaml", "AXAML"),
+            ("ui/Main.xaml", "XAML"),
+            ("ui/Main.axaml.cs", "C#"),
+            ("run.sh", "Shell"),
+            ("run.ps1", "PowerShell"),
+            ("db/schema.sql", "SQL"),
+            ("infra/main.tf", "Terraform"),
+            ("api/user.proto", "Protobuf"),
+            ("web/index.html", "HTML"),
+            ("web/site.scss", "SCSS"),
+            ("web/App.vue", "Vue"),
+            ("lib/x.ml", "OCaml"),
+            ("a.R", "R"),
+        ] {
+            assert_eq!(Language::file_level_name(path), Some(name), "{path}");
+        }
+        // A parser maps these; data and prose are not source.
+        for path in [
+            "src/lib.rs",
+            "a.py",
+            "web/App.tsx",
+            "A.java",
+            "README.md",
+            "a.json",
+            "a.yaml",
+            "Cargo.toml",
+            "Cargo.lock",
+            "notes.txt",
+            "logo.png",
+            "Makefile",
+            "dir.cs/README",
+            ".gitignore",
+        ] {
+            assert_eq!(Language::file_level_name(path), None, "{path}");
+        }
     }
 
     #[test]

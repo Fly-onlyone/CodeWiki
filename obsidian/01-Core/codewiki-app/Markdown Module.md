@@ -39,7 +39,6 @@ A vault note is Obsidian Markdown: it has frontmatter, `[[wikilinks]]` and Merma
 - `pub fn figure_index(block: &str) -> Option<usize>` — the number of the picture a `FIGURE_BLOCK` with this text stands for.
 - `prepare_note_with` — `prepare_note` with diagram support. `diagram` receives the source of each Mermaid block and says what to show in its place. `figures` are the headings of the sections that have a picture. A `FIGURE_BLOCK` is put directly under each such heading: a picture stands inside the section it explains, and the reader meets it before the text it makes easier.
 - `fn link_line(line: &str) -> String` — replace wikilinks in one line of prose.
-- `pub fn outline(text: &str) -> Vec<String>` — `##` headings of a note, for the outline pane.
 
 ## Depends on
 
@@ -47,7 +46,7 @@ A vault note is Obsidian Markdown: it has frontmatter, `[[wikilinks]]` and Merma
 
 ## Used by
 
-- [[codewiki-app]] — from `details`, `edit_view`, `follow_link`, `page_content`
+- [[codewiki-app]] — from `edit_view`, `follow_link`, `page_content`, `prepare_page`
 
 ## Gotchas
 

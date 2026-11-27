@@ -57,6 +57,7 @@ Modules:
 - [[Markdown Module]] — text preparation for the note viewer.
 - [[Motion Module]] — motion: whether things move at all.
 - [[Mui Module]] — components drawn to Material UI's measurements.
+- [[Outline Module]] — the outline in the details pane: the `##` headings of the note as its body draws them, which of their sections is being read, and the glide of the body to a heading the user clicks.
 - [[Pages Module]] — the report pages: decisions, dead code, health, drift and the rest.
 - [[Palette Module]] — the command palette's entries and matching.
 - [[Panes Module]] — the two side panes: whether each is shown.
@@ -89,8 +90,8 @@ Defined at the crate root:
 - `const WIKI_MAP: &str` — the vault's map note, which the app calls "Wiki map".
 - `enum Landing` — where the app goes once a repository's notes have loaded.
 - `struct Tab` — A tab that is not on screen. The active tab's page and history live in the view itself; its slot is refreshed when the user leaves it.
-- `enum Place` — where a note that loads is shown.
 - `enum MenuTarget` — what a right-click opened a menu on.
+- `struct Reader` — the note's text view, kept by the app so that the outline can read its headings and scroll it.
 - `enum Page` — what the centre pane shows.
 - `const SIDEBAR_WIDTH: f32` — width of the sidebar and of the details pane, in pixels.
 - `fn parse_repos(value: &Value) -> (Vec<Repo>, Vec<Repo>)` — the registered repositories, split into those whose folders are there and those whose folders are gone. A backend from before the list said so counts every folder as there.
@@ -104,7 +105,7 @@ Defined at the crate root:
 - `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
 - `fn main()` — private function.
 
-And 41 more items.
+And 42 more items.
 
 ## Depends on
 

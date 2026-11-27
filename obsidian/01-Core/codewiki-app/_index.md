@@ -4,7 +4,7 @@ tags: [moc, core, codewiki-app]
 
 # Core / codewiki-app — Map of Content
 
-> Notes for `codewiki-app`: 56 concepts.
+> Notes for `codewiki-app`: 57 concepts.
 
 ## Notes
 
@@ -38,6 +38,7 @@ tags: [moc, core, codewiki-app]
 - [[Motion Module]] — motion: whether things move at all.
 - [[MotionPref]] — what the user asked for.
 - [[Mui Module]] — components drawn to Material UI's measurements.
+- [[Outline Module]] — the outline in the details pane: the `##` headings of the note as its body draws them, which of their sections is being read, and the glide of the body to a heading the user clicks.
 - [[Pages Module]] — the report pages: decisions, dead code, health, drift and the rest.
 - [[Palette Module]] — the command palette's entries and matching.
 - [[Panes Module]] — the two side panes: whether each is shown.

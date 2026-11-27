@@ -9,7 +9,7 @@ tags: [moc, core]
 ## Folders
 
 - [[01-Core/codewiki/_index|codewiki]] — 2 notes
-- [[01-Core/codewiki-app/_index|codewiki-app]] — 77 notes
+- [[01-Core/codewiki-app/_index|codewiki-app]] — 78 notes
 - [[01-Core/codewiki-mcp/_index|codewiki-mcp]] — 3 notes
 - [[01-Core/cw-client/_index|cw-client]] — 3 notes
 - [[01-Core/cw-core/_index|cw-core]] — 20 notes

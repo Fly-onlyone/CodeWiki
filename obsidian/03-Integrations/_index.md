@@ -9,7 +9,7 @@ tags: [moc, integration]
 ## Notes
 
 - [[axum]] — external crate `axum`, imported by 4 source files.
-- [[gpui_kit]] — external crate `gpui_kit`, imported by 36 source files.
+- [[gpui_kit]] — external crate `gpui_kit`, imported by 37 source files.
 - [[rusqlite]] — external crate `rusqlite`, imported by 3 source files.
 - [[semver]] — external crate `semver`, imported by 3 source files.
 - [[sentry]] — external crate `sentry`, imported by 3 source files.

@@ -680,6 +680,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::outline",
+    "path": "01-Core/codewiki-app/Outline Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:codewiki_app::pages",
     "path": "01-Core/codewiki-app/Pages Module.md",
     "kind": "concept"

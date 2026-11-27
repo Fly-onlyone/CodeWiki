@@ -57,10 +57,10 @@ Submodules: [[Curve Module]], [[Duration Module]].
 - [[Button Module]] — from `ease`, `line`, `render`
 - [[Surfaces Module]] — from `card_content`, `paper`, `text`
 - [[Checkbox Module]] — from `of`, `render`
+- [[Motion Module (mui)]] — from `drawer`, `glide`
 - [[Base Module]] — from `new`
 - [[Feedback Module]] — from `indeterminate`
 - [[Interaction Module]] — from `LIGHT_RATIO`
-- [[List Module]] — from `render`
 
 ## Gotchas
 

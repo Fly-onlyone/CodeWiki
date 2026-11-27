@@ -6,7 +6,7 @@ tags: [moc, home]
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 17 crates and 365 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 366 source files. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 

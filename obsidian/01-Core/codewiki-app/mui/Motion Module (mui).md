@@ -39,25 +39,25 @@ Three holds are times, not motions. `NOTE_HOLD` (2.5 s) keeps the word "Saved" b
 - `pub const CARD_STAGGER: Duration` — `staggerCascade`: time between two cards.
 - `pub const STAGGER_CAP: usize` — items after this many enter together with the last staggered one. Without a cap the last row of a long table would arrive seconds late.
 - `pub const EXIT: Duration` — `scaleIn` exit, and the exit of `tabSwitch` and `pageEntrance`.
-- `pub const PRESS_IN: Duration` — how fast a control takes its pressed look, and lets it go. Not a motion of MUI, whose press is the ripple alone: quick enough to answer the press at once, and slow enough on the way back that a short click shows.
 - `pub const NOTE_HOLD: Duration` — how long the word "Saved" stays beside a setting. Not a motion of MUI or of TradingAgent: long enough to be read, and gone before the next change.
 - `pub const LEVEL_HOLD: Duration` — how long the zoom level stays in the title bar after a change. Not a motion of MUI or of TradingAgent: long enough to read the figure while the wheel turns, and gone soon after it stops.
 - `pub const TOAST_HOLD: Duration` — how long a toast stays on screen. Not a motion: the `autoHideDuration` of MUI's Snackbar docs example (`autoHideDuration={6000}`), long enough to read a title and a line under it.
 - `pub fn scale() -> f32` — the factor every motion is stretched by; 1 unless `CODEWIKI_MOTION_SCALE` says otherwise.
 - `pub fn scaled(duration: Duration) -> Duration` — `duration` stretched by `scale`.
 - `drawer` — how much of a side pane shows, from 0 (hidden) to 1 (shown), on the way to `open`: MUI's persistent `Drawer`. It enters over `enteringScreen` on `easeOut` and leaves over `leavingScreen` on `sharp` (`Drawer/Drawer.js`, `Slide/Slide.js`). A pane that starts hidden starts at 0, with no motion.
+- `pub fn glide(elapsed: Duration) -> f32` — how far a glide, such as the note's scroll to a heading the outline names, has gone after `elapsed`: from 0 to exactly 1 over MUI's `standard` duration, eased in and out.
 - `pub fn count_up(value: &str, progress: f32) -> String` — A figure such as `286`, `62.5%` or `1,204 lines`, `progress` of the way up from zero: TradingAgent's `RollingDigits`. Text that does not start with a number is returned as it is.
 - `pub fn stagger_delay(index: usize, step: Duration) -> Duration` — how long item `index` of a staggered group waits before it enters.
 - `pub struct Enter` — an entrance: where the element comes from, on which spring, after what wait.
 - `pub trait EnterExt: Styled + IntoElement + Sized + 'static` — elements that can make an entrance.
 
-And 6 more items.
+And 7 more items.
 
 ## Depends on
 
 - [[Spring]] — uses `Spring`, `animation`, `mass`, `new`
-- [[Curve Module]] — uses `EASE_OUT`, `SHARP`
-- [[Duration Module]] — uses `ENTERING_SCREEN`, `LEAVING_SCREEN`
+- [[Curve Module]] — uses `EASE_IN_OUT`, `EASE_OUT`, `SHARP`
+- [[Duration Module]] — uses `ENTERING_SCREEN`, `LEAVING_SCREEN`, `STANDARD`
 - [[Tokens Module]] — uses `easing`
 - [[Zoom Module]] — uses `px`
 

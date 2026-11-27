@@ -69,7 +69,7 @@ And 4 more private items with no comment.
 
 ## Used by
 
-- [[codewiki-app]] — from `Reveal`, `follow_reveal`, `palette_view`, `review_queue`
+- [[codewiki-app]] — from `Reveal`, `details`, `follow_reveal`, `palette_view`
 - [[Doc View Module]] — from `draw_row`
 - [[Autocomplete Module]] — from `render`
 - [[Menu Module]] — from `render`

@@ -4,7 +4,7 @@ tags: [integration]
 
 # gpui_kit
 
-> External crate `gpui_kit`, imported by 36 source files.
+> External crate `gpui_kit`, imported by 37 source files.
 
 ## What it does
 
@@ -12,7 +12,7 @@ tags: [integration]
 
 ## Used for
 
-Imported by 36 source files. Main users:
+Imported by 37 source files. Main users:
 
 - [[Autocomplete Module]] — imports `Anchor`, `App`, `Bounds`, `ElementId` and 17 more
 - [[Backdrop Module]] — imports `AnyElement`, `App`, `Bounds`, `ContentMask` and 24 more

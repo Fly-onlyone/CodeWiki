@@ -788,6 +788,14 @@ pub struct Project<'a> {
     pub worktree_of: Option<&'a str>,
 }
 
+/// Whether Home shows its search field. The search finds the projects opened
+/// before, so it needs one: a folder of `paths`, the projects Home lists,
+/// that is in `recent`. The app asks too, before it gives the field the
+/// focus: a field that is not drawn would take the keys from everything.
+pub fn home_has_search<'a>(mut paths: impl Iterator<Item = &'a str>, recent: &[String]) -> bool {
+    paths.any(|path| recent.iter().any(|opened| opened == path))
+}
+
 /// What Home is made from.
 pub struct HomeInput<'a> {
     /// The registered repositories whose folders are there.
@@ -826,12 +834,10 @@ pub fn home_page(home: &HomeInput) -> Doc {
             button: Some(("Sync".into(), Action::Sync)),
         });
     }
-    // The search finds the projects opened before, so it needs one.
-    let opened = home
-        .projects
-        .iter()
-        .any(|project| home.recent.iter().any(|path| path == project.path));
-    if opened {
+    if home_has_search(
+        home.projects.iter().map(|project| project.path),
+        home.recent,
+    ) {
         doc.push(Block::Search);
     }
     doc.push(Block::Rows(vec![
@@ -1231,6 +1237,19 @@ mod tests {
             assert!(!page.blocks.contains(&Block::Search), "{page:?}");
         }
         assert!(!home_page(&home(&[], &[])).blocks.contains(&Block::Search));
+    }
+
+    #[test]
+    fn home_has_its_search_only_with_a_listed_project_that_was_opened() {
+        let recent = [BETA.path.to_string(), r"C:\gone".to_string()];
+        assert!(home_has_search(
+            [ALPHA.path, BETA.path].into_iter(),
+            &recent
+        ));
+        // Opened before, but not among the projects Home lists.
+        assert!(!home_has_search([ALPHA.path].into_iter(), &recent));
+        assert!(!home_has_search([ALPHA.path, BETA.path].into_iter(), &[]));
+        assert!(!home_has_search(std::iter::empty(), &recent));
     }
 
     fn labels(hits: &[HitTarget]) -> Vec<&str> {

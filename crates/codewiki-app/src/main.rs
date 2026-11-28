@@ -2085,6 +2085,20 @@ impl AppView {
             .cloned()
     }
 
+    /// Whether Home shows its search field now: `live::home_has_search`
+    /// over the projects Home lists, which leave out every linked worktree
+    /// but the open one (`listed` in `home_doc`).
+    fn home_shows_search(&self) -> bool {
+        let current = self.repo.as_ref().map(|repo| repo.id.as_str());
+        live::home_has_search(
+            self.repos
+                .iter()
+                .filter(|repo| repo.worktree_of.is_none() || current == Some(repo.id.as_str()))
+                .map(|repo| repo.path.as_str()),
+            &self.recent,
+        )
+    }
+
     /// Show Home, unless it is on screen already.
     fn open_home(&mut self, cx: &mut Context<Self>) {
         if self.backend.is_none() || matches!(self.page, Page::Home) {
@@ -5979,12 +5993,19 @@ impl Render for AppView {
         }
         if std::mem::take(&mut self.home_search_pending) && matches!(self.page, Page::Home) {
             let focus = !self.palette_open;
+            let shown = self.home_shows_search();
             self.home_search.update(cx, |input, cx| {
                 input.set_value("", window, cx);
-                if focus {
+                if focus && shown {
                     input.focus(window, cx);
                 }
             });
+            // Home without its search field, as on a first start: the focus
+            // goes to the app, or it would be on a field that is not drawn
+            // and no shortcut would run until a click.
+            if focus && !shown {
+                window.focus(&self.focus, cx);
+            }
         }
         self.draw_queued_diagrams(cx);
         // A start argument carried out in the last frame has been drawn now.

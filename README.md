@@ -8,7 +8,7 @@ A native Windows app and a Rust backend that write and maintain a wiki for a cod
 
 The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives in the repository, so it is versioned with the code and readable without CodeWiki.
 
-> Status: version 0.6.0. See `ROADMAP.md` for what is verified and what is not.
+> Status: version 0.6.1. See `ROADMAP.md` for what is verified and what is not.
 
 ## Contents
 
@@ -406,7 +406,7 @@ For `wiki: check`:
 
 - Commit `obsidian/` after every change to code: the check fails when the two disagree. A bot that cannot run the sync, such as Dependabot, needs to be left out with an `if:`.
 - CodeWiki counts every file in the checkout. A step that writes a file into it before the action makes the wiki look out of date; write such files elsewhere, or name them in `.codewikiignore`.
-- Up to 0.6.0 a source file is recorded by a hash of its bytes, line endings included. A wiki synced on a machine whose files have other line endings than the runner's checkout fails the check until a release after 0.6.0, which reads CRLF as LF.
+- Up to 0.6.0 a source file is recorded by a hash of its bytes, line endings included. A wiki synced on a machine whose files have other line endings than the runner's checkout fails the check until it is synced once with 0.6.1 or newer, which reads CRLF as LF.
 
 ## Develop
 

@@ -53,7 +53,7 @@ The doc view in [[Doc View Module]] draws the result.
 - [[Block]] — A part of a page.
 - [[Doc]] — A generated page.
 
-And 2 more items.
+And 3 more items.
 
 ## Depends on
 

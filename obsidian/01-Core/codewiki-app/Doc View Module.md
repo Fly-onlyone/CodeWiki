@@ -59,10 +59,10 @@ And 32 more items.
 - [[Doc Module]] — uses `Cell`, `Choice`, `Row`, `SecretState`
 - [[Feedback Module]] — uses `alert`, `alert_action`, `chip`, `linear_progress`
 - [[Surfaces Module]] — uses `CARD_PADDING`, `card`, `card_content`, `card_piece`
-- [[Switch Module]] — uses `INSET`, `new`, `on`, `on_change`
 - [[Settings Layout Module]] — uses `CONTROL_WIDTH`, `LABEL_WIDTH`, `ROW_GAP`, `ROW_SPACING`
+- [[Button Module]] — uses `contained`, `new`, `toggled`
+- [[Switch Module]] — uses `INSET`, `new`, `on_change`
 - [[Text Field Module]] — uses `HEIGHT`, `helper`, `new`
-- [[Reading Module]] — uses `WIDE_MEASURE`, `gutter`, `link_hover`
 
 ## Used by
 

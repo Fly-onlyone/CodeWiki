@@ -10,6 +10,27 @@ The wiki is an Obsidian vault of Markdown notes at `<repo>/obsidian/`. It lives 
 
 > Status: version 0.6.0. See `ROADMAP.md` for what is verified and what is not.
 
+## Contents
+
+- [What it does](#what-it-does)
+- [Parts](#parts)
+- [Install](#install)
+  - [Updates](#updates)
+  - [The tray](#the-tray)
+- [Use](#use)
+  - [How a note is written](#how-a-note-is-written)
+  - [Search](#search)
+  - [Saved settings](#saved-settings)
+  - [Error reports](#error-reports)
+  - [Claude Code plugin](#claude-code-plugin)
+  - [Codex plugin](#codex-plugin)
+  - [Keep coding agents out of a folder](#keep-coding-agents-out-of-a-folder)
+  - [Docker](#docker)
+  - [GitHub Action](#github-action)
+- [Develop](#develop)
+  - [Test a package in a clean Windows](#test-a-package-in-a-clean-windows)
+- [License](#license)
+
 ## What it does
 
 - **Writes the wiki.** Parses the repository, builds a dependency graph, and writes notes for packages, modules, key types, startup flows, external integrations, patterns and operations, with Mermaid diagrams. Your coding agent then explains each note and adds pictures to it. With auto explaining on (Settings → Repositories), Claude Code with the plugin explains waiting notes in the background when a session starts, 20 by default, or as many as you choose, up to all of them; "To explain (N)" in the toolbar lists the notes that still wait.

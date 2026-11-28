@@ -18,7 +18,9 @@ A read-only index over one scan of the repository. The scan gives flat lists of 
 
 `Repo::new` builds the tables from facts alone. `Repo::at` also reads manifests from the checked-out folder, so it can name non-Rust units and read package descriptions. Both go through `build`, which loops once over symbols (by name, children by parent) and once over edges (outgoing, incoming, and implementors for `Implements` edges). Rank comes from the page rank in the metrics.
 
-Queries are plain lookups. `calls_from` keeps only call edges, orders them by call site and keeps each callee once. `unit_of` finds the unit by symbol, or by Rust path when the symbol is unknown. `top_modules` lists the modules right below a unit's root; for units with no root it finds modules not nested in another module of the unit. `descendants` and `subtree_rank` add up everything nested below a symbol. `is_test` is true for test paths and for test files outside Rust.
+Queries are plain lookups. `calls_from` keeps only call edges, orders them by call site and keeps each callee once. `unit_of` finds the unit by symbol, or by Rust path when the symbol is unknown. `top_modules` lists the modules right below a unit's root; for units with no root it scans all modules of the unit and drops those nested in another module of the unit. `descendants` and `subtree_rank` add up everything nested below a symbol.
+
+`is_test` decides what gets no note. A path with a test segment counts in any language. For languages other than Rust, a test file, a file in a test unit, or a symbol marked as generated code also counts. `top_modules` and `module_count` use it to skip Go packages that hold only tests.
 
 ## Items
 
@@ -66,7 +68,8 @@ Members:
 - `Repo::new` names non-Rust units from layout only. Use `Repo::at` when manifests matter.
 - `rank_of` returns 0 for an unknown symbol, not an error.
 - `module_count` skips `__init__` files, because a Python package's `__init__` is the package, not one of its modules.
-- `children` is built in fact order, not sorted by name, despite the field doc. Callers that need an order sort themselves.
+- `children` is built in fact order. The field doc says name order, but the code never sorts. Callers that need an order sort themselves.
+- Generated Go code counts as test code in `is_test`. It stays in the index and keeps its calls, but gets no note. Generated Rust is not filtered this way.
 
 ## See also
 

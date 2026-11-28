@@ -8,7 +8,7 @@ tags: [moc, core, scripts]
 
 ## Notes
 
-- [[Scripts Folder]] — PowerShell and Batch source folder `scripts` of `CodeWiki` with 21 source files, mapped at file level.
+- [[Scripts Folder]] — PowerShell and Batch source folder `scripts` of `CodeWiki` with 22 source files, mapped at file level.
 
 ## Folders
 

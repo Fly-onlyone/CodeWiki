@@ -17,9 +17,9 @@ Sends error reports to Sentry from the long-running programs: the app, the backe
 
 ## How it works
 
-`init` replaces the plain log setup. `start` calls `choose`: the environment DSN always wins, and the built-in one is used only when the consent file says `on`. A DSN that does not parse means no reports, not a crash. The mode is stored once in `MODE`. Sentry is set up with no personal data, a stack trace on every event, and the trace rate from the environment (default 0.1, bad values ignored).
+`init` replaces the plain log setup. `start` calls `choose`: the environment DSN always wins, and the built-in one is used only when the consent file says `on`. A DSN that does not parse means no reports, not a crash. The mode is stored once in `MODE`. Sentry is set up with no personal data, a stack trace on every event, the release `codewiki@<version>`, and the trace rate from the environment (default 0.1, a value outside 0 to 1 is ignored).
 
-The log layer maps records. An Error record becomes a report. Info and Warn become the trail (breadcrumbs). Debug and Trace are dropped. Panics are left to Sentry's own hook. Records from the sending crates are ignored, so reporting cannot report on itself. Error records of a recovered graphics device loss are only trail.
+The log layer maps records. An Error record becomes a report. Info and Warn become the trail (breadcrumbs). Debug and Trace are dropped. Panics are left to Sentry's own hook. Records from the sending crates (`sentry`, `ureq`, `rustls`) are ignored, so reporting cannot report on itself. The `page` target, the app's line that names a drawn note, is ignored too, so it stays on the machine. Error records of a recovered graphics device loss (code 0x887A0005 and the resize and draw errors that follow) are only trail. A device that hung or was reset still gives a report.
 
 Every event passes `before_send`, which asks `allowed` again and then calls `scrub::event`. In switch mode `allowed` reads the consent file, but at most every five seconds. The consent file holds `on` or is absent. `set_consent` writes or removes it. `sending` tells whether this process reports now, and the backend traces a request only then. `task_hub` gives each request its own Sentry hub, so scopes do not mix.
 
@@ -76,7 +76,8 @@ And 12 more items.
 - `SENTRY_DSN` needs no switch. Whoever sets it chose to report, and the Settings switch does not stop it.
 - The release workflow may set the built-in DSN empty. An empty value counts as no DSN.
 - Hold the `Guard` until `main` ends. A program that exits another way should call `flush` first, which waits up to two seconds.
-- Development builds keep the consent file under a separate folder name.
+- Development builds keep the consent file under a separate folder name, so they never share the choice of an installed copy.
+- `consent_path` needs `APPDATA`. Without it there is no switch, and `set_consent` fails.
 
 ## See also
 

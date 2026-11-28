@@ -20,15 +20,13 @@ The app calls a page function after it has the backend's answer. `AppView::open_
 
 Small helpers read the JSON. `string` gives an empty text for a missing field, `list` an empty list for a missing array, and `number` a dash for null. Rows come from `symbol_row`, `file_row` and `note_rows`, each with an `Action`.
 
-Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a snippet. The suggestions in [[Suggest Module]] share this code with the search page.
+Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a snippet. The suggestions in [[Suggest Module]] share this code.
 
-`home_page` puts the logo first. It adds an alert when a newer release waits, and another when the open repository has no wiki yet. The search block appears only when a registered project was opened in the app before, because the search finds only those. Then come the Open folder row, the projects newest first (`by_recency`), and the projects whose folder is missing, each with a Remove button. Each project row shows how agents are kept out (`Kept`).
+`home_page` puts the logo first. It adds an alert when a newer release waits, and another when the open repository has no wiki yet. The search block appears only when a registered project was opened in the app before (`home_has_search`). Then come the Open folder row, the projects newest first (`by_recency`), and the projects whose folder is missing, each with a Remove button. Each project row shows how agents are kept out (`Kept`). `recent_matches` feeds Home's search: names first, then folders (`path_matches`), newest first, at most `RECENT_MATCHES`.
 
-`recent_matches` feeds Home's search: projects whose name holds the query, then those whose folder matches it (`path_matches`), newest first, at most `RECENT_MATCHES`.
+`waiting_page` shows the notes that wait for a coding agent. Its top alert depends on the auto explain choice: all notes, a number of notes, or off. Rows say whether a note is behind the code or never explained, and whether an agent is writing it now. `explanation_lines` and `agent_view_line` give the details pane its lines about who wrote a note and what the agent view leaves out.
 
-`waiting_page` shows the notes that wait for a coding agent. Its top alert depends on the auto explain choice: all notes, a number of notes, or off. Rows say whether a note is behind the code or never explained, and whether an agent is writing it now.
-
-`kept_by` checks the file system and answers with `Kept`: open, kept by its own entry, kept by a parent folder's entry, or containing an entry.
+`kept_by` checks the file system and answers with `Kept`: open, kept by its own entry, by a parent's entry, or containing an entry.
 
 ## Items
 

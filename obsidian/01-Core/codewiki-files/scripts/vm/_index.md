@@ -8,7 +8,7 @@ tags: [moc, core, vm]
 
 ## Notes
 
-- [[Vm Folder]] — PowerShell source folder `scripts/vm` of `CodeWiki` with 14 source files, mapped at file level.
+- [[Vm Folder]] — PowerShell source folder `scripts/vm` of `CodeWiki` with 15 source files, mapped at file level.
 
 ## Folders
 

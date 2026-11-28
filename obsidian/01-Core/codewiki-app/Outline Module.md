@@ -18,7 +18,7 @@ All places are in design units, measured down from the top of the note: the body
 
 ## How it works
 
-The body is a text view (`TextViewState`). The app owns it: the note's view lives in `Reader`, and while a note is edited the editor's preview is the body instead. `outline_entries` asks the view for its headings and `entries` keeps level 2 only. Headings inside code blocks or quotes are not counted, because the view already knows which blocks it drew.
+The body is a text view (`TextViewState`). The app owns it: the note's view lives in `Reader`, and while a note is edited the editor's preview is the body instead. `AppView::outline_entries` asks the view for its headings and `entries` keeps level 2 only. Headings inside code blocks or quotes are not counted, because the view already knows which blocks it drew.
 
 ### Which entry is lit
 

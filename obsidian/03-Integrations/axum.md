@@ -23,16 +23,16 @@ Imported by 4 source files. Main users:
 
 ## Wire-up
 
-`routes` in the API module builds the `Router`. Handlers are plain async functions. They take extractors such as `State`, `Path`, `Query`, `Json` and `Bytes`.
+`routes` in the API module builds the `Router`. Handlers are plain async functions. They take extractors such as `State`, `Path`, `Query`, `Json` and `Bytes`. Errors become JSON `{ "error": ... }` with a status chosen by `ApiError`.
 
 The router has two parts.
 
-- A protected router holds every route except two, such as `/repos`, `/status`, `/settings` and `/shutdown`. The `require_token` middleware wraps it. It is nested under `/v1`.
+- A protected router holds every route except two: `/repos`, `/repos/{id}/...`, `/workspace`, `/status`, `/settings`, `/embed/...`, `/shutdown` and the rest. The `require_token` middleware wraps it, and it is nested under `/v1`.
 - The outer router holds `/v1/health` and `/v1/hooks/git`, which sit outside the token layer. The hook route has its own body limit of 25 MB.
 
-Two more layers wrap the outer router: `log_request` and, outside it, `trace_request`. `with_state` hands the shared [[AppState]] to all of it.
+Two more layers wrap the outer router: `log_request` and, outside it, `trace_request`, so what the log reports joins the trace. `with_state` hands the shared [[AppState]] to all of it.
 
-`router` returns the `Router` without a socket. The tests call it through `tower`'s `oneshot`, so a test sends one request straight to the app. `serve` binds a TCP listener and runs `axum::serve` with a graceful shutdown. Slow work such as SQLite or file access goes through `blocking`, which uses `spawn_blocking`, so the async runtime stays free.
+`router` returns the `Router` without a socket. The tests call it through `tower`'s `oneshot`, so a test sends one request straight to the app. `serve` binds a TCP listener, publishes the bound address, configures semantic search, resumes the background embedding job, and runs `axum::serve` with a graceful shutdown. Slow work such as SQLite or file access goes through `blocking`, which uses `spawn_blocking`, so the async runtime stays free.
 
 ## Auth mode
 
@@ -44,8 +44,11 @@ The git webhook cannot send that token. It is signed instead. `webhook_signed` a
 
 - A route added outside the protected router has no token check. Add new routes to the protected one unless a signature replaces the token.
 - The bridge call is counted only after the token passes. Anyone can send the client header.
-- The request log and trace record method and route only, never the query, headers or body. They carry search text, notes and the token. `/v1/health` and `/v1/status` are polled, so they are not traced.
+- The request log and trace record method and route only, never the query, headers or body. They carry search text, notes and the token. The trace uses the matched route (with `{id}`), not the real path, so ids stay out of it. `/v1/health` and `/v1/status` are not traced, because clients poll them.
+- Log levels: server errors are warnings, health checks stay at debug, refused or slow requests (over one second) are info.
 - The webhook answers 202 and runs the update afterwards. A git host waits only a few seconds.
+- Without a webhook secret, the hook route answers 404, not 401.
+- Updates, whether from the update route or the webhook, share one write lock. A second update waits, yet is already counted as running.
 - Route parameters use the `{id}` form of this axum version.
 
 ## See also

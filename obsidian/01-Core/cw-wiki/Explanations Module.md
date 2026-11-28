@@ -67,13 +67,13 @@ And 23 more items.
 - [[NoteKind]] — uses `NoteKind`, `agent_sections`, `explainable`, `fact_fences`
 - [[Error]] — uses `Error`, `invalid`, `io`, `not_found`
 - [[VaultMeta]] — uses `VaultMeta`, `load`, `registry`, `save`
+- [[Generate Module]] — uses `file_hash`, `hash_holds`, `illustration_path`
 - [[Explanation Module]] — uses `extract`, `weave`
 - [[Manifest Module]] — uses `Explained`, `body_hash`
-- [[Generate Module]] — uses `file_hash`, `illustration_path`
 
 ## Used by
 
-- [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_note_changed_after_the_proposal_is_not_deleted_by_it`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`, `a_note_that_is_behind_comes_first_and_is_cleared_by_writing_again`
+- [[cw-wiki]] — from `a_brief_says_which_sections_are_the_agents`, `a_file_with_crlf_line_endings_holds_up_no_note`, `a_note_changed_after_the_proposal_is_not_deleted_by_it`, `a_note_its_owner_edited_gets_a_proposal_and_is_not_written`
 - [[Api Module]] — from `approve_proposal`, `decide_proposals`, `list_explanations`, `read_explanation`
 - [[Briefing Module]] — from `explain_sentence`, `launch_order`, `session_start`
 - [[codewiki]] — from `batch_and_claim_texts_follow_the_backend`, `write_notes_skill_follows_the_tools_and_the_limits`

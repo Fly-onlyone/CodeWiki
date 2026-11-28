@@ -98,6 +98,8 @@ The bottom layer is [[cw-core]]: shared identifiers, hashing, configuration and 
 
 The app and the MCP bridge do not link the engine. Both reach the backend through [[cw-client]], which finds it, starts it if needed and makes the HTTP calls. So the app and the agents see the same backend. [[cw-telemetry]] is used by the programs and the server for opt-in error reports. The app also uses [[cw-update]] for self-update, [[cw-mermaid]] for diagrams and [[openui-lang]] for model-written UI, which [[cw-illustrate]] uses as well.
 
+In the manifests, a few of these dependencies carry a version (0.6.1) next to their path. These are the ones that cross from a program or the engine into a crate that is published on its own, such as cw-client, cw-server, cw-embed, cw-illustrate, cw-mermaid and openui-lang.
+
 ## Depends on
 
 - [[codewiki-app]] — used by 0 workspace crates
@@ -123,6 +125,7 @@ The app and the MCP bridge do not link the engine. Both reach the backend throug
 - Keep the arrows pointing down. The app must not depend on the engine crates. It goes through [[cw-client]] over HTTP.
 - [[cw-core]] is the base of most crates. A change to it rebuilds nearly the whole workspace.
 - [[openui-lang]] has no dependencies on purpose, and [[cw-illustrate]] builds on it. Do not add a UI dependency to it.
+- A dependency with both a path and a version must keep the version equal to the crate's own version. Raise both together when the workspace version changes.
 
 ## See also
 

@@ -17,13 +17,15 @@ The crate that turns a scanned repository into a wiki, and answers questions abo
 
 ## How it works
 
-The crate root only lists modules and re-exports a few names: `analyze`, `dependency_graph`, `generate`, `generate_with`, `Report`, `TEMPLATE_VERSION`, `Plan`, `Planned`, `Repo` and `Subject`. The work falls into groups.
+The crate root only lists modules and re-exports a few names: `analyze`, `dependency_graph`, `generate`, `generate_with`, `Report`, `KeptGone`, `Moved`, `TEMPLATE_VERSION`, `Plan`, `Planned`, `Repo` and `Subject`. The work falls into groups.
 
-- Generation: [[Plan Module]] picks the notes, [[Units Module]] names the top-level parts, [[Render Module]] writes Markdown, and [[Generate Module]] runs the whole pipeline: scan, plan, freeze names, render, lint, write.
+- Generation: [[Plan Module]] picks the notes, [[Units Module]] names the top-level parts, [[Render Module]] writes Markdown, and [[Generate Module]] runs the whole pipeline: scan, plan, freeze names, render, lint, write. `Gone Module` decides what happens to notes whose subject is gone.
 - Agent explanations: [[Explanations Module]] is the only way a coding agent writes into a note. [[Doctext Module]] cleans doc comments so they fit the note rules. [[Explain Module]] adds the walk-through and item lists.
 - Questions: [[Query Module]], [[Semantic Module]] and [[Service Module]] answer from the index. Service holds the operations the CLI, server and MCP tools share.
 - Analyses: [[Analyze Module]], [[Gitintel Module]], [[Health Module]], [[Security Module]], [[Testmap Module]], [[Coverage Module]], [[Contracts Module]], [[Refactor Module]] and [[Decisions Module]].
 - Output for tools: [[Briefing Module]], [[Agentdocs Module]] and [[Ci Module]].
+
+The crate builds on the embedding, illustration, graph, index, parse and vault crates, plus `serde` and `log`.
 
 ## Items
 
@@ -72,8 +74,9 @@ Modules:
 
 ## Gotchas
 
-- `explain`, `level` and `rustscan` are private modules. Use them through the public modules that wrap them.
+- `explain`, `gone`, `level` and `rustscan` are private modules. Use them through the public modules that wrap them.
 - `TEMPLATE_VERSION` is exported from `generate`. A change to how notes are laid out is tied to it, so check it when you change a template.
+- `KeptGone` and `Moved` are re-exported so callers can read what a sync did with notes whose code is gone or moved. They are part of `Report`.
 
 ## See also
 

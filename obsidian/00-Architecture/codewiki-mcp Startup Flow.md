@@ -31,7 +31,7 @@ First it calls `cw_telemetry::init` with the name `mcp` and the Info level. That
 
 Then it builds a `Bridge` and calls `serve` on the stdio transport. The bridge holds no backend yet. The backend connection is made on the first tool call, by `connected`, so listing the tools never starts a backend. `main` then waits until the agent closes the connection. A failed start or a failed wait logs an error and returns a failure exit code. A clean close returns success.
 
-Once serving, each tool call goes through `call_tool`. It first runs `screen`, which refuses calls for folders the user kept from coding agents. Only then does the router run the tool. The diagram shows startup only, so this per-call path is not in it.
+Once serving, each tool call goes through `call_tool`. It first runs `screen` on a blocking thread, which reads the list of folders kept from coding agents and refuses calls for those folders. A refusal is returned as normal text, not as an error. Only then does the router run the tool. Inside the tool, `Bridge::call` checks the repository the call really reaches (by id, from the backend's repository list) against the same list, and `answered` turns a late refusal into text too. The diagram shows startup only, so this per-call path is not in it.
 
 ## Depends on
 
@@ -44,7 +44,9 @@ Once serving, each tool call goes through `call_tool`. It first runs `screen`, w
 
 - Standard output carries the MCP protocol. Nothing else may be printed there. Logs go to the log file and to standard error.
 - The bridge connects to the backend lazily. A failed start is not kept, so the next tool call tries again. A kept backend that no longer answers is dropped and a new one is found. This matters because the app stops the backend when it installs an update.
-- The refusal check runs before the router, so a closed folder starts no backend.
+- The refusal check runs before the router, so a closed folder starts no backend. Only a `repo` argument that is an id or a name needs the backend, for one repository listing.
+- A list of kept folders that cannot be read refuses the call. It never counts as an empty list.
+- Tools that cover many repositories (`list_repos`, `get_workspace`, workspace contracts) drop the repositories whose folders are kept from agents.
 
 ## See also
 

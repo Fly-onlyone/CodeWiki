@@ -18,6 +18,8 @@ Small hashing helpers. CodeWiki hashes file and note content to tell whether any
 
 `sha256_hex` returns the lowercase hex SHA-256 of bytes. It is the basis of change detection, repository ids and input hashes.
 
+`source_hash` hashes a source file for change detection. It reads every CRLF as LF first, so a file checked out with either line ending gives the same hash. A lone CR and every other byte stay as they are. [[Scan Module]] uses it for source files.
+
 `normalize_text` prepares text before hashing: it drops a leading byte-order mark, trims trailing spaces on each line, ends every line with a single newline, and removes extra blank lines at the end. So Windows and Unix line endings, editor whitespace, and git autocrlf do not look like edits. [[Manifest Module]] uses it for note bodies.
 
 `hmac_sha256` builds HMAC-SHA256 by hand (RFC 2104). A key longer than the 64-byte block is hashed first, a shorter one is padded with zeros. Tests check it against RFC 4231 and GitHub's webhook example. [[Api Module]] uses it to verify webhook signatures.
@@ -35,18 +37,18 @@ Small hashing helpers. CodeWiki hashes file and note content to tell whether any
 
 ## Used by
 
+- [[Generate Module]] — from `file_hash`, `generate_with`, `hash_holds`
 - [[Api Module]] — from `require_token`, `webhook_signed`
 - [[Proposal Module]] — from `create_agent`, `create_retire`
-- [[Generate Module]] — from `file_hash`, `generate_with`
 - [[cw-server]] — from `signature`
+- [[cw-wiki]] — from `an_explanation_recorded_from_raw_bytes_is_behind_only_when_they_change`
 - [[Paths Module]] — from `repo_id`
 - [[Scan Module]] — from `scan_repo`
 - [[Manifest Module]] — from `body_hash`
-- [[Run]] — from `plan`
 
 ## Gotchas
 
-- Hash only normalized text when comparing across machines. Raw hashes differ for CRLF files.
+- Hash source files with `source_hash` and note text with `normalize_text` before comparing across machines. A hash of raw bytes differs for CRLF files, and the wiki would then mark notes behind for line endings alone.
 - `normalize_text` removes a trailing blank line, so a note with and without a final empty line hashes the same.
 - Use `constant_time_eq` for tokens and signatures, never `==`; the early exit of `==` leaks how many leading bytes matched.
 - Different lengths compare unequal at once. The length itself is not hidden.

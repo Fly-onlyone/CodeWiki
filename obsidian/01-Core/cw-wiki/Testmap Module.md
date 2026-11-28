@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Answers two questions about Rust tests. First: which tests exist, which source files do they reach, and which files has no test reached? Second: after these files change, which tests should I run, and with which command? It works without coverage data. A test reaches a file when it can get there through the file dependency graph. That means can reach, not does execute.
+Answers two questions about tests, in seven languages: Rust, C#, Go, Java and Kotlin, C and C++, Python, TypeScript and JavaScript. First: which tests exist, which source files do they reach, and which files has no test reached? Second: after these files change, which tests should I run, and with which command? It works without coverage data. A test reaches a file when it can get there through the file dependency graph. That means can reach, not does execute.
 
 ## Source
 
@@ -16,13 +16,15 @@ Answers two questions about Rust tests. First: which tests exist, which source f
 
 ## How it works
 
-`gather` reads every indexed Rust file from disk and scans it with [[Scanned]] to find test functions. The index cannot be used for this, because the structural parser leaves unit-test modules out. Files under `tests`, `benches` or `examples` count as integration tests. Other files with tests count as unit tests. For each test file `command` derives a `cargo test` command from its crate: `--test name` for a file directly in `tests/`, `--bins` for a binary, and `--lib` plus a module path for a library module.
+Reachability is the same for every language. Two things differ, and a `TestLanguage` entry holds both: what a test is, and the command that runs it. The static `LANGUAGES` list holds one entry per language. Adding a language means adding an entry there.
 
-`distances` is a breadth-first walk over the map from a file to the files that depend on it. It returns the number of hops from the start.
+`gather` builds an `Env` once from the index and the checkout: crates, symbols by file, C# projects, Go modules, CMake targets, JavaScript and Python project facts. For each indexed file whose language is known, it asks the entry whether the file is test code, then which tests it holds. Files kept apart from the code (a `tests` folder, a test project, `_test.go`) count as integration tests. Other files with tests count as unit tests. The entry then derives a command.
 
-`test_map` walks from each source file. A test file found at one hop is direct. At two or more hops it is indirect. A source file that defines functions, has no unit tests and is reached by no test file goes into `untested`.
+How each language finds tests: Rust scans the text lexically, because the structural parser leaves unit-test modules out of the index. C#, Go, Java and Kotlin, C and C++, and Python read the symbols and attributes the parser recorded. TypeScript and JavaScript read the titled calls of `test`, `it` and `describe` from the text.
 
-`impacted_tests` walks from each changed file and keeps every test file it reaches, with the smallest distance and the changed files that cause it. The result is sorted nearest first, with distinct commands. Changed source files that reach no test are listed as untested changes.
+`gather` also adds edges the import graph lacks: `add_go_package_dependents` makes every non-test file of a Go folder a dependency of that folder's test files, and `add_c_pair_dependents` merges a header and its source into one module.
+
+`distances` is a breadth-first walk from a file to the files that depend on it. `test_map` walks from each source file: a test file one hop away is direct, farther is indirect. A file with functions, no unit tests and no test reaching it goes into `untested`. `impacted_tests` walks from each changed file, keeps each test file with its smallest distance, sorts nearest first, and asks each language to fold its files into distinct commands.
 
 ## Items
 
@@ -75,7 +77,10 @@ Submodules: [[Js Module]], [[Python Module (testmap)]].
 
 - A test file that itself changed is at distance 0.
 - Paths with backslashes are normalised to slashes.
-- Only files directly in a `tests/` folder get an integration command. Helper modules deeper in it get an empty command.
+- Rust: only files directly in a `tests/` folder get an integration command. Helper modules deeper in it get an empty command.
+- Go, Java and Kotlin, and C and C++ fold the names of several tests into one filter. Past 8 names (`MAX_GO_NAMES`, `MAX_JVM_CLASSES`, `MAX_C_TESTS`) the run is the whole package, module or executable, because a long list would not save time.
+- C#: `--filter` is added only for VSTest projects. A project on Microsoft.Testing.Platform runs whole, since its filter syntax differs.
+- Go benchmarks go to `-bench`. A file of benchmarks alone runs with `-run '^$'`, so it runs no test.
 - A file with only declarations and re-exports is never called untested, because it has no functions.
 - A test file that cannot be read from disk is skipped without an error.
 

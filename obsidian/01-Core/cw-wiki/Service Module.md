@@ -18,11 +18,11 @@ The entry points for the main jobs of CodeWiki: open the index of a repository, 
 
 `open_index` and `open_index_in` open the index file for a repository. They then call `built`, which checks the `built` meta key. If it is missing, the index has never been filled, so `built` runs `reindex` and, when a vault folder exists, `index_notes`. Without this, a new data folder or a schema change would leave an empty index, and every query would answer as if the repository had nothing in it.
 
-`reindex` scans the repository, computes graph metrics, and replaces facts and metrics in the index. It also writes search documents for symbols and files, refreshes their vectors, records the head commit, and saves mined git data. It does not touch notes.
+`reindex` scans the repository, computes graph metrics, and replaces facts and metrics in the index. It sets the `built` key, writes search documents for symbols and files, refreshes their vectors, records the head commit, and saves mined git data. It does not touch notes.
 
-`index_notes` reads every note listed in the vault metadata and replaces the note documents. A note file that cannot be read is skipped.
+`index_notes` reads the notes listed in the vault metadata and replaces the note documents. It leaves out notes that wait to be retired (their code is gone), so a search does not answer from them. A note kept by its owner as history stays findable. A note file that cannot be read is skipped.
 
-`update` (or `update_in` with an explicit data folder) is the full run: open, reindex, generate the vault notes, then index them. It logs a summary of written, proposed, removed and kept notes. `is_stale` compares the commit the vault was made at with the current head.
+`update` (or `update_in` with an explicit data folder) is the full run. `run_update` opens the index, reindexes, reads the metrics back, generates the vault notes with `generate_with`, then indexes the notes. `update_in` times the run and logs a summary of written, proposed, removed and kept notes, or a warning on failure. `is_stale` compares the commit the vault was made at with the current head.
 
 ## Items
 
@@ -63,9 +63,10 @@ And 1 more private item with no comment.
 
 ## Gotchas
 
-- `open_existing_index_in` never builds anything. It returns `None` when the index is missing or was never built. Background jobs such as embedding use it, so they cannot start a repository scan by accident.
+- `open_existing_index_in` never builds anything. It returns `None` when the index file is missing or was never built. Background jobs such as embedding use it, so they cannot start a repository scan by accident.
 - `reindex` does not index notes and `index_notes` does not scan code. After changing both you need both calls, or `update`.
-- The `built` key is set at the start of a reindex, so a scan that fails later may still leave the index marked as built.
+- The `built` key is set early in `reindex`, right after facts and metrics are stored. A later failure, such as in the vector refresh or git mining, may leave the index marked as built with search documents missing.
+- A note waiting to be retired is not searchable after `index_notes`, even though its file is still in the vault.
 - Vector refresh runs inside `reindex` and `index_notes`, and a slow model can make them take minutes unless an inline budget is set.
 
 ## See also

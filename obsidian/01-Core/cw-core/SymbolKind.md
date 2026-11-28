@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-`SymbolKind` names what sort of code item a symbol is: module, function, method, struct, enum, union, trait, impl, const, static, type alias, macro, class or interface. The parser sets it for every item it finds, and the index, the graph and the wiki read it. `Class` and `Interface` cover Python, TypeScript and Java, so one enum serves all indexed languages.
+`SymbolKind` names what sort of code item a symbol is: module, function, method, struct, enum, union, trait, impl, const, static, type alias, macro, class or interface. The parser sets it for every item it finds, and the index, the graph and the wiki read it. One enum serves all indexed languages: `Class` covers classes in Python, TypeScript, Java, C#, Kotlin and C++ (and Java and C# records), `Interface` covers interfaces in several languages, and C and C++ items map onto `Struct`, `Enum`, `Const`, `Static`, `Macro` and `Module` (a header).
 
 ## Source
 
@@ -43,9 +43,10 @@ Members:
 
 ## Gotchas
 
-- `parse` returns `Option` and gives `None` for an unknown name. Visibility and the other enums in the model fall back to a default instead. A caller must handle the `None`.
+- `parse` returns `Option` and gives `None` for an unknown name. The visibility and confidence enums fall back to a default instead. A caller must handle the `None`.
 - Adding a variant needs three edits: the enum, `as_str` and `parse`. The round-trip test lists only some variants, so a missed arm may not fail a test.
 - `Impl`, `Const`, `Static`, `Macro` and `Module` are not types by `is_type`, so they get no concept note of their own.
+- A variant stands for more than its name in some languages. A C++ member is a `Method`, a C struct is a `Struct`, and a C or C++ enumerator is a `Const`. Check the variant's own comment before assuming a one-to-one map.
 
 ## See also
 

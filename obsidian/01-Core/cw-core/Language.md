@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-Names the source language of an indexed file. It decides which parser runs, how a file is described in notes, and which health checks apply. Rust, Python, TypeScript, JavaScript and Java get symbols and edges. Markdown, TOML, JSON and YAML are recorded as files only. Everything else is `Other`.
+Names the source language of an indexed file. It decides which parser runs, how a file is described in notes, and which health checks apply. Rust, Python, TypeScript, JavaScript, Java, C#, Go, Kotlin, C and C++ get symbols and edges. Markdown, TOML, JSON and YAML are recorded as files only. Everything else is `Other`, and some `Other` files still get a language name for display (`file_level_name`).
 
 ## Source
 
@@ -16,9 +16,11 @@ Names the source language of an indexed file. It decides which parser runs, how 
 
 ## How it works
 
-`from_path` looks only at the extension, lower-cased: for example `rs`, `py` and `pyi`, `ts` `tsx` `mts` `cts`, `js` `jsx` `mjs` `cjs`, `java`, `md`, `toml`, `json`, `yml` and `yaml`. No extension, or an unknown one, gives `Other`.
+`from_path` looks only at the extension, lower-cased: for example `rs`, `py` and `pyi`, `ts` `tsx` `mts` `cts`, `js` `jsx` `mjs` `cjs`, `java`, `cs`, `go`, `kt`, `c` and `h`, the C++ extensions, `md`, `toml`, `json`, `yml` and `yaml`. No extension, or an unknown one, gives `Other`. A `.gradle.kts` file is a build script, so it is `Other`, as is a Maven `pom.xml`. A `.h` file is C here; the scan tells C++ headers apart because it knows the other files.
 
-`as_str` and `parse` convert to and from the lowercase text stored in the index, where [[Index]] calls `parse`. `has_symbol_support` is true for the five code languages; callers use it to decide whether symbol-level work makes sense.
+`as_str` and `parse` convert to and from the lowercase text stored in the index, where [[Index]] calls `parse`. `has_symbol_support` is true for the ten code languages; callers use it to decide whether symbol-level work makes sense. `is_c_family` groups C and C++, which share headers and names.
+
+`file_level_name` gives a display name such as Swift, Ruby, SQL or Terraform for a source file with no parser. It returns `None` for any language with a parser, for data and prose, and for unknown extensions. Such a file is mapped by folder, language and size only. A language that gains a parser leaves this table by getting its own `Language` variant.
 
 ## Items
 
@@ -49,6 +51,7 @@ Members:
 - Detection ignores content and file names. A `Makefile` or a shebang script is `Other`.
 - `parse` maps any unknown text to `Other` instead of failing. A language added to the enum but not to `parse` silently reads back as `Other`.
 - Adding a variant means updating `from_path`, `as_str`, `parse` and `has_symbol_support` together.
+- Do not list a language in `file_level_name` once it has a variant with symbol support: the function returns `None` for those anyway, and the table would mislead.
 
 ## See also
 

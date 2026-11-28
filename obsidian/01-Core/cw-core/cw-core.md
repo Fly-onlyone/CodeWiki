@@ -8,7 +8,7 @@ tags: [core, cw-core]
 
 ## What it does
 
-`cw-core` is the base crate of CodeWiki. It holds what every other crate needs and nothing that depends on them: the data model (files, symbols, edges), content hashing, one error type, per-user paths, logs, and the settings file with its secrets. The parser, index, graph, backend, app and MCP bridge all depend on it, so it must stay small and free of heavy dependencies.
+`cw-core` is the base crate of CodeWiki. It holds what every other crate needs and nothing that depends on them: the data model (files, symbols, edges), content hashing, one error type, per-user paths, logs, the settings file with its secrets, the switch for auto explaining and the list of folders closed to coding agents. The parser, index, graph, backend, app and MCP bridge all depend on it, so it must stay small and free of heavy dependencies.
 
 ## Source
 
@@ -17,9 +17,11 @@ tags: [core, cw-core]
 
 ## How it works
 
-The crate root only declares the modules and re-exports `Error`, `Result`, the hash helpers and everything in [[Model Module]], so callers write `cw_core::Symbol`. It also defines shared constants. `VAULT_DIR` and `MANIFEST_DIR` fix where the generated notes and their machine data live. `CLAIM_MINUTES` is how long a listed note stays reserved for one coding agent. `CLIENT_HEADER` and `MCP_CLIENT` let the backend see that the MCP bridge called. `VERSION` comes from the package, so all binaries report one version.
+The crate root only declares the modules and re-exports `Error`, `Result`, the hash helpers (`normalize_text`, `sha256_hex`, `source_hash`) and everything in [[Model Module]], so callers write `cw_core::Symbol`.
 
-`DEV_BUILD` follows debug assertions, and `APP_NAME` follows `DEV_BUILD`. A debug build calls itself "CodeWiki Dev".
+It also defines shared constants. `VAULT_DIR` (`obsidian`) and `MANIFEST_DIR` (`.codewiki`, inside the vault) fix where the generated notes and their machine data live. `CLAIM_MINUTES` (30) is how long a listed note stays reserved for one coding agent. `CLIENT_HEADER` and `MCP_CLIENT` let the backend see that the MCP bridge called. `VERSION` comes from the package manifest, so all binaries report one version.
+
+`DEV_BUILD` follows debug assertions, and `APP_NAME` follows `DEV_BUILD`. A debug build calls itself "CodeWiki Dev"; a release build is "CodeWiki".
 
 ## Items
 
@@ -62,6 +64,7 @@ Defined at the crate root:
 - `DEV_BUILD` is set at compile time by debug assertions. A debug build uses its own folders and name, so it never shares a backend, index or settings with an installed CodeWiki. A release build run from the sources does share them.
 - `MANIFEST_DIR` is inside the vault but is never rendered as notes; do not put readable content there.
 - Changing `CLAIM_MINUTES` changes how long other agents wait for a claimed note.
+- The crate must stay light: a heavy dependency added here is paid for by every other crate.
 
 ## See also
 

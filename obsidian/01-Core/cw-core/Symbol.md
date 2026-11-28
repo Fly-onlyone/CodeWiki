@@ -16,7 +16,7 @@ One named code entity found by the parser: a function, method, type, module, con
 
 ## How it works
 
-A symbol records its short `name`, its [[SymbolKind]] and Visibility, the `file`, and a 1-based inclusive line range. `signature` is the declaration text up to the body with whitespace collapsed. `doc` is the leading documentation comment with markers removed. `parent` is the qualified name of the enclosing module, impl or trait, which gives the tree. `attrs` lists attribute names such as `derive`, `test` or `tokio::main`.
+A symbol records its short `name`, its [[SymbolKind]] and its visibility (public, crate or private), the `file`, and a 1-based inclusive line range. `signature` is the declaration text up to the body with whitespace collapsed. `doc` is the leading documentation comment with markers removed. `parent` is the qualified name of the enclosing module, impl or trait, which gives the tree. `attrs` lists attribute names such as `derive`, `test` or `tokio::main`.
 
 The [[Index]] stores symbols and returns them by name, file or qualified name. The [[Resolver]] looks symbols up to attach edges.
 

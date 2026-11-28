@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A few small questions about git are needed in many places: what is HEAD, has the code moved since the wiki was written, and is this folder a linked worktree. This module answers them by running the `git` command line. It does not link a git library. Every failure becomes `None` or `false`, so callers never have to handle a git error.
+Many places need small answers from git: what is HEAD, has the code moved since the wiki was written, which paths were renamed, which notes can git bring back, and is this folder a linked worktree. This module answers them by running the `git` command line. It does not link a git library. Every failure becomes `None`, an empty set or `false`, so callers never handle a git error.
 
 ## Source
 
@@ -16,11 +16,18 @@ A few small questions about git are needed in many places: what is HEAD, has the
 
 ## How it works
 
-A private helper `run` calls `git -C <root> <args>` and returns trimmed output only when git exits with success.
+Two private helpers run `git -C <root>`. `run` returns trimmed output; `raw` returns the output as printed and sets `core.quotepath=off`, so paths with other letters than ASCII stay readable. Both give a result only when git exits with success.
 
 `head_commit` runs `rev-parse --verify HEAD`. `changed_files` runs `diff --name-only base..HEAD`. `vault_is_behind` compares the commit the wiki was generated at with HEAD. If they are equal the wiki is current. If not, it lists the changed files and says behind only when at least one lies outside the vault folder. If the old commit is unknown (rebased away, shallow clone) the wiki counts as behind.
 
-`is_linked_worktree` asks git for the git directory and the common directory and says true when they differ after resolving the paths.
+The rest serves notes whose subject is gone or moved:
+
+- `history_paths` lists every path any commit of any branch ever held.
+- `moves` reads renames from the log and follows each chain to the last path; a path renamed back and forth does not loop.
+- `at_head` lists paths in the commit at HEAD. `changed` lists paths with uncommitted changes.
+- `recoverable` lists vault notes that are tracked and unchanged since their last commit, so git can bring them back as they are.
+
+`is_linked_worktree` compares the git directory and the common directory. `main_checkout` finds the folder of the common directory, and `repo_name` uses it, so a wiki synced in a worktree keeps the name of its main repository.
 
 ## Items
 
@@ -58,6 +65,7 @@ A private helper `run` calls `git -C <root> <args>` and returns trimmed output o
 
 - Commits that touch only the vault never make the wiki look behind. Committing the wiki must not make it stale.
 - Without a HEAD (no repository, or no commit yet) the answers are `None`, and `vault_is_behind` compares the two optional values directly.
+- `changed` and `recoverable` strip the path prefix of `root` inside a bigger checkout, because `status` names paths from the top of the checkout. Without that, a repository inside a bigger one would read wrong paths.
 - Git before 2.31 does not know `--path-format=absolute`. It echoes the flag as an output line and prints relative paths. The code skips that line and reads relative paths against the root.
 - A missing `git` program is silent: everything reads as no repository.
 

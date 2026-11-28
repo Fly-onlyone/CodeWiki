@@ -22,7 +22,7 @@ Edge kinds are imports, calls, implements, references and declares. For a call, 
 
 Every enum has `as_str` and `parse` for the text stored in the index. They serialize with serde, in lower case or snake case.
 
-`SymbolKind::is_type` marks structs, enums, unions, traits, classes and interfaces. Only those can earn their own concept note.
+`SymbolKind::is_type` marks structs, enums, unions, traits, classes and interfaces. Only those can earn their own concept note. `Visibility` has three levels: public, crate and private.
 
 ## Items
 

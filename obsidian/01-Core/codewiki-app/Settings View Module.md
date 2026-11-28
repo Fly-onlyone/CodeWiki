@@ -20,11 +20,11 @@ This is the live Settings page: categories on the left, the chosen category's pa
 
 `open_settings` shows the page, resets connect news, re-reads the kept-folder list and the auto explain switch and count (they are files another program may change), fills the remote address field, and loads the backend settings. On the Search category it also loads the embedding job and models. Moving between categories (`show_settings_category`) does not add history, so Back leaves Settings in one step. Opening Repositories re-reads the kept folders and the auto explain files again.
 
-A saved change is a `PUT /v1/settings` with a small body from `change` (section, field, value). `changes_the_embedder` tells whether the change touches the embedder, so the old job reading may be out of date. While an embedding job runs, the app asks again every second (`JOB_PAUSE`). `job_ended` notices when it stops, and the settings are read again. `test_line` turns a provider test answer into one line. `shown_value` shows a saved or environment value in a field; a default is left to the placeholder.
+A saved change is a `PUT /v1/settings` with a small body from `change` (section, field, value), sent by `put_settings`. `changes_the_embedder` tells whether the change touches the embedder, so the old job reading may be out of date. While an embedding job runs, the app asks again every second (`JOB_PAUSE`). `job_ended` notices when it stops, and the settings are read again. The list of embedding models is probed from the server, with a retry that backs off (`retry_embed_models`). `test_line` turns a provider test answer into one line. `shown_value` shows a saved or environment value in a field; a default is left to the placeholder.
 
-A backend on another machine is not asked for the embedding job or models; those fields stay empty.
+A backend on another machine is not asked for the embedding job or models; those fields stay empty. Its address and token are checked together by `connect_remote` before `switch_backend` uses them.
 
-The list of folders kept from coding agents is read by the app from the data folder, not through the backend (`read_agents_off`).
+The list of folders kept from coding agents is read by the app from the data folder, not through the backend (`read_agents_off`). `keep_agents_out` and `let_agents_in` change it.
 
 ## Items
 

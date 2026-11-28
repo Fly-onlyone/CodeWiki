@@ -19,9 +19,11 @@ tags: [core, codewiki]
 
 `main` parses the command line with clap. Four kinds of command are handled before a repository is resolved.
 
-`hook session-start` is run by an agent host at the start of a session. It prints a short briefing for the repository. Any error or panic is swallowed, and the program exits with success, so a hook never breaks a session. `sentry-test` sends one test error report. `agents` edits the list of folders closed to agents. `serve` hands over to the [[Serve Module]], which runs the HTTP backend.
+`hook session-start` is run by an agent host (`--agent claude-code` or `codex`) at the start of a session. It prints a short briefing for the repository. Any error or panic is swallowed, and the program exits with success, so a hook never breaks a session. `sentry-test` sends one test error report. `agents` edits the list of folders closed to agents. `serve` hands over to the [[Serve Module]], which runs the HTTP backend.
 
-All other commands go through `run`. It resolves the repository root, then calls the wiki service or the index for that command and prints the result as text or, with `--json`, as pretty JSON. `print_report` shows what an update did: notes written, kept, proposed, removed, and how many explanations may be behind or are still missing.
+All other commands go through `run`. It resolves the repository root, loads the saved settings so the embedder chosen in the app is the one used here, then calls the wiki service or the index for that command and prints the result as text or, with `--json`, as pretty JSON. `print_report` shows what an update did: notes written, kept, proposed, removed, and how many explanations may be behind or are still missing.
+
+`check` runs every analysis for CI. It prints text, SARIF or JUnit, can write to a file, and exits with status 1 when a finding reaches `--fail-on`. `approve` and `reject` apply or discard a proposal and update the note's record in the vault.
 
 Only `serve` sends error reports. Other commands log warnings and errors only.
 
@@ -64,6 +66,7 @@ And 5 more private items with no comment.
 - The hook reads stdin on a helper thread and waits one second, up to 64 KB. A host that keeps stdin open cannot hold up the session start.
 - `agents` never overwrites a list it cannot read. Every action then fails.
 - `sentry-test` fails with an error when error reports are off.
+- `coverage --report` takes a path relative to where the command runs, not to `--repo`.
 
 ## See also
 

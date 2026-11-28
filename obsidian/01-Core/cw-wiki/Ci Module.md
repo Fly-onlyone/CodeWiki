@@ -20,7 +20,7 @@ A CI system needs one list of problems it can fail a build on or show on a pull 
 
 - Dead code: only symbols whose certainty is `Likely`, as warnings.
 - File health: each finding becomes `health/<detector>`; a penalty of 2 or more is a warning, less is a note. Dead-code findings are skipped here since they are reported per symbol.
-- Doc drift: missing source and dead path are warnings, a changed source is a note, a broken link is an error.
+- Doc drift: missing source, dead path and subject gone are warnings, a changed source is a note, a broken link is an error.
 - Stale decisions: warnings.
 - Security scan results are copied with their own rule and level.
 
@@ -56,8 +56,8 @@ The list is sorted by file, line, rule, then message, so output is stable betwee
 
 ## Gotchas
 
-- `RULES` must list every rule id that `check` can emit. JUnit and SARIF only show rules from that table.
-- Line 0 means the finding is about the whole file; SARIF then omits the region.
+- `RULES` must list every rule id that `check` can emit, now 23 of them. JUnit and SARIF only show rules from that table, and a test checks that ids are unique.
+- Line 0 means the finding is about the whole file; SARIF then omits the region, and the text output prints the file alone.
 - A rule with findings below the threshold still passes in JUnit.
 - Doc-drift files are reported under the vault folder path, not the repo source path.
 - `xml_escape` replaces control characters with spaces because XML 1.0 cannot hold them.

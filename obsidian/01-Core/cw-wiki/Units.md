@@ -8,7 +8,7 @@ tags: [core, cw-wiki]
 
 ## What it does
 
-The list of all [[Unit]]s of a repository, plus two lookup tables that map code to a unit. Given a symbol, the planner and the renderer use it to say which crate or package the symbol belongs to.
+The list of all [[Unit]]s of a repository, plus lookup tables that map code to a unit. Given a symbol, the planner and the renderer use it to say which crate or package the symbol belongs to. It also remembers which non-Rust files are test code, and whether the repository has C or C++ tests.
 
 ## Source
 
@@ -16,7 +16,7 @@ The list of all [[Unit]]s of a repository, plus two lookup tables that map code 
 
 ## How it works
 
-For a Rust symbol, `index_of` takes the first segment of its qualified name (the crate name) and looks it up with `rust_index`. For code in any other language it looks up the symbol's source file in a file map instead. `by_name` finds a unit by its stable key. `all_rust` is true when no unit is in another language. The renderer uses that to choose the words crate or package.
+For a Rust symbol, `index_of` takes the first segment of its qualified name (the crate name) and looks it up with `rust_index`. For code in any other language it looks up the symbol's source file in a file map instead. `of_file` does the same lookup and returns the unit itself. `by_name` finds a unit by its stable key. `is_test` says whether a file was found to be test code, and `c_tests` whether C or C++ tests exist. `all_rust` is true when every unit is Rust. The renderer uses that to choose the words crate or package.
 
 ## Items
 
@@ -48,8 +48,9 @@ Members:
 ## Gotchas
 
 - A symbol in a file that belongs to no unit gives `None`.
-- `all_rust` is also true for an empty list.
-- The two lookup maps are private and filled only by `discover`.
+- `all_rust` is false for an empty list: no unit at all is no Rust either.
+- `is_test` covers only files outside Rust, found by `discover`. Rust test paths are judged elsewhere.
+- The lookup maps are private and filled only by `discover`.
 
 ## See also
 

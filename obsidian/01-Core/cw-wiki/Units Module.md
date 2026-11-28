@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Finds the top-level parts of a repository, called units. Each unit gets its own folder under `01-Core` in the vault. A Cargo package is a unit. For Python, JavaScript, TypeScript and Java the scanner has no manifest it understands, so this module derives units from the layout and the build files. Every unit has the same shape ([[Unit]]), so the planner and the renderer treat Rust and other languages alike.
+Finds the top-level parts of a repository, called units. Each unit gets its own folder under `01-Core` in the vault. A Cargo package is a unit. For Python, JavaScript and TypeScript, Java and Kotlin, C#, Go, and C and C++ the scanner has no manifest it understands, so this module derives units from the layout and the build files. Every unit has the same shape ([[Unit]]), so the planner and the renderer treat Rust and other languages alike. It also decides which non-Rust files are test code.
 
 ## Source
 
@@ -19,10 +19,10 @@ Finds the top-level parts of a repository, called units. Each unit gets its own 
 `discover` builds a [[Units]] value in three steps.
 
 1. Each crate from the scan becomes a Rust unit. Its entry is `main` when the crate has a binary.
-2. Every non-Rust source file is put into a group by language family. Python files group by their top-level package, and a lone top-level module goes into a shared group. JavaScript and TypeScript files group by the nearest folder up the tree that holds a `package.json`, or by their top folder if there is none. Java files group by the nearest folder with `pom.xml` or a Gradle file, or by the first part of their package name.
-3. Each group becomes a unit if it holds at least one real symbol outside test files. The unit's root module is the common prefix of its module names. Its manifests are found next to the group. A `package.json` supplies the name, description, scripts and entries: `main`, `bin` and the file named in the `start` script. `resolve_js_entry` maps a built path such as `dist/x.js` back to a source file under `src`.
+2. Every non-Rust source file is put into a group by language family. Python files group by top-level package, or by project (the folder of the nearest build file) when they sit outside a regular package. JavaScript and TypeScript files group by the nearest folder with a `package.json`. Java and Kotlin files group by the nearest `pom.xml` or Gradle file. C# files group by the nearest `.csproj` folder. Go files group by the nearest `go.mod`. C and C++ files group by CMake target, else by folder. A file with no match falls back to its top folder or its package name.
+3. Each group becomes a unit if it holds at least one real symbol outside test files. A C# project of tests is the exception: it still becomes a unit, marked `tests`. The unit's root module is the common prefix of its module names. Manifests, lock file and package manager are found by family. A `package.json` supplies name, description, scripts and entries, and `resolve_js_entry` maps a built path such as `dist/x.js` back to a source file. Names and slugs are made unique, with a family suffix added on a clash.
 
-`is_test_file` recognises non-Rust tests by folder names (`tests`, `__tests__`, `spec`, `e2e`) and by file patterns such as `test_*.py`, `*.test.ts` and `*Test.java`. `slug` makes a name safe as a folder and a tag.
+Test code is found in two ways. `is_test_file` recognises it by folder names (`tests`, `__tests__`, `spec`, `e2e`, `testdata` for Go) and by file patterns such as `test_*.py`, `*.test.ts`, `*Test.java` and `*Spec.kt`. `discover` also marks files by what they hold: a C# test project, or a CMake target that CTest discovers or that links a test framework.
 
 ## Items
 
@@ -73,10 +73,13 @@ And 22 more items.
 
 ## Gotchas
 
-- A unit never mixes language families. A repository with Python and TypeScript gets separate units.
+- A unit never mixes language families. A repository with Python and TypeScript gets separate units. Java and Kotlin, and C and C++, count as one family each.
 - Configuration files or test suites alone do not make a unit.
 - Unit names and folder slugs are kept unique separately, because a unit's key may equal its folder name.
+- The unit that is the repository itself is keyed `root-` plus the family suffix, so its key survives a rename of the checkout folder.
 - Manifests are read through a callback. When it returns nothing (as with `Repo::new`), the unit is still found but its manifest text is empty.
+- A C or C++ file that belongs to no module (vendored trees) gets no unit.
+- A CMake target that CTest only runs as a smoke test is still a program. Only a discovery command such as `gtest_discover_tests` marks its tests as tests of other code.
 
 ## See also
 

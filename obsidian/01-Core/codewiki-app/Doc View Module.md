@@ -18,13 +18,13 @@ The page is its own view, `DocPage`, drawn cached, so a ripple or hover in the w
 
 ## How it works
 
-`strips` cuts a page into strips: the title, one strip for each block, and for a table of more than 12 rows a head strip plus one strip for each row. `DocPage` hands them to a GPUI `list`, which builds only the strips on screen plus 400 px beyond. `draw_strip` adds the page's side gutter from `reading::gutter`, spacing, and a staggered entrance for the first strips.
+`strips` cuts a page into strips: the title, one strip for each block, and for a table of more than 12 rows (`SPLIT_ROWS`) a head strip plus one strip for each row. `DocPage` hands them to a GPUI `list`, which builds only the strips on screen plus 400 px beyond (`OVERDRAW`). `draw_strip` adds the page's side gutter from `reading::gutter`, spacing, and a staggered entrance for the first strips.
 
 `draw` turns one block into elements. Controls report through `on_action`. `show` swaps the page: a new page starts at the top, the same page with new content keeps its scroll place (`kept_top` clamps it when the page got shorter). A zoom change re-measures the list.
 
 `column` draws a short page whole with live controls, such as a settings category. Only it has `Controls` for text inputs and selects, since those belong to the view that handles their events. Settings blocks share one row layout: name and help on the left, control on the right, and under it the reason it is locked or the news about its last change.
 
-`line` turns spans into one wrapping run of text. A line with links becomes a `LinkedLine`, which keeps the index of the hovered link, so only that link is lightened and underlined. Clicks map the range index to its `Action`.
+`line` turns spans into one wrapping run of text. A line with links becomes a `LinkedLine`, which keeps the index of the hovered link, so only that link is lightened and underlined.
 
 Three blocks need more than the page. `Progress` draws a label, a bar and a detail line; a bar with no share and no motion stands still and grey. `Logo` draws the app's logo. `Search` draws Home's search field from a `SearchSlot`, which `DocPage::set_search` takes from the app. The app owns the input and the list under it. The field catches Escape, Up and Down and sends them to the app through `on_key`, since the app's own key handlers never see keys typed beside it.
 

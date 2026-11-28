@@ -22,7 +22,7 @@ The levels:
 - `Medium`: matched by bare name, with one candidate in scope. Weight 0.6.
 - `Low`: matched by bare name, with several candidates. Weight 0.25.
 
-`weight` gives that number. The type derives ordering, so `High > Low`. `as_str` and `parse` convert to and from the text stored in the index; [[Store Module]] calls `parse` when it reads an edge row.
+`weight` gives that number. The type derives ordering, so `High > Low`. `as_str` gives "high", "medium" or "low", and `parse` converts back from the text stored in the index; [[Store Module]] calls `parse` when it reads an edge row.
 
 ## Items
 

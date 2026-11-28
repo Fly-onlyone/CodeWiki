@@ -21,13 +21,15 @@ Decides which wiki notes a repository gets. The vault is a set of curated concep
 `plan` then adds notes in this order:
 
 1. One crate note per unit (a crate, or its counterpart in another language).
-2. Module notes for modules that define something. In Rust, a private inline module needs 3 or more items. Outside Rust every file is a module, so it needs 3 items or 5 nested symbols. Tests and files already covered by an adopted note are skipped. The best 300 by rank are kept.
+2. Module notes for modules that define something. In Rust, a private inline module needs 3 or more items. Outside Rust every file is a module, so it needs 3 items or 5 nested symbols. Tests and files covered by an adopted note are skipped. The best 300 by rank are kept.
 3. Type notes: per unit, the public types in the top quarter by rank, plus any with 3 or more children or 2 or more implementors, at most 12.
 4. Ownership: each symbol is mapped to the nearest enclosing note, falling back to its crate note.
-5. A crate dependency flow when there are 2 or more units, and up to 3 startup flows per unit.
-6. Integrations: external crates used in enough files (2 for small repos, 3 otherwise), at most 15.
+5. A dependency flow when there are 2 or more units, and up to 3 startup flows per unit.
+6. Integrations: external packages used in enough files (2 for repositories under 30 code files, 3 otherwise), at most 15.
 7. Patterns: traits with 2 or more implementors, at most 10.
-8. A build note, then one `_index` map per folder and ancestor folder, then the home note.
+8. A build note, notes for source no parser maps, one `_index` map per folder, then the home note.
+
+`pinned` holds the notes an agent explained. Every limit goes through `cut`, which keeps pinned notes past the limit, so an explanation is lost only when its subject is gone.
 
 `startup_messages` walks calls breadth-first from an entry point, to depth 4. It keeps only calls that cross from one note's owner to another, and stops at 14 messages. A flow with fewer than 2 messages is dropped.
 
@@ -79,9 +81,12 @@ And 9 more items.
 
 - Ownership is computed before flows. `startup_messages` needs `owner`, so a symbol with no owner is invisible to a flow.
 - Files in `covered` get no module or type notes, and their symbols belong to the adopted note.
-- Each selection is sorted by rank, cut to a cap, then sorted again by name. Caps such as 300 modules and 12 types per crate silently drop the rest.
+- Each selection is sorted by rank, cut to a cap, then sorted again by name. Caps such as 300 modules and 12 types per crate silently drop the rest, except pinned notes.
+- A private type is planned only when an agent explained it already.
 - `is_test_path` matches whole path segments (`tests`, `test`, `benches`, `examples`), so `testing_tools` is not a test.
 - A unit's first declared entry carries the unit's name. Later entries are named after themselves.
+- A startup flow beyond the three per unit is drawn only if it is pinned.
+- A C or C++ note also cites the files that implement what a header declares.
 
 ## See also
 

@@ -16,11 +16,11 @@ This module finds three kinds of trouble: code nothing uses, notes that no longe
 
 ## How it works
 
-`dead_code` marks a symbol as referenced when it has an incoming call, reference or implement edge. A type is alive when any of its methods is used. It skips modules, impls, macros, tests, `main`, public methods of traits or of types that implement a trait, and anything public in a library crate (that is API). What remains is `Likely` only when the symbol is Rust, private and has no attribute that could register it. Otherwise it is `Possible`, with the reason in words: an attribute like a route macro may wire it up, or the language is dynamic. Likely findings come first, then longer ones.
+`dead_code` marks a symbol as referenced when it has an incoming call, reference or implement edge. A type is alive when any of its methods is used. It skips modules, impls, macros, tests, entry points (`main`, Go `main` and `init`, a C# `Main`, Kotlin overrides and operators), public methods of traits or of types that implement a trait, and anything that is API: public in a library crate, an exported Go name outside `internal`, or what a C or C++ header declares. What remains is `Likely` only when the symbol is Rust, private and has no attribute that could register it. Otherwise it is `Possible`, with the reason in words. Likely findings come first.
 
-`doc_drift` goes through every note. It reports a cited source file that is gone, a source that changed since a hand-edited note was reviewed, a wikilink that matches no note, and a backticked path that is not in the repository. It also reports documentation coverage: the share of source files that some note cites, and the 20 largest uncited files.
+`doc_drift` goes through every note. A note whose subject is gone gets one `SubjectGone` finding that names why it stays (waiting in a retire proposal, kept as history, deletion uncommitted, or not held by git), and is checked no further. For other notes it reports a cited source file that is gone, a source that changed since a hand-edited note was reviewed, a wikilink that matches no note, and a backticked path that is not in the repository. It also reports documentation coverage: the share of source files that some note cites, and the 20 largest uncited files.
 
-`file_health` starts each source file at 10 and subtracts penalties. Detectors: long file (600 or 1200 lines), long function (80 or 160), large type (25 methods), high fan-out (15 files), mutual dependency, many parameters (7), undocumented API, wide API (30 public items), and dead code. The lowest score is 1. Files are sorted worst first. `parameter_count` ignores the receiver and nested commas.
+`file_health` starts each source file at 10 and subtracts penalties. Detectors: long file (600 or 1200 lines), long function (80 or 160), large type (25 methods), high fan-out (15 files), mutual dependency, many parameters (7), undocumented API, wide API (30 public items), and dead code. The lowest score is 1. Files are sorted worst first. `parameter_count` ignores the receiver and nested commas, and reads a Go receiver group apart.
 
 ## Items
 
@@ -72,7 +72,8 @@ And 8 more items.
 - A module and the file that declares it with `mod` do not count as a mutual dependency.
 - Generated notes that nobody edited are not checked for dead paths. They copy source comments, where paths are often examples, and the next sync rewrites them.
 - A source change counts as drift only for hand-edited notes. Generated notes are rewritten on sync.
-- A backticked path is only checked when its first folder exists in the repository or vault, which avoids flagging paths of other projects.
+- A backticked path is only checked when its first folder exists in the repository or vault, which avoids flagging paths of other projects. Paths that exist but are ignored by the scan, such as build output, are not flagged either.
+- A note of something gone never adds sources to the coverage count, since its sources are skipped.
 
 ## See also
 

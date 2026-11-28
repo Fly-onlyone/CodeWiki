@@ -21,7 +21,7 @@ When a coding agent starts a session in a repository, this module builds the sho
 `session_start` then builds the text:
 
 - If the vault has no notes or no home note, it says no wiki exists and points to the `sync_wiki` tool.
-- Otherwise it states the note count and the home note.
+- Otherwise it states the note count (`live_notes`, so notes kept after their code is gone are not counted) and the home note.
 - It compares the manifest's last indexed commit with git HEAD (`head_commit`, `vault_is_behind`). The text says: no HEAD, up to date, or stale with both short commit ids.
 - It counts pending proposals.
 - It adds a line about waiting notes when any wait, using `waiting_counts`.
@@ -63,7 +63,7 @@ For Claude Code the order tells the agent to launch the `codewiki:note-writer` a
 
 - The order to write notes is deliberately opt-in. Without it an agent might spend the user's usage allowance on notes at every session start.
 - Sessions with source `compact` or `fork` get facts only, never an order.
-- Linked worktrees never get the order, so parallel sessions do not all write notes at once. The caller in the hook checks the worktree and downgrades the order to facts.
+- Linked worktrees never get the order, so parallel sessions do not all write notes at once. The caller passes the worktree flag; `explain_for` downgrades the order to facts.
 - A count above 20 launches several agents in one message. A count of all with many waiting notes can launch a dozen agents.
 - The commit is shortened to 10 characters, and a missing manifest commit shows as unknown.
 - `HOME_NOTE` is fixed as `_HOME.md`; a vault without that file counts as having no wiki.

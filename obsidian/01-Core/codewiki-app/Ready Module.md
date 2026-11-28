@@ -8,9 +8,9 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-A program that drives the app from outside cannot see what the window shows, and UI Automation cannot read it. Such a program waits for these lines instead of a fixed time: `Wait-AppPage` in `scripts/vm/test-release.ps1`.
+A program that drives the app from outside cannot see what the window shows, and UI Automation cannot read it. This module writes the lines such a program waits for instead of sleeping a fixed time. The VM test script waits for them with `Wait-AppPage`.
 
-A line names the kind of the page and, for a note, the note's name. It never holds a search, a palette query, a file's path or the title of a generated page, which can be any of them.
+A line says that a page was drawn with its data, names the kind of page and, for a note, the note's name. It never holds a search, a palette query, a file's path or the title of a generated page.
 
 ## Source
 
@@ -18,10 +18,13 @@ A line names the kind of the page and, for a note, the note's name. It never hol
 
 ## How it works
 
-1. `AppView::announce_page` in [[codewiki-app]] calls `kind`. `kind` calls `stem`.
-2. `AppView::announce_page` in [[codewiki-app]] calls `drawn`.
-3. `AppView::announce_page` in [[codewiki-app]] calls `filled`.
-4. `AppView::new` and `AppView::open_request` in [[codewiki-app]] call `label`.
+The app calls `kind` with the page it shows and `Facts`, what it holds of the data. `kind` returns `None` while the page still lacks its data: Home waits for a backend answer and, with a repository open, for the list of notes; Waiting waits for the waiting list; Settings waits for the settings answer. A plain `Message` page is never announced, because it stands in for a page still to come. Graph, Review, Generated and Notice are announced at once.
+
+When `kind` gives a value, `drawn` makes the line, such as `page drawn: note _HOME`, with `(asked ...)` added when the page answers a launch argument. `label` makes that text from the argument. `filled` makes the line for data that arrives after the draw: `page filled: diagrams` or `page filled: models`.
+
+`Holds` says what keeps the shown page from being the one a launch asked for: running work, a view, editor or palette not yet opened, or a change made in this frame that shows only in the next. While `Holds::any` is true the page is not announced.
+
+All lines go to the log under the target `page`. `stem` turns a vault path into the note's name.
 
 ## Items
 
@@ -44,6 +47,14 @@ A line names the kind of the page and, for a note, the note's name. It never hol
 ## Used by
 
 - [[codewiki-app]] — from `AppView`, `announce_page`, `new`, `open_request`
+
+## Gotchas
+
+- The lines are an interface. A test rig matches their exact text, so changing a word breaks it.
+- `label` keeps only the word `palette:` or `file:` and drops what follows, because a query or a path can hold private text. Every other argument is repeated as given.
+- The note's name is in the line, so the target `page` is left out of Sentry reports. Keep that, or a note's name would leave the machine.
+- A page whose data never arrives is never announced. A rig waits until its own timeout.
+- `stem` accepts both slash styles, so a Windows path gives the same name.
 
 ## See also
 

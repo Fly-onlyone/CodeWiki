@@ -16,13 +16,13 @@ Serves the read side of the wiki to the app and to coding agents. The vault hold
 
 ## How it works
 
-`list_notes` loads the vault metadata and turns each entry into a `NoteInfo` through `info`, sorted by path. `info` sets the lifecycle state and where the explanation stands. A note kind that is not explainable, and an adopted note nobody explained, get `None`. Otherwise it is `Waiting` (rules wrote it, no agent has), `Explained`, or `Behind` (the entry lists files that changed after the agent wrote).
+`list_notes` loads the vault metadata and turns each entry into a `NoteInfo` through `info`, sorted by path. `info` sets the lifecycle state, the `gone` reason when what the note describes has left the repository, and where the explanation stands. A note kind that is not explainable, and an adopted note nobody explained, get `None`. Otherwise it is `Waiting` (rules wrote it, no agent has), `Explained`, or `Behind` (the entry lists files that changed after the agent wrote).
 
 `read_note_as` finds the entry with `find_entry`. That tries the vault path, then the path with `.md` added, then the note name without case. The found path goes through `check_vault_path`. With `View::Whole` it returns the text and the note's pictures, read from the illustration file beside the note. With `View::Agent` it runs `agent_view` and returns no pictures. `agent_view` cuts the rule-made `How it works` section from Concept notes only. The cut is skipped when an agent wrote that section.
 
 `symbol_detail` finds a symbol by qualified or bare name. It collects `depends_on` and `used_by` from dependency edges, including the edges of its methods. It drops relations to itself and its own members, then sorts and removes duplicates. It also lists the notes that cite the symbol's file. `context` returns file detail (imports, importers) when the target is an indexed path, else symbol detail. `dependency_path` builds a graph of dependency edges and returns the shortest chain. `answer` searches notes and symbols and joins the summaries of up to 3 note hits.
 
-`status` counts files, symbols, edges, notes and pending proposals, and compares the vault commit with the head commit.
+`status` counts files, symbols, edges, live notes and pending proposals, and compares the vault commit with the head commit.
 
 ## Items
 
@@ -74,6 +74,7 @@ And 9 more items.
 - `agent_view` ignores `## ` lines inside code fences. Only Concept notes are cut. Flow and other kinds come back whole.
 - `dependency_path` returns an empty list, not an error, when a symbol is not in the graph or no path exists. An unknown name is a not-found error.
 - A note with no summary adds nothing to `answer`. When no note has one, `answer` returns a fixed hint text.
+- A note kept after its subject went still shows in `list_notes`, with its `gone` reason, though it does not count in the status.
 
 ## See also
 

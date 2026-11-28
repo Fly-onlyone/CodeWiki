@@ -6,13 +6,17 @@ tags: [core, cw-wiki]
 
 > What git knows about a repository, each answer asked for once and only when a note needs it: most syncs remove nothing.
 
+## What it does
+
+A lazy view of what git knows about the repository, used when a sync decides about notes whose subject is gone. Each question (which files are recoverable, which changed, what is at HEAD, the full history, which files moved) runs a git command at most once and only when a note needs it. Most syncs remove nothing, so most syncs never run them.
+
 ## Source
 
 - `crates/cw-wiki/src/gone.rs` — definition of `Git`
 
 ## How it works
 
-1. `generate_with` in [[Generate Module]] and `retire` in [[Gone Module]] call `new`.
+Each answer sits in a `OnceCell`, filled by a function of the `git` module on the first call. `new` is cheap and builds nothing. `knew` says a commit once held a path, as a file or, from a folder set built from the history, as a folder. `has_at_head` says the commit at HEAD still has the path, so the deletion is not committed. `holds` says git can bring a note back as it is now: the note file must be in the recoverable set, and so must its picture, if it has one. `of_generated`, `of_adopted` and `cited` in [[Gone Module]] use these answers.
 
 ## Items
 
@@ -41,6 +45,11 @@ Members:
 
 - [[Gone Module]] — from `after_removal`, `cited`, `of_adopted`, `of_generated`
 - [[Generate Module]] — from `carry_moves`, `generate_with`
+
+## Gotchas
+
+- `changed` and `head` are `Option`. They are `None` when git cannot answer, for example no repository. Then `has_at_head` is false.
+- `holds` checks the note file and its picture. A note with a picture that git does not hold counts as unsaved.
 
 ## See also
 

@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-This is the engine that turns scanned code into a vault of notes. It runs the same steps for a first generation, an update after code changes, and a vault that already holds hand-written notes. For each note it decides whether to write it, merge new facts into it, propose a change, or leave it alone. It also tracks which notes an agent explained that may now be behind the code. It returns a `Report` that says what happened.
+This is the engine that turns scanned code into a vault of notes. It runs the same steps for a first generation, an update after code changes, and a vault that already holds hand-written notes. For each note it decides whether to write it, merge new facts into it, propose a change, or leave it alone. It tracks which notes an agent explained that may now be behind the code. It also handles notes whose subject moved or is gone: it carries them to the new place, keeps them, or proposes to retire them. It returns a `Report` that says what happened.
 
 ## Source
 
@@ -20,14 +20,16 @@ This is the engine that turns scanned code into a vault of notes. It runs the sa
 
 - Load the manifest. `adopt_existing` registers Markdown notes on disk the manifest does not know. Their kind comes from file name or tags, and their sources from the backticked paths in their Source section.
 - Ask the plan module which notes should exist. Files covered by adopted notes get no new notes.
-- Freeze names. Existing notes keep their paths. A planned note that collides with an adopted note takes over its entry. New notes get a free name from the registry.
-- Render every draft and lint it in strict mode. Any lint error aborts the whole run (the first 20 are shown). Warnings are only counted.
-- Notes CodeWiki wrote whose subject is gone are marked as leaving, unless a person edited them. This is done before links are woven, so links to them can be removed.
-- For each planned note, hash the draft with the template version. A new note is written. A known note goes through `lifecycle::state` and `lifecycle::action`: keep, merge, propose or regenerate. A merge takes the new facts, keeps the agent's sections (`weave_kept`), and keeps the pictures whose section still exists (`keep_placed_pictures`).
-- Then the behind check. For a note an agent explained, each file it was written from is hashed again. A changed or missing file puts a line in `NoteEntry::behind` and the note in `Report::behind`. A line that says a section moved stays until an agent writes the note again.
-- Picture files of notes no agent explained are deleted. Notes that are leaving are removed with their picture file.
+- Follow subjects. `carry_moves` gives a note whose type, module or pattern moved to the new planned note, when git saw the move or exactly one old and one new note share kind and name. `follow_units` moves notes into the folder of a renamed unit. File renames wait until the drafts are sound.
+- Freeze names. Existing notes keep their paths. New notes get a free name from the registry.
+- Judge hand-written notes. One that names only paths that are gone is queued, with the others, in one retire proposal; none is deleted by a run.
+- Render every draft and lint it in strict mode. Any lint error aborts the whole run (the first 20 are shown).
+- Mark notes CodeWiki wrote whose subject is gone. One with written work goes only when git can bring it back and the deletion is committed; otherwise it stays, marked `gone`.
+- For each planned note, hash the draft with the template version. A new note is written. A known note goes through `lifecycle::state` and `lifecycle::action`: keep, merge, propose or regenerate. A merge takes the new facts and keeps the agent's sections and pictures.
+- Then the behind check. Each file an explanation was written from is hashed again. A changed or missing file puts a line in `NoteEntry::behind`.
+- Pending proposals for notes whose subject went are marked superseded, and `Report::summary` says in sentences what happened.
 
-`file_hash` re-hashes one repository file the way a scan does, so other modules can tell whether a source changed since the last sync.
+`file_hash` re-hashes one repository file the way a scan does.
 
 ## Items
 
@@ -42,17 +44,17 @@ This is the engine that turns scanned code into a vault of notes. It runs the sa
 - `fn cited_sources(note: &Note, file_hashes: &HashMap<&str, &str>) -> Vec<SourceRef>` — source files named in a note's `## Source` section that exist in the repo.
 - `adopt_existing` — register notes found on disk that the manifest does not know.
 - `fn unit_subfolder(path: &str) -> Option<&str>` — the folder a vault path is in, when it is below a unit of `01-Core`.
-- `follow_units` — A unit that changes its name or its folder (a `package.json` that gets a `name`, two Python folders that become one project) leaves its notes with their ids and their frozen paths in a folder that no planned note uses, where the run removes the folder's map and the notes link a map that is gone. Each such note, with its picture, moves to the folder its subject is planned in; it keeps its file name, which is unique in the vault, and everything written in it. A note moves only to a free place. The files are not touched here; the renames are returned like those of `carry_moves`.
 - `fn movable(id: &str) -> Option<(&str, &str)>` — what a note describes, for the kinds of subject that can move: the kind and the name alone, without the place. `type:engine::pricing::Price` gives `("type", "Price")`.
-- `carry_moves` — give each note whose subject moved to the planned note of that subject in its new place, so that what was written in it is kept. A subject that moves gets a new id, because the id names the place. The old note is then a note of something gone and the new one starts empty. Here the old entry takes the new id and the new path instead. Only a clear match counts: git saw the file move to the one planned note's file, or exactly one new note and one old note share kind and name. The files are not touched here. Returns the renames to make, old and new vault path, once the run can no longer fail before it writes.
 - `generate` — generate or update the vault of the repository at `root`, reading nothing but the repository: a package from outside it is described only by what an earlier run kept in the vault.
 - `generate_with` — `generate`, with `packages` to say what a package from outside the repository is.
 - `const CARRIED: &str` — how a line of `NoteEntry::behind` starts that says the note followed its subject to another place in the code.
+- `fn file_bytes(root: &Path, path: &str) -> Option<Vec<u8>>` — the bytes of the repository file `path`; nothing for a file that is gone or leaves the repository.
 - `pub(crate) fn file_hash(root: &Path, path: &str) -> Option<String>` — the hash of the repository file `path` as it is now, made as a scan makes it; nothing for a file that is gone or leaves the repository.
+- `pub(crate) fn hash_holds(root: &Path, path: &str, hash: &str) -> bool` — whether the repository file `path` is as it was when the vault recorded `hash` for it. A hash recorded before a scan read CRLF as LF is of the file's raw bytes: it holds while those bytes stay the same, or every file with CRLF line endings would read as changed.
 - `struct Links<'a>` — which links of a note lead to a note once this run is over.
 - `pub fn illustration_path(note_path: &str) -> String` — vault path of the file that holds the pictures of the note at `note_path`.
 
-And 7 more items.
+And 9 more items.
 
 ## Depends on
 
@@ -81,11 +83,12 @@ And 7 more items.
 - A style error in any draft stops the whole run before any note is written.
 - Raise `TEMPLATE_VERSION` when rendering changes and every note must refresh. It is part of every input hash.
 - First contact with an adopted note only records its input hash and keeps it. Only later source changes raise a proposal.
+- A run never deletes a hand-written note. It proposes, and a person decides.
+- When the target of a moved subject is not clear, the note is listed in `possible_moves` and nothing is carried over.
 - Two notes with the same name cannot both be managed. The second is skipped and listed in the report.
 - Folders starting with a dot, `_Templates` and `_Attachments` are not adopted.
 - When the action is keep, the note's recorded sources are still refreshed to the current hashes. Without that, a brief would ask for a sync that changes nothing.
 - Rules draw no pictures. A picture file of a note that no agent explained is deleted on every run.
-- A note whose owner edited it is not counted as unexplained, since an agent's text for it would only be a proposal.
 - `file_hash` returns nothing for a missing file or one outside the repository.
 
 ## See also

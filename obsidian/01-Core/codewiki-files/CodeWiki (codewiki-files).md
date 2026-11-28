@@ -4,11 +4,11 @@ tags: [core, codewiki-files]
 
 # CodeWiki (codewiki-files)
 
-> PowerShell and Batch source of the repository with 21 source files, mapped at file level.
+> PowerShell and Batch source of the repository with 22 source files, mapped at file level.
 
 ## Source
 
-- `scripts/vm/test-release.ps1` — PowerShell, 6651 lines
+- `scripts/vm/test-release.ps1` — PowerShell, 6963 lines
 - `scripts/vm/Vm.ps1` — PowerShell, 1891 lines
 - `scripts/vm/guest/agent.ps1` — PowerShell, 300 lines
 - `scripts/release-notes.ps1` — PowerShell, 221 lines
@@ -16,11 +16,11 @@ tags: [core, codewiki-files]
 
 ## Items
 
-Holds 21 source files with 10650 lines in 3 folders: 19 in PowerShell and 2 in Batch.
+Holds 22 source files with 11068 lines in 3 folders: 20 in PowerShell and 2 in Batch.
 
 Folders:
 
-- [[Scripts Folder]] — 21 source files, 10650 lines
+- [[Scripts Folder]] — 22 source files, 11068 lines
 
 ## See also
 

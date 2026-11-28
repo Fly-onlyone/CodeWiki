@@ -8,7 +8,7 @@ tags: [core, codewiki-app, module]
 
 ## What it does
 
-This module is the state and rules behind the review queue, with no UI. A proposal is a suggested change to a note that waits for a person to approve or reject it. Two things make proposals: a sync, when the code under a hand-edited note changed, and a coding agent that explained such a note. The module keeps the list of pending proposals (`Item`), which ones are selected (`Selection`), which proposal opens next after a decision, and what the user is told. The page itself is drawn in [[Review View Module]].
+This module is the state and rules behind the review queue, with no UI. A proposal is a suggested change that waits for a person to approve or reject it. Three kinds exist (`Kind`): a sync proposal, made when the code under a hand-edited note changed; an agent proposal, made when a coding agent explained such a note; and a retire proposal, which offers to delete notes about code that is gone. The module keeps the list of pending proposals (`Item`), which ones are selected (`Selection`), which proposal opens next after a decision, and what the user is told. The page itself is drawn in [[Review View Module]].
 
 ## Source
 
@@ -21,6 +21,8 @@ This module is the state and rules behind the review queue, with no UI. A propos
 Selection works like a file list. A plain click selects one row and opens it. Ctrl toggles a row. Shift selects the range from the last clicked row (`Click::with_keys` lets Shift win over Ctrl). The header checkbox shows all, none or some (`Selection::header`).
 
 The buttons act on `targets`: the selection if it holds anything, else the open proposal. After a decision, `after_decision` picks what to show. The open proposal stays if it still waits. Otherwise `next_after` takes the next undecided one, then the nearest one before it, then the first of the queue.
+
+A retire proposal names no note of its own. `retire_notes` lists the notes it would delete, the user can leave some out, and `retire_label` words the approve button by the count. Rejecting it keeps the notes as history.
 
 `decided_notices` turns the results into toasts: one success notice for what went through, one warning that lists each failure with its reason. `clash_warning` warns when a sync proposal and an agent proposal for the same note are both selected.
 

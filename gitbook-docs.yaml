@@ -8,5 +8,5 @@ site:
       path: codewiki
       default: true
       content:
-        directory: ./codewiki
+        directory: ./docs/guide
         language: en

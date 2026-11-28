@@ -353,9 +353,36 @@ pub struct Row {
     /// Drawn as the current item of the list.
     pub selected: bool,
     pub action: Action,
-    /// Small text buttons at the row's end, in order. A click on one runs
+    /// Small icon buttons at the row's end, in order. A click on one runs
     /// its own action, not the row's.
-    pub asides: Vec<(String, Action)>,
+    pub asides: Vec<Aside>,
+}
+
+/// A round icon button at the end of a row.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Aside {
+    pub icon: Glyph,
+    /// Says what a click does, since the icon alone may not.
+    pub tooltip: String,
+    /// Drawn switched on, as for a state the button turns off again.
+    pub on: bool,
+    pub action: Action,
+}
+
+impl Aside {
+    pub fn new(icon: Glyph, tooltip: impl Into<String>, action: Action) -> Self {
+        Self {
+            icon,
+            tooltip: tooltip.into(),
+            on: false,
+            action,
+        }
+    }
+
+    pub fn on(mut self, on: bool) -> Self {
+        self.on = on;
+        self
+    }
 }
 
 impl Row {
@@ -386,10 +413,9 @@ impl Row {
         self
     }
 
-    /// A text button at the row's end, after the ones added before, with
-    /// its own action.
-    pub fn aside(mut self, label: impl Into<String>, action: Action) -> Self {
-        self.asides.push((label.into(), action));
+    /// A button at the row's end, after the ones added before.
+    pub fn aside(mut self, aside: Aside) -> Self {
+        self.asides.push(aside);
         self
     }
 }
@@ -768,7 +794,7 @@ impl Doc {
                 Block::Rows(rows) => {
                     for row in rows {
                         out.push(row.action.clone());
-                        out.extend(row.asides.iter().map(|(_, action)| action.clone()));
+                        out.extend(row.asides.iter().map(|aside| aside.action.clone()));
                     }
                 }
                 Block::Alert { button, .. } | Block::Setting { button, .. } => {
@@ -883,8 +909,16 @@ mod tests {
         let mut doc = Doc::new("t");
         doc.push(Block::Rows(vec![
             Row::new(crate::icons::FOLDER, "one", Action::OpenRepo("a".into()))
-                .aside("Keep agents out", Action::KeepAgentsOut("C:/a".into()))
-                .aside("Remove", Action::ForgetRepo("a".into())),
+                .aside(Aside::new(
+                    crate::icons::KEEP_OUT,
+                    "Keep agents out",
+                    Action::KeepAgentsOut("C:/a".into()),
+                ))
+                .aside(Aside::new(
+                    crate::icons::CLOSE,
+                    "Remove from list",
+                    Action::ForgetRepo("a".into()),
+                )),
             Row::new(crate::icons::FOLDER, "two", Action::OpenRepo("b".into())),
         ]));
         assert_eq!(

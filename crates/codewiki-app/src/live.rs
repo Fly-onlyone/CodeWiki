@@ -10,7 +10,8 @@ use cw_core::auto_explain::Count;
 use serde_json::Value;
 
 use crate::doc::{
-    Action, Block, Cell, Column, Doc, Line, Press, Row, Stat, Table, code, file, rich, strong, text,
+    Action, Aside, Block, Cell, Column, Doc, Line, Press, Row, Stat, Table, code, file, rich,
+    strong, text,
 };
 use crate::icons;
 use crate::mui::feedback::Tone;
@@ -904,22 +905,39 @@ pub fn home_page(home: &HomeInput) -> Doc {
                     // A parent entry is changed in Settings: removing it
                     // would let agents into other projects too. So is an
                     // entry inside the project, which is not the project's.
-                    let row = match project.kept {
-                        Kept::Open => row.aside(
+                    // The shield is filled while the project itself is kept.
+                    let settings = Action::Settings(Some(Category::Repositories));
+                    let agents = match project.kept {
+                        Kept::Open => Aside::new(
+                            icons::KEEP_OUT,
                             "Keep agents out",
                             Action::KeepAgentsOut(project.path.to_string()),
                         ),
-                        Kept::Own => row.aside(
+                        Kept::Own => Aside::new(
+                            icons::KEPT,
                             "Let agents in",
                             Action::LetAgentsIn(project.path.to_string()),
+                        )
+                        .on(true),
+                        Kept::Under(_) => Aside::new(
+                            icons::KEPT,
+                            "Kept by a folder above. Change it in Settings",
+                            settings,
+                        )
+                        .on(true),
+                        Kept::Contains(_) => Aside::new(
+                            icons::KEEP_OUT,
+                            "A folder inside is kept. Change it in Settings",
+                            settings,
                         ),
-                        Kept::Under(_) | Kept::Contains(_) => {
-                            row.aside("Settings…", Action::Settings(Some(Category::Repositories)))
-                        }
                     };
                     // Takes the project off the list, the open one too, which
                     // then closes. Nothing on disk is deleted.
-                    row.aside("Remove", Action::ForgetRepo(project.id.to_string()))
+                    row.aside(agents).aside(Aside::new(
+                        icons::CLOSE,
+                        "Remove from list",
+                        Action::ForgetRepo(project.id.to_string()),
+                    ))
                 })
                 .collect(),
         ));
@@ -1360,7 +1378,7 @@ mod tests {
         assert_eq!(hits[0].detail, r"C:\p\project0");
     }
 
-    fn asides_of<'a>(page: &'a Doc, label: &str) -> Option<&'a [(String, Action)]> {
+    fn asides_of<'a>(page: &'a Doc, label: &str) -> Option<&'a [Aside]> {
         page.blocks.iter().find_map(|block| match block {
             Block::Rows(rows) => rows
                 .iter()
@@ -1370,8 +1388,12 @@ mod tests {
         })
     }
 
-    fn aside_of<'a>(page: &'a Doc, label: &str) -> Option<&'a (String, Action)> {
-        asides_of(page, label).and_then(<[_]>::first)
+    /// The first button at the end of the row `label`: its tooltip, its
+    /// action, and whether it is drawn switched on.
+    fn aside_of<'a>(page: &'a Doc, label: &str) -> Option<(&'a str, &'a Action, bool)> {
+        asides_of(page, label)
+            .and_then(<[_]>::first)
+            .map(|aside| (aside.tooltip.as_str(), &aside.action, aside.on))
     }
 
     #[test]
@@ -1392,7 +1414,11 @@ mod tests {
             assert_eq!(asides.len(), 2, "{label}");
             assert_eq!(
                 asides.last(),
-                Some(&("Remove".to_string(), Action::ForgetRepo(id.into()))),
+                Some(&Aside::new(
+                    icons::CLOSE,
+                    "Remove from list",
+                    Action::ForgetRepo(id.into())
+                )),
                 "{label}"
             );
         }
@@ -1411,11 +1437,13 @@ mod tests {
         let page = home_page(&home(&[ALPHA], &[]));
         assert_eq!(
             aside_of(&page, "alpha"),
-            Some(&(
-                "Keep agents out".to_string(),
-                Action::KeepAgentsOut(r"C:\code\alpha".into())
+            Some((
+                "Keep agents out",
+                &Action::KeepAgentsOut(r"C:\code\alpha".into()),
+                false
             ))
         );
+        assert_eq!(asides_of(&page, "alpha").unwrap()[0].icon, icons::KEEP_OUT);
         assert!(!page.words().contains("ept from agents"));
     }
 
@@ -1428,15 +1456,17 @@ mod tests {
         let page = home_page(&home(&[own, BETA], &[]));
         assert_eq!(
             aside_of(&page, "alpha"),
-            Some(&(
-                "Let agents in".to_string(),
-                Action::LetAgentsIn(r"C:\code\alpha".into())
+            Some((
+                "Let agents in",
+                &Action::LetAgentsIn(r"C:\code\alpha".into()),
+                true
             ))
         );
+        assert_eq!(asides_of(&page, "alpha").unwrap()[0].icon, icons::KEPT);
         // Another project's row is its own.
         assert_eq!(
-            aside_of(&page, "Beta").map(|a| a.0.as_str()),
-            Some("Keep agents out")
+            aside_of(&page, "Beta").map(|a| (a.0, a.2)),
+            Some(("Keep agents out", false))
         );
     }
 
@@ -1454,11 +1484,13 @@ mod tests {
             });
             // No button that changes the list of kept folders; only a way
             // to Settings.
+            // The shield is filled: the project is kept.
             assert_eq!(
                 aside_of(&page, "alpha"),
-                Some(&(
-                    "Settings…".to_string(),
-                    Action::Settings(Some(Category::Repositories))
+                Some((
+                    "Kept by a folder above. Change it in Settings",
+                    &Action::Settings(Some(Category::Repositories)),
+                    true
                 ))
             );
             assert!(
@@ -1537,11 +1569,13 @@ mod tests {
             ..ALPHA
         };
         let page = home_page(&home(&[holder], &[]));
+        // The shield stays outlined: the project itself is not kept.
         assert_eq!(
             aside_of(&page, "alpha"),
-            Some(&(
-                "Settings…".to_string(),
-                Action::Settings(Some(Category::Repositories))
+            Some((
+                "A folder inside is kept. Change it in Settings",
+                &Action::Settings(Some(Category::Repositories)),
+                false
             ))
         );
         assert!(

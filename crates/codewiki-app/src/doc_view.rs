@@ -35,7 +35,7 @@ use gpui_kit::{
 use crate::doc::{Action, Block, Cell, Choice, Doc, Row, SecretState, Span, Stat, Table};
 use crate::icons;
 use crate::mui::base::Hover;
-use crate::mui::button::{Button, ToggleButtonGroup};
+use crate::mui::button::{Button, IconButton, ToggleButtonGroup};
 use crate::mui::feedback::{self, Tone};
 use crate::mui::list::ListItemButton;
 use crate::mui::menu::AnchorBounds;
@@ -1280,14 +1280,14 @@ fn draw_row(row: &Row, id: ElementId, page: &Page) -> ListItemButton {
         .asides
         .iter()
         .enumerate()
-        .map(|(index, (label, action))| {
+        .map(|(index, aside)| {
             // The button takes its press alone, so the row does not open.
             let on_action = page.on_action.clone();
-            let action = action.clone();
-            Button::new((id.clone(), format!("aside-{index}")))
-                .label(label.clone())
-                .text()
+            let action = aside.action.clone();
+            IconButton::new((id.clone(), format!("aside-{index}")), aside.icon)
                 .small()
+                .toggled(aside.on)
+                .tooltip(aside.tooltip.clone())
                 .on_click(move |_, window, cx| on_action(&action, window, cx))
         })
         .collect::<Vec<_>>();

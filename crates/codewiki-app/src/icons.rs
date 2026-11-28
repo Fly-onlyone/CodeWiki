@@ -75,6 +75,10 @@ app_icons! {
     TESTS = "science",
     COVERAGE = "percent",
     SECURITY = "security",
+    // The button on a Home row that keeps coding agents out of the
+    // project: filled while they are kept out.
+    KEEP_OUT = "shield-outlined",
+    KEPT = "shield",
     REFACTOR = "build",
     WORKSPACE = "workspaces",
     CONTRACTS = "handshake",

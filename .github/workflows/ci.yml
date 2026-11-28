@@ -68,7 +68,9 @@ jobs:
           fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - run: cargo run --locked -p codewiki -- check --format sarif --fail-on never --output codewiki.sarif
+      # The findings go outside the checkout: a file written into it would be
+      # one more file for the sync below to count.
+      - run: cargo run --locked -p codewiki -- check --format sarif --fail-on never --output "${{ runner.temp }}/codewiki.sarif"
         env:
           # The index is a cache; it is built on first use in a scratch
           # folder. The runner context exists only at step level.
@@ -77,7 +79,7 @@ jobs:
       - if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
         uses: github/codeql-action/upload-sarif@v4
         with:
-          sarif_file: codewiki.sarif
+          sarif_file: ${{ runner.temp }}/codewiki.sarif
           category: codewiki
       # A sync here may change nothing but the commit the manifest names.
       # Source files are hashed with CRLF read as LF, so the result does not

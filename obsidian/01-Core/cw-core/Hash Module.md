@@ -38,10 +38,10 @@ Small hashing helpers. CodeWiki hashes file and note content to tell whether any
 ## Used by
 
 - [[Generate Module]] — from `file_hash`, `generate_with`, `hash_holds`
+- [[cw-wiki]] — from `a_sync_renews_a_raw_byte_hash_so_another_checkout_agrees`, `an_explanation_recorded_from_raw_bytes_is_behind_only_when_they_change`
 - [[Api Module]] — from `require_token`, `webhook_signed`
 - [[Proposal Module]] — from `create_agent`, `create_retire`
 - [[cw-server]] — from `signature`
-- [[cw-wiki]] — from `an_explanation_recorded_from_raw_bytes_is_behind_only_when_they_change`
 - [[Paths Module]] — from `repo_id`
 - [[Scan Module]] — from `scan_repo`
 - [[Manifest Module]] — from `body_hash`

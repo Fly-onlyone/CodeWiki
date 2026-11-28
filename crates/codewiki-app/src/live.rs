@@ -904,7 +904,7 @@ pub fn home_page(home: &HomeInput) -> Doc {
                     // A parent entry is changed in Settings: removing it
                     // would let agents into other projects too. So is an
                     // entry inside the project, which is not the project's.
-                    match project.kept {
+                    let row = match project.kept {
                         Kept::Open => row.aside(
                             "Keep agents out",
                             Action::KeepAgentsOut(project.path.to_string()),
@@ -916,7 +916,10 @@ pub fn home_page(home: &HomeInput) -> Doc {
                         Kept::Under(_) | Kept::Contains(_) => {
                             row.aside("Settings…", Action::Settings(Some(Category::Repositories)))
                         }
-                    }
+                    };
+                    // Takes the project off the list, the open one too, which
+                    // then closes. Nothing on disk is deleted.
+                    row.aside("Remove", Action::ForgetRepo(project.id.to_string()))
                 })
                 .collect(),
         ));
@@ -1194,10 +1197,13 @@ mod tests {
                 Action::OpenFolder,
                 Action::OpenRepo("g3".into()),
                 Action::KeepAgentsOut(r"D:\gamma".into()),
+                Action::ForgetRepo("g3".into()),
                 Action::OpenRepo("a1".into()),
                 Action::KeepAgentsOut(r"C:\code\alpha".into()),
+                Action::ForgetRepo("a1".into()),
                 Action::OpenRepo("b2".into()),
                 Action::KeepAgentsOut(r"C:\code\beta".into()),
+                Action::ForgetRepo("b2".into()),
             ]
         );
         assert!(page.words().contains(r"gamma — D:\gamma"));
@@ -1354,14 +1360,50 @@ mod tests {
         assert_eq!(hits[0].detail, r"C:\p\project0");
     }
 
-    fn aside_of<'a>(page: &'a Doc, label: &str) -> Option<&'a (String, Action)> {
+    fn asides_of<'a>(page: &'a Doc, label: &str) -> Option<&'a [(String, Action)]> {
         page.blocks.iter().find_map(|block| match block {
             Block::Rows(rows) => rows
                 .iter()
                 .find(|row| row.label == label)
-                .and_then(|row| row.aside.as_ref()),
+                .map(|row| row.asides.as_slice()),
             _ => None,
         })
+    }
+
+    fn aside_of<'a>(page: &'a Doc, label: &str) -> Option<&'a (String, Action)> {
+        asides_of(page, label).and_then(<[_]>::first)
+    }
+
+    #[test]
+    fn home_offers_remove_on_every_row_the_open_one_too() {
+        let parent = Kept::Under(PathBuf::from(r"C:\code"));
+        let under = Project {
+            kept: &parent,
+            ..BETA
+        };
+        let page = home_page(&HomeInput {
+            current: Some("a1"),
+            missing: &[GAMMA],
+            ..home(&[ALPHA, under], &[])
+        });
+        for (label, id) in [("alpha", "a1"), ("Beta", "b2")] {
+            let asides = asides_of(&page, label).unwrap();
+            // After the button about agents, which stays first.
+            assert_eq!(asides.len(), 2, "{label}");
+            assert_eq!(
+                asides.last(),
+                Some(&("Remove".to_string(), Action::ForgetRepo(id.into()))),
+                "{label}"
+            );
+        }
+        // A project whose folder is gone keeps its one Remove.
+        assert_eq!(
+            page.actions()
+                .iter()
+                .filter(|a| **a == Action::ForgetRepo("g3".into()))
+                .count(),
+            1
+        );
     }
 
     #[test]
@@ -1410,7 +1452,8 @@ mod tests {
                 current,
                 ..home(&[under], &[])
             });
-            // No button that changes the list; only a way to Settings.
+            // No button that changes the list of kept folders; only a way
+            // to Settings.
             assert_eq!(
                 aside_of(&page, "alpha"),
                 Some(&(
@@ -1548,6 +1591,7 @@ mod tests {
                 Action::OpenFolder,
                 Action::OpenRepo("a1".into()),
                 Action::KeepAgentsOut(r"C:\code\alpha".into()),
+                Action::ForgetRepo("a1".into()),
                 Action::ForgetRepo("b2".into()),
                 Action::ForgetRepo("g3".into()),
             ]

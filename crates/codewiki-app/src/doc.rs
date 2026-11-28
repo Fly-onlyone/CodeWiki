@@ -353,9 +353,9 @@ pub struct Row {
     /// Drawn as the current item of the list.
     pub selected: bool,
     pub action: Action,
-    /// A small text button at the row's end. A click on it runs its own
-    /// action, not the row's.
-    pub aside: Option<(String, Action)>,
+    /// Small text buttons at the row's end, in order. A click on one runs
+    /// its own action, not the row's.
+    pub asides: Vec<(String, Action)>,
 }
 
 impl Row {
@@ -367,7 +367,7 @@ impl Row {
             detail: None,
             selected: false,
             action,
-            aside: None,
+            asides: Vec::new(),
         }
     }
 
@@ -386,9 +386,10 @@ impl Row {
         self
     }
 
-    /// A text button at the row's end, with its own action.
+    /// A text button at the row's end, after the ones added before, with
+    /// its own action.
     pub fn aside(mut self, label: impl Into<String>, action: Action) -> Self {
-        self.aside = Some((label.into(), action));
+        self.asides.push((label.into(), action));
         self
     }
 }
@@ -767,7 +768,7 @@ impl Doc {
                 Block::Rows(rows) => {
                     for row in rows {
                         out.push(row.action.clone());
-                        out.extend(row.aside.iter().map(|(_, action)| action.clone()));
+                        out.extend(row.asides.iter().map(|(_, action)| action.clone()));
                     }
                 }
                 Block::Alert { button, .. } | Block::Setting { button, .. } => {
@@ -878,11 +879,12 @@ mod tests {
     }
 
     #[test]
-    fn a_rows_aside_action_is_listed_after_the_rows_own() {
+    fn a_rows_aside_actions_are_listed_after_the_rows_own_in_order() {
         let mut doc = Doc::new("t");
         doc.push(Block::Rows(vec![
             Row::new(crate::icons::FOLDER, "one", Action::OpenRepo("a".into()))
-                .aside("Keep agents out", Action::KeepAgentsOut("C:/a".into())),
+                .aside("Keep agents out", Action::KeepAgentsOut("C:/a".into()))
+                .aside("Remove", Action::ForgetRepo("a".into())),
             Row::new(crate::icons::FOLDER, "two", Action::OpenRepo("b".into())),
         ]));
         assert_eq!(
@@ -890,6 +892,7 @@ mod tests {
             [
                 Action::OpenRepo("a".into()),
                 Action::KeepAgentsOut("C:/a".into()),
+                Action::ForgetRepo("a".into()),
                 Action::OpenRepo("b".into()),
             ]
         );

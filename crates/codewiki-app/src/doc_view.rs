@@ -1276,22 +1276,28 @@ fn draw_cell(cell: &Cell, path: &str, page: &Page, cx: &App) -> AnyElement {
 fn draw_row(row: &Row, id: ElementId, page: &Page) -> ListItemButton {
     let on_action = page.on_action.clone();
     let action = row.action.clone();
-    let aside_id = id.clone();
+    let asides = row
+        .asides
+        .iter()
+        .enumerate()
+        .map(|(index, (label, action))| {
+            // The button takes its press alone, so the row does not open.
+            let on_action = page.on_action.clone();
+            let action = action.clone();
+            Button::new((id.clone(), format!("aside-{index}")))
+                .label(label.clone())
+                .text()
+                .small()
+                .on_click(move |_, window, cx| on_action(&action, window, cx))
+        })
+        .collect::<Vec<_>>();
     ListItemButton::new(id, row.label.clone())
         .icon(row.icon)
         .code(row.code)
         .selected(row.selected)
         .when_some(row.detail.clone(), |item, detail| item.secondary(detail))
-        .when_some(row.aside.clone(), |item, (label, action)| {
-            // The button takes its press alone, so the row does not open.
-            let on_action = page.on_action.clone();
-            item.trailing(
-                Button::new((aside_id, "aside"))
-                    .label(label)
-                    .text()
-                    .small()
-                    .on_click(move |_, window, cx| on_action(&action, window, cx)),
-            )
+        .when(!asides.is_empty(), |item| {
+            item.trailing(h_flex().items_center().children(asides))
         })
         .on_click(move |_, window, cx| on_action(&action, window, cx))
 }

@@ -2043,9 +2043,16 @@ impl AppView {
     }
 
     /// Take the repository `id` off the backend's list, as the user asked on
-    /// Home for one whose folder is not found. Nothing on disk is deleted,
-    /// and opening the folder again registers it under the same id.
+    /// Home. Nothing on disk is deleted, and opening the folder again
+    /// registers it under the same id. The open repository closes, so it
+    /// waits until no unsaved edits would be lost.
     fn forget_repo(&mut self, id: String, cx: &mut Context<Self>) {
+        let open = self.repo.as_ref().is_some_and(|repo| repo.id == id);
+        if open && !self.can_leave() {
+            cx.notify();
+            return;
+        }
+        let forgotten = id.clone();
         self.run(
             "Removing",
             cx,
@@ -2054,8 +2061,13 @@ impl AppView {
                 log::info!("forgot repository {id}, as asked");
                 registered_repos(b)
             },
-            |this, (repos, missing), cx| {
+            move |this, (repos, missing), cx| {
                 this.take_repos(repos, missing);
+                // Unless another repository was opened meanwhile.
+                if this.repo.as_ref().is_some_and(|repo| repo.id == forgotten) {
+                    this.close_repo();
+                    this.set_page(Page::Home, false);
+                }
                 cx.notify();
             },
         );

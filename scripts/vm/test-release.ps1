@@ -3394,6 +3394,68 @@ $global:LASTEXITCODE = 0
     Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$dir' -ErrorAction SilentlyContinue" | Out-Null
 }
 
+# ---------------------------------------------------------------- LE, line endings
+# A source file is hashed with CRLF read as LF (cw_core::source_hash, 0.6.1).
+# Until then the same text saved with the other line ending counted as a
+# change: the wiki's records were rewritten and its notes marked behind. The
+# case writes a small repository with LF, syncs it, saves the same files with
+# CRLF and syncs again: nothing in the wiki may differ. A real change of one
+# word must still be seen. No window and no git.
+Test-Case "LE1" "Line endings are no change to the wiki" "the same files saved with CRLF leave the wiki as it is; a changed word does not" {
+    $dir = "$guestHome\repos\eol-demo"
+    $run = Invoke-GuestScript -TimeoutSec 600 -Script ("`$dir = '$dir'`n" + (@'
+Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$dir\src", "$dir\tools" | Out-Null
+$files = [ordered]@{
+    "Cargo.toml"    = "[package]`nname = `"eol-demo`"`nversion = `"0.1.0`"`nedition = `"2021`"`n"
+    "src\lib.rs"    = "/// Adds two numbers.`npub fn add(a: i32, b: i32) -> i32 {`n    a + b`n}`n`n/// Says hello.`npub fn greet() -> &'static str {`n    `"hello`"`n}`n"
+    "tools\run.ps1" = "param([string]`$Name)`nWrite-Output `"run `$Name`"`n"
+}
+$plain = New-Object System.Text.UTF8Encoding $false
+foreach ($name in $files.Keys) { [IO.File]::WriteAllText((Join-Path $dir $name), $files[$name], $plain) }
+Set-Location $dir
+function Run($arguments) { & '{{EXE}}' @arguments 2>&1 | ForEach-Object { "$_" } }
+function Get-WikiState {
+    $all = Get-ChildItem "$dir\obsidian" -Recurse -File | Sort-Object FullName
+    ($all | ForEach-Object { $_.FullName.Substring($dir.Length) + ' ' + (Get-FileHash $_.FullName -Algorithm SHA256).Hash }) -join "`n"
+}
+Run @('init') | Out-Null
+"init exit: $LASTEXITCODE"
+Run @('update') | Out-Null
+"update exit: $LASTEXITCODE"
+$first = Get-WikiState
+"wiki files: $(@(Get-ChildItem "$dir\obsidian" -Recurse -File).Count)"
+# The same text with the other line ending.
+foreach ($name in $files.Keys) { [IO.File]::WriteAllText((Join-Path $dir $name), ($files[$name] -replace "`n", "`r`n"), $plain) }
+"crlf in lib.rs: $([IO.File]::ReadAllText("$dir\src\lib.rs").Contains("`r`n"))"
+$said = @(Run @('update'))
+"crlf update exit: $LASTEXITCODE"
+"crlf behind lines: $(@($said | Where-Object { $_ -match 'may be behind' }).Count)"
+$second = Get-WikiState
+"crlf wiki same: $($first -eq $second)"
+if ($first -ne $second) {
+    $a = $first -split "`n"; $b = $second -split "`n"
+    "crlf differs in: " + ((Compare-Object $a $b | ForEach-Object { ($_.InputObject -split ' ')[0] } | Sort-Object -Unique) -join ', ')
+}
+# A word changed: this is a change.
+[IO.File]::WriteAllText("$dir\src\lib.rs", ($files["src\lib.rs"] -replace 'hello', 'good day' -replace "`n", "`r`n"), $plain)
+Run @('update') | Out-Null
+"word update exit: $LASTEXITCODE"
+"word wiki same: $($second -eq (Get-WikiState))"
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', "$guestTarget\codewiki.exe"))
+    $out = $run.Output
+    $synced = $out -match "(?m)^update exit: 0" -and $out -match "(?m)^crlf update exit: 0" -and $out -match "(?m)^word update exit: 0"
+    $saved = $out -match "(?m)^crlf in lib\.rs: True"
+    $same = $out -match "(?m)^crlf wiki same: True" -and $out -match "(?m)^crlf behind lines: 0"
+    $seen = $out -match "(?m)^word wiki same: False"
+    $differs = if ($out -match "(?m)^crlf differs in: (.+)$") { $Matches[1].Trim() } else { "" }
+    Add-Result -Id "LE1" -Title "Line endings are no change to the wiki" -Expect "after the files are saved with CRLF, a sync leaves every file of the wiki as it was and marks no note behind; after a word is changed, a sync changes the wiki" `
+        -Status $(if ($synced -and $saved -and $same -and $seen) { "pass" } else { "fail" }) -Output $out `
+        -Observed "three files written with LF and synced; saved again with CRLF (CRLF in the file: $saved) and synced: the wiki is the same: $same$(if ($differs) { " (differs in $differs)" }); one word changed and synced: the wiki changed: $seen; every sync exit 0: $synced"
+    Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$dir' -ErrorAction SilentlyContinue" | Out-Null
+}
+
 # ---------------------------------------------------------------- IC, icon
 Test-Case "IC1" "The program carries the app's icon" "codewiki-app.exe holds icon group 1, which Windows shows for the file, the shortcut and the taskbar" {
     $run = Invoke-GuestScript -Script @"

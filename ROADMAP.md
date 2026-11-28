@@ -4,7 +4,8 @@ Status as of 2026-11-28. "Verified" means covered by automated tests or by a liv
 
 ## Current state
 
-- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (1294 tests) and `cargo deny check advisories bans sources` all pass. The licenses of dependencies are no longer checked, by the owner's decision of 2026-11-20.
+- 17 crates. `cargo fmt --check`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace` (1295 tests) and `cargo deny check advisories bans sources` all pass. The licenses of dependencies are no longer checked, by the owner's decision of 2026-11-20.
+- Not released yet, on main since 2026-11-28: a source file hashes the same with CRLF and LF line endings. Until 0.6.0 the hash was that of the raw bytes, so the same commit gave other hashes in another checkout: notes were marked behind though nothing had changed, and a synced wiki was out of sync on the next machine. Found when CI was made to fail on a wiki that is not what the code generates (`wiki-check` in `ci.yml`); that check has passed on Linux against the wiki written on Windows. Unit tests only; no VM run.
 - Version 0.6.0 is the seventh release, tagged on 2026-11-28 as `v0.6.0`. It brings:
   - parsers for C#, Go, Kotlin, C and C++, and a file-level map for every other language;
   - TypeScript path aliases, Python packages without `__init__.py`, and pnpm, yarn and bun projects;

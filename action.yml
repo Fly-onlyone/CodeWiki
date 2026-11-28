@@ -1,0 +1,206 @@
+name: CodeWiki
+description: >-
+  Run CodeWiki on a repository in CI: report its findings, and check that the
+  committed wiki is what the code generates.
+author: Fly-onlyone
+branding:
+  icon: book-open
+  color: purple
+
+# Uses a released CodeWiki, never a build of this repository:
+#   Linux    the image ghcr.io/fly-onlyone/codewiki:<version>, run with the
+#            workspace mounted; needs Docker, which GitHub's runners have
+#   Windows  codewiki.exe from the release's zip, checked against its .sha256
+# After the action, `codewiki` is on PATH for the steps that follow.
+inputs:
+  version:
+    description: >-
+      The CodeWiki release to use, as in `0.6.0`, or `latest` for the newest
+      release.
+    default: latest
+  repo:
+    description: The repository's root, from the workspace.
+    default: .
+  check:
+    description: >-
+      `true` runs `codewiki check` (every analysis) and writes the report.
+    default: "true"
+  fail-on:
+    description: >-
+      The lowest level of a finding that fails the job: `note`, `warning`,
+      `error` or `never`.
+    default: never
+  format:
+    description: "The report's format: `sarif`, `junit` or `text`."
+    default: sarif
+  report:
+    description: >-
+      Where the report is written. The default is outside the checkout, so
+      that the file is not taken for one of the repository's.
+    default: ""
+  wiki:
+    description: >-
+      What to do with the wiki in `obsidian/`. `off`: nothing. `check`: sync
+      it and fail when the sync changes anything, which means the code
+      changed without its wiki. `update`: sync it (or write it for the first
+      time) and leave the changes for a later step to commit.
+    default: "off"
+  token:
+    description: Used to look up the newest release. The job's own token does.
+    default: ${{ github.token }}
+
+outputs:
+  version:
+    description: The CodeWiki version that ran.
+    value: ${{ steps.version.outputs.version }}
+  report:
+    description: The path of the report, when `check` ran.
+    value: ${{ steps.check.outputs.report }}
+  wiki-changed:
+    description: >-
+      `true` when the sync changed the wiki, `false` when it did not, empty
+      when `wiki` is `off`.
+    value: ${{ steps.wiki.outputs.changed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Find the CodeWiki version
+      id: version
+      shell: bash
+      env:
+        WANTED: ${{ inputs.version }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        version="${WANTED#v}"
+        if [ -z "$version" ] || [ "$version" = "latest" ]; then
+          tag=$(curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+            https://api.github.com/repos/Fly-onlyone/CodeWiki/releases/latest \
+            | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+          if [ -z "$tag" ]; then
+            echo "::error::Could not read the newest CodeWiki release. Give the input 'version' a number, as in 0.6.0."
+            exit 1
+          fi
+          version="${tag#v}"
+        fi
+        echo "version=$version" >> "$GITHUB_OUTPUT"
+        echo "CodeWiki $version"
+
+    - name: Install CodeWiki (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        image="ghcr.io/fly-onlyone/codewiki:$VERSION"
+        docker pull --quiet "$image"
+        bin="$RUNNER_TEMP/codewiki-bin"
+        mkdir -p "$bin" "$RUNNER_TEMP/codewiki-data"
+        # The program runs in its image, as the runner's user, with the
+        # workspace and the temporary folder at the paths they have outside:
+        # a path means the same thing in both places.
+        cat > "$bin/codewiki" <<EOF
+        #!/usr/bin/env bash
+        : "\${CODEWIKI_DATA_DIR:=\$RUNNER_TEMP/codewiki-data}"
+        exec docker run --rm -i -u "\$(id -u):\$(id -g)" \\
+          -e HOME=/tmp -e CODEWIKI_DATA_DIR="\$CODEWIKI_DATA_DIR" -e CODEWIKI_LOG \\
+          -v "\$GITHUB_WORKSPACE:\$GITHUB_WORKSPACE" -v "\$RUNNER_TEMP:\$RUNNER_TEMP" -w "\$PWD" \\
+          --entrypoint codewiki "$image" "\$@"
+        EOF
+        chmod +x "$bin/codewiki"
+        echo "$bin" >> "$GITHUB_PATH"
+
+    - name: Install CodeWiki (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      env:
+        VERSION: ${{ steps.version.outputs.version }}
+      run: |
+        $ErrorActionPreference = "Stop"
+        $name = "CodeWiki-$env:VERSION-windows-x64.zip"
+        $base = "https://github.com/Fly-onlyone/CodeWiki/releases/download/v$env:VERSION"
+        $zip = Join-Path $env:RUNNER_TEMP $name
+        Invoke-WebRequest "$base/$name" -OutFile $zip
+        Invoke-WebRequest "$base/$name.sha256" -OutFile "$zip.sha256"
+        $want = ((Get-Content "$zip.sha256" -Raw) -split '\s+')[0].ToLower()
+        $have = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
+        if ($want -ne $have) { throw "$name has the checksum $have, and its .sha256 file says $want" }
+        $bin = Join-Path $env:RUNNER_TEMP "codewiki-bin"
+        Expand-Archive $zip -DestinationPath $bin -Force
+        New-Item -ItemType Directory -Force (Join-Path $env:RUNNER_TEMP "codewiki-data") | Out-Null
+        Add-Content $env:GITHUB_PATH $bin
+        "CODEWIKI_DATA_DIR=$(Join-Path $env:RUNNER_TEMP 'codewiki-data')" | Add-Content $env:GITHUB_ENV
+
+    - name: No CodeWiki for this runner
+      if: runner.os != 'Linux' && runner.os != 'Windows'
+      shell: bash
+      run: |
+        echo "::error::CodeWiki is released for Windows and as a Linux image. Use a Windows or a Linux runner."
+        exit 1
+
+    - name: Check the repository
+      id: check
+      if: inputs.check == 'true'
+      shell: bash
+      env:
+        REPO: ${{ inputs.repo }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        FORMAT: ${{ inputs.format }}
+        REPORT: ${{ inputs.report }}
+      run: |
+        report="$REPORT"
+        if [ -z "$report" ]; then
+          case "$FORMAT" in
+            sarif) report="$RUNNER_TEMP/codewiki.sarif" ;;
+            junit) report="$RUNNER_TEMP/codewiki.xml" ;;
+            *) report="$RUNNER_TEMP/codewiki.txt" ;;
+          esac
+        fi
+        echo "report=$report" >> "$GITHUB_OUTPUT"
+        status=0
+        codewiki check --repo "$REPO" --format "$FORMAT" --fail-on "$FAIL_ON" --output "$report" || status=$?
+        echo "status=$status" >> "$GITHUB_OUTPUT"
+        if [ "$status" != 0 ]; then
+          echo "::warning::codewiki check ended with status $status: a finding at or above '$FAIL_ON', or it could not run. The report is at $report."
+        fi
+
+    - name: Sync the wiki
+      id: wiki
+      if: inputs.wiki == 'check' || inputs.wiki == 'update'
+      shell: bash
+      env:
+        REPO: ${{ inputs.repo }}
+        MODE: ${{ inputs.wiki }}
+      run: |
+        if [ -f "$REPO/obsidian/.codewiki/manifest.json" ]; then
+          codewiki update --repo "$REPO"
+        elif [ "$MODE" = "update" ]; then
+          codewiki init --repo "$REPO"
+          codewiki update --repo "$REPO"
+        else
+          echo "::error::$REPO has no wiki in obsidian/ to check. Write one with 'codewiki init', or run this action once with wiki: update, and commit it."
+          exit 1
+        fi
+        # The manifest names the commit that was indexed, which is this one.
+        changed=false
+        git -C "$REPO" diff --exit-code -I'"last_indexed_commit"' -- obsidian > /dev/null || changed=true
+        added=$(git -C "$REPO" ls-files --others --exclude-standard -- obsidian)
+        if [ -n "$added" ]; then changed=true; fi
+        echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        if [ "$changed" = true ]; then
+          git -C "$REPO" diff --stat -I'"last_indexed_commit"' -- obsidian
+          if [ -n "$added" ]; then echo "New notes:"; echo "$added"; fi
+        fi
+        if [ "$MODE" = "check" ] && [ "$changed" = true ]; then
+          echo "::error::The wiki in obsidian/ is not what this commit's code generates. Run 'codewiki update' in the repository and commit obsidian/."
+          exit 1
+        fi
+
+    - name: Fail on findings
+      if: inputs.check == 'true' && steps.check.outputs.status != '0'
+      shell: bash
+      env:
+        STATUS: ${{ steps.check.outputs.status }}
+      run: |
+        echo "::error::codewiki check ended with status $STATUS."
+        exit 1

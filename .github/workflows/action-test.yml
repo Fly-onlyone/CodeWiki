@@ -1,0 +1,113 @@
+name: Action
+
+# Tests the action in `action.yml` as another repository would use it: with a
+# released CodeWiki, on a small repository made here. `ci.yml` tests this
+# repository's own code; this workflow tests only the action's steps.
+on:
+  push:
+    branches: [main]
+    paths:
+      - action.yml
+      - .github/workflows/action-test.yml
+  pull_request:
+    paths:
+      - action.yml
+      - .github/workflows/action-test.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  use:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-22.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v7
+
+      # A repository of its own inside the workspace, in three languages.
+      - name: Make a small repository
+        run: |
+          mkdir -p fixture/src fixture/tools
+          cd fixture
+          git init -q -b main
+          git config user.name "CodeWiki action test"
+          git config user.email "action-test@users.noreply.github.com"
+          printf 'pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n' > src/lib.rs
+          printf '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2021"\n' > Cargo.toml
+          printf 'def greet(name):\n    return "hello " + name\n' > tools/greet.py
+          printf 'Write-Output "hello"\n' > tools/hello.ps1
+          printf '# Fixture\n' > README.md
+          git add -A
+          git commit -q -m "a small repository"
+
+      - name: Check it and write its first wiki
+        id: first
+        uses: ./
+        with:
+          repo: fixture
+          wiki: update
+
+      - name: The first run wrote a report and a wiki
+        env:
+          REPORT: ${{ steps.first.outputs.report }}
+          VERSION: ${{ steps.first.outputs.version }}
+          CHANGED: ${{ steps.first.outputs.wiki-changed }}
+        run: |
+          echo "version $VERSION, report $REPORT, wiki changed $CHANGED"
+          test -n "$VERSION"
+          test -s "$REPORT"
+          grep -q '"version"' "$REPORT"
+          test "$CHANGED" = true
+          test -f fixture/obsidian/_HOME.md
+          test -f fixture/obsidian/.codewiki/manifest.json
+          # The program is on PATH for later steps.
+          codewiki --version
+          git -C fixture add -A
+          git -C fixture commit -q -m "the wiki"
+
+      - name: A wiki that is in sync passes
+        id: synced
+        uses: ./
+        with:
+          repo: fixture
+          check: "false"
+          wiki: check
+
+      - name: The sync changed nothing
+        env:
+          CHANGED: ${{ steps.synced.outputs.wiki-changed }}
+        run: |
+          test "$CHANGED" = false
+          git -C fixture checkout -q -- obsidian
+          printf 'pub fn sub(a: i32, b: i32) -> i32 {\n    a - b\n}\n' >> fixture/src/lib.rs
+          git -C fixture commit -q -am "code without its wiki"
+
+      - name: Code that changed without its wiki fails
+        id: stale
+        continue-on-error: true
+        uses: ./
+        with:
+          repo: fixture
+          check: "false"
+          wiki: check
+
+      - name: It failed, and said that the wiki changed
+        env:
+          OUTCOME: ${{ steps.stale.outcome }}
+          CHANGED: ${{ steps.stale.outputs.wiki-changed }}
+        run: |
+          echo "outcome $OUTCOME, wiki changed $CHANGED"
+          test "$OUTCOME" = failure
+          test "$CHANGED" = true

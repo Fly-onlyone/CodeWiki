@@ -8,6 +8,7 @@ tags: [operations]
 
 ## Source
 
+- `.github/workflows/action-test.yml` — CI workflow
 - `.github/workflows/ci.yml` — CI workflow
 - `.github/workflows/docker.yml` — CI workflow
 - `.github/workflows/release.yml` — CI workflow

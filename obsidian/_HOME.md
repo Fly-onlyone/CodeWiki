@@ -6,7 +6,7 @@ tags: [moc, home]
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 17 crates and 387 source files. 21 source files in PowerShell and Batch are mapped at file level: CodeWiki has no parser for them yet. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 389 source files. 21 source files in PowerShell and Batch are mapped at file level: CodeWiki has no parser for them yet. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 

@@ -10,7 +10,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-cw-client = { version = "0.6.0", path = "../cw-client" }
+cw-client = { version = "0.6.1", path = "../cw-client" }
 cw-core = { path = "../cw-core" }
 cw-telemetry = { path = "../cw-telemetry" }
 log = "0.4"

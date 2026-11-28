@@ -1,6 +1,6 @@
 {
   "name": "codewiki",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Gives Codex a maintained wiki and structural index of the repository through the CodeWiki backend.",
   "author": {
     "name": "CodeWiki contributors"

@@ -3,3 +3,5 @@ spikes/
 vendor/
 # The user guide: GitBook pushes to it, and it is no code.
 docs/guide/
+# A local tool's folder (it appeared on 2026-11-28); it is no part of the project.
+.awb/

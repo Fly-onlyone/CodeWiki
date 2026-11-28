@@ -27,6 +27,7 @@
   * [Command line](reference/command-line.md)
   * [Semantic search settings](reference/llm-and-search-settings.md)
   * [Languages](reference/languages.md)
+  * [GitHub Action](reference/github-action.md)
   * [Error reports and privacy](reference/error-reports.md)
   * [Logs and diagnostics](reference/logs-and-diagnostics.md)
 * [Troubleshooting](troubleshooting.md)

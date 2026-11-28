@@ -50,9 +50,11 @@ jobs:
         with:
           command: check ${{ matrix.checks }}
 
-  # CodeWiki's own `check` run on this repository. It reports to code
-  # scanning and never fails the build. It also proves that the backend CLI
-  # still compiles on Linux, which the Docker image depends on.
+  # CodeWiki run on this repository, which also proves that the backend CLI
+  # still compiles on Linux, as the Docker image needs. Its `check` reports
+  # to code scanning and never fails the build. Its `update` does: the wiki
+  # in `obsidian/` is committed, and it must be what this commit's code
+  # generates.
   wiki-check:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -77,3 +79,29 @@ jobs:
         with:
           sarif_file: codewiki.sarif
           category: codewiki
+      # A sync here may change nothing but the commit the manifest names.
+      # Source files are hashed with CRLF read as LF, so the result does not
+      # depend on the checkout. A failure means that code changed without
+      # its `docs(wiki)` commit: run `cargo run -p codewiki -- update` at the
+      # repository root, in a tree with no stray files, and commit
+      # `obsidian/`. Dependabot cannot do that, so its pull requests are let
+      # through, and the push to main that merges one is held to it.
+      - name: The wiki is in sync with the code
+        if: github.actor != 'dependabot[bot]'
+        shell: bash
+        env:
+          CODEWIKI_DATA_DIR: ${{ runner.temp }}/codewiki
+        run: |
+          cargo run --locked -p codewiki -- update
+          stale=0
+          git diff --exit-code -I'"last_indexed_commit"' -- obsidian || stale=1
+          added=$(git ls-files --others --exclude-standard -- obsidian)
+          if [ -n "$added" ]; then
+            echo "Notes the sync would add:"
+            echo "$added"
+            stale=1
+          fi
+          if [ "$stale" = 1 ]; then
+            echo "::error::The wiki in obsidian/ is not what this commit's code generates. Run 'cargo run -p codewiki -- update' and commit obsidian/ as docs(wiki)."
+            exit 1
+          fi

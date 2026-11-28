@@ -8,7 +8,7 @@ tags: [core, codewiki-files, folder]
 
 ## Source
 
-- `scripts/vm/test-release.ps1` — PowerShell, 6586 lines
+- `scripts/vm/test-release.ps1` — PowerShell, 6648 lines
 - `scripts/vm/Vm.ps1` — PowerShell, 1891 lines
 - `scripts/vm/provision.ps1` — PowerShell, 182 lines
 - `scripts/vm/provision-gpu.ps1` — PowerShell, 95 lines
@@ -18,7 +18,7 @@ tags: [core, codewiki-files, folder]
 
 Folder `scripts/vm`, inside [[Scripts Folder]] of [[CodeWiki (codewiki-files)]].
 
-Holds 14 source files with 9870 lines in 2 folders: 14 in PowerShell.
+Holds 14 source files with 9932 lines in 2 folders: 14 in PowerShell.
 
 Folders below:
 
@@ -30,7 +30,7 @@ Files:
 - `provision-gpu.ps1` — PowerShell, 95 lines
 - `provision.ps1` — PowerShell, 182 lines
 - `record.ps1` — PowerShell, 73 lines
-- `test-release.ps1` — PowerShell, 6586 lines
+- `test-release.ps1` — PowerShell, 6648 lines
 
 ## See also
 

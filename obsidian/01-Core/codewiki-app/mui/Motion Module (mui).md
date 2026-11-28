@@ -64,7 +64,7 @@ And 7 more items.
 ## Used by
 
 - [[codewiki-app]] — from `check_for_update`, `connect`, `context_menu_view`, `diagram_viewer_view`
-- [[Doc View Module]] — from `column`, `draw_strip`, `render`, `stat_tile`
+- [[Doc View Module]] — from `column`, `draw_row`, `draw_strip`, `render`
 - [[Ripple Module]] — from `finished`, `frame`, `moving`
 - [[Spring]] — from `animation`, `config`, `policy`
 - [[Button Module]] — from `ease`, `render`

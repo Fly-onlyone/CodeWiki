@@ -55,7 +55,7 @@ And 32 more items.
 
 ## Depends on
 
-- [[Motion Module (mui)]] — uses `GENTLE`, `PAGE`, `STAGGER_CAP`, `card`
+- [[Motion Module (mui)]] — uses `EnterExt`, `GENTLE`, `PAGE`, `STAGGER_CAP`
 - [[Doc Module]] — uses `Cell`, `Choice`, `Row`, `SecretState`
 - [[Feedback Module]] — uses `alert`, `alert_action`, `chip`, `linear_progress`
 - [[Surfaces Module]] — uses `CARD_PADDING`, `card`, `card_content`, `card_piece`

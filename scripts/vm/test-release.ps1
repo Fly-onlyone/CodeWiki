@@ -102,12 +102,13 @@ $ErrorActionPreference = "Stop"
 # and E3 (start from the Start menu, idle load, a repository opened); NG0
 # ends that app; then the title bar's buttons and unsaved edits (W0 to W7),
 # F2 (start and leave alone), the look (BG1, HV1, TB1, CH1, WT1, LK1, TT1,
-# PN1, Z1), editing (G3) and the 0.6.0 window cases (HS1 to HS3, OU1).
+# PN1, Z1), editing (G3), the 0.6.0 window cases (HS1 to HS3, OU1) and the
+# 0.7.0 buttons of Home's rows (HM3, HM4).
 $NoGpuCases = @(
     "A1", "S1", "SX", "C1", "C5", "S3", "D2", "E1", "P1", "E3", "NG0",
     "W0", "W1", "W2", "W3", "W4", "W5", "W6", "W7",
     "F2-reduced", "F2-system", "BG1", "HV1", "TB1", "CH1", "WT1", "LK1", "TT1", "PN1", "Z1", "G3",
-    "HS1", "HS2", "HS3", "OU1"
+    "HM3", "HM4", "HS1", "HS2", "HS3", "OU1"
 )
 # "pwsh -File ... -Only A1,C1" hands the list over as one text.
 if ($Only) { $Only = @($Only | ForEach-Object { $_ -split "," } | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
@@ -2691,6 +2692,106 @@ Test-Case "HM2" "Remove a project whose folder is gone" "a click on Remove takes
         -Observed "clicked Remove at ($x,$y); the backend now lists: $((Get-Registered $probe | ForEach-Object { $_.name }) -join ', ')"
 }
 
+# ---------------------------------------------------------------- HM3 and HM4, the buttons of a Recent projects row (0.7.0)
+# Every row of Recent projects ends with two round icon buttons (live.rs
+# home_doc, doc_view.rs draw_row): a shield that keeps coding agents out of
+# the project (outlined: agents may use it; filled: kept from them) and a
+# close icon, "Remove from list". The cases start the app on a project of
+# their own, which is then the open one and the first row.
+#
+# Where the buttons are, read off 131-home-folder-not-found.png of
+# report\vm-test-2026-11-28-0.6.1 (window 1536x820 at (32,12)) and the code:
+# the first row's middle is 465 px below the client area's top; the row's
+# content ends 17 px inside Home's column (the card's border, list.rs INSET
+# and PADDING), and a small icon button is 28 px wide (button.rs
+# icon_button_metrics), so the close icon's centre is the gutter plus 31 px
+# from the right edge and the shield's the gutter plus 59. The open project
+# of these cases has no wiki, and Home then shows the notice "row-demo has no
+# wiki yet" above the search field, which moves everything below it 64 px
+# down (03-home-row-shield-hover.png of report\vm-proof-2026-11-28-0.7.0: the
+# first row's middle at screen y 541, the icons at x 1261 and 1289).
+function Get-HomeRowButton {
+    param(
+        [Parameter(Mandatory)]$Info,
+        [Parameter(Mandatory)][ValidateSet("agents", "remove")][string]$Which,
+        # Home shows the "no wiki yet" notice of the open project.
+        [switch]$Notice
+    )
+    $gutter = [math]::Max(24, ($Info.Width / $Info.Scale - 1040) / 2)
+    $inset = if ($Which -eq "remove") { 31 } else { 59 }
+    $down = if ($Notice) { 465 + 64 } else { 465 }
+    @(($Info.Right - [int](($gutter + $inset) * $Info.Scale)), ($Info.Top + [int]($down * $Info.Scale)))
+}
+$rowDemo = "$guestHome\repos\row-demo"
+# The folders agents-off.json names, or "(no file)".
+$readKept = 'if (Test-Path "$env:LOCALAPPDATA\CodeWiki\agents-off.json") { "kept: " + (@((Get-Content "$env:LOCALAPPDATA\CodeWiki\agents-off.json" -Raw | ConvertFrom-Json).folders) -join " | ") } else { "kept: (no file)" }'
+
+Test-Case "HM3" "The shield on a project's row keeps agents out" "a click on the shield of a Recent projects row adds the folder to agents-off.json; a second click takes it out again" {
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force '$rowDemo\.git' | Out-Null; Set-Content '$rowDemo\lib.rs' 'pub fn demo() {}'" | Out-Null
+    Start-GuestApp -Arguments $rowDemo
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $x, $y = Get-HomeRowButton -Info $info -Which agents -Notice
+    $before = (Invoke-GuestScript -InProcess -Script $readKept).Output.Trim()
+    Move-Pointer -X $x -Y $y
+    Hold-For 1.5 -Reason "the tooltip's delay"
+    $a = Shot "home-row-shield-hover"
+    Send-RestedClick -X $x -Y $y
+    $kept = [bool](Wait-Until -What "agents-off.json names row-demo" -TimeoutSec 6 -IntervalMs 500 { (Invoke-GuestScript -InProcess -Script $readKept).Output -match "row-demo" })
+    Wait-ScreenSettled -TimeoutSec 3
+    $b = Shot "home-row-kept"
+    $during = (Invoke-GuestScript -InProcess -Script $readKept).Output.Trim()
+    Send-RestedClick -X $x -Y $y
+    $free = [bool](Wait-Until -What "agents-off.json no longer names row-demo" -TimeoutSec 6 -IntervalMs 500 { (Invoke-GuestScript -InProcess -Script $readKept).Output -notmatch "row-demo" })
+    Wait-ScreenSettled -TimeoutSec 3
+    $c = Shot "home-row-let-in"
+    $after = (Invoke-GuestScript -InProcess -Script $readKept).Output.Trim()
+    Stop-GuestApp
+    Add-Result -Id "HM3" -Title "The shield on a project's row keeps agents out" -Expect "after the first click agents-off.json names row-demo, after the second it does not; read the screenshots for the two icons at the row's end, the tooltip, the filled shield and 'Kept from agents' in the row" `
+        -Status $(if ($before -notmatch "row-demo" -and $kept -and $free) { "pass" } else { "fail" }) -Shots @($a, $b, $c) `
+        -Observed "the app started on row-demo; shield at ($x,$y); before: '$before'; after one click: '$during' (kept: $kept); after a second click: '$after' (let in: $free)"
+}
+
+Test-Case "HM4" "Remove takes a project off Home's recent list" "a click on the close icon of a Recent projects row removes the project from the backend's list; its folder stays, and opening it again brings it back under the same id" {
+    Invoke-GuestScript -Script "New-Item -ItemType Directory -Force '$rowDemo\.git' | Out-Null; Set-Content '$rowDemo\lib.rs' 'pub fn demo() {}'" | Out-Null
+    Start-GuestApp -Arguments $rowDemo
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $info = Get-GuestWindowInfo "codewiki-app"
+    if (-not $info) { throw "the app has no window" }
+    $x, $y = Get-HomeRowButton -Info $info -Which remove -Notice
+    $first = @(Get-Registered (Get-Probe "home-row-before-remove" -Quick) | Where-Object { $_.name -eq "row-demo" })
+    Move-Pointer -X $x -Y $y
+    Hold-For 1.5 -Reason "the tooltip's delay"
+    $a = Shot "home-row-remove-hover"
+    Send-RestedClick -X $x -Y $y
+    Wait-ScreenSettled -TimeoutSec 5
+    $b = Shot "home-row-removed"
+    $probe = Get-Probe "home-row-removed" -Quick
+    $left = @(Get-Registered $probe | Where-Object { $_.name -eq "row-demo" })
+    $core = @(Get-Registered $probe | Where-Object { $_.name -eq "cw-core" })
+    $onDisk = (Invoke-GuestScript -InProcess -Script "Test-Path '$rowDemo\lib.rs'").Output.Trim()
+    Stop-GuestApp
+    # Opening the folder again registers it under the id it had.
+    Start-GuestApp -Arguments $rowDemo
+    Wait-AppPage -TimeoutSec 12
+    Hold-For 1.5 -Reason "the page's entrance animation"
+    $back = @(Get-Registered (Get-Probe "home-row-back" -Quick) | Where-Object { $_.name -eq "row-demo" })
+    $c = Shot "home-row-back"
+    # Leave Home as the cases after this one expect it: off the list again, and the folder gone.
+    Send-RestedClick -X $x -Y $y
+    Wait-ScreenSettled -TimeoutSec 5
+    $last = @(Get-Registered (Get-Probe "home-row-removed-again" -Quick) | Where-Object { $_.name -eq "row-demo" })
+    Stop-GuestApp
+    Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$rowDemo' -ErrorAction SilentlyContinue" | Out-Null
+    $sameId = $first.Count -eq 1 -and $back.Count -eq 1 -and $first[0].id -and $first[0].id -eq $back[0].id
+    Add-Result -Id "HM4" -Title "Remove takes a project off Home's recent list" -Expect "row-demo is registered, then not; cw-core stays; the folder's file is still on disk; opened again it is registered under the same id; a second Remove takes it off again" `
+        -Status $(if ($first.Count -eq 1 -and $left.Count -eq 0 -and $core.Count -eq 1 -and $onDisk -eq "True" -and $sameId -and $last.Count -eq 0) { "pass" } else { "fail" }) -Shots @($a, $b, $c) `
+        -Observed "the app started on row-demo (registered: $($first.Count), id $($first[0].id)); clicked the close icon at ($x,$y): registered $($left.Count), cw-core $($core.Count), lib.rs on disk: $onDisk; opened again: registered $($back.Count), id $($back[0].id) (the same: $sameId); removed again: registered $($last.Count); read the screenshots for the tooltip 'Remove from list' and for Home after the removal (the open project closes)"
+}
+
 # ---------------------------------------------------------------- HS1 to HS3, Home's search and Open recent (0.6.0)
 # Home has a search field above its list once a project has been opened: it
 # suggests the projects opened before (live.rs recent_matches: by name, then
@@ -3625,6 +3726,90 @@ Test-Case "D4" "Write a note through the MCP bridge" "list_waiting_notes, get_no
         -Observed "note '$note'; old base: '$stale'; wrong section: '$wrong'; submission: '$submit'; the vault file holds the submitted text: $held; the brief now shows the section as written by an agent: $again; first claiming listing: $first; second: $second"
 }
 
+# 0.6.1 made a sync read CRLF as LF, but a note's brief still compared the raw
+# bytes of each file with what the sync had recorded: in a repository checked
+# out with CRLF, every brief said STOP right after a sync, no explanation could
+# be submitted, and a submitted one was marked behind by the next sync. LE2
+# writes a repository with CRLF only, syncs it, and goes the agent's way
+# through the bridge (guest\mcp-brief.ps1): the brief has no STOP, the
+# submission is saved, a second sync marks nothing behind, and the brief then
+# names no file as changed. The bridge's first call registers the folder with
+# the backend; the case takes it off again, so Home lists what it did before.
+Test-Case "LE2" "A brief in a CRLF repository does not say STOP" "after a sync of files with CRLF line endings the note's brief has no STOP, submit_note saves, and the next sync marks nothing behind" {
+    Copy-ToGuest -Path (Join-Path $PSScriptRoot "guest\mcp-brief.ps1") -GuestDirectory $script:Vm.GuestDir
+    # The bridge uses the backend that runs; the case also asks it to forget the folder.
+    if (-not (Get-GuestBackendState | Where-Object { $_.Health -eq 200 })) { Start-GuestBackendOutside | Out-Null }
+    $dir = "$guestHome\repos\eol-brief"
+    $run = Invoke-GuestScript -TimeoutSec 600 -Script ("`$dir = '$dir'`n`$brief = '$($script:Vm.GuestDir)\mcp-brief.ps1'`n`$mcp = '$guestTarget\codewiki-mcp.exe'`n" + (@'
+Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force "$dir\src" | Out-Null
+$files = [ordered]@{
+    "Cargo.toml" = "[package]`r`nname = `"eol-brief`"`r`nversion = `"0.1.0`"`r`nedition = `"2021`"`r`n"
+    "src\lib.rs" = "//! Sums and greetings.`r`npub mod greet;`r`n`r`n/// Adds two numbers.`r`npub fn add(a: i32, b: i32) -> i32 {`r`n    a + b`r`n}`r`n"
+    "src\greet.rs" = "/// Who is greeted.`r`npub struct Guest {`r`n    pub name: String,`r`n}`r`n`r`n/// Says hello to a guest.`r`npub fn greet(guest: &Guest) -> String {`r`n    format!(`"hello {}`", guest.name)`r`n}`r`n"
+}
+$plain = New-Object System.Text.UTF8Encoding $false
+foreach ($name in $files.Keys) { [IO.File]::WriteAllText((Join-Path $dir $name), $files[$name], $plain) }
+"crlf in lib.rs: $([IO.File]::ReadAllText("$dir\src\lib.rs").Contains("`r`n"))"
+Set-Location $dir
+function Run($arguments) { & '{{EXE}}' @arguments 2>&1 | ForEach-Object { "$_" } }
+Run @('init') | Out-Null
+"init exit: $LASTEXITCODE"
+Run @('update') | Out-Null
+"update exit: $LASTEXITCODE"
+"--- first brief, then a submission"
+# The brief script runs in this PowerShell, not in one of its own behind a
+# pipe: a backend the bridge has to start would keep that pipe open, and the
+# read of it would never end. It runs as a block made of the file's text: the
+# guest's execution policy refuses to load a script file.
+$briefCode = [scriptblock]::Create((Get-Content -LiteralPath $brief -Raw))
+$first = @(try { & $briefCode -Mcp $mcp -Repo $dir -Submit | ForEach-Object { "$_" } } catch { "result: $($_.Exception.Message)" })
+$first | ForEach-Object { "first $_" }
+$note = ($first | Where-Object { $_ -match '^note: (.+)$' } | ForEach-Object { $Matches[1].Trim() } | Select-Object -First 1)
+"--- two more syncs"
+foreach ($round in 1, 2) {
+    $said = @(Run @('update'))
+    "sync $round exit: $LASTEXITCODE"
+    "sync $round behind lines: $(@($said | Where-Object { $_ -match 'may be behind in ' }).Count)"
+    "sync $round behind count: $(($said | Where-Object { $_ -match 'may be behind: (\d+)' } | ForEach-Object { $Matches[1] }) -join ',')"
+}
+"--- the brief again"
+if ($note) {
+    try { & $briefCode -Mcp $mcp -Repo $dir -Note $note | ForEach-Object { "second $_" } } catch { "second result: $($_.Exception.Message)" }
+} else { "second result: no note to ask for" }
+"--- off the backend's list again"
+try {
+    $backend = Get-Content "$env:LOCALAPPDATA\CodeWiki\backend.json" -Raw | ConvertFrom-Json
+    $headers = @{ Authorization = "Bearer $($backend.token)" }
+    $listed = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 "$($backend.url)/v1/repos" -Headers $headers).Content | ConvertFrom-Json
+    $mine = @($listed | Where-Object { $_.name -eq 'eol-brief' })
+    foreach ($repo in $mine) { Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 -Method Delete "$($backend.url)/v1/repos/$($repo.id)" -Headers $headers | Out-Null }
+    $listed = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 "$($backend.url)/v1/repos" -Headers $headers).Content | ConvertFrom-Json
+    "registered by the bridge: $($mine.Count); still registered: $(@($listed | Where-Object { $_.name -eq 'eol-brief' }).Count)"
+} catch { "unregister failed: $($_.Exception.Message)" }
+$global:LASTEXITCODE = 0
+'@).Replace('{{EXE}}', "$guestTarget\codewiki.exe"))
+    $out = $run.Output
+    $line = { param($key) if ($out -match "(?m)^${key}: (.*)$") { $Matches[1].Trim() } else { "" } }
+    $crlf = (& $line "crlf in lib\.rs") -eq "True"
+    $synced = $out -match "(?m)^update exit: 0" -and $out -match "(?m)^sync 1 exit: 0" -and $out -match "(?m)^sync 2 exit: 0"
+    $note = & $line "first note"
+    $firstStop = & $line "first stop"
+    $submit = & $line "first submit"
+    $behind = $out -match "(?m)^sync 1 behind lines: 0" -and $out -match "(?m)^sync 1 behind count: 0\s*$" -and
+        $out -match "(?m)^sync 2 behind lines: 0" -and $out -match "(?m)^sync 2 behind count: 0\s*$"
+    $secondStop = & $line "second stop"
+    $secondBehind = & $line "second behind"
+    $secondChanged = & $line "second changed files"
+    $left = & $line "registered by the bridge"
+    $ok = $crlf -and $synced -and $note -and $firstStop -eq "False" -and $submit -match "^Saved " -and $behind -and
+        $secondStop -eq "False" -and $secondBehind -eq "False" -and $secondChanged -eq "0"
+    Add-Result -Id "LE2" -Title "A brief in a CRLF repository does not say STOP" -Expect "files with CRLF, synced: the first brief has no STOP and the submission is saved; two more syncs mark no note behind; the brief then has no STOP, is not behind and names no changed file" `
+        -Status $(if ($ok) { "pass" } else { "fail" }) -Output $out `
+        -Observed "CRLF in the file: $crlf; every sync exit 0: $synced; note '$note'; first brief STOP: '$firstStop'; submission: '$submit'; two more syncs mark nothing behind: $behind; brief after them: STOP '$secondStop', behind '$secondBehind', changed files '$secondChanged'; entries of the folder on the backend's list, made by the bridge: $left"
+    Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$dir' -ErrorAction SilentlyContinue" | Out-Null
+}
+
 # Each program keeps a log of its own. By now the app, a backend and the MCP
 # bridge have all run.
 Test-Case "L2" "Every program writes its own log" "app.log, backend.log and mcp.log are in the logs folder, none empty" {
@@ -4137,6 +4322,133 @@ $global:LASTEXITCODE = 0
         Add-Result -Id "AE1" -Title "Auto explaining in a live session" -Expect "the briefing orders codewiki:note-writer; the session launches it; more notes explained by claude-code afterwards" `
             -Status $(if ($ordered -and $countOk -and $launched -and $gained -gt 0) { "pass" } else { "fail" }) -Output ($before.Output + "`n" + $run.Output + "`n" + $after.Output) `
             -Observed "the briefing orders the agent: $ordered, for up to $countOrdered notes with 'Notes per session' at 5 (1 to 5 expected); the session launched codewiki:note-writer: $launched; notes explained by claude-code before $(& $explained $before.Output), after $(& $explained $after.Output); $(($run.Output -split "`n" | Where-Object { $_ -match 'submit_note calls seen' }) -join ''); Claude's answer: '$answer'; the switch is off again"
+    }
+
+    # The same, where every source file has CRLF line endings (0.7.0). The
+    # checkout of cw-core the run copies is mostly LF, so AE1 and D4 never met
+    # the fault 0.6.1 left: a brief compared a file's raw bytes with the hash a
+    # sync had made with CRLF read as LF, said STOP right after a sync, and
+    # the agent could write nothing; a note it had written went behind again
+    # at every sync. AE2 copies cw-core's sources, saves each with CRLF, syncs,
+    # and lets a real session explain up to three notes. No answer of a tool
+    # may say STOP or ask for a sync, the notes must be saved, and two more
+    # syncs may mark none of them behind. LE2 checks the same without a login.
+    Test-Case "AE2" "Auto explaining in a repository with CRLF line endings" "in a copy of cw-core saved with CRLF, the note-writer agent of a live session gets no STOP, saves its notes, and two more syncs mark none behind" {
+        if (-not $signedIn) { throw "Claude Code is not signed in (CC2)" }
+        $crlf = "$guestHome\repos\cw-crlf"
+        $made = Invoke-GuestScript -TimeoutSec 900 -Script (@'
+$source = '{{REPO}}'; $dir = '{{DIR}}'
+Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $dir | Out-Null
+# cw-core's sources without the wiki D2 wrote, every file saved with CRLF.
+Copy-Item "$source\Cargo.toml" $dir
+Copy-Item "$source\src" $dir -Recurse
+if (Test-Path "$source\tests") { Copy-Item "$source\tests" $dir -Recurse }
+$plain = New-Object System.Text.UTF8Encoding $false
+$files = @(Get-ChildItem $dir -Recurse -File | Where-Object { $_.Extension -in '.rs', '.toml' })
+foreach ($file in $files) {
+    $text = [IO.File]::ReadAllText($file.FullName)
+    [IO.File]::WriteAllText($file.FullName, (($text -replace "`r`n", "`n") -replace "`n", "`r`n"), $plain)
+}
+"files: $($files.Count)"
+"files with CRLF: $(@($files | Where-Object { [IO.File]::ReadAllText($_.FullName).Contains("`r`n") }).Count)"
+Set-Location $dir
+& '{{EXE}}' init 2>&1 | Out-Null
+"init exit: $LASTEXITCODE"
+& '{{EXE}}' update 2>&1 | Out-Null
+"update exit: $LASTEXITCODE"
+$global:LASTEXITCODE = 0
+'@).Replace("{{REPO}}", $guestRepo).Replace("{{DIR}}", $crlf).Replace("{{EXE}}", "$guestTarget\codewiki.exe")
+        if (-not (Get-GuestBackendState | Where-Object { $_.Health -eq 200 })) { Start-GuestBackendOutside | Out-Null }
+        Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'on' -NoNewline; Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" '3' -NoNewline" | Out-Null
+        try {
+            $run = Invoke-GuestScript -TimeoutSec 1800 -Script (@'
+Set-Location '{{DIR}}'
+$env:ENABLE_CLAUDEAI_MCP_SERVERS = "false"
+$out = "$env:TEMP\claude-auto-explain-crlf.jsonl"
+& "$env:USERPROFILE\.local\bin\claude.exe" -p "Do what the CodeWiki session-start lines ask about auto explaining, but run that agent in the foreground, not in the background, and wait for its result: this one-shot session ends with your answer, and a background agent would end with it. Then answer with one line: the agent's own last line." --permission-mode default --allowedTools "Agent,Task,Read,Grep,Glob,Skill,mcp__plugin_codewiki_codewiki__*" --output-format stream-json --verbose --max-turns 12 --model haiku 2>&1 | Out-File -Encoding utf8 $out
+"claude exit: $LASTEXITCODE"
+function Cut { param([string]$Text, [int]$Length) $flat = $Text -replace "\s+", " "; $flat.Substring(0, [Math]::Min($Length, $flat.Length)) }
+$briefs = 0; $submits = 0; $syncs = 0; $stops = 0; $refused = 0; $saved = 0
+foreach ($line in Get-Content $out) {
+    try { $event = $line | ConvertFrom-Json } catch { continue }
+    if ($event.type -eq "system" -and $event.subtype -eq "hook_response") {
+        "briefing: $(Cut "$($event.output)" 1600)"
+    } elseif ($event.type -eq "assistant") {
+        foreach ($part in $event.message.content) {
+            if ($part.type -ne "tool_use") { continue }
+            if ($part.name -match '^(Agent|Task)$') { "agent launched: $($part.input.subagent_type)" }
+            elseif ($part.name -match 'get_note_brief$') { $briefs += 1 }
+            elseif ($part.name -match 'submit_note$') { $submits += 1 }
+            elseif ($part.name -match 'sync_wiki$') { $syncs += 1 }
+        }
+    } elseif ($event.type -eq "user") {
+        # What the tools answered, the agent's tools included.
+        foreach ($part in @($event.message.content)) {
+            if ($part.type -ne "tool_result") { continue }
+            $text = if ($part.content -is [string]) { $part.content } else { (@($part.content) | ForEach-Object { $_.text }) -join "`n" }
+            if ($text -match 'STOP: the code under this note changed') { $stops += 1 }
+            if ($text -match 'changed since the last sync') { $refused += 1 }
+            if ($text -match '(?m)^Saved ') { $saved += 1 }
+        }
+    } elseif ($event.type -eq "result") {
+        "result: error $($event.is_error), turns $($event.num_turns), denials $(@($event.permission_denials).Count)"
+        "answer: $(Cut "$($event.result)" 300)"
+    }
+}
+"calls seen: get_note_brief $briefs, submit_note $submits, sync_wiki $syncs"
+"answers seen: STOP $stops, sync first $refused, Saved $saved"
+Remove-Item $out -Force
+$global:LASTEXITCODE = 0
+'@).Replace("{{DIR}}", $crlf)
+        } finally {
+            Invoke-GuestScript -Script "Set-Content `"`$env:LOCALAPPDATA\CodeWiki\auto-explain.txt`" 'off' -NoNewline; Remove-Item `"`$env:LOCALAPPDATA\CodeWiki\auto-explain-count.txt`" -ErrorAction SilentlyContinue" | Out-Null
+        }
+        # What the vault holds now, two more syncs, and the folder off the
+        # backend's list again (the bridge's first call registered it).
+        $after = Invoke-GuestBackendScript -TimeoutSec 900 -Script (@'
+$dir = '{{DIR}}'
+$list = Invoke-Backend GET '/v1/repos' | ConvertFrom-Json
+$repo = @($list | Where-Object { $_.name -eq 'cw-crlf' })[0]
+"registered: $([bool]$repo)"
+if ($repo) {
+    $id = $repo.id
+    $notes = Invoke-Backend GET "/v1/repos/$id/notes" | ConvertFrom-Json
+    $all = @($notes)
+    "explained by claude-code: $(@($all | Where-Object { $_.explained_by -eq 'claude-code' }).Count)"
+    Set-Location $dir
+    foreach ($round in 1, 2) {
+        $said = @(& '{{EXE}}' update 2>&1 | ForEach-Object { "$_" })
+        "sync $round exit: $LASTEXITCODE"
+        "sync $round behind lines: $(@($said | Where-Object { $_ -match 'may be behind in ' }).Count)"
+    }
+    $waiting = (Invoke-Backend GET "/v1/repos/$id/explanations?all=true" | ConvertFrom-Json).waiting
+    "waiting: $($waiting.behind) behind, $($waiting.unexplained) never explained"
+    Invoke-Backend DELETE "/v1/repos/$id" | Out-Null
+    $list = Invoke-Backend GET '/v1/repos' | ConvertFrom-Json
+    "still registered: $(@($list | Where-Object { $_.name -eq 'cw-crlf' }).Count)"
+}
+$global:LASTEXITCODE = 0
+'@).Replace("{{DIR}}", $crlf).Replace("{{EXE}}", "$guestTarget\codewiki.exe")
+        Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$crlf' -ErrorAction SilentlyContinue" | Out-Null
+        $all = $made.Output + "`n" + $run.Output + "`n" + $after.Output
+        $number = { param($pattern) if ($all -match $pattern) { [int]$Matches[1] } else { -1 } }
+        $files = & $number "(?m)^files: (\d+)"
+        $withCrlf = & $number "(?m)^files with CRLF: (\d+)"
+        $prepared = $files -gt 0 -and $files -eq $withCrlf -and $all -match "(?m)^update exit: 0"
+        $ordered = $run.Output -match "(?m)^briefing: .*note-writer"
+        $launched = $run.Output -match "(?m)^agent launched: codewiki:note-writer"
+        $stops = & $number "answers seen: STOP (\d+)"
+        $refused = & $number "answers seen: STOP \d+, sync first (\d+)"
+        $saved = & $number "answers seen: STOP \d+, sync first \d+, Saved (\d+)"
+        $explained = & $number "explained by claude-code: (\d+)"
+        $quiet = $all -match "(?m)^sync 1 exit: 0" -and $all -match "(?m)^sync 1 behind lines: 0" -and $all -match "(?m)^sync 2 exit: 0" -and $all -match "(?m)^sync 2 behind lines: 0"
+        $behind = & $number "(?m)^waiting: (\d+) behind"
+        $answer = if ($run.Output -match "(?m)^answer: (.+)$") { $Matches[1].Trim() } else { "" }
+        $ok = $prepared -and $ordered -and $launched -and $stops -eq 0 -and $refused -eq 0 -and $saved -gt 0 -and $explained -gt 0 -and $quiet -and $behind -eq 0
+        Add-Result -Id "AE2" -Title "Auto explaining in a repository with CRLF line endings" -Expect "every source file has CRLF; the session launches codewiki:note-writer; no tool answers STOP or asks for a sync; notes are saved and explained by claude-code; two more syncs mark none behind" `
+            -Status $(if ($ok) { "pass" } else { "fail" }) -Output $all `
+            -Observed "a copy of cw-core, $withCrlf of $files source files with CRLF, synced: $prepared; the briefing orders the agent: $ordered; launched: $launched; $(($run.Output -split "`n" | Where-Object { $_ -match '^calls seen' }) -join ''); tool answers with STOP: $stops, asking for a sync first: $refused, Saved: $saved; notes explained by claude-code: $explained; two more syncs exit 0 and mark nothing behind: $quiet; notes behind afterwards: $behind; Claude's answer: '$answer'; the switch is off again and the folder is off the backend's list"
     }
 
     Test-Case "CC7" "Remove the plugin as README says" "the plugin and the marketplace are gone" {

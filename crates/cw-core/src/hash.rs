@@ -7,6 +7,26 @@ pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String {
     hex::encode(Sha256::digest(bytes.as_ref()))
 }
 
+/// The hash of a source file, for change detection: the SHA-256 of its bytes
+/// with every CRLF read as LF.
+///
+/// Git hands out the same file with either line ending (`core.autocrlf`, an
+/// `eol` attribute, an editor that saved it), and a wiki is committed and then
+/// read on other machines and checkouts. A hash of the raw bytes called such a
+/// file changed there: its notes were marked behind, and a check that the wiki
+/// is in sync failed for line endings alone. A lone CR stays, and so does
+/// every other byte.
+pub fn source_hash(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    let mut rest = bytes;
+    while let Some(at) = rest.windows(2).position(|pair| pair == b"\r\n") {
+        hasher.update(&rest[..at]);
+        rest = &rest[at + 1..];
+    }
+    hasher.update(rest);
+    hex::encode(hasher.finalize())
+}
+
 /// SHA-256 block size in bytes.
 const BLOCK: usize = 64;
 
@@ -61,6 +81,28 @@ mod tests {
         assert_eq!(
             sha256_hex("abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn a_source_file_hashes_the_same_with_either_line_ending() {
+        let unix = b"fn main() {\n    run();\n}\n";
+        let windows = b"fn main() {\r\n    run();\r\n}\r\n";
+        assert_eq!(source_hash(unix), source_hash(windows));
+        // A file with LF only hashes as its bytes do, so its recorded hash
+        // stays what it was.
+        assert_eq!(source_hash(unix), sha256_hex(unix));
+        assert_eq!(source_hash(b""), sha256_hex(""));
+        // Anything else is a change: a lone CR, a CR that ends the file, a
+        // blank line more.
+        assert_ne!(source_hash(b"a\rb\n"), source_hash(b"ab\n"));
+        assert_ne!(source_hash(b"a\r"), source_hash(b"a"));
+        assert_eq!(source_hash(b"a\r\r\nb"), sha256_hex("a\r\nb"));
+        assert_ne!(source_hash(b"a\n\nb"), source_hash(b"a\nb"));
+        // Bytes that are no text are hashed the same way.
+        assert_eq!(
+            source_hash(&[0xff, 0x00, 0x0d, 0x0a]),
+            sha256_hex([0xff, 0x00, 0x0a])
         );
     }
 

@@ -6,7 +6,7 @@ use std::path::Path;
 
 use cw_core::{
     Edge, Error, FileRecord, Language, Result, Symbol, SymbolKind, VAULT_DIR, Visibility,
-    sha256_hex,
+    source_hash,
 };
 use ignore::WalkBuilder;
 
@@ -268,7 +268,7 @@ pub fn scan_repo(root: &Path) -> Result<RepoFacts> {
         facts.files.push(FileRecord {
             path: path.clone(),
             language,
-            hash: sha256_hex(&bytes),
+            hash: source_hash(&bytes),
             bytes: meta.len(),
             lines: text
                 .as_deref()

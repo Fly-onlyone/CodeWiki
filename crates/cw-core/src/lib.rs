@@ -11,7 +11,7 @@ pub mod secret;
 pub mod settings;
 
 pub use error::{Error, Result};
-pub use hash::{normalize_text, sha256_hex};
+pub use hash::{normalize_text, sha256_hex, source_hash};
 pub use model::*;
 
 /// Crate version, exposed so binaries report one consistent version string.

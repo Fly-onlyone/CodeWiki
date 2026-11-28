@@ -10,10 +10,10 @@ license.workspace = true
 workspace = true
 
 [dependencies]
-cw-embed = { version = "0.6.1", path = "../cw-embed" }
+cw-embed = { version = "0.7.0", path = "../cw-embed" }
 cw-core = { path = "../cw-core" }
 cw-graph = { path = "../cw-graph" }
-cw-illustrate = { version = "0.6.1", path = "../cw-illustrate" }
+cw-illustrate = { version = "0.7.0", path = "../cw-illustrate" }
 cw-index = { path = "../cw-index" }
 cw-parse = { path = "../cw-parse" }
 cw-vault = { path = "../cw-vault" }

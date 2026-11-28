@@ -341,6 +341,52 @@ docker run --rm -p 127.0.0.1:7411:7411 -e CODEWIKI_TOKEN=<secret> -v codewiki-da
 
 Each released version is also pushed as `ghcr.io/fly-onlyone/codewiki:<version>`. Point the app or the MCP program at it with `CODEWIKI_URL=http://127.0.0.1:7411` and the same `CODEWIKI_TOKEN`. Set `CODEWIKI_WEBHOOK_SECRET` to let a git host trigger updates through `POST /v1/hooks/git`.
 
+### GitHub Action
+
+To run CodeWiki in another repository's CI, use the action in this repository. It installs a released CodeWiki on the runner, runs `codewiki check`, and can hold the committed wiki to the code.
+
+```yaml
+jobs:
+  codewiki:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write   # only for the upload below
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0       # hotspots, ownership and change coupling read the history
+      - id: codewiki
+        uses: Fly-onlyone/CodeWiki@action-v1
+        with:
+          wiki: check
+      - if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: ${{ steps.codewiki.outputs.report }}
+          category: codewiki
+```
+
+| Input | Default | What it does |
+|---|---|---|
+| `version` | `latest` | The CodeWiki release to use, as in `0.6.0`. Name one to keep runs the same. |
+| `repo` | `.` | The repository's root, from the workspace. |
+| `check` | `true` | Runs `codewiki check`, every analysis, and writes the report. |
+| `fail-on` | `never` | The lowest level of a finding that fails the job: `note`, `warning`, `error` or `never`. |
+| `format` | `sarif` | The report's format: `sarif`, `junit` or `text`. |
+| `report` | a file in the runner's temporary folder | Where the report is written. |
+| `wiki` | `off` | `check` syncs the wiki in `obsidian/` and fails when the sync changes anything: code changed without its wiki. `update` syncs it, or writes it the first time, and leaves the changes for a later step to commit. |
+
+The outputs are `version`, `report` (the report's path) and `wiki-changed` (`true` or `false`). After the action, `codewiki` is on `PATH` for the steps that follow.
+
+It runs on Linux runners, where it uses the image `ghcr.io/fly-onlyone/codewiki` and so needs Docker (GitHub's runners have it), and on Windows runners, where it takes `codewiki.exe` from the release's zip and checks its checksum. There is no build for macOS runners.
+
+For `wiki: check`:
+
+- Commit `obsidian/` after every change to code: the check fails when the two disagree. A bot that cannot run the sync, such as Dependabot, needs to be left out with an `if:`.
+- CodeWiki counts every file in the checkout. A step that writes a file into it before the action makes the wiki look out of date; write such files elsewhere, or name them in `.codewikiignore`.
+- Up to 0.6.0 a source file is recorded by a hash of its bytes, line endings included. A wiki synced on a machine whose files have other line endings than the runner's checkout fails the check until a release after 0.6.0, which reads CRLF as LF.
+
 ## Develop
 
 ```

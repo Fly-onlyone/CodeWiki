@@ -3773,6 +3773,13 @@ foreach ($round in 1, 2) {
     "sync $round behind lines: $(@($said | Where-Object { $_ -match 'may be behind in ' }).Count)"
     "sync $round behind count: $(($said | Where-Object { $_ -match 'may be behind: (\d+)' } | ForEach-Object { $Matches[1] }) -join ',')"
 }
+"--- the same files with LF, as another checkout has them"
+foreach ($name in $files.Keys) { [IO.File]::WriteAllText((Join-Path $dir $name), ($files[$name] -replace "`r`n", "`n"), $plain) }
+"lf in lib.rs: $(-not [IO.File]::ReadAllText("$dir\src\lib.rs").Contains("`r`n"))"
+$said = @(Run @('update'))
+"lf sync exit: $LASTEXITCODE"
+"lf sync behind lines: $(@($said | Where-Object { $_ -match 'may be behind in ' }).Count)"
+"lf sync behind count: $(($said | Where-Object { $_ -match 'may be behind: (\d+)' } | ForEach-Object { $Matches[1] }) -join ',')"
 "--- the brief again"
 if ($note) {
     try { & $briefCode -Mcp $mcp -Repo $dir -Note $note | ForEach-Object { "second $_" } } catch { "second result: $($_.Exception.Message)" }
@@ -3802,11 +3809,14 @@ $global:LASTEXITCODE = 0
     $secondBehind = & $line "second behind"
     $secondChanged = & $line "second changed files"
     $left = & $line "registered by the bridge"
-    $ok = $crlf -and $synced -and $note -and $firstStop -eq "False" -and $submit -match "^Saved " -and $behind -and
+    # The files saved with LF, as the same commit is on another machine: still nothing behind.
+    $lf = $out -match "(?m)^lf in lib\.rs: True" -and $out -match "(?m)^lf sync exit: 0" -and
+        $out -match "(?m)^lf sync behind lines: 0" -and $out -match "(?m)^lf sync behind count: 0\s*$"
+    $ok = $crlf -and $synced -and $note -and $firstStop -eq "False" -and $submit -match "^Saved " -and $behind -and $lf -and
         $secondStop -eq "False" -and $secondBehind -eq "False" -and $secondChanged -eq "0"
     Add-Result -Id "LE2" -Title "A brief in a CRLF repository does not say STOP" -Expect "files with CRLF, synced: the first brief has no STOP and the submission is saved; two more syncs mark no note behind; the brief then has no STOP, is not behind and names no changed file" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Output $out `
-        -Observed "CRLF in the file: $crlf; every sync exit 0: $synced; note '$note'; first brief STOP: '$firstStop'; submission: '$submit'; two more syncs mark nothing behind: $behind; brief after them: STOP '$secondStop', behind '$secondBehind', changed files '$secondChanged'; entries of the folder on the backend's list, made by the bridge: $left"
+        -Observed "CRLF in the file: $crlf; every sync exit 0: $synced; note '$note'; first brief STOP: '$firstStop'; submission: '$submit'; two more syncs mark nothing behind: $behind; the files saved with LF and synced, nothing behind: $lf; brief after that: STOP '$secondStop', behind '$secondBehind', changed files '$secondChanged'; entries of the folder on the backend's list, made by the bridge: $left"
     Invoke-GuestScript -Script "Remove-Item -Recurse -Force '$dir' -ErrorAction SilentlyContinue" | Out-Null
 }
 

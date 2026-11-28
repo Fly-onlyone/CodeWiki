@@ -7,7 +7,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
-use cw_core::{Error, Result, VAULT_DIR, sha256_hex};
+use cw_core::{Error, Result, VAULT_DIR, sha256_hex, source_hash};
 use cw_index::NodeMetrics;
 use cw_parse::RepoFacts;
 use cw_vault::lifecycle::{self, Action, NoteState};
@@ -1095,7 +1095,11 @@ pub fn generate_with(
                     .map(|hash| hash.to_string())
                     .or_else(|| file_hash(root, &source.path));
                 match now {
-                    Some(hash) if hash == source.hash => None,
+                    Some(hash)
+                        if hash == source.hash || hash_holds(root, &source.path, &source.hash) =>
+                    {
+                        None
+                    }
                     Some(_) => Some(format!("{} changed", source.path)),
                     None => Some(format!("{} is gone", source.path)),
                 }
@@ -1219,9 +1223,9 @@ const MOVED: &str = "the section ";
 /// its subject to another place in the code.
 const CARRIED: &str = "its subject moved from ";
 
-/// The hash of the repository file `path` as it is now, made as a scan
-/// makes it; nothing for a file that is gone or leaves the repository.
-pub(crate) fn file_hash(root: &Path, path: &str) -> Option<String> {
+/// The bytes of the repository file `path`; nothing for a file that is gone
+/// or leaves the repository.
+fn file_bytes(root: &Path, path: &str) -> Option<Vec<u8>> {
     let inside = !path.is_empty()
         && !path.contains(':')
         && !path.starts_with(['/', '\\'])
@@ -1229,7 +1233,22 @@ pub(crate) fn file_hash(root: &Path, path: &str) -> Option<String> {
     if !inside {
         return None;
     }
-    std::fs::read(root.join(path)).ok().map(sha256_hex)
+    std::fs::read(root.join(path)).ok()
+}
+
+/// The hash of the repository file `path` as it is now, made as a scan
+/// makes it; nothing for a file that is gone or leaves the repository.
+pub(crate) fn file_hash(root: &Path, path: &str) -> Option<String> {
+    file_bytes(root, path).map(|bytes| source_hash(&bytes))
+}
+
+/// Whether the repository file `path` is as it was when the vault recorded
+/// `hash` for it. A hash recorded before a scan read CRLF as LF is of the
+/// file's raw bytes: it holds while those bytes stay the same, or every
+/// file with CRLF line endings would read as changed.
+pub(crate) fn hash_holds(root: &Path, path: &str, hash: &str) -> bool {
+    file_bytes(root, path)
+        .is_some_and(|bytes| source_hash(&bytes) == hash || sha256_hex(&bytes) == hash)
 }
 
 /// Which links of a note lead to a note once this run is over.

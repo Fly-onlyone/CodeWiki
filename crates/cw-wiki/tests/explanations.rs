@@ -634,6 +634,68 @@ fn a_sync_that_changes_no_fact_still_lets_the_note_be_written() {
     assert!(matches!(submit(root, PRICE, &sent), Outcome::Saved { .. }));
 }
 
+/// Give the repository file `rel` CRLF line endings, as git hands it out on
+/// Windows with `core.autocrlf`.
+fn to_crlf(root: &Path, rel: &str) {
+    let text = read(root, rel).replace('\n', "\r\n");
+    write(root, rel, &text);
+}
+
+/// Explain `Price` from a checkout whose files have CRLF line endings, the
+/// agent having read the file of `OrderBook` too.
+fn explain_price_from_crlf(root: &Path) {
+    to_crlf(root, "crates/engine/src/pricing.rs");
+    to_crlf(root, "crates/engine/src/book.rs");
+    sync(root);
+    // The facts were made from the files as they are, so nothing waits for
+    // a sync.
+    assert!(!explanations::brief(root, PRICE).unwrap().sync_first);
+    let mut sent = submission(root, PRICE, &[("Gotchas", GOTCHA)]);
+    sent.read = vec!["crates/engine/src/book.rs".into()];
+    assert!(matches!(submit(root, PRICE, &sent), Outcome::Saved { .. }));
+}
+
+#[test]
+fn a_file_with_crlf_line_endings_holds_up_no_note() {
+    let dir = repo();
+    let root = dir.path();
+    explain_price_from_crlf(root);
+    // What the agent read was recorded as a scan hashes it: nothing is
+    // behind, and no file reads as changed.
+    assert!(sync(root).behind.is_empty());
+    let brief = explanations::brief(root, PRICE).unwrap();
+    assert!(!brief.sync_first);
+    assert!(brief.sources.iter().all(|s| !s.changed));
+}
+
+#[test]
+fn an_explanation_recorded_from_raw_bytes_is_behind_only_when_they_change() {
+    let dir = repo();
+    let root = dir.path();
+    explain_price_from_crlf(root);
+    // Before CRLF was read as LF, a hash was of the file's raw bytes, and
+    // the wiki kept it so.
+    let vault = root.join("obsidian");
+    let mut meta = VaultMeta::load(&vault).unwrap();
+    let id = meta.by_path(PRICE).unwrap().id.clone();
+    let explained = meta.notes.get_mut(&id).unwrap().explained.as_mut().unwrap();
+    for source in &mut explained.sources {
+        source.hash = cw_core::sha256_hex(fs::read(root.join(&source.path)).unwrap());
+    }
+    meta.save(&vault).unwrap();
+
+    // The bytes are the same, so the explanation is not behind.
+    assert!(sync(root).behind.is_empty());
+    let brief = explanations::brief(root, PRICE).unwrap();
+    assert!(brief.sources.iter().all(|s| !s.changed));
+
+    // A change to them still is.
+    let book = read(root, "crates/engine/src/book.rs")
+        .replace("self.best = price;", "self.best = price; let _ = 0;");
+    write(root, "crates/engine/src/book.rs", &book);
+    assert_eq!(sync(root).behind, [PRICE]);
+}
+
 #[test]
 fn pictures_follow_the_sections_that_are_sent() {
     let dir = repo();

@@ -23,7 +23,7 @@ use cw_vault::proposal::{self, Offer, ProposalKind};
 use cw_vault::{Explained, NoteEntry, NoteKind, Origin, Section, SourceRef, VaultMeta, body_hash};
 use serde::{Deserialize, Serialize};
 
-use crate::generate::{file_hash, illustration_path};
+use crate::generate::{file_hash, hash_holds, illustration_path};
 use crate::query::{find_entry, title_of};
 
 /// Notes a queue lists when the caller names no number.
@@ -335,7 +335,7 @@ fn changed_since_sync(root: &Path, entry: &NoteEntry) -> Vec<String> {
     entry
         .sources
         .iter()
-        .filter(|s| !s.hash.is_empty() && file_hash(root, &s.path).as_deref() != Some(&s.hash))
+        .filter(|s| !s.hash.is_empty() && !hash_holds(root, &s.path, &s.hash))
         .map(|s| s.path.clone())
         .collect()
 }
@@ -413,9 +413,8 @@ pub fn brief(root: &Path, path_or_name: &str) -> Result<Brief> {
             .map(|s| s.hash.as_str());
         sources.push(BriefSource {
             path: source.path.clone(),
-            changed: then.is_some_and(|then| {
-                !then.is_empty() && file_hash(root, &source.path).as_deref() != Some(then)
-            }),
+            changed: then
+                .is_some_and(|then| !then.is_empty() && !hash_holds(root, &source.path, then)),
         });
     }
     Ok(Brief {

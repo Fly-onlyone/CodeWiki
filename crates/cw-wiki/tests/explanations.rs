@@ -697,6 +697,44 @@ fn an_explanation_recorded_from_raw_bytes_is_behind_only_when_they_change() {
 }
 
 #[test]
+fn a_sync_renews_a_raw_byte_hash_so_another_checkout_agrees() {
+    let dir = repo();
+    let root = dir.path();
+    explain_price_from_crlf(root);
+    // The wiki kept hashes of raw bytes, taken from files with CRLF.
+    let vault = root.join("obsidian");
+    let mut meta = VaultMeta::load(&vault).unwrap();
+    let id = meta.by_path(PRICE).unwrap().id.clone();
+    let explained = meta.notes.get_mut(&id).unwrap().explained.as_mut().unwrap();
+    for source in &mut explained.sources {
+        source.hash = cw_core::sha256_hex(fs::read(root.join(&source.path)).unwrap());
+    }
+    meta.save(&vault).unwrap();
+
+    // A sync where the files still have those bytes records them as a scan
+    // hashes them.
+    assert!(sync(root).behind.is_empty());
+    let meta = VaultMeta::load(&vault).unwrap();
+    let explained = meta.notes[&id].explained.as_ref().unwrap();
+    assert!(!explained.sources.is_empty());
+    for source in &explained.sources {
+        let bytes = fs::read(root.join(&source.path)).unwrap();
+        assert_eq!(source.hash, cw_core::source_hash(&bytes), "{}", source.path);
+    }
+
+    // The same commit checked out with LF line endings, as on a CI runner:
+    // nothing changed, so nothing is behind.
+    for rel in ["crates/engine/src/pricing.rs", "crates/engine/src/book.rs"] {
+        let text = read(root, rel).replace("\r\n", "\n");
+        write(root, rel, &text);
+    }
+    assert!(sync(root).behind.is_empty());
+    let brief = explanations::brief(root, PRICE).unwrap();
+    assert!(!brief.sync_first);
+    assert!(brief.sources.iter().all(|s| !s.changed));
+}
+
+#[test]
 fn pictures_follow_the_sections_that_are_sent() {
     let dir = repo();
     let root = dir.path();

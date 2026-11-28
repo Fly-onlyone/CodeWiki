@@ -1076,7 +1076,7 @@ pub fn generate_with(
             }
         }
 
-        let Some(explained) = &entry.explained else {
+        let Some(explained) = &mut entry.explained else {
             entry.behind.clear();
             // A note its owner changed is not in the agents' queue: what
             // an agent wrote for it would only be a proposal.
@@ -1086,25 +1086,23 @@ pub fn generate_with(
         };
         // The explanation was written from files. One that reads otherwise
         // now may have made it wrong; only an agent can tell.
-        let mut behind: Vec<String> = explained
-            .sources
-            .iter()
-            .filter_map(|source| {
-                let now = file_hashes
-                    .get(source.path.as_str())
-                    .map(|hash| hash.to_string())
-                    .or_else(|| file_hash(root, &source.path));
-                match now {
-                    Some(hash)
-                        if hash == source.hash || hash_holds(root, &source.path, &source.hash) =>
-                    {
-                        None
-                    }
-                    Some(_) => Some(format!("{} changed", source.path)),
-                    None => Some(format!("{} is gone", source.path)),
-                }
-            })
-            .collect();
+        let mut behind: Vec<String> = Vec::new();
+        for source in &mut explained.sources {
+            let now = file_hashes
+                .get(source.path.as_str())
+                .map(|hash| hash.to_string())
+                .or_else(|| file_hash(root, &source.path));
+            match now {
+                Some(hash) if hash == source.hash => {}
+                // Recorded from the file's raw bytes, which it still has.
+                // Those bytes differ in a checkout with other line endings,
+                // where the record would hold no longer: it takes the hash
+                // every checkout makes.
+                Some(hash) if hash_holds(root, &source.path, &source.hash) => source.hash = hash,
+                Some(_) => behind.push(format!("{} changed", source.path)),
+                None => behind.push(format!("{} is gone", source.path)),
+            }
+        }
         // A section that moved, a subject that moved and a link that became
         // plain words stay a reason until an agent writes again.
         behind.extend(

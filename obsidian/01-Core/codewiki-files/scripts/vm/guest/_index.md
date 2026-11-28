@@ -8,7 +8,7 @@ tags: [moc, core, guest]
 
 ## Notes
 
-- [[Guest Folder]] — PowerShell source folder `scripts/vm/guest` of `CodeWiki` with 8 source files, mapped at file level.
+- [[Guest Folder]] — PowerShell source folder `scripts/vm/guest` of `CodeWiki` with 9 source files, mapped at file level.
 
 ## See also
 

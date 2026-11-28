@@ -8,7 +8,7 @@ tags: [moc, core, codewiki-files]
 
 ## Notes
 
-- [[CodeWiki (codewiki-files)]] — PowerShell and Batch source of the repository with 20 source files, mapped at file level.
+- [[CodeWiki (codewiki-files)]] — PowerShell and Batch source of the repository with 21 source files, mapped at file level.
 
 ## Folders
 

@@ -6,7 +6,7 @@ tags: [moc, home]
 
 A graph-linked tour of the codebase. **Start with the architecture flows**, then drill into crates, modules and patterns.
 
-> **CodeWiki** is a Rust codebase of 17 crates and 366 source files. This vault maps its architecture, modules and conventions.
+> **CodeWiki** is a Rust codebase of 17 crates and 386 source files. 21 source files in PowerShell and Batch are mapped at file level: CodeWiki has no parser for them yet. This vault maps its architecture, modules and conventions.
 
 ## 🧭 Start here — Architecture flows
 
@@ -17,7 +17,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 
 → [[00-Architecture/_index|All architecture concepts]]
 
-## 🦀 Core
+## 📦 Core
 
 - [[01-Core/codewiki-app/_index|codewiki-app/]] — CodeWiki desktop app for Windows.
 - [[01-Core/codewiki-mcp/_index|codewiki-mcp/]] — MCP stdio bridge between coding agents and the CodeWiki backend.
@@ -36,6 +36,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 - [[01-Core/cw-vault/_index|cw-vault/]] — Obsidian vault model for CodeWiki: notes, manifest, name registry, linter, lifecycle and proposals.
 - [[01-Core/cw-wiki/_index|cw-wiki/]] — concept selection and wiki generation pipeline for CodeWiki.
 - [[01-Core/openui-lang/_index|openui-lang/]] — parser and static evaluator for OpenUI Lang.
+- [[01-Core/codewiki-files/_index|CodeWiki/]] — PowerShell and Batch source of the repository with 21 source files, mapped at file level.
 
 ## 🔌 External Integrations
 
@@ -43,7 +44,7 @@ A graph-linked tour of the codebase. **Start with the architecture flows**, then
 
 ## 🧩 Patterns
 
-→ [[04-Patterns/_index|All patterns]] — Implementing Embedder Pattern, Implementing PackageInfo Pattern.
+→ [[04-Patterns/_index|All patterns]] — Implementing Embedder Pattern, Implementing PackageInfo Pattern, Implementing TestLanguage Pattern.
 
 ## 🛠️ Operations
 

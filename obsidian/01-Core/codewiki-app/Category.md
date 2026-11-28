@@ -38,6 +38,7 @@ Members:
 
 - [[codewiki-app]] — from `Page`, `open_settings`, `open_startup_view`, `settings_frame`
 - [[Palette Module]] — from `Command`, `actions`
+- [[Ready Module]] — from `kind`
 - [[Settings Pages Module]] — from `page`
 - [[Settings View Module]] — from `State`
 - [[Action]] — from `Action`

@@ -920,6 +920,11 @@
     "kind": "concept"
   },
   {
+    "id": "mod:codewiki_app::ready",
+    "path": "01-Core/codewiki-app/Ready Module.md",
+    "kind": "concept"
+  },
+  {
     "id": "mod:cw_wiki::refactor",
     "path": "01-Core/cw-wiki/Refactor Module.md",
     "kind": "concept"

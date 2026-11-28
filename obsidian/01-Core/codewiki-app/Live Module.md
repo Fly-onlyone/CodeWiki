@@ -47,13 +47,13 @@ Search hits go through `hit_groups`, which sorts them under Notes, Symbols and F
 - `pub fn agent_view_line(left_out: &[String]) -> String` — the line above a note in the agent view: what the view is, and what it leaves out of the note.
 - `pub fn explanation_lines(explanation: &str, by: &str, behind: &[String]) -> Vec<String>` — what the details pane says about a note's explanation, a line for each string: who wrote it, and why it may be behind. `explanation` is the backend's word for where it stands. Nothing for a note no agent explains.
 - `pub fn message_page(message: &str) -> Doc` — A page that only says something, such as that there is no wiki yet.
-- `pub enum Kept` — whether coding agents are kept out of a project's registered folder.
 - `pub fn kept_by(entries: &[PathBuf], folder: &str) -> Kept` — how `entries` keep agents out of `folder`. A parent entry wins over the folder's own: removing the own entry would leave the folder kept. It looks at the file system (a link is followed), so the app works it out when Home's data is refreshed, never while a page is built.
+- `pub fn home_has_search<'a>(mut paths: impl Iterator<Item = &'a str>, recent: &[String]) -> bool` — whether Home shows its search field. The search finds the projects opened before, so it needs one: a folder of `paths`, the projects Home lists, that is in `recent`. The app asks too, before it gives the field the focus: a field that is not drawn would take the keys from everything.
 - `pub fn home_page(home: &HomeInput) -> Doc` — the page the app starts on: a way to open a folder, and every registered repository, the ones opened most recently first.
 - `pub fn recent_matches(projects: &[Project], recent: &[String], query: &str) -> Vec<HitTarget>` — what Home's search suggests for `query`, ignoring case: the projects of `recent` whose name holds it, then those whose folder matches it (`path_matches`), each newest first. A folder that is not among `projects`, the registered ones that are there, is left out, and so is every project never opened in the app.
 - `pub fn offline_page(log: &str, logs: &str, remote: Option<&str>) -> Doc` — the page shown when no backend could be reached: that the app keeps looking for one, where its log is, and a button that tries again at once. `remote` is the address of the backend saved in the settings, when that is the one that did not answer. The app does not go back to a backend on this machine by itself, which would show other wikis or none; the page offers it.
 
-And 19 more items.
+And 22 more items.
 
 ## Depends on
 

@@ -31,6 +31,7 @@ Three blocks need more than the page. `Progress` draws a label, a bar and a deta
 ## Items
 
 - `pub type OnAction = Rc<dyn Fn(&Action, &mut Window, &mut App)>` — what a link, row or button of a page does when used.
+- `pub type Shortcuts = Rc<dyn Fn(Div) -> Div>` — gives the page's root the app's shortcut handlers. The shell draws the page beside the app, so a focused input or button in it is not under the app's root, which is where the shortcuts are handled.
 - `pub type OnSelect = Rc<dyn Fn(SelectRequest, &mut Window, &mut App)>` — what a click on a select does: its owner opens the list.
 - `pub(crate) const TILE_MIN: f32` — the narrowest a stat tile or a theme card gets before the row wraps.
 - `pub struct Controls` — what the blocks that hold live controls need from the view that owns them: the text inputs, and the list of a select. Only a page drawn with `column` has these. The page view, `DocPage`, is drawn by the shell from its cache, which suits a report that is read; a text input and a menu belong to the view that handles their events.
@@ -45,13 +46,12 @@ Three blocks need more than the page. `Progress` draws a label, a bar and a deta
 - `pub struct DocPage` — A generated page as a view of its own, so that it can be drawn cached. The page is a list of strips, and the list builds only the strips on screen. A table of two hundred rows then costs what the thirty in view cost, on every frame of a scroll, a hover or an entrance.
 - `fn draw(block: &Block, path: &str, page: &Page, window: &mut Window, cx: &mut App) -> AnyElement` — private function, returns `AnyElement`; called by `column`, `draw_strip`.
 - `column` — A short page drawn whole, with live controls: a category of the settings. The caller scrolls it.
-- `row` — `setting_row`, with the choice of how wide the control's side is: `fill` gives it all the room that is left, for a value that is shown and may be long, such as a folder.
 - `pub fn choice_tint(choice: &Choice, cx: &App) -> Option<Hsla>` — the color of a choice's icon. A theme's icon is in a color of that theme, as in the theme menu; any other takes the hue its kind has everywhere.
 - `fn line(spans: &[Span], path: &str, page: &Page, cx: &App) -> AnyElement` — A line of spans as one run of text that wraps, with its links live.
 - `pub fn stat_tile(stat: &Stat, id: ElementId, cx: &App) -> Div` — TradingAgent's metric tile: a label, a large figure that counts up when the tile appears, and a note under it. `id` names the tile.
 - `draw_table` — A whole table in one card: for a short table, or one inside a card.
 
-And 31 more items.
+And 32 more items.
 
 ## Depends on
 
@@ -61,8 +61,8 @@ And 31 more items.
 - [[Surfaces Module]] — uses `CARD_PADDING`, `card`, `card_content`, `card_piece`
 - [[Switch Module]] — uses `INSET`, `new`, `on`, `on_change`
 - [[Settings Layout Module]] — uses `CONTROL_WIDTH`, `LABEL_WIDTH`, `ROW_GAP`, `ROW_SPACING`
-- [[Button Module]] — uses `contained`, `error`, `new`
 - [[Text Field Module]] — uses `HEIGHT`, `helper`, `new`
+- [[Reading Module]] — uses `WIDE_MEASURE`, `gutter`, `link_hover`
 
 ## Used by
 

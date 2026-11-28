@@ -4,7 +4,7 @@ tags: [core, codewiki-files, folder]
 
 # Scripts Folder
 
-> PowerShell and Batch source folder `scripts` of `CodeWiki` with 20 source files, mapped at file level.
+> PowerShell and Batch source folder `scripts` of `CodeWiki` with 21 source files, mapped at file level.
 
 ## Source
 
@@ -20,11 +20,11 @@ tags: [core, codewiki-files, folder]
 
 Folder `scripts`, in [[CodeWiki (codewiki-files)]].
 
-Holds 20 source files with 8291 lines in 3 folders: 18 in PowerShell and 2 in Batch.
+Holds 21 source files with 10585 lines in 3 folders: 19 in PowerShell and 2 in Batch.
 
 Folders below:
 
-- [[Vm Folder]] — 13 source files, 7576 lines
+- [[Vm Folder]] — 14 source files, 9870 lines
 
 Files:
 

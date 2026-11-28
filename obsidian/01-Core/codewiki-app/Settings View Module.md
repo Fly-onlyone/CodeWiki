@@ -54,7 +54,7 @@ The list of folders kept from coding agents is read by the app from the data fol
 
 ## Used by
 
-- [[codewiki-app]] — from `AppView`, `commit_settings_field`, `load_embed_job`, `main`
+- [[codewiki-app]] — from `AppView`, `announce_page`, `commit_settings_field`, `load_embed_job`
 
 ## Gotchas
 

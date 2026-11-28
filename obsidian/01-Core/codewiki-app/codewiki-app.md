@@ -65,6 +65,7 @@ Modules:
 - [[Panes Module]] — the two side panes: whether each is shown.
 - [[Prefs Module]] — small per-user settings, one value per file under `%APPDATA%\CodeWiki` (`CodeWiki-Dev` for a development build, `cw_core::paths::APP_FOLDER`).
 - [[Reading Module]] — typography of the reading pane.
+- [[Ready Module]] — the lines the app writes to its log when a page has been drawn with its data.
 - [[Review Module]] — the review queue as the app keeps it: the pending proposals, which of them are selected, which opens after a decision, and what the user is told.
 - [[Review View Module]] — the review page as the app's view draws and runs it.
 - [[Settings Module]] — what the Settings page is made of, apart from how it is drawn: its categories, the fields a user types into, and the news shown beside one.
@@ -86,9 +87,9 @@ Modules:
 
 Defined at the crate root:
 
+- `fn shortcuts<E: InteractiveElement>(el: E, view: WeakEntity<AppView>) -> E` — gives `el` the handlers of the app's shortcuts, which run on the app's view. The app's own root has them, and so does the generated page, which the shell draws beside the app: an input or a button focused there is not under the root, and without them every shortcut stayed dead until a click elsewhere moved the focus.
 - `const SYNCING: &str` — the busy line while this app syncs a wiki.
 - `const MIN_WINDOW: (f32, f32)` — the smallest window: the sidebar, the details pane, and a reading pane about as wide as the two together.
-- `const SCREEN_MARGIN: f32` — kept free around the first window on a screen it would otherwise fill. A window as large as the free area has its unseen frame, and with it a few pixels of the title bar, outside the screen.
 - `const WIKI_MAP: &str` — the vault's map note, which the app calls "Wiki map".
 - `enum Landing` — where the app goes once a repository's notes have loaded.
 - `struct Tab` — A tab that is not on screen. The active tab's page and history live in the view itself; its slot is refreshed when the user leaves it.
@@ -105,23 +106,24 @@ Defined at the crate root:
 - `recent_menu_entries` — A theme as a row of a menu: its icon in a color of its own, its name, a sample of its four colors, and a mark on the one in use. The toolbar's theme menu and the theme select of the settings list themes with it, so that a theme looks the same in both. What the toolbar's Open recent menu lists: the registered repositories of `recent`, newest first, by id and label, without the open one `current`, and at most as many as the tray's Recent menu.
 - `enum ToolbarFit` — how much of the toolbar shows. Its buttons with labels need more room than a window about 1000 px wide leaves it, or one at 125% zoom: they ran past its right edge, and Sync, Review and To explain could not be reached.
 - `const SEARCH_HINT: &str` — the search field's placeholder, whole and short.
-- `fn main()` — private function.
+- `fn main()` — private function; called by `listed`.
 
-And 42 more items.
+And 43 more items.
 
 ## Depends on
 
 - [[Review Module]] — uses `Click`, `Item`, `State`, `Targets`
 - [[Live Module]] — uses `HomeInput`, `Kept`, `OPEN`, `Project`
 - [[Graph Module (codewiki-app)]] — uses `Camera`, `DETAIL_LIMIT`, `GraphData`, `cell_size`
+- [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
 - [[Doc View Module]] — uses `Controls`, `DocPage`, `OnAction`, `PageSlot`
 - [[Menu Module]] — uses `AnchorBounds`, `Menu`, `MenuItem`, `MenuSection`
-- [[Settings View Module]] — uses `JOB_PAUSE`, `LOG_LEVEL_PREF`, `OpenMenu`, `State`
 - [[Supervisor]] — uses `Supervisor`, `default`, `due`, `failed`
 - [[Glass Module]] — uses `FADE`, `Levels`, `OPAQUE`, `chrome`
 
 ## Used by
 
+- [[Ready Module]] — from `kind`
 - [[Review View Module]] — from `empty_review`
 - [[Settings View Module]] — from `new`
 

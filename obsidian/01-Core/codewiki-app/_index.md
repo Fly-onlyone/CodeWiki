@@ -4,7 +4,7 @@ tags: [moc, core, codewiki-app]
 
 # Core / codewiki-app — Map of Content
 
-> Notes for `codewiki-app`: 57 concepts.
+> Notes for `codewiki-app`: 58 concepts.
 
 ## Notes
 
@@ -44,6 +44,7 @@ tags: [moc, core, codewiki-app]
 - [[Panes Module]] — the two side panes: whether each is shown.
 - [[Prefs Module]] — small per-user settings, one value per file under `%APPDATA%\CodeWiki` (`CodeWiki-Dev` for a development build, `cw_core::paths::APP_FOLDER`).
 - [[Reading Module]] — typography of the reading pane.
+- [[Ready Module]] — the lines the app writes to its log when a page has been drawn with its data.
 - [[Review Module]] — the review queue as the app keeps it: the pending proposals, which of them are selected, which opens after a decision, and what the user is told.
 - [[Review View Module]] — the review page as the app's view draws and runs it.
 - [[Settings Layout Module]] — the measures of the Settings page that are a matter of taste.

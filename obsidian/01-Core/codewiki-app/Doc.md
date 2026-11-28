@@ -33,7 +33,7 @@ Declared as `pub struct Doc`.
 
 Members:
 
-- `pub fn new(title: impl Into<String>) -> Self` — public method, returns `Self`; called by `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page` and 19 more.
+- `pub fn new(title: impl Into<String>) -> Self` — public method, returns `Self`; called by `contracts_page`, `coupling_page`, `coverage_page`, `dead_code_page` and 20 more.
 - `pub fn lead(mut self, lead: impl Into<String>) -> Self` — public method, returns `Self`.
 - `pub fn push(&mut self, block: Block)` — public method; called by `Doc::actions`, `Doc::heading`, `Doc::text`, `Doc::words` and 2 more.
 - `pub fn heading(&mut self, title: impl Into<String>)` — public method.

@@ -22,11 +22,11 @@ Small helpers read the JSON. `string` gives an empty text for a missing field, `
 
 Search hits go through `hit_groups`, which sorts them under Notes, Symbols and Files, then by the backend's ranking. `hit_target` decides what a hit opens, and `plain_snippet` strips Markdown from a snippet. The suggestions in [[Suggest Module]] share this code.
 
-`home_page` puts the logo first. It adds an alert when a newer release waits, and another when the open repository has no wiki yet. The search block appears only when a registered project was opened in the app before (`home_has_search`). Then come the Open folder row, the projects newest first (`by_recency`), and the projects whose folder is missing, each with a Remove button. Each project row shows how agents are kept out (`Kept`). `recent_matches` feeds Home's search: names first, then folders (`path_matches`), newest first, at most `RECENT_MATCHES`.
+`proposal_page` shows one review proposal as a diff, with an alert that says whether a sync or a coding agent proposed it and how many pictures approving adds. A proposal of kind retire goes to `retire_page`: it lists the notes that name only gone files, and warns that approving deletes the ticked ones.
 
-`waiting_page` shows the notes that wait for a coding agent. Its top alert depends on the auto explain choice: all notes, a number of notes, or off. Rows say whether a note is behind the code or never explained, and whether an agent is writing it now. `explanation_lines` and `agent_view_line` give the details pane its lines about who wrote a note and what the agent view leaves out.
+`home_page` puts the logo first. It adds an alert when a newer release waits, and another when the open repository has no wiki yet. The search block appears only when a registered project was opened in the app before (`home_has_search`). Then come the Open folder row, the projects newest first (`by_recency`), and a Folder not found list for projects whose folder is away, each with a Remove button. A project row shows open now, worktree of, its number of worktrees, and how agents are kept out (`Kept`). `recent_matches` feeds Home's search: names first, then folders (`path_matches`), newest first.
 
-`kept_by` checks the file system and answers with `Kept`: open, kept by its own entry, by a parent's entry, or containing an entry.
+`waiting_page` shows the notes that wait for a coding agent. `explanation_lines` and `agent_view_line` give the details pane its lines. `kept_by` checks the file system and answers with `Kept`.
 
 ## Items
 
@@ -77,6 +77,8 @@ And 22 more items.
 - `kept_by` reads the file system and follows links. Call it when Home's data is refreshed, never while a page is built, since Home is built every frame.
 - A parent entry wins over a folder's own entry in `kept_by`, because removing the own entry would leave the folder kept.
 - `waiting_count` is 0 until the queue has been read, and `waiting_page` takes `None` while it is being read.
+- Home's search matches a folder path only where a folder name or a word in it starts with the query, so a short query does not match every path through `AppData`. A query with a slash matches anywhere in the path.
+- A linked worktree has no row of its own. It shows only as a count on its project, or while it is the open repository.
 - The offline page does not return to a backend on this machine by itself. It offers a button, because that backend could show other wikis or none.
 
 ## See also

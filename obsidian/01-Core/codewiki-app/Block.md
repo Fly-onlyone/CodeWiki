@@ -18,7 +18,7 @@ There are blocks for text (heading, paragraph, list, code), data (stats, table, 
 
 ## How it works
 
-A page function builds a `Doc` and calls `push` for each block. A `Card` holds a list of blocks in `body`, so blocks nest one level through cards. Anything a user can press carries an [[Action]]. The view sends that action back to the app, which decides what to do.
+A page function builds a `Doc` and calls `push` for each block. A `Card` holds a list of blocks in `body`, so blocks nest through cards. Anything a user can press carries an [[Action]]. The view sends that action back to the app, which decides what to do.
 
 Setting blocks carry no value of their own in two cases. A `Field` has an id, a [[FieldId]], and its text lives in the input the app keeps for that id. A `Secret` has an id and a `SecretState`, and never holds the secret. A setting can say why it cannot be changed, in `locked`. A `Select`, `Field` or `Secret` may also carry a settings `Note`.
 

@@ -29,15 +29,15 @@ Imported by 37 source files. Main users:
 
 ## Wire-up
 
-The version is pinned exactly in the app's manifest, because the API changes between releases. Files import the pieces they need from `gpui_kit`, from `gpui_kit::component` (theme, icons, inputs, title bar), `gpui_kit::base` (markdown and motion) and `gpui_kit::prelude`.
+The version is pinned exactly in the app's manifest (`=0.9.1`), because the API changes between releases. Files import the pieces they need from `gpui_kit`, from `gpui_kit::component` (theme, icons, inputs, title bar), `gpui_kit::base` (markdown, text and motion) and `gpui_kit::prelude`.
 
 In `main`, the app is built with `gpui_kit::application().with_assets(icons::AppAssets)`. Inside `run` the setup order is: `gpui_kit::init`, then the app's `motion`, `backdrop` and `tab_prefs` init, then `fonts::register`, then `themes::init`, then `zoom::init`. The fonts are registered before any theme is applied. Zoom comes after the themes because it reads the theme's sizes as its 100% sizes. The zoom actions and the key bindings are bound to the app with `cx.on_action` and `cx.bind_keys`.
 
-The window is opened with `gpui_kit::open_window` and the Windows Mica backdrop. The [[Icons Module]] supplies `AppAssets`. It serves the app's own SVG icons and logo first, then falls back to the kit's default assets. The [[Glass Module]] and the [[Backdrop Module]] read the active theme and draw see-through surfaces over Mica.
+The window is opened with `gpui_kit::open_window` and the Windows Mica backdrop. The [[Icons Module]] supplies `AppAssets`. It serves the app's own Material SVG icons and its logo PNG first, then falls back to the kit's default assets. The [[Glass Module]] and the [[Backdrop Module]] read the active theme and draw see-through surfaces over Mica.
 
 Home's search field is a kit `InputState` that the app owns. The [[Doc View Module]] draws it and catches the kit's `Escape`, `MoveUp` and `MoveDown` actions before the input uses them.
 
-The note's body is a kit `TextViewState`, owned by the app (`Reader`, and the preview of the editor). The app reads its headings and where each block starts, and scrolls its list, to build the outline (see [[Outline Module]]). The release of the kit's base crate has no such calls, so the workspace patches `gpui-base` with a copy in the `vendor` folder.
+The note's body is a kit `TextViewState`, owned by the app (`Reader`, and the preview of the editor). The app reads its headings and where each block starts, and scrolls its list, to build the outline (see [[Outline Module]]). It also hands the kit a hover look for links: `reading::sync_link_hover` sets `LinkHoverStyle` from the active theme. The release of the kit's base crate has neither, so the workspace patches `gpui-base` with a copy in the `vendor` folder (`[patch.crates-io]` in the root manifest).
 
 ## Auth mode
 
@@ -46,11 +46,11 @@ No sign-in. It is a local library with no network access.
 ## Gotchas
 
 - The version is pinned with `=`. Changing it can break many files at once, so upgrade it on purpose and rebuild everything.
-- The outline depends on the patched `gpui-base` in `vendor`: its `headings` and `block_top` do not exist in the published crate. After a kit upgrade, drop the patch or port it again.
+- The outline and the link hover look depend on the patched `gpui-base` in `vendor`: `headings`, `block_top` and `LinkHoverStyle` do not exist in the published crate. After a kit upgrade, drop the patch or copy the new release and port it again. The root manifest says the link look was asked of the kit upstream.
 - A font family that the text system does not list falls back to the system font without an error. `fonts::register` warns about this only in debug builds, and a test compares the family names with the themes.
 - The toolkit paints the theme background over the whole window, which hides the backdrop. After opening the window, `main` clears the root's background to transparent.
 - The toolkit cannot blur content inside a window. The glass look comes from the window backdrop plus partly transparent colors, so check text contrast against each theme.
-- The kit's own components draw a few Lucide icons. Those load only because `AppAssets` falls back to the kit's assets. Do not drop that fallback.
+- The kit's own components draw a few Lucide icons. Those load only because `AppAssets` falls back to the kit's assets, and a test checks it. Do not drop that fallback. An unknown icon path is an error, not a blank.
 - `main.rs` imports `gpui_kit::*`, so a name clash is easy to cause when adding a type with a common name.
 
 ## See also

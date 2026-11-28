@@ -20,16 +20,15 @@ This is the engine that turns scanned code into a vault of notes. It runs the sa
 
 - Load the manifest. `adopt_existing` registers Markdown notes on disk the manifest does not know. Their kind comes from file name or tags, and their sources from the backticked paths in their Source section.
 - Ask the plan module which notes should exist. Files covered by adopted notes get no new notes.
-- Follow subjects. `carry_moves` gives a note whose type, module or pattern moved to the new planned note, when git saw the move or exactly one old and one new note share kind and name. `follow_units` moves notes into the folder of a renamed unit. File renames wait until the drafts are sound.
+- Follow subjects. `carry_moves` gives a note whose type, module or pattern moved to the new planned note, when git saw the move or exactly one old and one new note share kind and name. `follow_units` moves notes into the folder of a renamed unit.
 - Freeze names. Existing notes keep their paths. New notes get a free name from the registry.
 - Judge hand-written notes. One that names only paths that are gone is queued, with the others, in one retire proposal; none is deleted by a run.
 - Render every draft and lint it in strict mode. Any lint error aborts the whole run (the first 20 are shown).
-- Mark notes CodeWiki wrote whose subject is gone. One with written work goes only when git can bring it back and the deletion is committed; otherwise it stays, marked `gone`.
-- For each planned note, hash the draft with the template version. A new note is written. A known note goes through `lifecycle::state` and `lifecycle::action`: keep, merge, propose or regenerate. A merge takes the new facts and keeps the agent's sections and pictures.
-- Then the behind check. Each file an explanation was written from is hashed again. A changed or missing file puts a line in `NoteEntry::behind`.
-- Pending proposals for notes whose subject went are marked superseded, and `Report::summary` says in sentences what happened.
+- For each planned note, hash the draft with the template version. A new note is written. A known note goes through `lifecycle::state` and `lifecycle::action`: keep, merge, propose or regenerate. A merge (`weave_kept`) takes the new facts and keeps the agent's sections and pictures.
+- Then the behind check. Each file an explanation was written from is hashed again. A changed or missing file puts a line in `NoteEntry::behind`. A hash made from raw bytes that still match is renewed to the hash a scan makes, so other line endings do not read as a change.
+- Notes CodeWiki wrote whose subject is gone are removed, or kept and marked `gone`. Pending proposals for them are superseded, and `Report::summary` says what happened.
 
-`file_hash` re-hashes one repository file the way a scan does.
+`file_hash` re-hashes one repository file the way a scan does. `hash_holds` also accepts the raw-byte hash.
 
 ## Items
 
@@ -90,6 +89,7 @@ And 9 more items.
 - When the action is keep, the note's recorded sources are still refreshed to the current hashes. Without that, a brief would ask for a sync that changes nothing.
 - Rules draw no pictures. A picture file of a note that no agent explained is deleted on every run.
 - `file_hash` returns nothing for a missing file or one outside the repository.
+- A hash taken from raw bytes holds only while those bytes stay the same. A sync renews it, so only a real change marks a note behind.
 
 ## See also
 

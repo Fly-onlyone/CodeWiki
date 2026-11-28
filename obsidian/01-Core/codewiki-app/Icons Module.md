@@ -18,7 +18,7 @@ This module holds every icon the app draws, and serves them to GPUI. The icons a
 
 The `app_icons!` macro turns each line into a `Glyph` constant and adds the SVG bytes to one `EMBEDDED` list. Some constants serve one place only: `HISTORY` is the toolbar's Open recent menu, `AGENT` the agent view of a note, `WAITING` the Waiting notes page, and `CONNECTED` the toast that says the backend answers again. `AppAssets` is the asset source the app registers at startup. Its `load` method first answers the logo path with the embedded PNG, then looks the path up in `EMBEDDED`, and otherwise passes the request to gpui-kit's own `Assets` (the kit draws a few Lucide icons itself). `list` merges both sources and drops duplicates.
 
-Three small functions choose icons. `for_theme` maps a theme name to its icon, and a light theme shares its dark twin's icon (it strips the " Light" suffix). An unknown theme gets the palette icon. `for_command` gives the icon for each palette entry; a command with a settings category takes the category's own icon. `hue` says which theme color an icon wears in the sidebar and toolbar, and `tint` turns that hue into a color in the active theme; icons like back and close stay neutral.
+Three small functions choose icons. `for_theme` maps a theme name to its icon, and a light theme shares its dark twin's icon (it strips the " Light" suffix). An unknown theme gets the palette icon. `for_command` gives the icon for each palette entry; a command with a settings category takes the category's own icon. `hue` says which theme color an icon wears in the sidebar and toolbar (only a few icons have one), and `tint` turns that hue into a color in the active theme; all other icons, such as back and close, stay neutral.
 
 ## Items
 

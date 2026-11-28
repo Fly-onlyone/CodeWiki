@@ -20,7 +20,7 @@ It works in two directions. When an agent sends its text, the text goes into the
 
 `weave` takes a base note, the agent's sections and the note's kind. The base depends on the caller:
 
-- `submit` in [[Explanations Module]] weaves into the note on disk, after it has checked each section, the pictures and the lint rules. For a note its owner edited, the same text becomes a proposal.
+- `submit` in [[Explanations Module]] weaves into the note on disk, after it has checked each section, the pictures and the lint rules. For a note its owner edited, the same woven text becomes a proposal instead of being written.
 - `weave_kept` in [[Generate Module]] weaves into the fresh draft that rules just wrote, when a sync finds that the code under an explained note changed. It also keeps sections such as `Gotchas` that rules never write.
 
 Inside `weave`:
@@ -62,7 +62,7 @@ Inside `weave`:
 - Even with nothing new to put in, `weave` sends an explainable note through `split` and `join`. Blank lines are evened out and empty sections dropped, so a note laid out differently comes back changed. A test in [[cw-wiki]] checks that every explainable note splits and joins to itself.
 - Which sections hold agent text comes from the headings the manifest (CodeWiki's record of each note) stores for it, not from the kind. A section of the agent's that still holds rule text is not read back, so rule text is never kept as an explanation.
 - Text is never dropped for want of a place. When a section moves, [[Generate Module]] records a reason that keeps the note marked behind until an agent writes it again. The text of a heading the kind no longer has goes into the first section the agent wrote, or the kind's first agent section.
-- A blank agent section is skipped and the base's text stays. Sending one cannot clear a section.
+- A blank agent section is skipped and the base's text stays. Sending one cannot clear a section. `submit` refuses an empty text outright.
 - In a section whose code blocks are facts, `weave` drops any code block the agent sent; `submit` refuses such a block before that. A block the base leaves open is closed at the end of its section.
 - `unlink_dead` runs only on a sync. On a submit, a link to a missing note is refused instead.
 - `unlink_dead` finds inline code by counting single backticks on a line. A link inside a span opened with two backticks counts as outside code and may be unlinked. Fenced blocks are never touched.

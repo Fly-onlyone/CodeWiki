@@ -50,12 +50,13 @@ The toolchain is `stable`. The workspace needs Rust 1.95 and edition 2024. A rel
 - A new RustSec advisory can fail CI with no change in the repository. Fix the dependency, or add the ID to `ignore` in `deny.toml` with a reason.
 - Code changed without its wiki fails CI. After a code change, run `cargo run -p codewiki -- update` in a tree with no stray files and commit `obsidian/` as a `docs(wiki)` commit.
 - Source files are hashed with CRLF read as LF, so a Windows checkout does not mark notes behind.
-- A release tag must match the workspace version in `Cargo.toml`, or the Release job stops. A tag with a pre-release part, such as `-rc.1`, is published as a pre-release.
+- A release tag must match the workspace version in `Cargo.toml` (now 0.7.0), or the Release job stops. A tag with a pre-release part, such as `-rc.1`, is published as a pre-release.
 - The Release job fails if the setup program was not built. It needs the Inno Setup compiler.
 - Dev builds keep only line tables for our crates, no debug information for dependencies, and no incremental cache. Debug builds once grew past 40 GB.
-- The vendored `gpui-base` is a patch of one release. When `gpui-kit` is bumped, drop the patch or copy the new release and patch it again; otherwise the outline's heading calls stop compiling.
+- The vendored `gpui-base` is a patch of one release (`[patch.crates-io]` in the root manifest). It adds the link hover look and the heading and block position calls the outline uses. When `gpui-kit` is bumped, drop the patch or copy the new release and patch it again; otherwise those calls stop compiling.
 - The Dockerfile copies `vendor`, because Cargo reads every `[patch]` of the workspace. The server in the image refuses to start on a public address without `CODEWIKI_TOKEN`.
 - Runs on a pull request cancel older runs of the same branch. Runs on main are never cancelled.
+- Clippy warns on an `unsafe` block with no `// SAFETY:` comment, and with `-D warnings` that fails CI.
 
 ## See also
 

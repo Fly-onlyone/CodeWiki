@@ -18,7 +18,7 @@ A pair of numbers that says how many notes wait for a coding agent to explain th
 
 `Counts` has two fields. `behind` counts notes that were explained, but a file the explanation was written from has changed since. `unexplained` counts notes written by rules only. `total` adds them.
 
-`waits` decides whether one note waits, and `all_waiting` collects them, behind first. `count` builds the pair from that list: those marked `Behind` are counted as behind, everything else is unexplained. `waiting_counts` does this for a whole repository's vault. `queue` also carries a `Counts` in its `waiting` field, counted over the whole vault, not only the notes that fit the filter.
+`waits` decides whether one note waits, and `all_waiting` collects them, behind first. `count` builds the pair from that list: those marked `Behind` are counted as behind, everything else is unexplained. `waiting_counts` does this for a whole repository's vault. `queue` also carries a `Counts` in its `waiting` field, counted over the whole vault, not only the notes that fit the filter. A saved submission reports the new `Counts` too, so the agent sees how many still wait.
 
 ## Items
 

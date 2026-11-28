@@ -41,7 +41,7 @@ Members:
 
 - The field is private. Make new glyphs only through `app_icons!`, so the file is embedded and the path starts with `icons/material/`. A test checks that every embedded file is a 24-unit SVG with a path.
 - Two glyphs are equal when their paths are equal. `hue` matches on glyph constants, so a new icon stays neutral until it gets an arm there.
-- A path no one embedded is an error from `AppAssets`, not a blank icon.
+- A path no one embedded goes on to the kit's assets, which will not have it either, so nothing is drawn.
 
 ## See also
 

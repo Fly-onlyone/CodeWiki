@@ -22,7 +22,7 @@ The body is a text view (`TextViewState`). The app owns it: the note's view live
 
 ### Which entry is lit
 
-`outline_entries` lights the entry a glide is going to. With no glide, it reads each heading's top (`block_top`) and the scroll position, and calls `spy`. `spy` returns the last heading at or above `SPY_LINE` below the top of the view. At the very bottom it returns the last entry, since a short last section never reaches the line. If the blocks are not laid out yet, the previous frame's answer is reused.
+`outline_entries` lights the entry a glide is going to. With no glide, it reads each heading's top and the scroll position, and calls `spy`. `spy` returns the last heading at or above `SPY_LINE` below the top of the view. At the very bottom it returns the last entry, since a short last section never reaches the line. If the blocks are not laid out yet, the previous frame's answer is reused.
 
 ### Click and glide
 

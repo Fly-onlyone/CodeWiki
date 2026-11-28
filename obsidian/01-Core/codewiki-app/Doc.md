@@ -22,7 +22,7 @@ Six methods exist only in tests and read a page back:
 
 - `flat` lists every block, with card bodies opened out.
 - `tables`, `headings` and `words` pick out tables, headings and all visible text, one block to a line.
-- `actions` lists every [[Action]] a link, row, button, choice, unlocked switch or select, or secret control carries. Disabled buttons are left out.
+- `actions` lists every [[Action]] a link, row (and its aside buttons), button, choice, unlocked switch or select, or secret control carries. Disabled buttons are left out.
 - `fields` lists the inputs the page asks the user to fill in.
 
 Page tests use these to check what a page says and offers. The [[Doc View Module]] draws the same tree in the app.

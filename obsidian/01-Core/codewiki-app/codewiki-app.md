@@ -136,6 +136,7 @@ And 43 more items.
 - Ctrl+Shift+= and the keypad plus arrive as "+", so zoom in has two bindings.
 - A launch with the tray option never shows its window until something asks for it; `placed` stops the app from showing a window GPUI has not yet positioned.
 - The backend is asked to stop with a short timeout, because GPUI waits only 200 ms for the quit hook.
+- The app must not gain a dependency on an engine crate. In the manifest, cw-core is for paths and logs only, and the backend is reached through cw-client.
 
 ## See also
 

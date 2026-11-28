@@ -79,6 +79,7 @@ And 26 more items.
 - Each claiming listing gets its own id. One id for all would hand a second batch the notes the first still holds, when a main agent and its background writers share one bridge.
 - `search_codebase` and `get_refactoring_plan` clamp `limit` to 1 to 50, and `list_waiting_notes` caps the batch it asks for.
 - `get_architecture` reads at most six flow notes.
+- The `cw-client` dependency carries a version next to its path, so it must follow the workspace version.
 
 ## See also
 

@@ -71,8 +71,8 @@ And 32 more items.
 
 ## Gotchas
 
-- `notify_after_draw` defers the notify. A notify made during a frame marks the view but asks for no frame, so with reduced motion a new page stayed blank until the pointer moved. The search field uses it to keep the open list under the field while the page scrolls.
-- `PageSlot::set` is cheap each frame. It tells the reader only when the place changed.
+- `notify_after_draw` defers the notify. A notify made during a frame marks the view but asks for no frame, so with reduced motion a new page stayed blank until the pointer moved. `PageSlot::set` and `DocPage::set_search` use it.
+- `PageSlot::set` is cheap each frame. It tells the reader only when the place changed. `DocPage::show` and `set_search` are cheap each frame too.
 - The page ids include a serial, so state kept for one page does not leak into the next.
 - `LinkedLine` is used only when a line has a link. Its highlight index points into the highlight list, so keep link and highlight pushes in step.
 - The list keeps measured heights. A strip off screen is not re-measured on a zoom change unless `remeasure` is called, which `render` does.

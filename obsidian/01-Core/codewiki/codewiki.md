@@ -67,6 +67,7 @@ And 5 more private items with no comment.
 - `agents` never overwrites a list it cannot read. Every action then fails.
 - `sentry-test` fails with an error when error reports are off.
 - `coverage --report` takes a path relative to where the command runs, not to `--repo`.
+- This crate is the only one that links the whole engine: wiki, index, vault and server. The `cw-server` dependency carries a version next to its path, which must follow the workspace version.
 
 ## See also
 

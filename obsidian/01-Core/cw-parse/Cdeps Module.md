@@ -8,12 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Formats, from the tools' own documentation:
-
-- vcpkg's manifest (`vcpkg.json`): `dependencies` is a list of names or of objects with `name` and optionally `version>=`; `overrides` is a list of `{ "name", "version" }`; `builtin-baseline` is a commit of the registry.
-- Conan 2's `conanfile.txt`: a `[requires]` section with one `name/version` per line, an optional `@user/channel` or `#revision` after it, and `[tool_requires]` for build tools.
-- `conanfile.py`: `requires = "name/version"` or a tuple or list of those, and `self.requires("name/version")` in `requirements()`.
-- `conan.lock`: JSON with `requires` (and `build_requires`), each `"name/version#revision%timestamp"`.
+Reads the files where C and C++ projects list the libraries they use, apart from `CMakeLists.txt`: `vcpkg.json`, `conanfile.txt`, `conanfile.py` and `conan.lock`. Each parser gives back plain `Library` values (a name and a version, empty when none is given). It also holds `names_library`, which decides whether an `#include` path probably belongs to a declared library, so that `#include <fmt/core.h>` can be linked to the package `fmt`.
 
 ## Source
 
@@ -21,13 +16,14 @@ Formats, from the tools' own documentation:
 
 ## How it works
 
-1. `declared_libraries` in [[Cfamily Module]] and `cfamily` in [[Manifests Module]] call `parse_vcpkg`.
-2. `declared_libraries` in [[Cfamily Module]] and `cfamily` in [[Manifests Module]] call `parse_conanfile_txt`. `parse_conanfile_txt` calls `reference`.
-3. `declared_libraries` in [[Cfamily Module]] and `cfamily` in [[Manifests Module]] call `parse_conanfile_py`. `parse_conanfile_py` calls `string_literals`, then `reference`.
-4. `declared_libraries` in [[Cfamily Module]] and `cfamily` in [[Manifests Module]] call `parse_conan_lock`. `parse_conan_lock` calls `reference`.
-5. `same_library` in [[Manifests Module]] and `CPlan::library` in [[CPlan]] call `names_library`.
+Four parsers, one per format, share the helper `reference`. It turns `fmt/10.1.1@user/channel#abc` into name `fmt` and version `10.1.1`, dropping the user, channel and revision.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+- `parse_vcpkg` uses serde on the JSON. A dependency is a bare name or an object with `name` and `version>=`. It also returns the overrides and the baseline.
+- `parse_conanfile_txt` reads only the `[requires]` section. Other sections such as `[tool_requires]` are ignored.
+- `parse_conanfile_py` scans lines for `requires = ...` (a string, tuple or list over several lines) and for `self.requires(...)` calls. `string_literals` pulls out the quoted strings.
+- `parse_conan_lock` reads the JSON `requires` and `build_requires`.
+
+`names_library` is the matcher. It lowercases and drops punctuation, then accepts an exact match, a match after trimming trailing digits (`Eigen` for `Eigen3`), or a match with the first word of a family name (`boost` for `boost-asio`, `nlohmann` for `nlohmann_json`). Callers are [[Cfamily Module]] and [[CPlan]] (to name the library) and [[Manifests Module]].
 
 ## Items
 
@@ -48,6 +44,13 @@ And 3 more private items with no comment.
 - [[Manifests Module]] — from `cfamily`, `same_library`
 - [[Cfamily Module]] — from `declared_libraries`
 - [[CPlan]] — from `library`
+
+## Gotchas
+
+- Bad input gives an empty result, never an error. A `vcpkg.json` or `conan.lock` that is not valid JSON returns nothing.
+- `parse_conanfile_py` reads plain string literals only. A requirement built from a variable or an f-string is missed. A version range like `zlib/[>=1.2 <2]` gives no library, since the version part is cut at the bracket and ends up empty.
+- In `conanfile.txt`, a `#` starts a comment, so `boost/1.83.0#abcdef` is read up to the `#` and the revision is dropped, which is fine.
+- `names_library` needs at least two characters in the include name, and refuses weak matches on purpose: an include is linked to a library only when the link is evident.
 
 ## See also
 

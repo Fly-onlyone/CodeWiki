@@ -16,11 +16,11 @@ Rules write each note from facts. Two parts of a note need more than a doc comme
 
 ## How it works
 
-`walk` picks the entry points of one note: its functions and methods that a program starts at, or that other notes call. Test code and low-confidence calls are ignored. Entry points are sorted: program starts first, then those called from the most notes, then source order. At most 5 become steps; the rest are named as "more entry points". If nothing calls in, the note's own non-private functions that call something become the steps and the text says so.
+`walk` picks the entry points of one note: its functions and methods that a program starts at, or that other notes call. Test code and low-confidence calls are ignored. Entry points are sorted: program starts first, then those called from the most notes, then source order. At most 5 become steps; the rest are named as more entry points. If nothing calls in, the note's own non-private functions that call something become the steps and the text says so.
 
 Each step lists up to 6 calls in source order. Up to 2 callees that belong to the same note are described too, each only once in the whole walk. `Walk::text` turns this into numbered sentences with links to other notes, and adds a line that conditions and loops are not shown.
 
-`items` lists the children of a note's subject, one bullet each. Public items come first, then non-private, then private ones that `walk` names. Source order breaks ties; at most 20 are shown and the rest are counted. A bullet starts with the signature (or the name if it is over 100 characters or contains a backtick). With a doc comment, the bullet holds `first_sentence`/`item_text` of it. Without one, `facts` states: visibility, kind, return type and up to 4 users.
+`items` lists the children of a note's subject, one bullet each. Public items come first, then non-private, then private ones that `walk` names or that have a doc comment. A note with fewer than 3 such items shows up to 8 of the best ranked. Source order breaks ties; at most 20 are shown and the rest are counted. A bullet starts with the signature, or the name if the signature is over 100 characters, contains a backtick or reads as a line reference. An item with a note of its own links to it. With a doc comment, the bullet holds `item_text` of it. Without one, `facts` states: visibility, kind, return type and up to 4 users.
 
 ## Items
 
@@ -64,9 +64,10 @@ And 2 more items.
 ## Gotchas
 
 - No resolved incoming call does not mean unused. A call through a value of unknown type is not followed.
-- `return_type` returns nothing for unit results, types over 60 characters, and languages other than Rust, Python, TypeScript and JavaScript.
+- `return_type` reads signatures of Rust, Python, C#, Go, C, C++, TypeScript, JavaScript and Kotlin. It returns nothing for unit results, for types over 60 characters or with a backtick, and for other languages.
 - A signature that looks like a file and line (checked by `is_line_ref`) is replaced by the name, because the linter would refuse it.
 - Constants cut their signature at the equals sign so the value is not printed.
+- A Go doc comment starts with the item's own name, so that word keeps its capital letter; other comments are lowered at the first letter.
 
 ## See also
 

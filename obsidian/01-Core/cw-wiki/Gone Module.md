@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A note nobody wrote in is the rules' alone and goes with its subject at once. A note that holds written work, an agent's explanation or its owner's edits, goes only when nothing is lost by it: the deletion of its subject is committed, and git holds the note as it is now.
+Decides what a sync does with a note whose subject is gone from the repository. A note only the rules wrote leaves with its subject. A note that holds written work (an agent's explanation, or its owner's edits) leaves only when nothing is lost: the deletion is committed, and git holds the note as it is. Otherwise it stays, marked with a [[Gone]] reason. The module also cleans up after notes leave, and runs the approve and reject steps of a retire proposal.
 
 ## Source
 
@@ -16,15 +16,13 @@ A note nobody wrote in is the rules' alone and goes with its subject at once. A 
 
 ## How it works
 
-1. `generate_with` in [[Generate Module]] calls `of_generated`.
-2. `generate_with` in [[Generate Module]] calls `cited`. `cited` calls `spans`, then `path_in`.
-3. `generate_with` in [[Generate Module]] calls `repath`. `repath` calls `spans`, then `path_in`.
-4. `generate_with` in [[Generate Module]] calls `of_adopted`.
-5. `generate_with` in [[Generate Module]] calls `after_removal`. `after_removal` calls `Note::parse` in [[Note Module]], then `body_hash` in [[Manifest Module]], then `unlink_dead`, then `extract`, then `weave` (all in [[Explanation Module]]), then `Error::io` in [[Error]].
+For a note CodeWiki wrote, `of_generated` gives `Remove` or `Keep`. It keeps with `Uncommitted` when a source file is still changed in the working tree. It keeps with `Unsaved` when git does not hold the note. Else it removes.
 
-3 more entry points: `remove_empty_folders`, `retire`, `keep_all`.
+For a note its owner wrote, `cited` reads every code span that has the shape of a path (`path_in`) and sorts the paths into alive, moved and dead. `of_adopted` then gives a `Hand`: `Unjudged` (names no path), `Alive`, `PartlyGone`, or `Gone` with a reason. `Gone` is `History` if the owner already chose to keep it, `Uncommitted` if a dead path is still at HEAD, `Pending` if git holds the note, else `Unsaved`. `repath` rewrites moved paths inside code spans.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+After notes leave, `after_removal` turns links to them into plain words in the notes that stay. In an agent's note that edit marks the note behind. A note edited by hand is changed only when git holds it. Attachments that only removed notes showed are deleted. `remove_empty_folders` sweeps empty folders.
+
+`retire` approves a proposal and `keep_all` rejects it. See [[Git]] for the lazy git facts.
 
 ## Items
 
@@ -65,6 +63,13 @@ And 1 more private item with no comment.
 
 - [[Explanations Module]] — from `approve_keeping`, `reject`
 - [[Generate Module]] — from `generate_with`
+
+## Gotchas
+
+- `retire` deletes a note only if it is still `Pending`, its text hash equals what the proposal saw, and git holds it. A note failing any test stays and is judged again at the next sync.
+- Only links to notes that just left are changed. Other dead links are the owner's to mend.
+- Folders starting with a dot, `_Templates` and `_Attachments` are never swept.
+- A note that names no repository path is never judged gone.
 
 ## See also
 

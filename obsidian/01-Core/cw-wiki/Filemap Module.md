@@ -8,21 +8,9 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A file counts when `Language::file_level_name` names its language. Such a file has a folder, a language and a size in lines, and nothing else is known about it: no symbols, no imports, no calls. What is said about it is therefore always correct, whatever the language. A language that gets a parser leaves this map, because `Language::file_level_name` stops naming it; no list of languages lives here.
+Gives a repository a wiki even where CodeWiki has no parser for its language. For each source file whose language `Language::file_level_name` names, it knows only the folder, the language and the number of lines. So the notes say only what is always true: what a folder holds and how big it is. When a language later gets a parser, it leaves this map by itself, because `file_level_name` stops naming it. No list of languages lives here.
 
-Units:
-
-A unit is the counterpart of a crate or a package, and has a note of its own under `01-Core`. The rule, from the paths alone:
-
-- A file at `<container>/<project>/…`, where `<container>` is one of `CONTAINERS` (`src`, `tests`, `apps`, `packages`, …), belongs to the unit `<container>/<project>`. A layout of `src/<Project>/` and `tests/<Project>/` therefore gives one unit per project.
-- Every other file belongs to the root unit, the repository itself. A flat repository is one unit.
-- A unit of fewer than `MIN_UNIT_FILES` files is folded into the root unit, and beside mapped code (a repository with parsed units) the root unit must hold that many files too, so that a few scripts or style sheets beside a Rust workspace get no notes. A unit an agent explained is never dropped while it has a file.
-
-Folders:
-
-A folder gets a note when the files it holds, its own and those of the folders below it that have no note, number at least `MIN_FOLDER_FILES`. A smaller folder rolls up: its files are listed in the nearest folder above it that has a note, or in the unit's note. At most `MAX_FOLDER_NOTES` folders get a note, the largest in lines first; the others roll up the same way. The folder of a note an agent explained is never cut while it has a file.
-
-Ids are `unit:<name>` and `dir:<repo-relative folder>`. A folder's id names the place, never its neighbours, so no other file changes it.
+The map has two kinds of note. A unit is the counterpart of a crate or a package. A folder note covers a large enough folder. Ids are `unit:<name>` and `dir:<repo-relative folder>`.
 
 ## Source
 
@@ -30,13 +18,9 @@ Ids are `unit:<name>` and `dir:<repo-relative folder>`. A folder's id names the 
 
 ## How it works
 
-1. `Tally::add` in [[Tally]] calls `parent_dir`.
-2. `plan` in [[Plan Module]] calls `build`. `build` calls `Language::file_level_name` in [[Language]], then `unit_dir`, then `slug` in [[Units Module]], then `unique`, then `candidates`, then `cut` in [[Plan Module]], and 5 more. `candidates` calls `parent_dir`, then `parent_of`, then `depth`.
-3. `RenderCtx::summary` in [[RenderCtx]] calls `folder_summary`. `folder_summary` calls `count` in [[Render Module]].
-4. `RenderCtx::render` in [[RenderCtx]] calls `unit_sections`. `unit_sections` calls `holds`, then `folder_bullet`, then `file_lines`, then `source_lines`. `holds` calls `count`, then `join_and` (both in [[Render Module]]). `folder_bullet` calls `count` in [[Render Module]].
-5. `RenderCtx::render` in [[RenderCtx]] calls `folder_sections`. `folder_sections` calls `holds`, then `folder_bullet`, then `file_lines`, then `source_lines`. `file_lines` calls `count` in [[Render Module]].
+`build` filters the repository's files to the file-level languages and groups them by `unit_dir`. A file at `<container>/<project>/...`, with a container such as `src`, `apps` or `tests`, belongs to the unit `<container>/<project>`. Every other file belongs to the root unit. A unit with fewer than `MIN_UNIT_FILES` files folds into the root unit. Next to parsed code, the root unit must also reach that size, so a few scripts beside a Rust workspace get no notes.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`candidates` judges the folders of a unit from the deepest up. A folder gets a note when its own files, plus those rolled up from folders below that got none, number at least `MIN_FOLDER_FILES`. A smaller folder passes its files to its parent. `build` keeps at most `MAX_FOLDER_NOTES` folders, largest in lines first. Notes an agent explained (the `pinned` ids) are never cut while they still hold a file. `holder` finds the nearest folder with a note for a file. `unit_sections` and `folder_sections` write the note text, and `unit_summary` and `folder_summary` write the one-line summaries. `FileMap::home_summary` writes the sentence on the home note.
 
 ## Items
 
@@ -77,6 +61,13 @@ And 15 more items.
 - [[Plan Module]] — from `Plan`, `plan`
 - [[Tally]] — from `add`, `language_names`
 - [[RenderCtx]] — from `render`, `summary`
+
+## Gotchas
+
+- A folder note id names the place only, so a change in a neighbour never renames it.
+- Unit slugs must not clash with folders parsed units already use; `unique` adds `-2`, `-3` and so on, ignoring case.
+- A note lists at most 40 files and cites at most 10 sources. The rest are only counted.
+- A file with no lines read shows its size in bytes, or `empty`.
 
 ## See also
 

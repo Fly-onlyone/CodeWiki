@@ -8,11 +8,11 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A test file is `*.test.*` or `*.spec.*` (any JavaScript or TypeScript extension), `*.cy.*`, or any source file under `__tests__`, `test`, `tests`, `e2e` or `cypress`. A test is a `test(...)`, `it(...)` or `describe(...)` call with a string title, also as `.only`, `.skip` and `.todo`; the unit of running is the file.
+Teaches the test map about JavaScript and TypeScript tests: vitest, jest, mocha, Playwright, ava, `node --test` and `bun test`. It says which files are tests, which tests they hold, and which command runs a file.
 
-End-to-end specs (Playwright, Cypress) are test files like the others, but they reach the code through the running app, not through imports. The import graph sees only what such a spec imports (a page object, a helper), so a change to the app's own source impacts them only through that: no guess is made about which pages a change shows.
+A test file is `*.test.*`, `*.spec.*` or `*.cy.*` with any JS or TS extension, or any source file under `__tests__`, `test`, `tests`, `e2e` or `cypress`. A test is a `test`, `it` or `describe` call with a string title, also with `.only`, `.skip` or `.todo`. The unit of running is the file.
 
-The runner is what the file imports (`vitest`, `@playwright/test`, `node:test`, `bun:test`, `@jest/globals`), else what the package's `test` script runs, else its dependencies; the package is the nearest `package.json`, and the workspace root's when that names no runner. The command goes through the package's manager (`pm.rs`): `pnpm exec vitest run a.test.ts`, `npx jest a.test.ts`, `yarn mocha a.test.ts`, `bunx ...`; a workspace package is named with the manager's filter, any other package below the root is entered with `cd`. Paths are those of the package's folder, except for `bun test`, which takes `./<path>` from the repository root. A runner that is not recognised runs the `test` script whole. Bun has no filter that runs a program in a workspace package, so there the test script runs whole too.
+End-to-end specs are test files too, but they reach the app through a browser, not through imports. So the import graph links them only to what they import, such as a page object. No guess is made about which pages a change shows.
 
 ## Source
 
@@ -20,13 +20,11 @@ The runner is what the file imports (`vitest`, `@playwright/test`, `node:test`, 
 
 ## How it works
 
-What the functions of this module call:
+`is_test_path` checks the file name and folders. `find_tests` scans the text line by line, skips comments, and `scan_line` looks for the three names followed by an opening bracket and a quoted title.
 
-1. `JsTests::is_test_file` calls `is_test_path`.
-2. `JsTests::command` calls `parent_dir` in [[Testmap Module]], then `runner_in_imports`, then `JsTests::package_runner`, then `run_script`, then `arg`, then `exec` (all in [[Pm Module]]). `JsTests::package_runner` calls `runner_in`.
-3. `JsTests::commands` calls `split_files`. `split_files` calls `words` in [[Python Module (testmap)]].
+`JsTests::command` walks up to the nearest folder with a `package.json`, then asks [[JsRepo]] for the package manager of that folder. It picks the runner in this order: what the file imports (`runner_in_imports`), else what the package's `test` script runs, else its dependencies (`package_runner`, falling back to the workspace root's package). It then writes the command through [[Pm Module]], for example `pnpm exec vitest run a.test.ts`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`JsTests::commands` folds the files of many impacted tests into one run per package and runner. It uses `split_files` to separate the program from the files at the end.
 
 ## Items
 
@@ -53,6 +51,15 @@ And 3 more private items with no comment.
 ## Used by
 
 - [[Testmap Module]] — from `LANGUAGES`
+
+## Gotchas
+
+- An unknown runner runs the package's `test` script whole, and gives an empty command when there is no such script.
+- Bun has no filter that runs a program in a workspace package, so the test script runs whole there.
+- `bun test` takes a path from the repository root, written `./<path>`, while other runners take paths as the package folder sees them.
+- More than 8 files in one run turns into the package's whole test run.
+- A source file that merely calls `test(` is not a test file, so `tests` gives nothing for it.
+- Names are matched in order, because one name can hold another, such as `@playwright/test` and `playwright test`. `ava` counts only as a whole word.
 
 ## See also
 

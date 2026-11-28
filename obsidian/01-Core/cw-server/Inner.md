@@ -18,7 +18,8 @@ tags: [core, cw-server]
 
 `state` builds one `Inner` from a `ServerConfig` and wraps it in an `Arc`. Fields:
 
-- `write_lock` serializes writers: repository list changes, note writes and wiki updates.
+- `config` is what the server was started with: data folder, bearer token, optional webhook secret, whether settings are writable, and the hooks tests replace.
+- `write_lock` serializes writers: repository list changes, note writes and wiki updates. Startup also takes it to tidy worktree entries.
 - `settings_lock` serializes settings changes. It is separate because an update holds `write_lock` for minutes.
 - `stop` is woken by `POST /v1/shutdown`, and `serve` then ends.
 - `activity` is the live status board, see [[Activity]].

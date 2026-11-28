@@ -8,13 +8,9 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Rules write every note from the code. They state facts and cannot say what a thing is for. A coding agent can: it reads the code. This module is its way in, and the only one:
+Rules write every note from the code, so they state facts and cannot say what a thing is for. A coding agent can, because it reads the code. This module is the agent's only way in. It lists the notes that wait, hands the agent one note with its limits, takes back the sections the agent wrote, and decides what happens to the review proposals that follow.
 
-- `queue` lists the notes that wait for an explanation.
-- `brief` gives the agent one note: its text, which sections are the agent's, the files to read, and the limits.
-- `submit` takes the agent's sections and pictures. It checks them and weaves them into the note. The agent never sends a whole note, so it cannot change a fact.
-
-A note its owner edited is never written: what the agent sends for it is filed as a proposal for the owner to review.
+The agent never sends a whole note, only its own sections, so it cannot change a fact. A note its owner edited is never written; the agent's text is filed as a proposal for the owner instead.
 
 ## Source
 
@@ -22,20 +18,22 @@ A note its owner edited is never written: what the agent sends for it is filed a
 
 ## How it works
 
-A note waits when its kind can be explained, nobody has edited it, and either no agent explained it (`Unexplained`) or an explained note has reasons it may be behind (`Behind`). `all_waiting` lists them, behind first, then by path. `queue` filters by folder and source files, drops notes that another agent holds, and cuts to the limit (clamped to 1 through `MAX_LIMIT`).
+A note waits when its kind can be explained, it has not been kept after its subject went, nobody edited it, and either no agent explained it (`Unexplained`) or an explained note has reasons it may be behind (`Behind`). `all_waiting` lists them, behind first, then by path. `queue` filters by folder and source files, drops notes that another agent holds, and cuts to the limit (clamped to 1 through `MAX_LIMIT`).
 
-`brief` returns the note text, the agent's sections, the files to read, the limits, and a `base`. The `base` is the body hash of the note as it is now.
+`brief` returns the note text, the agent's sections, the files to read, the limits, and a `base`: the body hash of the note as it is now.
 
 `submit` goes through gates in order:
 
-- The note file must exist.
+- The note file must exist, else `SyncFirst`.
 - `base` must equal the hash of the current text, else `Changed`.
 - No source file may have changed since the last sync, else `SyncFirst`.
-- Each section must be one the agent owns, sent once, non-empty, at most the word limit, with no `#` or `##` heading, and no code block in sections where code is a fact.
+- Each section must be one the agent owns, sent once, non-empty, at most the word limit, with no `#` or `##` heading, and no code block where code is a fact.
 - The woven note must pass the strict linter. A fault the note already had is ignored, so the agent is not blamed for an owner's mistake.
 - Pictures must name an owned section that exists, at most one per section, and pass `cw_illustrate::review`.
 
-If all pass, the text is woven in, the pictures file is written, and the note records who explained it, from which source hashes, and at which commit. Pictures of sections not sent are kept. A note edited by its owner, or adopted, is not written: `create_agent` files a proposal, which `approve` or `reject` later decides.
+If all pass, the text is woven in, the pictures file is written, and `record` stores who explained it, from which source hashes, and at which commit, and clears the behind reasons. Pictures of sections not sent are kept. A note edited by its owner, or adopted, is not written: `create_agent` files a proposal, and the outcome is `Proposed`.
+
+`approve_keeping` sends a retire proposal to the `gone` module, which deletes the notes not kept. `reject` of a retire proposal keeps all its notes as history. `decide_all` runs a batch and reports each result.
 
 ## Items
 
@@ -84,8 +82,10 @@ And 23 more items.
 
 - Every refusal is an `Outcome`, not an error. The agent is expected to act on each one.
 - A section sent again without a picture loses its old picture, since that picture explained the old text.
-- Files the agent names as read are hashed and added as sources, up to a limit. Changing one later marks the note behind.
-- An approved agent proposal leaves the note in its owner's hands. The next change of its facts becomes a proposal again, never an overwrite.
+- Files the agent names as read are hashed and added as sources, up to `MAX_READ` (40). Changing one later marks the note behind.
+- An approved agent proposal leaves the note in its owner's hands: `approve` restores the owner's body hash. The next change of its facts becomes a proposal again, never an overwrite.
+- A rejected sync proposal records its input hash, so the same change is not proposed again. A rejected agent proposal records nothing; an agent may offer another.
+- Only `approve_keeping` may take a `keep` list, and only for a retire proposal.
 - The caller must refresh the search index after `Saved`; this module does not.
 - A section may not hold a `#` or `##` heading, because it would end the section or start one of the rules'.
 

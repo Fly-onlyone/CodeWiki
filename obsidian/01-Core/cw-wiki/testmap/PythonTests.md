@@ -6,19 +6,17 @@ tags: [core, cw-wiki]
 
 > `PythonTests` struct defined in `cw_wiki::testmap::python` with 8 methods.
 
+## What it does
+
+The Python entry in the test map's list of languages. It fills in the two things that differ between languages: what a test is, and the command that runs it. Details of the rules are in [[Python Module (testmap)]].
+
 ## Source
 
 - `crates/cw-wiki/src/testmap/python.rs` — definition of `PythonTests`
 
 ## How it works
 
-What the functions of this type call:
-
-1. `is_test_file` calls `is_test_path` in [[Python Module (testmap)]].
-2. `command` calls `project_dir`, then `project`, then `quote` in [[Python Module (testmap)]]. `project` calls `read_project` in [[Python Module (testmap)]].
-3. `commands` calls `split_command`, then `unique`, then `unittest_module`, then `file_of` (all in [[Python Module (testmap)]]).
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`is_test_file` calls `is_test_path`. `tests` asks the scanned symbols of the file for functions and methods that `name_of` accepts, such as `test_a` or `TestC::test_m`, and skips `conftest.py`. `command` finds the owning project with `project_dir` (through [[PythonRoots]]), reads its settings once with `project`, and writes either a pytest line or a unittest line. `commands` merges the commands of all impacted files by their head, up to and including the runner. Past 8 names it names files. Past 8 files it runs the whole project. A file named whole swallows the ids inside it.
 
 ## Items
 
@@ -46,6 +44,11 @@ Members:
 ## Used by
 
 - [[Testmap Module]] — from `LANGUAGES`
+
+## Gotchas
+
+- `command` gives an empty string for a unittest file when the scan found no module symbol.
+- Project settings are cached by folder in `Env::py_projects`. A run of the map sees one answer for each folder.
 
 ## See also
 

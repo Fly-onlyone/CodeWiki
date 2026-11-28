@@ -16,11 +16,13 @@ This module walks a whole repository and produces every structural fact the inde
 
 ## How it works
 
-`list_files` walks the folder with the `ignore` crate. It honors `.gitignore` and a `.codewikiignore` file, skips `.git`, `target`, `node_modules` and a few more, and skips the top-level vault folder. The result is sorted.
+`list_files` walks the folder with the `ignore` crate. It honors `.gitignore` and a `.codewikiignore` file, skips `.git`, `target`, `node_modules` and a few more, skips the top-level vault folder, skips a Go `vendor` folder that has a `modules.txt`, and skips a `.git` link file. The result is sorted.
 
-`scan_repo` first reads every `Cargo.toml` through `parse_manifest` in [[Workspace Module]]. A broken manifest is skipped, not fatal. Then for each file it records a path, hash, byte count and line count. It parses the file by language: Rust through `parse_rust`, and Python, TypeScript or JavaScript and Java through their own parsers. Each parser's symbols are added to the list.
+`scan_repo` first reads every `Cargo.toml` through `parse_manifest` in [[Workspace Module]]. A broken manifest is skipped, not fatal. Then it prepares what some languages need from other files: the TypeScript configs (`JsRepo`), the Python import roots (`PythonRoots`), the Go modules and package names from `go.mod` and the top of each `.go` file, and a plan for C and C++ (`CPlan`).
 
-When all files are parsed, `link_imports` ([[Lang Module]]) sorts out Python and Java imports. Then a [[Resolver]] is built from all symbols and files, and `resolve` returns the edges and outside uses. Symbols are sorted by qualified name at the end.
+Then for each file it records a path, hash, byte count and line count and parses it by language: Rust through `parse_rust`, and Python, TypeScript or JavaScript, Java, Kotlin, C#, Go, C and C++ through their own parsers. Symbols that share a qualified name are merged or dropped: C# partial types go through `merge_partial`, Go packages through `merge_package`, and anything else keeps the first. C and C++ symbols are put together afterwards, because a declaration and its definition stand in different files.
+
+When all files are parsed, the NuGet ids of every `.csproj` and `.props` file are collected. `link_imports` ([[Lang Module]]) sorts out Python, Java, Kotlin, C# and Go imports. Then a [[Resolver]] is built from all symbols and files, and `resolve` returns the edges and outside uses. Symbols are sorted by qualified name at the end.
 
 ## Items
 
@@ -59,11 +61,13 @@ When all files are parsed, `link_imports` ([[Lang Module]]) sorts out Python and
 ## Gotchas
 
 - A file above 1.5 MB, or one that is not valid UTF-8, is recorded but not parsed. Large files get an empty hash and zero lines.
-- When two symbols share a qualified name (overloads, `#[cfg]` twins, inline and file modules), only the first is kept.
+- When two symbols share a qualified name (overloads, `#[cfg]` twins, inline and file modules, the files of one Java package), only the first is kept. The exceptions are C# partial types and Go packages, which are merged.
+- A Go package stands for its first file that is not a test file, with the first doc comment any file has above `package`.
 - Rust files get their module symbol from the scanner, with the file's `//!` doc as its text. The other languages' parsers add their own.
 - A file with syntax errors still gives facts, and is listed in `files_with_errors`.
 - A read error on one file stops the whole scan, because the error is returned, not skipped.
 - JavaScript is parsed with the TSX grammar.
+- A C or C++ file with no module in the plan, such as vendored code, is not parsed at all.
 
 ## See also
 

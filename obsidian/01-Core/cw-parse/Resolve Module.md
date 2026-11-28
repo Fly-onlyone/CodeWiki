@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-This module is name resolution without a compiler. It takes the per-file facts and produces the graph edges, and it lists the outside packages each file uses. The work is done by the [[Resolver]]. Because the matching is heuristic, each edge records how sure the match was, as a confidence level.
+This module is name resolution without a compiler. It takes the per-file facts of every language (Rust, Python, TypeScript, Java, Kotlin, C#, Go, C and C++) and produces the graph edges, and it lists the outside packages each file uses. The work is done by the [[Resolver]]. Because the matching is heuristic, each edge records how sure the match was, as a confidence level.
 
 ## Source
 
@@ -18,7 +18,9 @@ This module is name resolution without a compiler. It takes the per-file facts a
 
 `Resolved` is the result: a list of edges and a list of `ExternalUse` rows. An `ExternalUse` says that a file uses a package outside the repository, and which names it takes from it. `leaves` trims that list so a module is left out when a name inside it is listed, for example `de` beside `de::Visitor`.
 
-The rest are helpers for Rust visibility. `home_module` gives the module a symbol lives in, and for a method it skips the type too. `within` tests nesting. `visible_from` decides whether code in a module can name a symbol: private items only inside their module, `pub(crate)` items only inside their crate. `is_separate_target` marks files under `tests`, `benches` or `examples` outside `src`, which behave as crates of their own.
+The rest are helpers and word lists. For Rust visibility, `home_module` gives the module a symbol lives in, and for a method it skips the type too. `within` tests nesting. `visible_from` decides whether code in a module can name a symbol: private items only inside their module, `pub(crate)` items only inside their crate. `is_separate_target` marks files under `tests`, `benches` or `examples` outside `src`, which behave as crates of their own.
+
+The `COMMON_*_METHODS` lists (Rust, C#, Go, Kotlin, C and C++) hold method names that the platform library has almost everywhere, such as `len` or `Add`. The resolver uses them to refuse a name-only guess on a receiver of unknown type. `Want` tells the C and C++ lookup whether a name stands for a module, a type, a call or a value.
 
 ## Items
 
@@ -56,10 +58,11 @@ And 1 more private item with no comment.
 
 ## Gotchas
 
-- `COMMON_METHODS` lists 64 standard library names such as `len`, `get` and `push`. A call on an unknown receiver with one of these names is almost never a repository method, so only a private method of the caller's own module can match.
+- Each `COMMON_*_METHODS` list is for one language and is matched by exact name, so `Add` and `add` stay apart. A call on an unknown receiver with a listed name is almost never a repository method, so only a private method of the caller's own module can match.
 - `TOOLCHAIN_CRATES` keeps `std`, `core`, `alloc`, `proc_macro` and `test` out of the outside-package report.
 - `MAX_REEXPORT_DEPTH` is 6. A chain of re-exports longer than that is not followed, and the name stays unresolved.
 - `ExternalUse` names are in name order and use the language's own style: `extract::Path` for Rust, `adapters.HTTPAdapter` for Python and Java.
+- `same_language` treats C and C++ as one language, so they can match each other by name. Any other pair of languages never does.
 
 ## See also
 

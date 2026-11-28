@@ -8,7 +8,7 @@ tags: [core, cw-parse]
 
 ## What it does
 
-The `Resolver` turns the loose facts of all files into the edges of the code graph (calls, imports, implements, references, declares). The scanner only records names as they were written, such as a call to `shout`. The resolver decides which symbol that name means, with no compiler, using the imports, modules and symbols it knows. It also lists which outside packages each file uses.
+The `Resolver` turns the loose facts of all files into the edges of the code graph (calls, imports, implements, references, declares). The scanner only records names as they were written, such as a call to `shout`. The resolver decides which symbol that name means, with no compiler, using the imports, modules and symbols it knows. It also lists which outside packages each file uses. One resolver serves every language, with special lookups for C and C++ (`lookup_c`) and C# (`lookup_csharp`).
 
 ## Source
 
@@ -16,9 +16,9 @@ The `Resolver` turns the loose facts of all files into the edges of the code gra
 
 ## How it works
 
-`new` indexes every symbol by qualified name and by bare name. It reads every import and stores it as module, alias, absolute path. Globs are stored apart. `with_crates` adds the dependency list of each Cargo package.
+`new` indexes every symbol by qualified name and by bare name. It collects the Go, Kotlin, C and C++ modules, calls `see_c_modules` and `see_enclosing_namespaces`, then reads every import and stores it as module, alias, absolute path. Globs are stored apart. `with_crates` adds the dependency list of each Cargo package.
 
-`lookup` resolves a path written inside a module. It builds candidates in order: through an import, relative to the module, as a crate name, then through glob imports. `resolve_abs` tries each, following re-exports through imports and globs up to six hops (`MAX_REEXPORT_DEPTH`). `lookup_from` also checks the scopes around the caller, so an item declared inside a function is found.
+`lookup` resolves a path written inside a module. A C or C++ module goes to `lookup_c` and a C# namespace to `lookup_csharp`. Otherwise it builds candidates in order: through an import, relative to the module, as a crate name, then through glob imports. `resolve_abs` tries each, following re-exports through imports and globs up to six hops (`MAX_REEXPORT_DEPTH`). It does not follow imports out of C#, Go or Kotlin modules, because there an import binds a name in one file and re-exports nothing. `lookup_from` also checks the scopes around the caller, so an item declared inside a function is found. A class body is not such a scope: a bare name in a method never means a sibling member, except in C# partial types.
 
 `resolve` goes file by file. An import that resolves gives a file-to-file Imports edge. One that does not, and names no local module, crate or toolchain crate, becomes an outside use. Module declarations give Declares edges, and impls of a trait give Implements. A plain call that resolves to a function or method gives a High confidence edge. A method call on a known `self` type is Medium. When the type is unknown, `by_bare_name` matches by name alone and gives Low. Value and type mentions give References.
 
@@ -65,9 +65,10 @@ Members:
 
 - Resolution is a guess without a compiler, so each edge carries a confidence of High, Medium or Low.
 - A path that does not resolve is never guessed for a plain call. It is assumed to name something outside the repository.
-- A name never matches a symbol in another language.
+- A name never matches a symbol in another language. Paths and imports cross between Java and Kotlin, but bare-name matching does not. C and C++ count as one language.
 - Bare-name matching for Rust respects visibility and crate dependencies. A crate the caller does not depend on cannot be matched, and common names such as `len` or `get` match only a private method in the caller's own module.
 - Tests, benches and examples count as separate crates. Their items are visible only from the same file.
+- In C and C++, a name that two headers at the same include distance both declare names nothing. Private symbols of another module are never seen.
 - Edges are de-duplicated. The `site` kept is the earliest call place.
 - A caller equal to its target is dropped, so recursion gives no edge.
 

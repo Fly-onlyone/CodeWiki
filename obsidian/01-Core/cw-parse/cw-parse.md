@@ -8,7 +8,7 @@ tags: [core, cw-parse]
 
 ## What it does
 
-cw-parse turns a repository's source files into facts: symbols, imports, calls, type references and Cargo package data. It uses tree-sitter grammars for Rust, Python, TypeScript and Java, and needs no compiler. The index crate stores what it returns. The wiki, the dependency graph and the risk tools all rest on these facts.
+cw-parse turns a repository's source files into facts: symbols, imports, calls, type references and package data from build files. It uses tree-sitter grammars for Rust, Python, TypeScript and JavaScript, Java, Kotlin, C#, Go, C and C++, and needs no compiler. The index crate stores what it returns. The wiki, the dependency graph and the risk tools all rest on these facts.
 
 ## Source
 
@@ -17,9 +17,9 @@ cw-parse turns a repository's source files into facts: symbols, imports, calls, 
 
 ## How it works
 
-The crate is a library with one module per language. `lib.rs` only declares them and re-exports the main entry points. `scan_repo` in [[Scan Module]] is the front door. It lists files with `list_files`, reads each `Cargo.toml` through [[Workspace Module]], and sends each source file to its parser: `parse_rust`, `parse_python`, `parse_typescript` or `parse_java`. It returns a `RepoFacts` value.
+The crate is a library with one module per language, plus modules that read build files as data and never run them (Cargo, Go, Gradle, CMake, tsconfig and package.json, Python roots, C dependency files). `lib.rs` only declares them and re-exports the main entry points. `scan_repo` in [[Scan Module]] is the front door. It lists files with `list_files`, reads each `Cargo.toml` through [[Workspace Module]], reads the other build files, and sends each source file to its parser, for example `parse_rust`, `parse_python`, `parse_typescript_with`, `parse_java`, `parse_go` or `parse_c`. It returns a `RepoFacts` value.
 
-The parsers only see one file at a time, so names stay unresolved. [[Resolve Module]] then links a call or type name to the symbol it means, using imports and the crate layout. [[Lang Module]] holds helpers shared by the Python, TypeScript and Java extractors.
+The parsers only see one file at a time, so names stay unresolved. After parsing, `link_imports` in [[Lang Module]] sorts each import into repository code, an outside package or a language's own library. [[Resolve Module]] then links a call or type name to the symbol it means, using imports and the crate layout. [[Lang Module]] also holds the helpers and the fact collector [[Sink]] shared by the extractors.
 
 ## Items
 
@@ -49,6 +49,8 @@ Modules:
 
 - Resolution works without a compiler. It is a best guess from imports and names, so macros, trait dispatch and generated code can stay unresolved.
 - Each language module extracts what it can from the syntax tree. Code that fails to parse well gives fewer facts, not an error.
+- Build files are only read, never run. A value that a build script computes is not seen.
+- Each tree-sitter grammar is a separate dependency with its own version, so a grammar upgrade can change which node kinds the extractors see.
 
 ## See also
 

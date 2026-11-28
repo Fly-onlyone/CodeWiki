@@ -18,7 +18,7 @@ A pair of numbers that says how many notes wait for a coding agent to explain th
 
 `Counts` has two fields. `behind` counts notes that were explained, but a file the explanation was written from has changed since. `unexplained` counts notes written by rules only. `total` adds them.
 
-`count` builds it from the list of waiting notes: it counts those marked `Behind`, and everything else is `unexplained`. `waiting_counts` does this for a whole repository's vault. `queue` also carries a `Counts` in its `waiting` field, counted over the whole vault, not only the notes that fit the filter.
+`waits` decides whether one note waits, and `all_waiting` collects them, behind first. `count` builds the pair from that list: those marked `Behind` are counted as behind, everything else is unexplained. `waiting_counts` does this for a whole repository's vault. `queue` also carries a `Counts` in its `waiting` field, counted over the whole vault, not only the notes that fit the filter.
 
 ## Items
 
@@ -38,6 +38,8 @@ Members:
 
 - A note only counts as waiting when nobody edited it. `untouched` checks that its origin is generated and that its body hash still matches. A note its owner edited is not counted, because what an agent writes for it would only be a proposal, again on every run.
 - Notes whose kind cannot be explained are not counted.
+- A note kept after the code it describes is gone (its `gone` mark is set) is not counted either: it has nothing left to explain.
+- A note that was explained and has no reason to be behind is not counted.
 - The count covers the whole vault, even when the queue was narrowed by a folder or a file list. Notes held by another agent are still counted here; they are only left out of the listed notes.
 
 ## See also

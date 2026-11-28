@@ -16,7 +16,7 @@ The shared state of the HTTP server. It is a clonable handle to one `Inner` valu
 
 ## How it works
 
-`AppState` wraps an `Arc` of `Inner`, so a clone is cheap and points at the same data. `state` builds it from a `ServerConfig` when the server starts. `router` and `serve` both call it.
+`AppState` wraps an `Arc` of [[Inner]], so a clone is cheap and points at the same data. `state` builds it from a `ServerConfig` when the server starts. `router` and `serve` both call it.
 
 `Inner` holds:
 
@@ -30,7 +30,7 @@ The shared state of the HTTP server. It is a clonable handle to one `Inner` valu
 - `proposals`, the count of pending proposals per repository;
 - `updates`, a counter of finished wiki updates.
 
-`serve` also starts `embed_job::resume` on a blocking task and applies the settings to semantic search. On stop, it calls `jobs.close()` so a background job does not keep the process alive.
+`serve` binds the port, publishes it through `on_bound`, and applies the settings to semantic search. Then, on a blocking task, it takes `write_lock` and tidies the repository list: it marks linked worktrees and forgets those whose folder is gone. After that it calls `embed_job::resume`. When the stop signal comes, from the caller or from `POST /v1/shutdown`, it calls `jobs.close()` so a background job does not keep the process alive.
 
 ## Items
 

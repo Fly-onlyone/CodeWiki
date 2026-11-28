@@ -20,7 +20,9 @@ This module reads one Java file and turns it into facts: the package, classes, i
 
 `type_decl` makes a symbol for the type, with its signature, Javadoc and annotations. It collects the member names of the body first. Then it records `extends` and `implements` types as inheritance, and walks the body through `members`. Methods, constructors, constants and enum constants each get a symbol. Plain fields give no symbol and only add the types and values they mention.
 
-`walk` records what code mentions. `invocation` decides what a call looks like: a bare call is a member of an enclosing type or a static import; `this.x()` carries the class as `self_type`; `Type.x()` is a path; any other receiver is a method call of unknown type. Every fact goes into a [[Sink]]. Imports are stored as written. [[Scan Module]] decides later which ones are repository code.
+`walk` records what code mentions. `invocation` decides what a call looks like: a bare call is a member of an enclosing type or a static import; `this.x()` carries the class as `self_type`; `Type.x()` is a path; any other receiver is a method call of unknown type. Every fact goes into a [[Sink]].
+
+Imports are stored as written. A static import also records the class it comes from. Later, `link_imports` in [[Lang Module]] decides which imports name repository code: Java and Kotlin share one package set, and a platform import under `java`, `javax`, `jdk` or `sun` is dropped. [[Scan Module]] calls it after all files are parsed.
 
 ## Items
 

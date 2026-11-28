@@ -8,7 +8,7 @@ tags: [core, cw-wiki]
 
 ## What it does
 
-A note about an outside package, such as a crate or an npm package, should say what the package is. That text is in no file of the repository. `Machine` is the `PackageInfo` that finds it in files a build left on this computer. It makes no network call. On a machine that has never built the repository it finds nothing.
+A note about an outside package, such as a crate, an npm package or a NuGet package, should say what the package is. That text is in no file of the repository. `Machine` is the `PackageInfo` that finds it in files a build left on this computer. It makes no network call. On a machine that has never built the repository it finds nothing.
 
 ## Source
 
@@ -16,9 +16,15 @@ A note about an outside package, such as a crate or an npm package, should say w
 
 ## How it works
 
-`Machine::new` takes the cargo home from `CARGO_HOME`, or from a `.cargo` folder in the user's home folder. `with_cargo_home` lists the folders under that home in `registry/src`, one per registry, in sorted order.
+`Machine::new` takes the cargo home from `CARGO_HOME`, or from a `.cargo` folder in the user's home folder, and the NuGet folder from `NUGET_PACKAGES`, or `.nuget/packages` in the home folder. `with_cargo_home` lists the folders under `registry/src`, one per registry, in sorted order. `with_nuget` keeps the NuGet folder only if it exists.
 
-`describe` depends on the language. For Rust it looks for a folder named after the package and its locked version in each registry, reads its `Cargo.toml` and takes the package description. Without a locked version it takes the newest copy whose folder name starts with the package name and a digit. For TypeScript and JavaScript it reads `node_modules/<package>/package.json` and returns the description with whitespace folded to single spaces. Other languages give nothing.
+`describe` depends on the language:
+
+- Rust: it looks in each registry for a folder named after the package and its locked version, reads its `Cargo.toml` and takes the package description. Without a locked version it takes the newest copy whose folder name starts with the package name and a digit.
+- TypeScript and JavaScript: it reads `package.json` under `node_modules/<package>`, with whitespace folded to single spaces. `describe_in` also looks in the `node_modules` of each workspace folder first, then at the repository root, then in pnpm's hoisted store.
+- C#: it finds the NuGet folder named like the package, else the first that continues it, takes the locked version folder or the newest, and reads `description` from the `.nuspec`.
+
+Other languages give nothing.
 
 ## Items
 
@@ -53,7 +59,8 @@ And 1 more private item with no comment.
 - Results differ between machines. That is why [[Manifests Module]] saves what was found in `packages.json` and falls back to it.
 - Without a lock file the newest cached copy may not be the version the repository uses.
 - A missing registry folder or an unreadable file gives no description, with no error.
-- `node_modules` is read relative to the repository root only, not from parent folders.
+- NuGet names its folders in lowercase, so the lookup lowercases the package name.
+- Besides the repository root, `node_modules` is read only from the workspace folders it is given, not from parent folders.
 
 ## See also
 

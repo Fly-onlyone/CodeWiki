@@ -8,7 +8,7 @@ tags: [core, cw-parse]
 
 ## What it does
 
-`Sink` collects the facts of one source file while an extractor walks its syntax tree. The Python, TypeScript and Java extractors all call the same methods on it, so they all produce the same `ParsedFile`: symbols, calls, value and type references, imports and inheritance. This keeps the language-specific code small, because it only has to decide what a node means.
+`Sink` collects the facts of one source file while an extractor walks its syntax tree. The Python, TypeScript, Java, Kotlin, C#, Go, C and C++ extractors all call the same methods on it, so they all produce the same `ParsedFile`: symbols, calls, value and type references, imports and inheritance. This keeps the language-specific code small, because it only has to decide what a node means.
 
 ## Source
 

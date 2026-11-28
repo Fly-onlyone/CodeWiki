@@ -8,7 +8,9 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-CMake is a language, and this reads the part of it that projects write as data. It follows `set` and `list(APPEND)` of variables, `file(GLOB)` with a literal pattern, `add_subdirectory`, and the branches of every `if` (none is evaluated, as the preprocessor's are not). It does not run functions or macros, does not read `include()`d files, and does not evaluate generator expressions other than `$<BUILD_INTERFACE:...>`. An argument it cannot resolve is left out: a source it cannot name is a source that falls to its folder's unit.
+Reads `CMakeLists.txt` files and returns the build facts the scan needs for C and C++: targets and the source files each one lists, include directories, links between targets, libraries the project asks for, and tests registered with CTest. The result is a [[Cmake]] value. The scan uses it to find which directories an `#include` may be written relative to, and the unit and test-map code uses it to group files by target.
+
+CMake is a full language. This reader handles only the part that projects write as data, and it never runs anything.
 
 ## Source
 
@@ -16,10 +18,15 @@ CMake is a language, and this reads the part of it that projects write as data. 
 
 ## How it works
 
-1. `gather` in [[Testmap Module]] and `discover` in [[Units Module]], and 1 more, call `read_cmake`. `read_cmake` calls `commands`, then `locate`. `commands` calls `skip_comment`, then `arguments`. `locate` calls `normalize`, then `join`.
-2. `cfamily` in [[Manifests Module]] calls `declared_packages`. `declared_packages` calls `commands`, then `found`, then `fetched`.
+`read_cmake` gets all repository paths and a function that reads a file's text.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+1. `commands` splits each file into commands with their arguments. It drops comments (line and `#[[ ]]` block). Quoted and bracket arguments are marked with a hidden prefix so they stay one item when a variable expands.
+2. It finds every folder another file adds with `add_subdirectory`. Those are not roots.
+3. For each root folder, a `Reader` walks the commands in order and keeps a variable table. It follows `set`, `unset`, `list(APPEND, PREPEND, REMOVE_ITEM)`, `file(GLOB)` and `GLOB_RECURSE` with literal patterns, and `add_subdirectory` (to depth 16, with variables copied into the child). `PARENT_SCOPE` values are handed back to the caller.
+4. Command effects fill the result: `add_library` and `add_executable` make targets, `target_sources`, `target_include_directories` and `target_link_libraries` extend them, `find_package`, `FetchContent_Declare` and CPM calls add packages, and `add_test` and the gtest, catch and doctest discovery commands add tests.
+5. At the end, alias names are replaced by the real target, and lists are sorted and deduplicated.
+
+`declared_packages` is a lighter path for one file's text alone. `Cmake::include_dirs` and `Cmake::target_of` answer questions for a given source file.
 
 ## Items
 
@@ -55,6 +62,15 @@ And 5 more private items with no comment.
 - [[Manifests Module]] — from `cfamily`
 - [[Units Module]] — from `discover`
 - [[CPlan]] — from `build`
+
+## Gotchas
+
+- No `if` is evaluated, so the targets from every branch are all recorded.
+- A source that cannot be resolved is silently left out. Variables set by `include()`d files, functions or macros are invisible. Function and macro bodies are skipped.
+- Only `$<BUILD_INTERFACE:...>` is understood among generator expressions. Any other `$<...>` makes that argument disappear.
+- Only files that exist in the repository path list are accepted as sources. A glob uses the same list, not the disk.
+- `declared_packages` follows no variables. A package name written through `${VAR}` is skipped there, though `read_cmake` may resolve it.
+- Paths that leave the repository or are absolute are dropped by `normalize`.
 
 ## See also
 

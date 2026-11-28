@@ -8,16 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-A folder of `.py` files below a root is part of the dotted path whether or not it has an `__init__.py`: that is PEP 420, the namespace package. The roots of a project are the folder of its build file, a `src` folder under it, and what the build file declares:
-
-- `[tool.setuptools.packages.find] where = [...]` and `[tool.setuptools.package-dir]` (`"" = "src"`, or a package named for a folder: `shop = "lib/shop_impl"`),
-- `[options] package_dir = =src` and `[options.packages.find] where` of `setup.cfg`,
-- the literals `package_dir={"": "src"}` and `where="src"` of `setup.py`,
-- `[tool.poetry] packages = [{ include, from }]`,
-- `[tool.hatch.build.targets.wheel] packages` and `sources`,
-- `[tool.pdm.build] package-dir`, and `[tool.maturin] python-source`.
-
-A file that no declared root holds keeps the rule it had before: the name starts at the outermost folder with an `__init__.py`; with none, at the project's folder, or at the repository root (minus a leading `src` or `lib`) when no build file is above it.
+Finds where Python's import names start. In Python, `import shop.cart` means a folder `shop` inside some root folder. If the scanner guesses the wrong root, imports link to the wrong file. This module reads the build files (`pyproject.toml`, `setup.cfg`, `setup.py`) as data, never runs them, and lists the roots they declare. Supported forms include setuptools `where` and `package-dir`, setup.cfg `package_dir`, Poetry `packages` with `from`, Hatch wheel `packages` and `sources`, PDM `package-dir` and maturin `python-source`. A `src` folder with `.py` files under a project is always a root. A folder below a root counts as part of the dotted path even with no `__init__.py` (PEP 420, the namespace package).
 
 ## Source
 
@@ -25,12 +16,9 @@ A file that no declared root holds keeps the rule it had before: the name starts
 
 ## How it works
 
-1. `discover` in [[Units Module]] calls `project_name`. `project_name` calls `get`.
-2. `PythonRoots::read` in [[PythonRoots]] calls `pyproject_roots`. `pyproject_roots` calls `strings`, then `get`, then `root`. `root` calls `join_norm` in [[Jsbuild Module]].
-3. `PythonRoots::read` in [[PythonRoots]] calls `setup_cfg_roots`. `setup_cfg_roots` calls `root`.
-4. `PythonRoots::read` in [[PythonRoots]] calls `setup_py_roots`. `setup_py_roots` calls `root`.
+[[PythonRoots]] calls `pyproject_roots`, `setup_cfg_roots` and `setup_py_roots` for each build file. Each parser turns a declared path into a `SourceRoot` through `root`, which joins it to the project folder with `join_norm` and gives `None` if the path climbs out of the repository. A root may carry a prefix: `shop = "lib/shop_impl"` puts the files of `lib/shop_impl` under the package name `shop`. `setup_cfg_roots` reads INI by hand, including continued lines. `setup_py_roots` looks for the literal text `package_dir` followed by `{"": "src"}` and for `where="src"`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`project_name` is a separate helper. It returns `[project] name`, else `[tool.poetry] name`, from a `pyproject.toml`.
 
 ## Items
 
@@ -53,6 +41,13 @@ Calls are listed in the order of the source; a condition or a loop around a call
 
 - [[PythonRoots]] — from `PythonRoots`, `module`, `read`
 - [[Units Module]] — from `discover`
+
+## Gotchas
+
+- `setup.py` is read as text. A path computed in code is not followed.
+- A pyproject that is not valid TOML gives no roots, with no error.
+- The project's own folder is the default and is not listed as a root.
+- A file under no declared root falls back to the older rule: the outermost folder with an `__init__.py`, else the project folder, else the repository root minus a leading `src` or `lib`.
 
 ## See also
 

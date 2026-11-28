@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Every command runs from the repository root. A package that a workspace lists is named with the manager's own filter, `npm -w <name>`, `pnpm --filter <name>`, `yarn workspace <name>`, `bun run --filter <name>`; any other package below the root is entered with `cd <folder> &&`, except where npm's `--prefix` has always served (the operations note).
+Writes the shell commands for a JavaScript or TypeScript package the way its own package manager spells them. The same idea, such as run the `test` script, is `npm -w name run test`, `pnpm --filter name run test`, `yarn workspace name run test` or `bun run --filter name test`. The wiki shows these commands in notes about operations and tests. Every command is meant to run from the repository root. How the manager is found is the job of [[Jsbuild Module]]; this module only writes strings.
 
 ## Source
 
@@ -16,10 +16,13 @@ Every command runs from the repository root. A package that a workspace lists is
 
 ## How it works
 
-1. `JsTests::command` in [[Js Module]] and `RenderCtx::unit_commands` in [[RenderCtx]] call `run_script`. `run_script` calls `in_folder`. `in_folder` calls `arg`.
-2. `JsTests::command` in [[Js Module]] calls `arg`.
-3. `RenderCtx::unit_commands` in [[RenderCtx]] calls `install`. `install` calls `in_folder`.
-4. `JsTests::command` in [[Js Module]] calls `exec`. `exec` calls `arg`.
+`run_script` checks whether the package is a workspace member (`PmInfo` has a member name). If it is, the manager's filter flag names it. If not, `in_folder` enters the folder: npm gets `--prefix <dir>`, the others get `cd <dir> &&`. At the root nothing is added.
+
+`install` asks `PmInfo::install` for the strict command (for example `npm ci`, with a lock file) and runs it in the folder that holds the lock file.
+
+`exec` writes the command that runs a program of the package's dependencies, such as `vitest run a.test.ts`. A member uses the manager's filter form. A plain package uses `npx`, `pnpm exec`, `yarn` or `bunx`, after a `cd` when needed.
+
+`arg` quotes a name or path when it holds anything but letters, digits and `. _ - /`.
 
 ## Items
 
@@ -38,6 +41,12 @@ Every command runs from the repository root. A package that a workspace lists is
 
 - [[Js Module]] — from `command`
 - [[RenderCtx]] — from `unit_commands`
+
+## Gotchas
+
+- `exec` gives `None` for a Bun workspace member. Bun has no way to run a program for one member this way.
+- `in_folder` uses `--prefix` only for npm commands that do not start with `exec`. For those, `cd` is used.
+- `@scope/name` is quoted because PowerShell reads `@` as the start of a splat.
 
 ## See also
 

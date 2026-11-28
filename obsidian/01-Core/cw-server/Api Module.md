@@ -18,11 +18,13 @@ This is the HTTP face of the backend. `routes` builds one axum router with every
 
 `routes` makes two groups. The protected group sits under `/v1` behind `require_token`, which wants an `Authorization: Bearer` token and compares it in constant time. A request that also carries the MCP client header counts as a bridge call, and only after the token passed. Outside that layer sit `/v1/health` and `/v1/hooks/git`. The webhook proves itself by signature instead.
 
-The whole router is wrapped by `log_request` and `trace_request`. The log shows method, path, status and time, never the query, headers or body. The trace names a request by method and route, never by path, and skips `/v1/health` and `/v1/status`, which clients poll.
+The whole router is wrapped by `log_request` and `trace_request`. The log shows method, path, status and time, never the query, headers or body. The trace is a Sentry transaction, started only while error reports are on. It names a request by method and route, never by path, and skips `/v1/health` and `/v1/status`, which clients poll.
 
 Handlers do blocking work (SQLite, files, parsing) through `blocking`, which uses `spawn_blocking`. Errors become JSON `{error}` with 404, 400 or 500.
 
-Writes take the shared write lock. `run_update` registers a running update first, so a waiting update still shows as running, then takes the lock, updates, and calls `notes_changed`.
+Writes take the shared write lock. `run_update` registers a running update first, so a waiting update still shows as running, then takes the lock, updates, runs `embed_job::after_update`, and calls `notes_changed`. `list_repos` also forgets a linked worktree whose folder is gone, writing under the lock only when there is one to forget.
+
+`backend_status` answers `/v1/status`: the activity report, the background embedding job as `model_job`, and the pending proposals per repository.
 
 `git_hook` checks the secret (GitHub HMAC or GitLab token), matches the pushed repository name to a registered folder name, and answers 202. The update runs detached afterwards, because git hosts wait only seconds.
 

@@ -8,7 +8,9 @@ tags: [core, cw-vault, module]
 
 ## What it does
 
-The review queue for notes a person edited. CodeWiki never overwrites such a note. When new text is ready, a proposal stores it beside the note, with a diff to read. Nothing in the vault changes until a person approves. Two sources propose: a sync, when the code under a note changed, and a coding agent, when it explained a note whose owner had edited it. Both kinds are stored as files and shown in the app.
+The review queue for notes a person edited. CodeWiki never overwrites such a note. When new text is ready, a proposal stores it beside the note, with a diff to read. Nothing in the vault changes until a person approves.
+
+Three kinds of proposal exist. A sync proposes when the code under a note changed. A coding agent proposes when it explained a note whose owner had edited it. A retire proposal asks to delete notes the owner wrote about code that is gone. All are stored as files and shown in the app.
 
 ## Source
 
@@ -16,11 +18,13 @@ The review queue for notes a person edited. CodeWiki never overwrites such a not
 
 ## How it works
 
-Each proposal lives in a `proposals` folder under the metadata folder, as several files with one id: a `.json` record ([[Proposal Module]] holds the `Proposal` type), the proposed full text as `.md`, a unified `.patch`, and for an agent with pictures an `.openui` file.
+Each proposal lives in a `proposals` folder under the metadata folder, as files with one id: a `.json` record (the `Proposal` type), the proposed text as `.md`, a unified `.patch`, and for an agent with pictures an `.openui` file.
 
-`create` queues a sync's proposal. `create_agent` queues an agent's, naming it by a hash of the proposed text and pictures, so the same offer twice is one proposal. Both go through `create_as`, which first deletes an older pending proposal of the same note and the same kind, then writes the files. The record stores `base_hash`, the hash of the note as it was.
+`create` queues a sync's proposal. `create_agent` queues an agent's, named by a hash of the proposed text and pictures, so the same offer twice is one proposal. Both go through `create_as`, which first deletes an older pending proposal of the same note and the same kind, then writes the files. The record stores `base_hash`, the hash of the note as it was. Ids differ by kind: a sync's is the note slug plus a hash, an agent's has `agent` in the middle.
 
-`approve` re-reads the note. If its hash is not the `base_hash` any more, the proposal becomes `Superseded` and an error says a new proposal is needed. Otherwise it writes the proposed text and marks the proposal `Approved`. `reject` marks it `Rejected`. The caller records the input hash on the note entry so the same change is not proposed again. `pending_count` reads only the status of each record.
+`create_retire` takes a list of `Retired` notes and makes one proposal for all of them, with id `retire-` and a hash of their paths and base hashes. The same notes found again leave the proposal alone and return `None`. Different notes replace it. An empty list removes a pending retire proposal. `close_retire` records the decision; deleting the notes is the caller's work, since only the caller knows what git holds.
+
+`approve` re-reads the note. If its hash is not `base_hash` any more, the proposal becomes `Superseded` and an error asks for a new proposal. Otherwise it writes the proposed text and marks the proposal `Approved`. `reject` marks it `Rejected`. `supersede` marks a pending proposal overtaken when what it says is no longer true. `pending_count` reads only the status of each record.
 
 ## Items
 
@@ -68,8 +72,10 @@ And 8 more items.
 
 ## Gotchas
 
-- A sync proposal and an agent proposal for the same note live side by side. Their ids differ, and a new one replaces only a pending proposal of its own kind.
+- A sync proposal and an agent proposal for the same note live side by side. A new one replaces only a pending proposal of its own kind.
 - Only pending proposals can be approved or rejected. Any other state is an error.
+- A retire proposal can be neither approved nor rejected with `approve` or `reject`; both refuse it. Use `close_retire`.
+- A decided retire proposal is never replaced or removed by a later sync.
 - `check_id` allows only letters, digits, dash and underscore. Ids come from API callers, so one must never name a path outside the folder.
 - A new note has an empty `base_hash`. Approval then expects that the file does not exist yet.
 - `approve` writes the text but does not update the note's manifest entry. The caller, for example `approve` in [[Explanations Module]], does that.

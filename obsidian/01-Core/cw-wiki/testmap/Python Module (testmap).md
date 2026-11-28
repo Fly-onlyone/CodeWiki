@@ -8,9 +8,11 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-A test file is `test_*.py`, `*_test.py`, or any file under a `tests` or `test` folder; `conftest.py` is support and holds no test. A test is a function `test_*`, a method `test_*` of a class `Test*` (pytest) and a method `test_*` of a class that derives from a `unittest.TestCase` (any base whose name ends in `TestCase`, also through a base class of the same file).
+Teaches the test map about Python tests. It runs pytest when the project names it, and `python -m unittest` otherwise.
 
-The runner is pytest when the project names it: `[tool.pytest.ini_options]` or any `pytest` in its build files, `pytest.ini`, a `[pytest]` section in `tox.ini`, `[tool:pytest]` in `setup.cfg`, a `conftest.py`, or the file importing `pytest`; else `python -m unittest`. The project's own tool runs it when its files say which: `uv run` (`uv.lock`), `poetry run` (`poetry.lock` or `[tool.poetry]`), `pdm run` (`pdm.lock`), `hatch run` (`[tool.hatch.envs`). Commands run from the repository root, or, for a project below it, after `cd <project folder> &&`, with the paths as that folder sees them. A `python -m unittest` name is the module's dotted name as the scan gave it, so the package must be importable from that folder.
+A test file is `test_*.py`, `*_test.py`, or any file under a `tests` or `test` folder. `conftest.py` is support and holds no test. A test is a function `test_*`, a method `test_*` of a class `Test*`, or a method `test_*` of a class that derives from a `unittest.TestCase` (any base whose name ends in `TestCase`, also through a base class of the same file).
+
+The project's own tool wraps the command when its files say which: `uv run`, `poetry run`, `pdm run` or `hatch run`.
 
 ## Source
 
@@ -18,15 +20,11 @@ The runner is pytest when the project names it: `[tool.pytest.ini_options]` or a
 
 ## How it works
 
-1. `PythonTests::is_test_file` in [[PythonTests]] calls `is_test_path`.
-2. `PythonTests::project` in [[PythonTests]] calls `read_project`. `read_project` calls `ancestors` in [[Jsbuild Module]], then `join_path` in [[Testmap Module]], then `word`.
-3. `PythonTests::command` in [[PythonTests]] calls `quote`.
-4. `PythonTests::name_of` in [[PythonTests]] calls `is_unittest_class`.
-5. `PythonTests::commands` in [[PythonTests]] calls `unique`.
+`read_project` walks from the project folder up through its ancestors. It marks the project as pytest when it finds `pytest.ini`, a `conftest.py`, a `[pytest]` section in `tox.ini`, `[tool:pytest]` in `setup.cfg`, `[tool.pytest` in `pyproject.toml`, or the whole word `pytest` in build or requirements files (`word`). It picks a command prefix from `uv.lock`, `poetry.lock`, `pdm.lock` or hatch environments. The nearest prefix wins. Results are kept per folder in `Env::py_projects`.
 
-4 more entry points: `file_of`, `unittest_module`, `words`, `split_command`.
+[[PythonTests]] builds the command. For pytest it uses ids like `path::Class::test`. Past 8 ids it names the file. For unittest it uses the dotted module name from the scan, `pkg.mod.Class.method`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`is_unittest_class` reads the bases from the class signature and follows a base of the same file up to 4 levels. `split_command` and `words` read a command back into a head and arguments, so many files can be merged into one run. `file_of` and `unittest_module` turn an id back into its file or module.
 
 ## Items
 
@@ -58,6 +56,14 @@ And 1 more private item with no comment.
 - [[PythonTests]] — from `command`, `commands`, `is_test_file`, `name_of`
 - [[Testmap Module]] — from `Env`
 - [[Js Module]] — from `split_files`
+
+## Gotchas
+
+- Past 8 names a run names the files. Past 8 files it runs the whole project.
+- A unittest name is the module's dotted name as the scan gave it, so the package must be importable from the project folder.
+- Unittest runs only methods of `TestCase` classes. A plain `Test*` class counts for pytest, not for unittest.
+- A file that imports `pytest` is run with pytest even when the project names none.
+- A project below the root gets `cd <folder> &&` in front, and paths as that folder sees them.
 
 ## See also
 

@@ -6,16 +6,19 @@ tags: [core, cw-parse]
 
 > The Python projects of a repository and their import roots.
 
+## What it does
+
+Holds the Python projects of a repository and the import roots of each. Given the path of a Python file, it says which dotted module that file defines, for example `shop::cart`, and whether the file is a package (`__init__.py`). The scanner uses this so that `import shop.cart` finds the right file. Roots are described in [[Pyroots Module]].
+
 ## Source
 
 - `crates/cw-parse/src/pyroots.rs` — definition of `PythonRoots`
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] and `gather` in [[Testmap Module]], and 1 more, call `read`. `read` calls `parent_dir`, then `join` (both in [[Jsbuild Module]]), then `pyproject_roots`, then `setup_cfg_roots`, then `setup_py_roots` (all in [[Pyroots Module]]).
-2. `discover` in [[Units Module]] calls `in_package`. `in_package` calls `parent_dir`, then `join` (both in [[Jsbuild Module]]).
+`read` first finds every folder that holds a build file (`pyproject.toml`, `setup.py` or `setup.cfg`). For each such project it collects roots: a `src` folder that holds `.py` files, plus whatever the three build files declare. Duplicates and the project folder itself are left out.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`project_of` finds the nearest project folder above a file. `module` then picks the declared root with the longest folder that holds the file, drops the folders above that root, and joins the rest with `::`. A root prefix comes first. With no declared root, the name starts at the outermost folder with an `__init__.py`; failing that, at the project folder; failing that, at the repository root, minus a leading `src` or `lib`. A file `__init__.py` names its folder and the second value is true. `in_package` is a plain check: does a folder between the file and the root hold an `__init__.py` or `.pyi`?
 
 ## Items
 
@@ -41,6 +44,12 @@ Members:
 - [[Scan Module]] — from `scan_repo`
 - [[Units Module]] — from `discover`
 - [[PythonTests]] — from `project_dir`
+
+## Gotchas
+
+- `module` never returns an empty name. A file with no segments is named `__init__`.
+- Segments go through `sanitize`, so odd characters in folder names become safe ones.
+- A repository with no build file still works, through the fallback rule.
 
 ## See also
 

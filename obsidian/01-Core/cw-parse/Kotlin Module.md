@@ -8,20 +8,9 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Written against the node kinds and field names published in the grammar's own `node-types.json` (tree-sitter-kotlin-ng 1.1.0). No query files are used. Kotlin is mapped at the level Java is, and the two share their packages.
+Turns one Kotlin source file into the shared model of symbols, imports, calls and inheritance edges that the scanner stores. Kotlin is mapped at the level Java is, and the two share their packages. A Java class and a Kotlin class of the same package are siblings and resolve each other. The mapping is written against the node kinds in the grammar's own `node-types.json` (tree-sitter-kotlin-ng 1.1.0). No query files are used.
 
-How Kotlin maps onto the shared model:
-
-- **A package is a module**, written `package a.b.c` in the file, whatever folder the file stands in. A Java file of the same package names the same module, so a Java class and a Kotlin class of `com.acme.store` are siblings and resolve each other. A file with no `package` is in the default package of its folder, exactly as a Java file is.
-- **Declarations.** A class, a data class, a sealed class and an inner class are `SymbolKind::Class`; an interface, a `fun interface` and an annotation class are `SymbolKind::Interface`; an `enum class` is a `SymbolKind::Enum` whose entries are `SymbolKind::Const`; a `typealias` is a `SymbolKind::TypeAlias`. An `object` is a class (its members are what Java calls static members), and a `companion object` is no symbol: its members belong to the class around it, so `Foo.create()` is `pkg::Foo::create` wherever `create` is written.
-- **Top level.** A function at the top of a file is a `SymbolKind::Function` of its package; one inside a type is a `SymbolKind::Method`. A top-level property, and a property of an `object` or a companion, is a symbol too: `SymbolKind::Const` for a `val` and a `const val`, `SymbolKind::Static` for a `var`. A property of a class, the ones its primary constructor declares with `val` or `var` included, is no symbol, as a Java field is none: the type it names counts as a reference of its class.
-- **Extension functions** (`fun String.shout()`) are functions or methods of the place they are written in, never of the receiver. They carry the attribute `EXTENSION_ATTR`, which lets a call on a receiver of unknown type (`name.shout()`) find them as it finds methods.
-- **Visibility.** `public` (the default) is `Visibility::Public`, `internal` and `protected` are `Visibility::Crate`, `private` is `Visibility::Private`. Annotations, without their arguments, are the symbol's `attrs`. The documentation is the KDoc comment (`/** */`) directly above.
-- **Inheritance.** The supertype list after `:`, a class with its constructor call and an interface alike, is the edge Java gives to `extends` and `implements`. A class that extends one of the Kotest spec styles carries `KOTEST_ATTR`: such a class is a test without an annotation.
-- **Imports.** `import a.b.C`, `import a.b.*` and `import a.b.C as D`. A `Companion` segment of an import path is left out, since the companion is no symbol. The platform (`java.*`, `javax.*`, `kotlin.*`) is not an integration; `kotlinx.*` and every other outside root is a library.
-- **Calls.** `foo()`, `Type.foo()`, `x.foo()` (a receiver of unknown type), `this.foo()`, a call through an import alias, a call with named arguments, a call with a trailing lambda (the lambda does not change the callee) and `Foo(1)`, a call whose name is a type: that is a construction, a reference to `Foo` and a call of its constructor. A bare name that is a member of an enclosing type is that member. The default imports (`kotlin.*`, `kotlin.collections.*`, `kotlin.io.*`...) are not imports of the file, so `listOf` or `println` is a bare name that no repository function answers to unless the package or an import of the file has one: that is Kotlin's own rule.
-- **Not followed.** Names bound inside a function (a lowercase name in an expression is a variable, as in Java), inherited members, a call through a typed receiver, and a top-level function called from Java as `UtilsKt.shout()`.
-- **A grammar limit.** `fun interface I { ... }` makes the grammar lose the rest of the file, so the parser hands the grammar a copy of the source in which that `fun` is blanked out (same length, so every position still stands). Other constructs the grammar cannot read make the file report syntax errors; what could be read is still extracted, and the members of an error node are taken as members of the scope they stand in.
+In short: a package is a module, whatever folder the file is in. Classes, interfaces, enums, enum entries and type aliases become symbols. An `object` is a class, and a `companion object` is no symbol: its members belong to the class around it. Top-level functions and properties belong to the package. Extension functions belong to the place they are written, never to the receiver, and carry `EXTENSION_ATTR` so a call on an unknown receiver can find them.
 
 ## Source
 
@@ -29,9 +18,9 @@ How Kotlin maps onto the shared model:
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `parse_kotlin`. `parse_kotlin` calls `blank_fun_interfaces`, then `Error::external`, then `Error::invalid` (both in [[Error]]), then `named`, then `dotted`, then `sanitize` (all in [[Lang Module]]), and 2 more.
+`parse_kotlin` first calls `blank_fun_interfaces`, then loads the grammar and parses the text. The `package` header gives the module name. A file with no header is named by its folder, as Java does. The function writes a module symbol, then walks the top-level nodes. Imports go to `import`. Everything else goes to `declaration`, which hands out to the type, function, property and alias handlers.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+A `Level` value records where a declaration stands (file, type body, object), because that decides whether a function is a function or a method and whether a property is a symbol. Calls are collected while walking: plain calls, `Type.foo()`, calls through an import alias, and `Foo(1)`, which counts as a reference to `Foo` plus a call of its constructor. A class that extends a Kotest spec style (the `KOTEST_SPECS` list) gets `KOTEST_ATTR`, so it counts as a test with no annotation. Imports are stored as written, and the scanner decides later which name repository packages.
 
 ## Items
 
@@ -61,6 +50,14 @@ And 3 more private items with no comment.
 - [[Scan Module]] — from `scan_repo`
 - [[Testmap Module]] — from `is_jvm_test`
 - [[Resolver]] — from `resolve`
+
+## Gotchas
+
+- The grammar loses the rest of the file after a `fun interface` with a body. `blank_fun_interfaces` blanks the `fun` word with spaces of the same length, so every position still stands.
+- Other constructs the grammar cannot read give syntax errors. What could be read is still extracted, and members of an error node count as members of the scope they stand in.
+- Default imports such as `kotlin.*` are not imports of the file. A bare `listOf` resolves to nothing unless the package or an import has it. That is Kotlin's own rule.
+- Not followed: names bound inside a function, inherited members, calls through a typed receiver, and a top-level function called from Java as `UtilsKt.shout()`.
+- A property of a class is no symbol, as a Java field is none. Only the type it names counts as a reference.
 
 ## See also
 

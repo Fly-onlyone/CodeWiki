@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-The formats are documented at <https://go.dev/ref/modgo-mod-file> and <https://go.dev/ref/modworkspaces>. A `go.mod` is a list of directives, one per line or a parenthesised block of lines, with `//` comments; the scanner needs only `module`, `go`, `require` and `replace`.
+Reads Go's build files as plain text, with no Go tool involved. From `go.mod` it takes the module path, the `go` version, the `require` lines and the `replace` lines. From `go.work` it takes the directories listed with `use`. From `go.sum` it takes the versions that have a source hash. The scanner uses this to know which Go module a file belongs to, which dependencies a repository has, and which package name an import path stands for. `GoModules` maps files to packages and import paths to folders.
 
 ## Source
 
@@ -16,12 +16,15 @@ The formats are documented at <https://go.dev/ref/modgo-mod-file> and <https://g
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] and `go` in [[Manifests Module]], and 1 more, call `parse_go_mod`. `parse_go_mod` calls `code`, then `directive`, then `unquote`. `directive` calls `code`.
-2. `discover` in [[Units Module]] calls `parse_go_work`. `parse_go_work` calls `code`, then `unquote`, then `directive`.
-3. `go` in [[Manifests Module]] calls `go_sum_versions`. `go_sum_versions` calls `version_key`.
-4. `Extractor::import` in [[Go Module]] calls `guess_package_name`. `guess_package_name` calls `sanitize` in [[Lang Module]].
+`parse_go_mod` walks the file line by line. `code` cuts off a `//` comment. `directive` splits a line into its keyword and the rest. A line such as `require (` opens a block, and every following line counts as that directive until a lone `)`. Only `module`, `go`, `require` and `replace` are kept; other directives such as `exclude` are skipped. A line that ends in `// indirect` marks the require as indirect.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`parse_go_work` works the same way but keeps only `use` paths, from a single line or a block.
+
+`go_sum_versions` groups versions by module path and drops the `/go.mod` lines, which hash only the module file. It then sorts each list with `version_key`, which compares numbers, so v1.9.0 comes before v1.10.0.
+
+`guess_package_name` turns an import path into the name Go code would use: it drops a `/v2` element, a `.v3` suffix and a `go-` prefix or `-go` suffix, then calls `sanitize` from [[Lang Module]].
+
+`GoModules::of` picks the module whose folder is the nearest above a file. `package_of` builds the qualified name from the module path plus the folders below it. `folder_of` goes the other way: the longest matching module path wins.
 
 ## Items
 
@@ -48,6 +51,14 @@ Calls are listed in the order of the source; a condition or a loop around a call
 - [[Scan Module]] — from `scan_repo`
 - [[Manifests Module]] — from `go`
 - [[Units Module]] — from `discover`
+
+## Gotchas
+
+- A line the parser cannot read is dropped without a message.
+- `code` splits on the first `//` anywhere, so a quoted path holding `//` would be cut. The source says no module path holds one.
+- `replace` keeps the new version empty when the target is a local directory.
+- `folder_of` needs a full path segment match: `example.com/application` does not match module `example.com/app`.
+- `version_key` reads a part that is not a number as 0, and ignores pre-release text after `-` or `+`, so those sort as ties.
 
 ## See also
 

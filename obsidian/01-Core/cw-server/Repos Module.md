@@ -8,7 +8,7 @@ tags: [core, cw-server, module]
 
 ## What it does
 
-Stores the list of repositories the backend manages, as `repos.json` in the data folder. Each entry has an id, a display name and the absolute path on the backend's machine. The API, the git webhook, the workspace view and the embedding job all read it.
+Stores the list of repositories the backend manages, as `repos.json` in the data folder. Each entry has an id, a display name, the absolute path on the backend's machine and, for a linked git worktree, the id of its main checkout (`worktree_of`). The API, the git webhook, the workspace view and the embedding job all read it. A worktree is one more copy of a repository, often made by a coding agent for one task, so it is not treated as a project of its own.
 
 ## Source
 
@@ -16,7 +16,9 @@ Stores the list of repositories the backend manages, as `repos.json` in the data
 
 ## How it works
 
-`load` reads and parses the file. A missing file gives an empty list. `add` turns the path into a canonical folder path, checks that it is a folder, and builds the id with `repo_id`. If that id is known, it returns the old entry. Otherwise it adds an entry named after the folder, sorts by lowercase name and saves. `remove` drops an entry by id and fails with not found if there is none. `get` finds one entry. `save` writes pretty JSON with a final newline.
+`load` reads and parses the file. A missing file gives an empty list. `add` turns the path into a canonical folder path, checks that it is a folder, and builds the id with `repo_id`. If that id is known, it returns the old entry. Otherwise it adds an entry named after the folder, asks git through `main_of` whether the folder is a linked worktree, sorts by lowercase name and saves. `remove` drops an entry by id and fails with not found if there is none. `get` finds one entry. `save` writes pretty JSON with a final newline.
+
+Two functions keep worktrees tidy. `mark_worktrees` marks entries that were registered before worktrees were told apart. It asks git once for each unmarked entry whose folder exists, so it runs at backend start, not on each listing. `prune_worktrees` forgets every worktree whose folder is gone. It deletes the index database and its `-wal` and `-shm` files first, and only drops the entry when the database is really gone.
 
 ## Items
 
@@ -48,7 +50,9 @@ Stores the list of repositories the backend manages, as `repos.json` in the data
 ## Gotchas
 
 - Callers that change the list must hold the write lock. The module itself does no locking, and `save` rewrites the whole file.
-- `remove` forgets the entry only. The vault and the source stay.
+- `remove` forgets the entry only. The vault and the source stay. `prune_worktrees` is different: it also deletes the index of the worktree.
+- On Windows an open file cannot be deleted. If a job still holds the index of a gone worktree, the entry stays listed and the next call tries again.
+- Only worktrees are pruned. A normal repository on an unplugged drive stays in the list.
 - On Windows the `\\?\` prefix of canonical paths is cut off, because tools reject it.
 - A corrupt `repos.json` makes `load` fail with an error. Only a missing file gives an empty list.
 - The same folder added by a different path spelling gives the same id and the same entry.

@@ -22,7 +22,7 @@ There are three public ways to take text from a comment.
 - `doc_body` gives the whole comment for a note. With `after_first_sentence` it leaves the summary out, for a note whose summary already is that sentence.
 - `item_text` gives a comment as the text of one list item. Paragraphs run on as one, nested lists follow as indented items, and code blocks are dropped.
 
-`doc_body` and `item_text` both call `blocks`. It reads the comment line by line into parts: running text, a label, a list, a code block or a table. A heading such as `# Errors` becomes a label, since a note takes headings only from its template. `doc_tag` turns Javadoc and JSDoc tags such as `@param` and `@returns` into list items. `clean_line` then runs `clean_inline` and `inline_tags` over each line, and rewrites any code span that would read as a line reference.
+`doc_body` and `item_text` both call `blocks`. It reads the comment line by line into parts: running text, a label, a list, a code block or a table. A heading such as `# Errors` becomes a label, since a note takes headings only from its template. `doc_tag` turns Javadoc and JSDoc tags such as `@param` and `@returns` into list items. `clean_line` then runs `inline_tags` and `clean_inline` over each line, and rewrites any code span that would read as a line reference.
 
 `clean_inline` keeps code spans as written. It turns rustdoc links into plain text, and Markdown links keep only their text. It defuses wikilink brackets, drops a `#` that would read as a tag, and squeezes whitespace.
 
@@ -57,9 +57,11 @@ There are three public ways to take text from a comment.
 
 - Tags with no value for a reader, such as `@author` and `@since`, are dropped, with the lines that follow them.
 - A fence labelled `mermaid` becomes `text`, because the app would draw a diagram and diagrams belong in a flow note.
-- An unlabelled fence in a Rust comment is `rust`. Rustdoc words such as `no_run` or `ignore` also mean `rust`.
+- An unlabelled fence takes the language of the source: `rust`, `go`, `kotlin`, `c` or `cpp`. In a Rust comment, rustdoc words such as `no_run` or `ignore` also mean `rust`.
 - `sentence_break` skips `e.g.`, `i.e.` and `etc` and anything inside backticks. A sentence that ends in another abbreviation is cut early.
 - A Python doctest block runs until the next blank line.
+- A fence or doctest that the comment never closes is closed at the end, so it cannot swallow the rest of the note.
+- A code span that reads as a line reference, such as an address with a port, loses its backticks. An unpaired backtick becomes an apostrophe.
 
 ## See also
 

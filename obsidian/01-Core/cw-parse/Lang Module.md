@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-This module holds what the [[Python Module]], [[Typescript Module]] and [[Java Module]] extractors share. That is the fact collector [[Sink]], small text helpers, the rules that map a file path to a module name, and the step that sorts imports into repository code, outside packages and a language's own library. Names use `::` between segments in every language, so one resolver serves all of them. Python's `pkg.util.shout` becomes `pkg::util::shout`.
+This module holds what all the language extractors share: [[Python Module]], [[Typescript Module]], [[Java Module]], [[Kotlin Module]], [[Csharp Module]] and [[Go Module]]. That is the fact collector [[Sink]], small text helpers, the rules that map a file path to a module name, and the step that sorts imports into repository code, outside packages and a language's own library. Names use `::` between segments in every language, so one resolver serves all of them. Python's `pkg.util.shout` becomes `pkg::util::shout`.
 
 ## Source
 
@@ -18,9 +18,16 @@ This module holds what the [[Python Module]], [[Typescript Module]] and [[Java M
 
 The helpers are small. `named` and `field_all` list tree-sitter children. `dotted` and `split_qualified` cut names into segments. `collapse` squeezes a declaration into one line, drops a trailing `{`, `:`, `;` or `=`, and cuts it to 300 characters. `block_doc` reads a doc comment that starts with `/**`. `dedent` strips shared indent. `marker_name` reads a decorator name after `@`.
 
-Path rules: `python_module` starts the name at the outermost folder that has an `__init__.py`. `ts_module` is the path without the extension. `java_default_package` uses the directory. `resolve_ts_import` follows a relative TypeScript import by trying the path, then each extension, then an `index` file. `.js` in the import is matched to `.ts` on disk.
+Path rules: `python_module` starts the name at the outermost folder that has an `__init__.py`. `ts_module` is the path without the extension. `java_default_package` and `csharp_default_namespace` use the directory. `resolve_ts_import` follows a relative TypeScript import by trying the path, then each extension, then an `index` file.
 
-`link_imports` runs after all files are parsed. For each Python or Java import it checks the repository's modules first. If none matches, a Python import in the standard library list or a Java import under `java`, `javax`, `jdk` or `sun` is dropped. Anything else becomes an external import that names the package.
+`link_imports` runs once after all files are parsed. It builds the set of repository modules per language, then rewrites each file's imports:
+
+- Python: repository modules first, then modules next to the script, then the standard library list (dropped), else an external package.
+- Java and Kotlin: one shared package set. `java`, `javax`, `jdk`, `sun` (and `kotlin` for Kotlin) are dropped; the rest is external.
+- C#: `global using` lines are spread over every namespace. Platform namespaces (`System`, a few `Microsoft.*`) are dropped. Other outside namespaces are matched to a NuGet id from project files (`nuget_ids`), else named by their root.
+- Go: an import is a whole package. It is a repository package, dropped as standard library or generated code, or an outside module found from `go.mod` requires or a guess from the host (`GoBuild`).
+
+An external import keeps one segment naming the package, and what it takes goes in the `external` field.
 
 ## Items
 
@@ -75,6 +82,9 @@ And 17 more items.
 - A TypeScript spec starting with `@/`, `~`, `#` or a path is treated as an alias and gives no package, because its target is unknown.
 - A Python script outside any package also finds sibling modules, since its own folder is on the import path.
 - `link_imports` also adds a module declaration for Python packages, so the resolver can find a module under its parent.
+- Only `System` and four named `Microsoft.*` namespaces count as the .NET platform. Any other `Microsoft.*` namespace is a package. `Systematic` is not `System`.
+- For Go, a path under a module of the repository that has no such package names nothing and is dropped.
+- A C# file with no namespace is named by its directory, so two folders give two modules.
 
 ## See also
 

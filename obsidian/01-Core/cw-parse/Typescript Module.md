@@ -16,9 +16,9 @@ This module reads one TypeScript, TSX, JavaScript or JSX file and turns it into 
 
 ## How it works
 
-`parse_typescript` picks a grammar by file extension. `.tsx`, `.js`, `.jsx`, `.mjs` and `.cjs` use the TSX grammar, which also accepts plain JavaScript. Any other file uses the plain TypeScript grammar. It then collects the roots (names bound by imports and top-level declarations), records the module symbol, and walks each top-level statement with `item`.
+`parse_typescript` calls `parse_typescript_with` with an alias check that always says no. The function picks a grammar by file extension. `.tsx`, `.js`, `.jsx`, `.mjs` and `.cjs` use the TSX grammar, which also accepts plain JavaScript. Any other file uses the plain TypeScript grammar. It then collects the roots (names bound by imports and top-level declarations), records the module symbol, and walks each top-level statement with `item`.
 
-The caller passes a `resolve` function. Given a relative import such as `./util/text`, it returns the module that file defines, or nothing when no such file is indexed. `Extractor::target` uses it to sort each import into three kinds: a repository module, an outside package, or unknown (a Node built-in, a missing file or a path alias). Repository imports go to the `Sink` as paths. Package imports go through `import_package` and record the names taken.
+The caller passes two functions. `resolve` takes an import specifier such as `./util/text` and returns the module that file defines, or nothing when no such file is indexed. `is_alias` says that a specifier matches a path alias of the repository's tsconfig. `Extractor::target` uses both to sort each import into three kinds: a repository module, an outside package, or unknown. The order is: `resolve` first, then the alias check (unknown, so it is not an outside package), then `ts_package` from [[Lang Module]], which names the package or returns nothing for a Node built-in or an unknown alias. Repository imports go to the [[Sink]] as paths. Package imports go through `import_package` and record the names taken.
 
 After the walk, any name listed in an `export { a, b }` clause is made public.
 
@@ -49,8 +49,9 @@ And 4 more private items with no comment.
 
 - Plain `.ts` needs its own grammar, because a cast like `<T>value` is not valid TSX. A `.ts` file with JSX would fail to parse cleanly.
 - Only exported, top-level things are `Public`. Anything inside a function body is `Private`.
-- A default import is recorded as the name `default` under the module's path.
+- A default import is recorded as the name `default` under the module's path or package.
 - An import of a module file records a dependency on the whole module, even if the imported name is not an indexed symbol.
+- An import that matches a tsconfig alias but names no indexed file is not an outside package. It is dropped as unknown.
 - A dotted call counts as a path only when it starts at a root. Otherwise it is a method call on an unknown receiver.
 - A doc comment is the `/** */` block above, or failing that a run of `//` lines. A comment that trails code on its own line is not used.
 

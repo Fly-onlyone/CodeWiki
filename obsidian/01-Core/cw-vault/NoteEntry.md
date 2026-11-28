@@ -25,6 +25,8 @@ One record in the vault's bookkeeping: everything CodeWiki remembers about a sin
 - `behind` holds one line per reason the explanation may be behind the code. It is rewritten at each sync and cleared when an agent explains the note again.
 - `model` names the agent that explained the note, and `illustration` points to the file that keeps its pictures.
 - `rejected_inputs` lists inputs for which a person rejected a proposal.
+- `cited` lists the repository paths a note that CodeWiki did not write names in its text. It is read again at each sync.
+- `gone` is set while the note stays although what it describes is gone from the repository, see [[Gone]].
 
 ## Items
 
@@ -50,10 +52,11 @@ Declared as `pub struct NoteEntry`.
 
 ## Gotchas
 
-- Optional fields are left out of the JSON when empty, so the file stays short and diffs stay small.
+- Optional fields are left out of the JSON when empty, so the file stays short and diffs stay small. An older line without `cited` or `gone` still loads.
 - `path` is relative to the vault, not to the repository.
 - `origin` `Adopted` means the note existed before CodeWiki. It is treated as human-owned from the start.
 - Changing the `body_hash` by hand makes CodeWiki think the note was edited.
+- A note with `gone` set is not rewritten by the updater and is not counted as part of the wiki.
 
 ## See also
 

@@ -16,7 +16,7 @@ The loaded state of a vault's metadata folder: the manifest plus a map of every 
 
 ## How it works
 
-`load` reads `manifest.json` and `notes.jsonl` from the metadata folder. A missing file gives the default, so a new vault starts empty. A broken file or line is an error. `save` creates the folder, writes the manifest, writes the entries sorted by id, and writes `registry.json`, derived from the entries by `registry` so the two cannot disagree. `by_path` and `notes_for_source` search the entries. `notes_for_source` returns the notes that cite a given source file, which is how a code change finds the notes it affects. `dir` gives the metadata folder path and is also used for the proposals folder.
+`load` reads `manifest.json` and `notes.jsonl` from the metadata folder. A missing file gives the default, so a new vault starts empty. A broken file or line is an error, and the message names the line. `save` creates the folder, writes the manifest, writes the entries one per line sorted by id, and writes `registry.json`, derived from the entries by `registry` so the two cannot disagree. `by_path` and `notes_for_source` search the entries; `notes_for_source` returns the notes that cite a given source file, which is how a code change finds the notes it affects. `live_notes` counts the notes that describe something: those without a `gone` mark. `dir` gives the metadata folder path and is also the base of the proposals folder.
 
 ## Items
 
@@ -56,9 +56,10 @@ Members:
 ## Gotchas
 
 - The whole set of entries is held in memory, and `save` rewrites all three files each time. Two writers at once can overwrite each other.
-- `by_path` and `notes_for_source` scan every entry. They are linear in the number of notes.
-- `registry` can fail if two entries clash in name, and then `save` fails too.
-- Entries are written sorted, which keeps git diffs small and stable.
+- `by_path` and `notes_for_source` scan every entry, so they are linear in the number of notes.
+- `registry` can fail if two entries clash in name, and then `save` fails too, after `manifest.json` and `notes.jsonl` are already written.
+- `live_notes` leaves out notes kept after their code is gone, so it is smaller than the entry count.
+- Entries are written sorted, which keeps git diffs small and stable. Lines written before newer fields existed still load, because those fields default.
 
 ## See also
 

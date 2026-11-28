@@ -8,7 +8,7 @@ tags: [core, cw-wiki, module]
 
 ## What it does
 
-Notes about outside packages need facts: the version asked for, the version locked, the features turned on, and what the package is. This module reads the first three from the build files of the repository and keeps the fourth in a saved file, so that notes come out the same on every machine.
+Notes about outside packages need facts: the version asked for, the version locked, the features turned on, and what the package is. This module reads the first three from the build files of the repository, for Rust, JavaScript, Python, Java and Kotlin, Go, C#, and C and C++. It keeps the fourth in a saved file, so that notes come out the same on every machine.
 
 ## Source
 
@@ -16,11 +16,16 @@ Notes about outside packages need facts: the version asked for, the version lock
 
 ## How it works
 
-`Packages::read` reads the root `Cargo.toml` and `Cargo.lock` of the repository. The lock gives exact versions by crate name, and the published name (for example `tree-sitter` for `tree_sitter`).
+`Packages::read` reads the root `Cargo.toml` and `Cargo.lock`. The lock gives exact versions by crate name, and the published name (for example `tree-sitter` for `tree_sitter`).
 
-`declared` answers what each build file asks of a package. For Rust units, `cargo` reads the dependency spec: requirement, features, and whether default features are off. A `workspace = true` spec is resolved through the root manifest. `Packages::locked` picks the locked version that the requirement accepts, using Cargo's default rule in `accepts`. If that cannot be told and the lock file has only one version, that one is used. For other units, `other` reads the requirement by file kind. Maven group matching, gradle strings and Python specifiers each have a helper.
+`declared` answers what each build file asks of a package, one entry per file. The reader depends on the unit's language:
 
-`describe` adds a one-line description for each package. It asks a `PackageInfo` (see [[Machine]]) with the published name and the locked version. If that finds nothing, it takes the text saved by an earlier run in `packages.json` under the vault's manifest folder. It rewrites the file only when the result differs. An empty result deletes the file.
+- Rust: `cargo` reads the dependency spec: requirement, features, and whether default features are off. A `workspace = true` spec is resolved through the root manifest. `Packages::locked` picks the locked version that the requirement accepts, by Cargo's default rule in `accepts`; if that cannot be told and the lock has only one version, that one is used.
+- C#: `nuget` reads project files, central versions and the lock file. Go: `go` reads `go.mod` and `go.sum`. C and C++: `cfamily` reads CMake, vcpkg and Conan files.
+- JavaScript: the requirement comes from `package.json`, the locked version from the unit's lock file via `js_locked`.
+- Java, Kotlin and Python: `other` matches Maven groups, Gradle strings and version catalogs, and Python specifiers.
+
+`describe` adds a one-line description for each package. It asks a `PackageInfo` (see [[Machine]]) with the published name and the locked version. If that finds nothing, it takes the text saved by an earlier run in `packages.json`. It rewrites the file only when the result differs. An empty result deletes the file.
 
 ## Items
 
@@ -72,6 +77,8 @@ And 14 more items.
 - `numbers` accepts only plain versions of one to three numbers. A range like `>=1, <3` or `*` gives no match, so the locked version is chosen only when there is exactly one.
 - A package that is no longer named in this run is dropped from `packages.json`.
 - `NoPackageInfo` knows nothing, so a run with it just replays the saved file.
+- A Rust manifest that was not read still counts: the names the scan found under dependencies give a bare entry without versions.
+- A JavaScript lock file in a format the reader does not know gives no locked version, and is not parsed again.
 
 ## See also
 

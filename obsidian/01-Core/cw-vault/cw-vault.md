@@ -8,7 +8,7 @@ tags: [core, cw-vault]
 
 ## What it does
 
-The model of an Obsidian vault for CodeWiki. It knows what a note is and how to read one, which sections each kind of note has, who wrote which part, which notes exist and what they are called, whether a note may be rewritten, and how changes to human-edited notes wait for review. Other crates generate and serve notes; this one decides what is allowed and keeps the records.
+The model of an Obsidian vault for CodeWiki. It knows what a note is and how to read one, which sections each kind of note has, who wrote which part, which notes exist and what they are called, whether a note may be rewritten, and how changes to human-edited notes wait for review. It also records notes whose code is gone. Other crates generate and serve notes; this one decides what is allowed and keeps the records.
 
 ## Source
 
@@ -17,14 +17,14 @@ The model of an Obsidian vault for CodeWiki. It knows what a note is and how to 
 
 ## How it works
 
-The crate is a library with seven parts, each in its own module:
+The crate is a library with seven modules, all declared in its root and re-exported from there:
 
 1. [[Note Module]] parses a note into title, summary, sections and links, and defines [[NoteKind]].
 2. [[Manifest Module]] stores the bookkeeping for every note, loaded as [[VaultMeta]].
 3. [[Registry Module]] holds the unique note names and resolves links.
 4. [[Lint Module]] checks a note's style.
 5. [[Lifecycle Module]] turns a note's state into an action: keep, regenerate, merge or propose.
-6. [[Proposal Module]] stores proposals for notes a person edited.
+6. [[Proposal Module]] stores proposals for notes a person edited, and retire proposals for notes whose code is gone.
 7. [[Explanation Module]] splits a note between the rules' sections and an agent's sections and weaves them back together.
 
 A typical update asks `state` and `action` about each note, writes or merges the note if allowed, runs the linter, and records the result in the manifest.

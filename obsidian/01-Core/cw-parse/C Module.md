@@ -8,21 +8,13 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Written against the node kinds and field names published in the grammars' own `node-types.json` (tree-sitter-c 0.24 and tree-sitter-cpp 0.23). No query files are used.
+Turns one C or C++ file into symbols and facts (calls, type references, uses). A single walker serves both languages. The C++ grammar is the C grammar plus extra node kinds, so a C file simply never meets the C++ ones. `CInput::cpp` picks the grammar.
 
-One walker serves both languages because the C++ grammar is the C one plus more node kinds: every C construct has the same shape in both, and the walk simply never meets the C++ kinds in a C file. The grammar is chosen by `CInput::cpp`.
+The parser works on one file only. Anything that needs other files is left to the scan: pairing a header with its source, resolving includes, and merging a declaration with its definition. That part lives in [[Cfamily Module]] and [[CPlan]].
 
-What a module is:
+A module is a header and source pair of one name, so `net/socket.h` and `net/socket.c` are the module `net::socket`. Namespaces are not modules; a symbol records its namespace in a `namespace:` attribute. Symbol names are `module::Name`, `module::Class::member` and `module::Enum::NAME`.
 
-There are no packages. A module is the header/source pair of one name: `src/net/socket.h` and `src/net/socket.c` (or `.cpp`) are the module `net::socket`, the declaration in the header and the definition in the source one symbol (the scan merges them; see `scan.rs`). A header with no source, or a source with no header, is a module of its own. The scan names the module and tells the parser, because pairing needs the other files. Namespaces are not modules: a namespace spans many files, and in most projects there is one. A symbol records the namespace it was declared in as the attribute `namespace:a::b`, and a qualified name such as `a::b::f()` is matched by the resolver against it.
-
-Names:
-
-A symbol is `<module>::<Name>`; a member is `<module>::<Class>::<name>` and an enumerator `<module>::<Enum>::<NAME>`. An out-of-line definition `void Foo::bar() {}` is a method of `Foo` in the module of the file that defines it; the scan fixes the class chain once it knows the classes.
-
-What is kept out:
-
-Forward declarations of types (`struct Foo;`) name something another header owns. A specialization is not a symbol: its body is walked for the calls it makes, on behalf of the primary template. Include guards and empty `#define`s are no symbols; an object-like macro with a value is a constant and a function-like macro is a macro. Code under `#if` and `#ifdef` is parsed in every branch, and a name declared in several is kept once by the scan. Conditions are never evaluated.
+Some things are deliberately not symbols: forward declarations, template specializations (their bodies are still walked for calls), include guards and empty `#define`s. Every branch of `#if` is parsed and conditions are never evaluated.
 
 ## Source
 
@@ -30,9 +22,13 @@ Forward declarations of types (`struct Foo;`) name something another header owns
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `parse_c`. `parse_c` calls `Error::external` in [[Error]], then `blank_statement_macros`, then `Error::invalid` in [[Error]], then `Sink::new` in [[Sink]], then `file_doc`. `blank_statement_macros` calls `macro_name`, then `is_comment`, then `arguments`. `file_doc` calls `clean_block`.
+`scan_repo` calls `parse_c` once per file with a `CInput` that names the module and the include resolution. `parse_c` loads the C or C++ grammar, then runs `blank_statement_macros` on the text. That step blanks lone macro lines such as `FT_BEGIN_HEADER`, and the name of wrapper macros such as `FT_EXPORT( T )`, keeping every byte position the same. Without it the grammar would read the next declaration as part of the macro.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+The parse tree goes to an `Extractor` that writes into a `Sink`. It adds one module symbol (with the file's leading doc from `file_doc`), then walks the top-level items. Each item becomes a function, type, typedef, enum, macro, constant or test symbol. Calls, type references and includes are recorded as facts on the way.
+
+Tests are found two ways: macros the grammar reads as a function (`TEST(Suite, Name)`), and block macros such as `TEST_CASE`. They get `test:` attributes.
+
+If the tree has errors, the sink is told, and what could be read still stands.
 
 ## Items
 
@@ -82,6 +78,14 @@ And 8 more items.
 - [[Plan Module]] — from `files_of`
 - [[Render Module]] — from `implementation_files`
 - [[Resolver]] — from `see_c_modules`
+
+## Gotchas
+
+- Visibility is rough. Inside a class it follows `public`, `protected` (shown as `Crate`) and `private`. Outside a class, `static` or an anonymous namespace means `Private`, everything else `Public`. The scan later lowers symbols that only a source file defines.
+- An out-of-line definition `Foo::bar` carries a temporary `outline:` attribute. The scan resolves it to the real class and removes it, so a parser result alone has the wrong parent.
+- The `declaration` attribute marks a symbol that is only declared (prototype, `extern`). The scan prefers the part that defines it, then strips the attribute.
+- Macro blanking only touches a line standing between declarations. A macro in another position is left alone and may confuse the grammar.
+- `same_type_name` treats `Foo`, `_Foo`, `foo_t`, `FOO` and `foo` as one name, so `typedef struct _foo {} foo_t;` becomes one symbol.
 
 ## See also
 

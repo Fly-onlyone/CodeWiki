@@ -25,11 +25,13 @@ impl PackageInfo for NewType {
 
 ## Why
 
-The repository's build files say which package version is asked for and locked. They do not say what the package is. That answer lives in files a machine may or may not have, such as cargo's registry cache or `node_modules`. The `PackageInfo` trait puts that lookup behind one method, `describe`, so the wiki code does not care where the text comes from.
+The repository's build files say which package version is asked for and locked. They do not say what the package is. That answer lives in files a machine may or may not have: cargo's registry cache, `node_modules`, the NuGet package folder. The `PackageInfo` trait puts that lookup behind one method, `describe`, so the wiki code does not care where the text comes from.
 
-`Machine` reads the local files and never uses the network. `NoPackageInfo` knows nothing, so tests and runs on a clean machine still work. A test type such as `OnlyAxum` can answer for one package.
+`describe_in` is the same question for a JavaScript package that a workspace installed under its own `node_modules`. It gets the folders to look in, and by default it calls `describe`. An implementation overrides it only when folders matter.
 
-The free function `describe` calls the trait and keeps the answers in `packages.json` in the vault. What the machine finds wins. What it does not find comes from the saved file. This way a machine without the cache writes the same notes as one with it.
+`Machine` reads the local files and never uses the network. It answers for Rust, JavaScript and TypeScript, and C# packages, and returns `None` for other languages. `NoPackageInfo` knows nothing, so tests and runs on a clean machine still work. A test type such as `OnlyAxum` can answer for one package.
+
+The free function `describe` calls the trait and keeps the answers in `packages.json` in the vault. What the machine finds wins. What it does not find comes from the saved file. This way a machine without the cache writes the same notes as one with it. The file holds exactly the packages named in the call that have a description, and it is written only when that differs from what it held.
 
 ## Don't
 
@@ -38,6 +40,7 @@ The free function `describe` calls the trait and keeps the answers in `packages.
 - Do not return more than one line. The text goes into a note as a short summary.
 - Do not write to the vault from the implementation. Only the free `describe` function saves `packages.json`.
 - Do not assume a version is present. `version` is `None` when there is no lock file.
+- Do not rely on `describe_in` being called alone. A caller may use `describe` only, so the two must give the same answer when `dirs` is empty.
 
 ## See also
 

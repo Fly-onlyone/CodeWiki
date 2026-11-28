@@ -24,9 +24,11 @@ Showing: `show_review` selects the first proposal alone and calls `show_proposal
 
 Clicking: `click_review_row` updates the selection with plain, control or shift click rules and opens the row in place when a click chose a new proposal. The checkboxes toggle one row or all rows. When a sync proposal and an agent proposal for one note are both selected, `review_clash` shows a warning.
 
-Deciding: `decide_review` takes the ids from `review_targets` (the selection when it holds anything, else the open proposal) and runs `decide` off the UI thread. `decide` posts to the proposal's own approve or reject route for one id, and calls `Backend::decide_proposals` for several. When results return: notices are shown, pages of written notes are forgotten in every tab (`forget_written_notes`), the notes reload, and `after_decision` picks the next proposal or shows the empty review page.
+Retire proposals: `review_retire` lists the notes the open retire proposal would delete, each with a check box. A ticked note is deleted; an unticked one is kept as history (`review.keep`). Approve counts the notes (`retire_label`); Reject reads "Keep all as history".
 
-Counts: `take_proposal_counts` compares the new status counts with the old, tells the user about rises, and reloads the open repository's queue quietly. `review_queue_grew` opens the first proposal when the empty review page was shown and proposals arrive. `review_details` fills the details pane with counts by kind and the number selected.
+Deciding: `decide_review` takes the ids from `review_targets` (the selection when it holds anything, else the open proposal) and runs `decide` off the UI thread. `decide` posts to the proposal's own approve or reject route for one id, and calls `Backend::decide_proposals` for several. A retire proposal always goes by its own route, which alone takes the notes to keep. When results return: notices are shown, pages of written notes are forgotten in every tab, the notes reload, and `after_decision` picks the next proposal or shows the empty review page.
+
+Counts: `take_proposal_counts` compares the new status counts with the old, tells the user about rises, and reloads the open repository's queue quietly. `review_queue_grew` opens the first proposal when the empty review page was shown and proposals arrive. `review_details` fills the details pane.
 
 ## Items
 

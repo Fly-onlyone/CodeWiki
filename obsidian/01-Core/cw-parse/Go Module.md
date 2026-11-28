@@ -8,18 +8,9 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Written against the node kinds and field names published in the grammar's own `node-types.json` (tree-sitter-go 0.25). No query files are used.
+Turns one Go file into symbols and facts for the shared model, using the tree-sitter Go grammar. A Go package is a module: all files of one folder share it, and the caller supplies its qualified name (see [[GoModules]]). Functions are `package::Name`. Methods belong to their receiver's type, whether the receiver is a value or a pointer. Structs, interfaces and every other type are separate kinds, constants are constants and package variables are statics. Fields are not symbols.
 
-How Go maps onto the shared model:
-
-- **A package is a module.** All `.go` files of one folder share one package; the caller names it (see `crate::gomod::GoModules::package_of`) so that the import path `example.com/app/internal/store` is the module `example_com::app::internal::store`. The module symbol's signature is `package <name>`, which is how an entry point is told from a library. An external test package (`package store_test` in a `_test.go` file) is a module of its own, `<package>_test`.
-- **Functions** are `<package>::Name`; a **method** belongs to its receiver's type, value or pointer alike (`<package>::Type::Name`), so the type and its methods nest as a class and its methods do elsewhere.
-- **Types.** A struct is a `SymbolKind::Struct`, an interface a `SymbolKind::Interface` whose methods are method symbols, and every other defined type and every alias a `SymbolKind::TypeAlias`. Fields are no symbols. Constants are `SymbolKind::Const` and package variables `SymbolKind::Static`.
-- **Exported** (a name that starts with an upper-case letter) is `Visibility::Public`; any other name is visible to its package alone, which is `Visibility::Crate`.
-- **Inheritance.** Go has none; the shared edge for it, "implements", is given to what stands closest: a struct that embeds a type, an interface that embeds an interface, and `var _ Iface = (*T)(nil)`, the idiom that states `T` implements `Iface`. A type that satisfies an interface by having its methods leaves no trace in the text and gets no edge.
-- **Calls.** `pkg.Func()` through an import name is a path; `x.Method()` on the receiver of the enclosing method is a call on the receiver's type; `x.Method()` on anything else is a method call on a receiver of unknown type, as in Java. A name bound inside the function (parameter, `:=`, `var`, range variable) is never a package-level name.
-- **Doc comments** are the `//` lines (or a `/* */` block) that end on the line above a declaration; compiler directives such as `//go:generate` are no documentation.
-- **Generated code.** A file with a line `// Code generated ... DO NOT EDIT.` before its `package` clause is parsed like any other, so its symbols exist and are called, and each of its symbols carries the attribute `GENERATED_ATTR`, which keeps it out of the notes' rankings.
+Go has no inheritance, so the shared "implements" edge is given to the closest thing the text states: an embedded type, an embedded interface, and the idiom `var _ Iface = (*T)(nil)`. A type that satisfies an interface only by having the methods leaves no edge.
 
 ## Source
 
@@ -27,9 +18,11 @@ How Go maps onto the shared model:
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `parse_go`. `parse_go` calls `Error::external`, then `Error::invalid` (both in [[Error]]), then `named`, then `sanitize` (both in [[Lang Module]]), then `Sink::new` in [[Sink]], then `is_generated_marker`.
+`parse_go` parses the file and reads the `package` clause. If the file is `_test.go` and the package ends in `_test`, the module becomes `<module>_test`, since an external test package is its own package. It adds the module symbol with the signature `package <name>`, which is how an entry point is told from a library.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+It then reads imports first, and walks functions, methods, type declarations and const or var blocks. For calls it uses `Fun`, the set of names bound inside one function (parameters, `:=`, `var`, range variables, local types). A name bound locally is never treated as a package-level name. `pkg.Func()` through an import is a path call, `x.Method()` on the receiver is a call on the receiver's type, and any other `x.Method()` is a call on an unknown receiver. The `import_name` callback gives the real name a repository package declares for itself, so that `example.com/app/store` for `package db` resolves to `db`.
+
+A file is generated when a comment before its `package` clause has a line starting `// Code generated` and ending `DO NOT EDIT.`. Its symbols are still extracted but carry the `generated` attribute.
 
 ## Items
 
@@ -62,6 +55,14 @@ And 3 more private items with no comment.
 - [[Scan Module]] — from `scan_repo`
 - [[Health Module]] — from `dead_code`
 - [[Repo]] — from `is_test`
+
+## Gotchas
+
+- Export rule: a name starting with an upper-case letter is public. Any other is crate level, because it is visible to its package only. There is no private level.
+- Compiler directives like `//go:generate` or `//nolint` are not part of documentation.
+- Builtin names (`len`, `make` and others in `BUILTIN_FUNCTIONS`) never count as calls to repository code.
+- Generated files are kept in the index but marked, so rankings and notes skip them.
+- Interface satisfaction by method set is invisible, so a call through an interface has no implements edge to follow.
 
 ## See also
 

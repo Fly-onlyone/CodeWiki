@@ -6,17 +6,17 @@ tags: [core, cw-wiki]
 
 > Files, lines, folders and languages of a set of source files.
 
+## What it does
+
+A running total for a set of source files: how many files, how many lines, which folders hold a file, and how many files of each language. [[Filemap Module]] keeps one for the whole repository, one for each unit and one for each folder note, and builds its summary sentences from them.
+
 ## Source
 
 - `crates/cw-wiki/src/filemap.rs` — definition of `Tally`
 
 ## How it works
 
-What the functions of this type call:
-
-1. `language_names` calls `names_up_to`. `names_up_to` calls `languages`, then `count`, then `join_and` (both in [[Render Module]]).
-
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`add` is private and counts one file: it adds one to the files, adds its lines, records the file's folder in a set, and adds one to its language. `folders` returns the size of that set. `languages` sorts the counts largest first, ties by name. `language_names` writes the readable list through `names_up_to`: at most three names, then "and N other languages", for example `Lua, Ruby, SQL, and 2 other languages`.
 
 ## Items
 
@@ -39,6 +39,12 @@ And 1 more private item with no comment.
 ## Used by
 
 - [[Filemap Module]] — from `FileMap`, `FileUnit`, `Folder`, `build`
+
+## Gotchas
+
+- Only [[Filemap Module]] can add files, because `add` is private.
+- A folder counts once however many files it holds.
+- The folder set is keyed by each file's own folder, not its parents.
 
 ## See also
 

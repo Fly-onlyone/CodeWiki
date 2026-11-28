@@ -6,15 +6,23 @@ tags: [core, cw-parse]
 
 > Everything a repository's JavaScript build files say, read once.
 
+## What it does
+
+`JsRepo` reads every JavaScript build file of a repository once and then answers questions. Which packages exist? Which belong to a workspace? Which package manager does a folder use? Which file does an import such as `@/store/cart` or `@acme/ui` name? Nothing is run: files are read as data through a `read` callback the caller supplies.
+
 ## Source
 
 - `crates/cw-parse/src/jsbuild.rs` — definition of `JsRepo`
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] and `gather` in [[Testmap Module]], and 1 more, call `read`. `read` calls `parent_dir`, then `parse_pnpm_workspace`, then `read_tsconfig` (all in [[Jsbuild Module]]), then `find_members`. `find_members` calls `glob_matches` in [[Jsbuild Module]].
+`JsRepo::read` loops over the file paths and picks files by name. A `package.json` becomes a [[JsPackage]], and its `workspaces` globs are noted (an array, or an object with `packages`). A `pnpm-workspace.yaml` adds globs through `parse_pnpm_workspace`. A `tsconfig.json` is read with `read_tsconfig`. A `jsconfig.json` is used only where its folder has no tsconfig. Then it notes each `yarn.lock` (Berry or not, by its `__metadata:` header) and each `.yarnrc.yml` folder, and calls `find_members`.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+`find_members` tests each package against each workspace root with `glob_matches`. Globs run in order. A `!` glob removes a package that an earlier glob added. The workspace root's own package is not a member.
+
+`manager_of` picks the manager in this order. First the `packageManager` field of the nearest `package.json` that has one. Then the nearest lock file above. Then a `pnpm-workspace.yaml`. Then npm. The install folder is the lock file's folder, else the workspace root, else the package.
+
+`resolve_import` returns a file and an alias flag. It tries `paths` and `baseUrl` of the nearest config first, then `resolve_member` for a workspace package name. Relative specifiers return `(None, false)`.
 
 ## Items
 
@@ -45,6 +53,14 @@ Members:
 - [[Js Module]] — from `command`, `package_runner`
 - [[Scan Module]] — from `scan_repo`
 - [[Units Module]] — from `discover`
+
+## Gotchas
+
+- A `packageManager` field wins over a lock file of another manager. A lock file of that manager is then looked for.
+- `bun.lockb` is binary. It names bun but counts as no lock file.
+- A yarn lock counts as Berry from a `packageManager` major of 2 or more, else from `.yarnrc.yml` or the lock header.
+- The alias flag can be true with no file found. It means the import is the repository's own, not an outside package.
+- A package with no `name` can never be resolved by name.
 
 ## See also
 

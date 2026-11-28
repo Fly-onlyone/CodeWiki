@@ -8,14 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-The walker itself is `c.rs`; this is the part that needs the other files.
-
-The rules:
-
-- **Language.** `.c` is C. `.cc`, `.cpp`, `.cxx`, `.c++`, `.hpp`, `.hh`, `.hxx`, `.ipp`, `.tpp` and `.inl` are C++. A `.h` is C++ when it uses what only C++ has (`class`, `namespace`, `template`, an `#include` of a header with no extension...), outside the `#ifdef __cplusplus` blocks C headers keep for C++ callers; otherwise when the source of the same name is C++, or its folder holds C++ sources and no C; otherwise C.
-- **Module.** A header and the source of its name are one module (`net/socket.h` and `net/socket.c`), named from the header's path without its extension and without a leading `src`, `lib` or `include`. A header and a source of one name in different folders (`include/x/a.h` and `src/a.cpp`) are one module when each is the only one of its kind with that name. Every other file is a module of its own.
-- **Declaration and definition** of one name in a module are one symbol, whose file is the header and which lists the sources that define it (`impl:<file>`). `void Foo::bar() {}` joins the class `Foo`, wherever the class is declared. A function a header declares and another module defines is merged when the defining module includes that header.
-- **Vendored trees** (`third_party`, `vendor`, `external`, `extern`, `deps`, `_deps`, `3rdparty`) are not parsed when the repository has C or C++ outside them: they would dwarf the project in every ranking and in the time of a scan. An include that reaches into one names the library by the folder it sits in.
+The walker in [[C Module]] reads one C or C++ file. This module does the work that needs all files: it decides whether a `.h` is C or C++, groups a header and its source into one module, resolves what each `#include` means, skips vendored code, and merges the pieces of a declaration (prototype, definition, out-of-line method) into one symbol. It is the shared helper layer for the scan, the units, the test map and the health checks.
 
 ## Source
 
@@ -23,15 +16,19 @@ The rules:
 
 ## How it works
 
-1. `is_c_api` in [[Health Module]] and `is_c_entry` in [[Units Module]], and 1 more, call `is_header`. `is_header` calls `extension`.
-2. `add_c_pair_dependents` in [[Testmap Module]] and `discover` in [[Units Module]] call `c_module_map`. `c_module_map` calls `is_header`, then `is_source`, then `is_vendored`, then `module_names`.
-3. `CPlan::build` in [[CPlan]] calls `is_source`. `is_source` calls `extension`.
-4. `CPlan::build` and `CPlan::find` in [[CPlan]], and 1 more, call `dir_of`.
-5. `CPlan::build` in [[CPlan]] calls `stem_of`.
+Two phases around the parse.
 
-7 more entry points: `is_vendored`, `vendored_library`, `looks_cpp`, `module_names`, `declared_libraries`, `normalize`, and 1 more.
+Before parsing, [[CPlan]] `build` classifies every file, names modules with `module_names`, and reads CMake and package files. `c_module_map` is a lighter form that returns only the module of each file, for callers that need no includes.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+After parsing, `merge` takes every file's symbols and:
+
+1. Gives each out-of-line definition (`Foo::bar`) its class. It looks in the same module first, then by name across the repository.
+2. Folds symbols with the same qualified name into one. Headers go first, so the symbol sits where it is declared, and the defining sources are listed as `impl:` attributes (`join_parts`).
+3. Merges a function that one module's header declares and another module defines, when the defining module reaches that header through includes (`reach`, up to three levels).
+4. Lowers visibility for things only a source file uses: macros become private, other public functions and statics become crate level, except entry points such as `main`.
+5. Rewrites calls and references that named a renamed symbol.
+
+Small helpers (`is_header`, `is_source`, `dir_of`, `stem_of`, `is_vendored`) work on path text only.
 
 ## Items
 
@@ -76,6 +73,14 @@ And 7 more items.
 - [[Scan Module]] — from `scan_repo`
 - [[Health Module]] — from `is_c_api`
 - [[Testmap Module]] — from `add_c_pair_dependents`
+
+## Gotchas
+
+- Vendored folders (`third_party`, `vendor`, `external`, `deps` and the like) are skipped only when the repository has C or C++ outside them.
+- `merge` empties the `symbols` of every C file in `files` and returns them all. A caller must use the returned list, not the per-file one.
+- Matching a header to a source in different folders works only when each is the only one of its name. Two such pairs stay separate and get `_2` style suffixes.
+- Include reach is limited to three hops, so a deep include chain can leave a definition unmerged.
+- Conditions of `#if` are never evaluated, in this module or in the walker.
 
 ## See also
 

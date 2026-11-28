@@ -19,7 +19,7 @@ cw-server is the HTTP API of the CodeWiki backend. It serves data only, with no 
 
 ## How it works
 
-`serve` binds the address, tells the caller the bound port through `on_bound` (useful for port 0), and builds the shared state with `state`. It then points semantic search at the embedder named in the settings, sets a one second inline embedding budget, and starts `embed_job::resume` in the background. At last it runs axum with `api::routes`.
+`serve` binds the address, tells the caller the bound port through `on_bound` (useful for port 0), and builds the shared state with `state`. It then points semantic search at the embedder named in the settings and sets a one second inline embedding budget. On a blocking task it takes the write lock and tidies the repository list with `mark_worktrees` and `prune_worktrees`, then starts `embed_job::resume`. At last it runs axum with `api::routes`.
 
 The stop future ends on the caller's `shutdown` future or on the `stop` notify of `POST /v1/shutdown`. It also closes the embedding job, so a background job does not keep the process alive. Running requests finish first.
 
@@ -68,9 +68,10 @@ Defined at the crate root:
 
 ## Gotchas
 
-- `settings_writable` is false for a server that listens beyond this machine. Otherwise a token holder could point a provider address at their own host and be sent the API key.
+- `settings_writable` is false for a server that listens beyond this machine. Otherwise a token holder could point a provider address at their own host and be sent the API key. The embedding job routes are closed for the same reason.
 - With no webhook secret the git hook route answers 404.
 - Embedding inside an update is limited to about one second. The rest runs in the background, so the first search after an update may find fewer results by meaning.
+- Startup holds the write lock while it tidies the repository list, so a request that writes can wait a moment right after start.
 
 ## See also
 

@@ -24,7 +24,7 @@ Three files are written under the metadata folder:
 
 `VaultMeta::load` reads these. A missing file is not an error: a vault with no metadata loads as the empty default. A line of `notes.jsonl` that cannot be parsed is an error that names the line number.
 
-Each entry has an `Origin` (`Generated` or `Adopted`), its [[SourceRef]] list, a `body_hash` and an `input_hash`. `body_hash` hashes the note text after normalizing it, so line-ending changes do not count as edits. `Explained` records what an agent wrote and the files and hashes it wrote from. `behind` holds the reasons an explanation may be out of date. [[Lifecycle Module]] reads these fields to decide what may be rewritten.
+Each entry has an `Origin` (`Generated` or `Adopted`), its [[SourceRef]] list, a `body_hash` and an `input_hash`. `body_hash` hashes the note text after normalizing it, so line-ending changes do not count as edits. `Explained` records what an agent wrote and the files and hashes it wrote from. `behind` holds the reasons an explanation may be out of date. `cited` and `gone` serve notes that CodeWiki did not write: `cited` lists the repository paths such a note names, and `gone` says why a note stays although what it describes has left the repository (a pending retire proposal, kept as history, deletion not committed yet, or git could not restore it). `live_notes` counts only notes that are not gone. [[Lifecycle Module]] reads these fields to decide what may be rewritten.
 
 ## Items
 
@@ -62,6 +62,8 @@ Each entry has an `Origin` (`Generated` or `Adopted`), its [[SourceRef]] list, a
 - `rejected_inputs` is permanent memory: an input a person rejected is never proposed again.
 - Setting `explained` changes how the note is rewritten later. Rules then write only the sections the agent did not write.
 - A broken line in `notes.jsonl` stops the whole load, so a bad merge in git must be fixed by hand.
+- Newer fields such as `gone` and `cited` are optional on load, so an older line still reads. A line written by a newer version has no such guarantee in reverse.
+- A gone note stays in the vault but is not counted by `live_notes`.
 
 ## See also
 

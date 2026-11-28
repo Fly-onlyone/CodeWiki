@@ -8,9 +8,9 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-Written against the node kinds and field names published in the grammar's own `node-types.json` (tree-sitter-c-sharp 0.24). No query files are used.
+Turns one C# file into symbols and facts for the shared model. A namespace is a module, so all files of one namespace share one module, like a Java package. Classes and records become classes, structs and record structs become structs, interfaces and enums keep their kinds, and delegates become type aliases. Methods and constructors are methods. Constants, `static readonly` fields and enum members are constants. Properties, events, indexers, operators and plain fields are not symbols; the types they mention count for their owner type. Top-level statements become a function `Main` of their namespace.
 
-Mapping, in short. A namespace is a module, so the files of one namespace share one module, as the files of a Java package do. Symbols: a class and a record are `Class`, a struct and a record struct `Struct`, an interface `Interface`, an enum `Enum`, a delegate `TypeAlias`, a method, a constructor and an operator-free member function `Method`, a constant, a `static readonly` field and an enum member `Const`. Properties, events, indexers, operators and plain fields are no symbols: the types and values they mention count for their type, as a Java field does. Top-level statements are the function `Main` of their namespace.
+It works from the grammar's own node kinds and field names, with no query files.
 
 ## Source
 
@@ -18,9 +18,11 @@ Mapping, in short. A namespace is a module, so the files of one namespace share 
 
 ## How it works
 
-1. `scan_repo` in [[Scan Module]] calls `parse_csharp`. `parse_csharp` calls `Error::external`, then `Error::invalid` (both in [[Error]]), then `flat`, then `is_namespace`, then `namespace_segments`, then `csharp_default_namespace` in [[Lang Module]], and 1 more. `flat` calls `named` in [[Lang Module]]. `namespace_segments` calls `dotted` in [[Lang Module]].
+`parse_csharp` loads the tree-sitter C# grammar and parses the file. `flat` lists the top-level items and treats the branches of `#if` blocks as if they stood in the code; other directives are dropped. The first `namespace_declaration` or file-scoped namespace gives the module name through `namespace_segments`. Without one, `csharp_default_namespace` names the module from the file's folder.
 
-Calls are listed in the order of the source; a condition or a loop around a call is not shown.
+An `Extractor` writing into a `Sink` then walks the items in a `Ctx` that carries the scope, namespace, enclosing types and the default access level for members. `Modifiers::visibility` maps `public` to public, `private` and `file` to private, and `internal` and `protected` to crate level. With no keyword the context default applies, which starts at crate level.
+
+XML doc comments are turned into plain paragraphs by `xml_doc`, with `param`, `returns` and `exception` tags as tag lines like Javadoc. A `cref` is shortened to a readable name by `short_cref`.
 
 ## Items
 
@@ -50,6 +52,13 @@ And 5 more private items with no comment.
 ## Used by
 
 - [[Scan Module]] — from `scan_repo`
+
+## Gotchas
+
+- A `global using` is recorded with an empty scope. The scan applies it to every namespace. Other imports are stored as written, and the scan decides later which ones name repository namespaces.
+- Members with no modifier get the default of the enclosing context, so the result depends on what the member sits in.
+- If a file has a namespace, the module symbol comes from the namespace itself. Only a file with no namespace gets an explicit module symbol.
+- Because properties and fields are not symbols, a dead-code or usage view will not list them.
 
 ## See also
 

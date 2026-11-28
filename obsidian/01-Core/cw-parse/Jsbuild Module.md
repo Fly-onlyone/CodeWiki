@@ -8,7 +8,7 @@ tags: [core, cw-parse, module]
 
 ## What it does
 
-tsconfig is JSONC: comments and trailing commas are allowed. A bundler's own aliases (`vite.config.ts`, webpack) are code and are not evaluated. The YAML readers are line based and know only the shapes their tests pin; a file in another shape reads as empty, and a lock file of a format this module does not know is "not read", never a guess.
+Reads the build files of a JavaScript or TypeScript repository as data and never runs them. The files are `tsconfig.json`, `jsconfig.json`, `package.json`, `pnpm-workspace.yaml` and the lock files of npm, pnpm, Yarn and Bun. The scanner needs this to turn an import such as `@/utils/text` or `@acme/ui` into a file of the repository, to find workspace members, to pick the package manager, and to know which version a lock file pins. The YAML readers go line by line and know only the shapes the tests pin. Anything else reads as empty, never as a guess.
 
 ## Source
 
@@ -16,13 +16,15 @@ tsconfig is JSONC: comments and trailing commas are allowed. A bundler's own ali
 
 ## How it works
 
-1. `read_project` in [[Python Module (testmap)]] and `JsRepo::config_for` in [[JsRepo]], and 2 more, call `ancestors`.
-2. `JsRepo::config_for` and `JsRepo::read` in [[JsRepo]], and 3 more, call `parent_dir`.
-3. `JsRepo::manager_of` and `JsRepo::resolve_member` in [[JsRepo]], and 2 more, call `join`.
-4. `resolve_ts_import` in [[Lang Module]] and `JsRepo::resolve_import` in [[JsRepo]], and 1 more, call `resolve_source`.
-5. `discover` in [[Units Module]] and `JsRepo::resolve_member` in [[JsRepo]] call `resolve_js_entry`. `resolve_js_entry` calls `join`.
+Small path helpers (`parent_dir`, `join`, `ancestors`, `join_norm`) work on repo-relative strings. `join_norm` folds `.` and `..` and gives `None` when a path climbs out of the repository.
 
-8 more entry points: `join_norm`, `match_pattern`, `read_tsconfig`, `export_targets`, `parse_pnpm_workspace`, `glob_matches`, and 2 more.
+`strip_jsonc` removes comments and trailing commas but leaves strings alone. `parse_jsonc` also drops a byte-order mark.
+
+`read_tsconfig` loads a config and follows `extends` up to 8 levels deep. A parent can be a relative file or a package in `node_modules` up the tree. Later parents win over earlier ones, and the file wins over all. `TsConfig::lookup` picks the `paths` pattern with the longest prefix before its `*`, then adds `baseUrl` itself.
+
+`resolve_source` finds a file for a base path: the file itself, with each TS or JS extension, or an `index` file in a folder. `resolve_js_entry` does this for a `package.json` entry and also tries `src` when the entry points into `dist`, `build`, `lib` or `out`.
+
+`PmInfo` and `Manager` describe the package manager. `PmInfo::install` gives the strict command for a lock file, such as `npm ci`. [[JsRepo]] ties it together. `JsLock::read` picks a reader by file name and `JsLock::version` finds the pinned version of a package.
 
 ## Items
 
@@ -63,6 +65,14 @@ And 13 more items.
 - [[Lang Module]] — from `resolve_ts_import`
 - [[Pyroots Module]] — from `root`
 - [[Python Module (testmap)]] — from `read_project`
+
+## Gotchas
+
+- Bundler aliases in `vite.config.ts` or webpack are code and are not read.
+- `paths` of a file replace inherited ones, as TypeScript does. Without `baseUrl`, targets are relative to the config that wrote `paths`.
+- A lock file of an unknown format version gives `None`, so no version is claimed. Known: npm 1 to 3, pnpm 6.0 and 9.0, Yarn Berry metadata 4 to 9, bun 0 and 1.
+- `parse_pnpm_workspace` reads only the block and flow list forms of `packages:`.
+- For Yarn, a requirement missing from the lock falls back to the only version present, and only when exactly one exists.
 
 ## See also
 

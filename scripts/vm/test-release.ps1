@@ -2792,9 +2792,13 @@ Test-Case "HS1" "Home's search suggests recent projects" "typing in the field li
     $chosen = Shot "home-search-down"
     Send-Keys "esc"; Wait-ScreenSettled -TimeoutSec 2
     $escaped = Shot "home-search-escape"
-    $listed = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $typed)
-    $closed = Get-ImageChange (Join-Path $shots $typed) (Join-Path $shots $escaped)
-    $back = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $escaped)
+    # Compared where the list opens, under the field in the page's column, not
+    # over the whole window: with a graphics card the backdrop drifts in the
+    # margins, and its 0.8 percent once outweighed half of the list's 1.6.
+    $under = @(($info.Left + [int]($info.Width / 2) - [int](400 * $info.Scale)), ($info.Top + [int](285 * $info.Scale)), [int](800 * $info.Scale), [int](150 * $info.Scale))
+    $listed = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $typed) -Region $under
+    $closed = Get-ImageChange (Join-Path $shots $typed) (Join-Path $shots $escaped) -Region $under
+    $back = Get-ImageChange (Join-Path $shots $empty) (Join-Path $shots $escaped) -Region $under
     # Again, and open the first project of the list.
     Send-Text "hs-"; Wait-ScreenSettled -TimeoutSec 3
     Send-Keys "down"; Wait-ScreenSettled -TimeoutSec 1
@@ -2804,10 +2808,10 @@ Test-Case "HS1" "Home's search suggests recent projects" "typing in the field li
     $line = Wait-AppRepository -Name "hs-beta" -After $after
     Wait-ScreenStill -TimeoutSec 4 -MinSec 1.5 -QuietMs 800 -What "the opened project is drawn"
     $opened = Shot "home-search-opened"
-    $ok = $listed -ge 0.01 -and $closed -ge 0.01 -and $back -lt $listed / 2 -and [bool]$line
+    $ok = $listed -ge 0.03 -and $closed -ge 0.03 -and $back -lt 0.01 -and [bool]$line
     Add-Result -Id "HS1" -Title "Home's search suggests recent projects" -Expect "a list under the field for 'hs-' (two projects); Escape empties the field and closes the list; Down, Enter opens a project" `
         -Status $(if ($ok) { "pass" } else { "fail" }) -Shots @($empty, $typed, $chosen, $escaped, $opened) `
-        -Observed "typed 'hs-' with hs-alpha and hs-beta opened before: $([math]::Round($listed * 100, 1)) percent of the window changed with the list; Down; Escape: $([math]::Round($closed * 100, 1)) percent changed back, $([math]::Round($back * 100, 1)) percent from the empty field; typed again, Down, Enter: the app's log says '$line'; read the screenshots: the list 'Recent projects' with hs-beta above hs-alpha and one row marked, then the empty field with no list, then the opened project"
+        -Observed "typed 'hs-' with hs-alpha and hs-beta opened before: $([math]::Round($listed * 100, 1)) percent of the band under the field changed with the list; Down; Escape: $([math]::Round($closed * 100, 1)) percent changed back, $([math]::Round($back * 100, 1)) percent from the empty field; typed again, Down, Enter: the app's log says '$line'; read the screenshots: the list 'Recent projects' with hs-beta above hs-alpha and one row marked, then the empty field with no list, then the opened project"
     Stop-GuestApp
     Complete-HsCase "HS1"
 }

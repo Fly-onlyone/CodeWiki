@@ -3430,7 +3430,10 @@ foreach ($name in $files.Keys) { [IO.File]::WriteAllText((Join-Path $dir $name),
 "crlf in lib.rs: $([IO.File]::ReadAllText("$dir\src\lib.rs").Contains("`r`n"))"
 $said = @(Run @('update'))
 "crlf update exit: $LASTEXITCODE"
-"crlf behind lines: $(@($said | Where-Object { $_ -match 'may be behind' }).Count)"
+# A note that is behind gets a line "... may be behind in <note>"; the
+# summary line "explanation may be behind: <n>" is there in every sync.
+"crlf behind lines: $(@($said | Where-Object { $_ -match 'may be behind in ' }).Count)"
+"crlf behind count: $(($said | Where-Object { $_ -match 'may be behind: (\d+)' } | ForEach-Object { $Matches[1] }) -join ',')"
 $second = Get-WikiState
 "crlf wiki same: $($first -eq $second)"
 if ($first -ne $second) {
@@ -3447,7 +3450,7 @@ $global:LASTEXITCODE = 0
     $out = $run.Output
     $synced = $out -match "(?m)^update exit: 0" -and $out -match "(?m)^crlf update exit: 0" -and $out -match "(?m)^word update exit: 0"
     $saved = $out -match "(?m)^crlf in lib\.rs: True"
-    $same = $out -match "(?m)^crlf wiki same: True" -and $out -match "(?m)^crlf behind lines: 0"
+    $same = $out -match "(?m)^crlf wiki same: True" -and $out -match "(?m)^crlf behind lines: 0" -and $out -match "(?m)^crlf behind count: 0\s*$"
     $seen = $out -match "(?m)^word wiki same: False"
     $differs = if ($out -match "(?m)^crlf differs in: (.+)$") { $Matches[1].Trim() } else { "" }
     Add-Result -Id "LE1" -Title "Line endings are no change to the wiki" -Expect "after the files are saved with CRLF, a sync leaves every file of the wiki as it was and marks no note behind; after a word is changed, a sync changes the wiki" `

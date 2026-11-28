@@ -1,3 +1,5 @@
 # Paths CodeWiki should not document. Same syntax as .gitignore.
 spikes/
 vendor/
+# The user guide: GitBook pushes to it, and it is no code.
+docs/guide/

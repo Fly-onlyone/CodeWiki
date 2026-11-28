@@ -15,7 +15,7 @@ You need CodeWiki [installed](install.md) and a folder with source code. The fol
 
 Start CodeWiki. On Home, press **Open folder…** and choose the project's folder.
 
-![Home, with Open folder and the recent projects](../.gitbook/assets/home-0.6.png)
+![Home, with Open folder and the recent projects](../.gitbook/assets/home-0.7.png)
 {% endstep %}
 
 {% step %}

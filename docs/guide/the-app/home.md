@@ -9,7 +9,7 @@ icon: house
 
 CodeWiki starts on Home. It fills the window: the sidebar, the toolbar and the tabs appear once you open a project's page.
 
-![Home with a few letters typed into the search field, and two projects below: one open now, one with a worktree and kept from agents](../.gitbook/assets/home-0.6.png)
+![Home with a few letters typed into the search field, and two projects below: one open now, one with a worktree and kept from agents. Each row ends with a shield and a close button](../.gitbook/assets/home-0.7.png)
 
 ## Open a project
 
@@ -38,16 +38,21 @@ The toolbar has a shortcut too: the **Open recent** button, after **Back**, list
 
 A project's row starts with marks, then the folder.
 
-| Mark                                      | Meaning                                                                                              |
-| ----------------------------------------- | ---------------------------------------------------------------------------------------------------- |
-| **Open now**                              | This is the project that is open.                                                                    |
-| **1 worktree**, **\<n> worktrees**        | The repository has linked git worktrees. They have no row of their own. See below.                   |
-| **Worktree of \<name>**                   | The open folder is a linked git worktree of that project.                                            |
-| **Kept from agents**                      | Coding agents get no CodeWiki tools in this folder. The button at the right reads **Let agents in**. |
-| **Kept from agents by \<folder>**         | A folder above it is kept from agents. The button reads **Settings…**.                               |
-| **Kept from agents (contains \<folder>)** | A folder inside it is kept from agents. The button reads **Settings…**.                              |
+| Mark                                      | Meaning                                                                                            |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| **Open now**                              | This is the project that is open.                                                                  |
+| **1 worktree**, **\<n> worktrees**        | The repository has linked git worktrees. They have no row of their own. See below.                 |
+| **Worktree of \<name>**                   | The open folder is a linked git worktree of that project.                                          |
+| **Kept from agents**                      | Coding agents get no CodeWiki tools in this folder. The shield at the end of the row is filled.    |
+| **Kept from agents by \<folder>**         | A folder above it is kept from agents. The shield is filled, and a click on it opens Settings.     |
+| **Kept from agents (contains \<folder>)** | A folder inside it is kept from agents. The shield is outlined, and a click on it opens Settings. |
 
-The button **Keep agents out** appears on a project that is not kept. See [Folders kept from coding agents](../agents/keep-agents-out.md).
+## The buttons at the end of a row
+
+Each row ends with two round buttons. Rest the pointer on one to read what it does.
+
+* The **shield** keeps coding agents out of the project, or lets them in again. It is outlined while agents may use the project, and its tooltip reads **Keep agents out**. It is filled while the project is kept from them, and reads **Let agents in**. Where a folder above or inside the project decides, a click opens Settings → Repositories. See [Folders kept from coding agents](../agents/keep-agents-out.md).
+* The **×** is **Remove from list**. It takes the project off Home and nothing else: the folder, its wiki and its index stay, and opening the folder again brings the project back as it was. Removing the project that is open closes it. If a note has unsaved edits, save or discard them first.
 
 ### Git worktrees
 
@@ -61,7 +66,7 @@ A project whose folder was moved, renamed or deleted, or whose drive is not conn
 
 ![A project whose folder is not found](../.gitbook/assets/home-folder-not-found.png)
 
-CodeWiki does not forget such a project by itself. It opens again as soon as its folder is back in place. **Remove** takes it off the list; nothing on disk is deleted, and opening the folder again later adds it back.
+CodeWiki does not forget a project by itself. A project whose folder is not found opens again as soon as the folder is back in place. **Remove** takes it off the list; nothing on disk is deleted, and opening the folder again later adds it back.
 
 ## When an update waits
 

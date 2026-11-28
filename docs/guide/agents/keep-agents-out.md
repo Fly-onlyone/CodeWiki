@@ -23,9 +23,9 @@ The list is the file `agents-off.json` in the data folder (`%LOCALAPPDATA%\CodeW
 {% tab title="In the app" %}
 Settings → Repositories → **Kept from coding agents** adds and removes folders. **Add folder…** picks one. **Remove** takes one off.
 
-On [Home](../the-app/home.md), a project's row has **Keep agents out** and **Let agents in**. The command palette has **Keep agents out of this project** and **Let agents into this project**.
+On [Home](../the-app/home.md), a project's row ends with a shield. It is outlined while agents may use the project, and a click keeps them out (**Keep agents out**). It is filled while the project is kept from them, and a click lets them in again (**Let agents in**). The command palette has **Keep agents out of this project** and **Let agents into this project**.
 
-A project kept by a folder above it says so (**Kept from agents by \<folder>**), and so does a project that holds a kept folder (**Kept from agents (contains \<folder>)**). Such a row has a **Settings…** button in place of a **Keep agents out** button. A project that is on the list itself while a folder above it is listed too shows the folder above, since removing its own entry would not let agents in.
+A project kept by a folder above it says so (**Kept from agents by \<folder>**), and so does a project that holds a kept folder (**Kept from agents (contains \<folder>)**). On such a row a click on the shield opens Settings, where the folder that decides is listed. A project that is on the list itself while a folder above it is listed too shows the folder above, since removing its own entry would not let agents in.
 {% endtab %}
 
 {% tab title="On the command line" %}

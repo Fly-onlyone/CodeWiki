@@ -86,4 +86,4 @@ Three things can make it fail when you did sync:
 
 * **A file written into the checkout.** CodeWiki counts every file it finds in the repository's folder. A step that writes a file there before the action, such as a report, makes the wiki look out of date. Write such files elsewhere, or name them in `.codewikiignore`.
 * **A bot that cannot sync.** A pull request from a bot such as Dependabot changes code and cannot run the sync. Leave the step out for it with an `if:`, and sync when you merge.
-* **An older CodeWiki.** Up to version 0.6.0 a file saved with Windows line endings on one machine and Unix ones on another counted as changed. From 0.6.1 line endings make no difference. Sync the wiki once with 0.6.1 or newer.
+* **An older CodeWiki.** Up to version 0.6.0 a file saved with Windows line endings on one machine and Unix ones on another counted as changed. From 0.6.1 line endings make no difference. Sync the wiki once with 0.6.1 or newer. If a coding agent explained notes with 0.6.1 or older, sync once with 0.7.0 or newer on the machine where they were explained, and commit: that sync renews what those notes recorded about their files.

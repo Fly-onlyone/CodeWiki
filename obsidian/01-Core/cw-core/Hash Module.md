@@ -27,6 +27,7 @@ Small hashing helpers. CodeWiki hashes file and note content to tell whether any
 ## Items
 
 - `pub fn sha256_hex(bytes: impl AsRef<[u8]>) -> String` — lowercase hex SHA-256 of `bytes`.
+- `pub fn source_hash(bytes: &[u8]) -> String` — the hash of a source file, for change detection: the SHA-256 of its bytes with every CRLF read as LF. Git hands out the same file with either line ending (`core.autocrlf`, an `eol` attribute, an editor that saved it), and a wiki is committed and then read on other machines and checkouts. A hash of the raw bytes called such a file changed there: its notes were marked behind, and a check that the wiki is in sync failed for line endings alone. A lone CR stays, and so does every other byte.
 - `const BLOCK: usize` — SHA-256 block size in bytes.
 - `pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32]` — HMAC-SHA256 of `message` under `key` (RFC 2104), used to verify webhook signatures.
 - `pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool` — compare without leaking how many leading bytes matched.

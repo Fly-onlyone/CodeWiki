@@ -29,3 +29,6 @@ report/
 
 # Logs of a run from the RustRover configurations (CODEWIKI_LOG_DIR=logs)
 /logs/
+
+# A local tool's folder (it appeared on 2026-11-28); no part of the project
+.awb/
